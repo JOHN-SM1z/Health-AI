@@ -57,6 +57,28 @@ describe("generateSlots", () => {
     expect(slots[0].start.toISOString()).toBe("2026-08-17T04:00:00.000Z");
   });
 
+  it("normalizes Postgres HH:mm:ss working-hour values", () => {
+    // Supabase returns time columns as "09:00:00"; the generator must not
+    // append ":00" on top of that (would produce an Invalid Date and zero slots).
+    const now = new Date("2026-08-17T00:00:00Z");
+    const slots = generateSlots({
+      timezone: TZ,
+      workingHours: [
+        { weekday: 1, start_time: "09:00:00", end_time: "18:00:00" },
+        { weekday: 2, start_time: "09:00:00", end_time: "18:00:00" },
+      ],
+      timeBlocks: [],
+      existingAppointments: [],
+      serviceDurationMinutes: 30,
+      dayStart: MONDAY_UTC,
+      dayCount: 1,
+      now,
+      slotIntervalMinutes: 30,
+    });
+    expect(slots).toHaveLength(18);
+    expect(slots[0].startLocal).toBe("09:00");
+  });
+
   it("skips slots already started when `now` is inside the workday", () => {
     const now = new Date("2026-08-17T06:30:00Z"); // 11:30 local
     const slots = generateSlots({

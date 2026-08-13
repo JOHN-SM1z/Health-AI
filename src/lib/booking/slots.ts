@@ -30,6 +30,15 @@ export type Slot = {
 };
 
 
+/**
+ * Postgres `time` values come back as "HH:mm:ss" (e.g. "09:00:00"), while
+ * form inputs may send "HH:mm". Normalize both to "HH:mm".
+ */
+function normalizeTime(value: string): string {
+  const [h, m] = value.split(":");
+  return `${h.padStart(2, "0")}:${(m ?? "00").padStart(2, "0")}`;
+}
+
 /** True when [aStart,aEnd) overlaps [bStart,bEnd). */
 export function rangesOverlap(
   aStart: Date,
@@ -95,8 +104,8 @@ export function generateSlots(opts: {
     const wh = workingHours.find((w) => w.weekday === weekday);
     if (!wh) continue;
 
-    const openAt = fromClinicTime(`${formatDayStart(localDay, timezone)}T${wh.start_time}:00`, timezone);
-    const closeAt = fromClinicTime(`${formatDayStart(localDay, timezone)}T${wh.end_time}:00`, timezone);
+    const openAt = fromClinicTime(`${formatDayStart(localDay, timezone)}T${normalizeTime(wh.start_time)}:00`, timezone);
+    const closeAt = fromClinicTime(`${formatDayStart(localDay, timezone)}T${normalizeTime(wh.end_time)}:00`, timezone);
 
     let cursor = openAt;
     while (cursor.getTime() + serviceDurationMinutes * 60_000 <= closeAt.getTime()) {
@@ -150,8 +159,8 @@ export function isRangeBookable(opts: {
   if (!wh) return false;
 
   const day = formatDayStart(start, timezone);
-  const openAt = fromClinicTime(`${day}T${wh.start_time}:00`, timezone);
-  const closeAt = fromClinicTime(`${day}T${wh.end_time}:00`, timezone);
+  const openAt = fromClinicTime(`${day}T${normalizeTime(wh.start_time)}:00`, timezone);
+  const closeAt = fromClinicTime(`${day}T${normalizeTime(wh.end_time)}:00`, timezone);
   if (start < openAt || end > closeAt) return false;
 
   const blocks = timeBlocks.map((b) => ({ start: new Date(b.starts_at), end: new Date(b.ends_at) }));
