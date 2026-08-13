@@ -1,0 +1,67 @@
+# Health AI — Cloud Build pipeline: build image -> push -> deploy Cloud Run.
+#
+# Trigger: on push to main (cloudbuild-trigger.yaml) or manual:
+#   gcloud builds submit --config=cloudbuild.yaml .
+#
+# Requires:
+#   - Artifact Registry repo:  gcloud artifacts repositories create health-ai \
+#       --repository-format=docker --location=REGION
+#   - Secret Manager secrets holding the real env values (see docs/deploy-cloud-run.md).
+#   - The build service account may need iam.serviceAccountUser + run.admin
+#     for the deploy step.
+
+steps:
+  # 1. Build the image. The tag embeds COMMIT_SHA (substituted by Cloud Build).
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "--tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/health-ai:${COMMIT_SHA}"
+      - "--tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/health-ai:latest"
+      - "."
+
+  # 2. Push to Artifact Registry.
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "push"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/health-ai:${COMMIT_SHA}"
+
+  # 3. Deploy to Cloud Run.
+  #    Secrets from Secret Manager are mapped to env vars; at least
+  #    TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+  #    AI_BASE_URL, AI_API_KEY, AI_MODEL, WEBHOOK_SECRET, CRON_SECRET,
+  #    CRON_SECRET must exist (see docs/deploy-cloud-run.md).
+  - name: "gcr.io/cloud-builders/gcloud"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        gcloud run deploy health-ai \
+          --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/health-ai:${COMMIT_SHA} \
+          --region=${_REGION} \
+          --platform=managed \
+          --allow-unauthenticated \
+          --memory=${_MEMORY} \
+          --cpu=${_CPU} \
+          --min-instances=${_MIN_INSTANCES} \
+          --max-instances=${_MAX_INSTANCES} \
+          --timeout=60 \
+          --port=8080 \
+          --set-env-vars="NODE_ENV=production,NEXT_PUBLIC_APP_URL=${_PUBLIC_URL}" \
+          --set-secrets="SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest,NEXT_PUBLIC_SUPABASE_URL=NEXT_PUBLIC_SUPABASE_URL:latest,NEXT_PUBLIC_SUPABASE_ANON_KEY=NEXT_PUBLIC_SUPABASE_ANON_KEY:latest,TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest,AI_BASE_URL=AI_BASE_URL:latest,AI_API_KEY=AI_API_KEY:latest,AI_MODEL=AI_MODEL:latest,WEBHOOK_SECRET=WEBHOOK_SECRET:latest,CRON_SECRET=CRON_SECRET:latest" \
+          --no-cpu-throttling
+
+substitutions:
+  _REGION: us-central1
+  _REPO: health-ai
+  _MEMORY: 1Gi
+  _CPU: "1"
+  _MIN_INSTANCES: "0"
+  _MAX_INSTANCES: "10"
+  _PUBLIC_URL: https://health-ai.example.com
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/health-ai:${COMMIT_SHA}"

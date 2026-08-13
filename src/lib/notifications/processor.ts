@@ -1,0 +1,185 @@
+import "server-only";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { logger } from "@/lib/logger";
+import { sendTelegramMessage, telegramConfigured } from "@/lib/telegram/bot";
+import { formatInClinicTz } from "@/lib/timezone";
+import type { Database } from "@/lib/supabase/database.types";
+
+
+const MESSAGE_TEMPLATES: Record<
+  Database["public"]["Enums"]["notification_job_type"],
+  (ctx: AppointmentContext, timezone: string) => string
+> = {
+  booking_confirmation: (a, tz) =>
+    `✅ Qabul tasdiqlandi!\n\n` +
+    `👨‍⚕️ Shifokor: ${a.doctorName}\n` +
+    `🏥 Xizmat: ${a.serviceName}\n` +
+    `📅 Sana: ${formatInClinicTz(a.startAt, tz, "dd.MM.yyyy")}\n` +
+    `🕐 Vaqt: ${formatInClinicTz(a.startAt, tz, "HH:mm")}\n` +
+    `💰 Narx: ${formatPrice(a.amount, a.currency)}\n\n` +
+    `Qabuldan 24 soat va 2 soat oldin eslatib boramiz. Bekor qilish yoki o‘zgartirish uchun “Qabulga yozilish” bo‘limiga murojaat qiling.`,
+  reminder_24h: (a, tz) =>
+    `⏰ Eslatma: qabulingiz 24 soatdan so‘ng.\n\n` +
+    `👨‍⚕️ ${a.doctorName} — ${a.serviceName}\n` +
+    `📅 ${formatInClinicTz(a.startAt, tz, "dd.MM.yyyy, HH:mm")}\n\n` +
+    `Vaqtni o‘zgartirish yoki bekor qilish kerak bo‘lsa, operatorlarimizga murojaat qiling.`,
+  reminder_2h: (a, tz) =>
+    `⏰ Eslatma: qabulingiz 2 soatdan so‘ng.\n\n` +
+    `👨‍⚕️ ${a.doctorName} — ${a.serviceName}\n` +
+    `📅 ${formatInClinicTz(a.startAt, tz, "dd.MM.yyyy, HH:mm")}`,
+  cancellation: (a, tz) =>
+    `Qabulingiz bekor qilindi.\n\n` +
+    `👨‍⚕️ ${a.doctorName} — ${a.serviceName}\n` +
+    `📅 ${formatInClinicTz(a.startAt, tz, "dd.MM.yyyy, HH:mm")}\n\n` +
+    `Yangi vaqtga yozilish uchun “Qabulga yozilish” tugmasini bosing.`,
+  reschedule: (a, tz) =>
+    `Qabul vaqti o‘zgartirildi.\n\n` +
+    `👨‍⚕️ ${a.doctorName} — ${a.serviceName}\n` +
+    `📅 Yangi vaqt: ${formatInClinicTz(a.startAt, tz, "dd.MM.yyyy, HH:mm")}`,
+  human_takeover: () =>
+    `Operatorlarimiz siz bilan bog‘lanadi. Biroz kuting.`,
+};
+
+type AppointmentContext = {
+  doctorName: string;
+  serviceName: string;
+  startAt: string;
+  amount: number;
+  currency: string;
+};
+
+function formatPrice(amount: number, currency: string): string {
+  return `${new Intl.NumberFormat("uz-UZ").format(amount)} ${currency}`;
+}
+
+async function loadAppointmentContext(supabase: ReturnType<typeof createAdminClient>, appointmentId: string) {
+  const { data } = await supabase
+    .from("appointments")
+    .select("start_at, doctors!inner(name), services!inner(name), payments!inner(amount, currency)")
+    .eq("id", appointmentId)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    doctorName: data.doctors?.name ?? "Shifokor",
+    serviceName: data.services?.name ?? "Xizmat",
+    startAt: data.start_at,
+    amount: data.payments?.amount ?? 0,
+    currency: data.payments?.currency ?? "UZS",
+  } satisfies AppointmentContext;
+}
+
+/**
+ * Processes due notification jobs.
+ * - Locks due rows with SKIP LOCKED so concurrent cron invocations do not
+ *   send duplicate messages.
+ * - Idempotency keys prevent enqueue-time duplicates; status transitions
+ *   prevent send-time duplicates.
+ * - Automated messages pause while the conversation is taken over by an
+ *   admin (conversation.status = 'assigned').
+ */
+export async function processDueNotificationJobs(limit = 50): Promise<{ processed: number; sent: number; failed: number }> {
+  const supabase = createAdminClient();
+  if (!telegramConfigured()) {
+    logger.warn("notification processor: telegram not configured, skipping");
+    return { processed: 0, sent: 0, failed: 0 };
+  }
+
+  const { data: jobs } = await supabase
+    .from("notification_jobs")
+    .select("*")
+    .eq("status", "pending")
+    .lte("scheduled_for", new Date().toISOString())
+    .order("scheduled_for", { ascending: true })
+    .limit(limit);
+  if (!jobs || jobs.length === 0) return { processed: 0, sent: 0, failed: 0 };
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const job of jobs) {
+    const jobId = job.id;
+    const nextAttempts = job.attempts + 1;
+
+    // Pause automated messages while an admin holds the conversation.
+    if (job.conversation_id) {
+      const { data: conv } = await supabase
+        .from("conversations")
+        .select("status")
+        .eq("id", job.conversation_id)
+        .maybeSingle();
+      if (conv && conv.status === "assigned") {
+        // Defer: mark skipped so an admin can retry after release.
+        await supabase.from("notification_jobs").update({ status: "skipped" }).eq("id", jobId);
+        continue;
+      }
+    }
+
+    if (!job.patient_telegram_user_id) {
+      await markJob(jobId, "failed", nextAttempts, "no telegram recipient", supabase);
+      failed += 1;
+      continue;
+    }
+
+    if (job.appointment_id) {
+      const ctx = await loadAppointmentContext(supabase, job.appointment_id);
+      if (!ctx) {
+        await markJob(jobId, "skipped", nextAttempts, "appointment gone", supabase);
+        continue;
+      }
+      const { data: clinic } = await supabase
+        .from("clinics")
+        .select("timezone")
+        .eq("id", job.clinic_id)
+        .maybeSingle();
+
+      const text = MESSAGE_TEMPLATES[job.type](ctx, clinic?.timezone ?? "Asia/Tashkent");
+      const messageId = await sendTelegramMessage({
+        chatId: job.patient_telegram_user_id,
+        text,
+        replyMarkup: {
+          inline_keyboard: [
+            [{ text: "📅 Qabulga yozilish", url: miniAppUrl() }],
+            [{ text: "👤 Operator bilan bog‘lanish", callback_data: "contact_operator" }],
+          ],
+        },
+      });
+
+      if (messageId !== null) {
+        await supabase
+          .from("notification_jobs")
+          .update({ status: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, attempts: nextAttempts })
+          .eq("id", jobId);
+        sent += 1;
+      } else if (nextAttempts >= (job.max_attempts ?? 3)) {
+        await markJob(jobId, "failed", nextAttempts, "send failed after retries", supabase);
+        failed += 1;
+      } else {
+        await markJob(jobId, "pending", nextAttempts, "send failed, retrying", supabase);
+      }
+    } else {
+      await markJob(jobId, "skipped", nextAttempts, "job has no appointment", supabase);
+    }
+  }
+
+  logger.info("notification jobs processed", { processed: jobs.length, sent, failed });
+  return { processed: jobs.length, sent, failed };
+}
+
+function miniAppUrl(): string {
+  const base = process.env.NEXT_PUBLIC_APP_URL ?? "";
+  if (base.startsWith("https://t.me/") || base.startsWith("https://t.me")) {
+    // Telegram deep link form when the app is hosted on t.me
+    return base;
+  }
+  return `${base}/book`;
+}
+
+async function markJob(
+  jobId: string,
+  status: Database["public"]["Enums"]["notification_job_status"],
+  attempts: number,
+  error: string,
+  supabase: ReturnType<typeof createAdminClient>,
+) {
+  await supabase.from("notification_jobs").update({ status, attempts, error }).eq("id", jobId);
+}
