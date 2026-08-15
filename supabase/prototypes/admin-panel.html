@@ -131,12 +131,14 @@
   .strip-lane{position:relative;height:42px;background:linear-gradient(180deg,var(--paper),#F1EEE7);border:1px solid var(--line);border-radius:9px;overflow:hidden}
   .strip-lane::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(100%/9 - 1px),var(--line) calc(100%/9 - 1px),var(--line) calc(100%/9));opacity:.7}
   .block{
-    position:absolute;top:4px;bottom:4px;border-radius:6px;
-    padding:3px 8px;font-size:10.5px;line-height:1.25;overflow:hidden;white-space:nowrap;
+    position:absolute;top:5px;bottom:5px;border-radius:6px;
+    padding:2px 6px;font-size:10px;line-height:1.35;overflow:hidden;
     border:1px solid;display:flex;flex-direction:column;justify-content:center;
+    transition:filter .12s;
   }
-  .block b{font-weight:600;font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .block span{opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .block:hover{filter:brightness(.94)}
+  .block b{font-weight:600;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .block span{opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:9.5px}
   .block.st-confirmed{background:var(--sage-wash);border-color:#C7DECF;color:var(--sage)}
   .block.st-pending{background:var(--amber-wash);border-color:#EADFB8;color:var(--amber)}
   .block.st-checked{background:var(--clay-wash);border-color:#E7C9B8;color:var(--clay-ink)}
@@ -311,45 +313,7 @@
           </div>
           <div class="strip">
             <div class="strip-hours"><span>09:00</span><span>10:00</span><span>11:00</span><span>12:00</span><span>13:00</span><span>14:00</span><span>15:00</span><span>16:00</span><span>17:00</span><span>18:00</span></div>
-            <div class="strip-rows">
-              <div class="strip-row">
-                <div class="strip-dr">Karimov A.<small>Terapevt</small></div>
-                <div class="strip-lane">
-                  <div class="block st-completed" style="left:0%;width:8.3%"><b>09:00</b><span>Rustamov O.</span></div>
-                  <div class="block st-completed" style="left:8.3%;width:8.3%"><b>09:20</b><span>Toirova M.</span></div>
-                  <div class="block st-progress" style="left:16.6%;width:8.3%"><b>09:40</b><span>Yusupov D.</span></div>
-                  <div class="block st-checked" style="left:25%;width:8.3%"><b>10:00</b><span>Ergasheva N.</span></div>
-                  <div class="block st-confirmed" style="left:33.3%;width:8.3%"><b>10:20</b><span>Mirzaev B.</span></div>
-                  <div class="block st-confirmed" style="left:41.6%;width:16.6%"><b>10:40</b><span>Qodirova S. · 30 min</span></div>
-                  <div class="block st-pending" style="left:66.6%;width:8.3%"><b>12:20</b><span>Nazarov T.</span></div>
-                  <div class="block st-confirmed" style="left:75%;width:8.3%"><b>13:00</b><span>Ismoilov F.</span></div>
-                  <div class="block st-confirmed" style="left:83.3%;width:8.3%"><b>14:00</b><span>Azizova G.</span></div>
-                  <div class="block st-confirmed" style="left:91.6%;width:8.3%"><b>16:20</b><span>Hamidov K.</span></div>
-                </div>
-              </div>
-              <div class="strip-row">
-                <div class="strip-dr">Rahimova D.<small>Kardiolog</small></div>
-                <div class="strip-lane">
-                  <div class="block st-completed" style="left:0%;width:12.5%"><b>09:00</b><span>Sa'dullaeva Z. · 30 min</span></div>
-                  <div class="block st-completed" style="left:12.5%;width:12.5%"><b>09:30</b><span>Boboyev A. · 30 min</span></div>
-                  <div class="block st-checked" style="left:33.3%;width:12.5%"><b>11:00</b><span>Rahmonov J. · 30 min</span></div>
-                  <div class="block st-confirmed" style="left:45.8%;width:12.5%"><b>11:30</b><span>Karimova L. · 30 min</span></div>
-                  <div class="block st-progress" style="left:58.3%;width:12.5%"><b>12:00</b><span>Umarov S. · 30 min</span></div>
-                  <div class="block st-confirmed" style="left:70.8%;width:12.5%"><b>14:30</b><span>Xolmatova D. · 30 min</span></div>
-                </div>
-              </div>
-              <div class="strip-row">
-                <div class="strip-dr">Yusupova M.<small>Pediatr</small></div>
-                <div class="strip-lane">
-                  <div class="block st-completed" style="left:8.3%;width:8.3%"><b>09:20</b><span>Aliyev R.</span></div>
-                  <div class="block st-pending" style="left:16.6%;width:8.3%"><b>09:40</b><span>Valiyeva M.</span></div>
-                  <div class="block st-checked" style="left:33.3%;width:8.3%"><b>10:40</b><span>Naimov S.</span></div>
-                  <div class="block st-confirmed" style="left:41.6%;width:8.3%"><b>11:00</b><span>Rashidova F.</span></div>
-                  <div class="block st-confirmed" style="left:66.6%;width:8.3%"><b>12:40</b><span>Otabekov J.</span></div>
-                  <div class="block st-confirmed" style="left:83.3%;width:16.6%"><b>15:00</b><span>Djalilova H. · 30 min</span></div>
-                </div>
-              </div>
-            </div>
+            <div class="strip-rows" id="strip-rows"></div>
           </div>
         </div>
 
@@ -504,29 +468,78 @@
   const CONVS = [
     {id:1, name:"Sa'dullaeva Zarina", ava:"SZ", chan:"Telegram", time:"08:52", unread:0,
      msgs:[
-       {from:"patient", t:"Assalomu alaykum! Kardiologga qabulga yozilmoqchi edim, ertaga bo'sh vaqt bormi?"},
+       {from:"patient", t:"Assalomu alaykum! Kardiologga qabulga yozilmoqchi edim, ertaga bo'sh vaqt bormi?", tm:"08:52"},
        {from:"system", t:"Bot: ertaga 11:00 uchun qabul taklif qilindi"},
-       {from:"patient", t:"11:00 yaxshi, tasdiqlayman."},
-       {from:"admin", t:"Tasdiqlandi, ertaga 11:00 da kutamiz. Karimova Laylo — kardiolog qabuli."}
+       {from:"patient", t:"11:00 yaxshi, tasdiqlayman.", tm:"08:53"},
+       {from:"admin", t:"Tasdiqlandi, ertaga 11:00 da kutamiz. Karimova Laylo — kardiolog qabuli.", tm:"08:55"}
      ]},
     {id:2, name:"Rahmonov Jahongir", ava:"RJ", chan:"Telegram", time:"09:12", unread:2,
      msgs:[
-       {from:"patient", t:"Assalomu alaykum. Kecha qilgan tahlillarimni shifokor ko'rdimi?"},
-       {from:"admin", t:"Salom, Jahongir! Tahlillaringiz kardiologga yetkazildi, bugun 11:00 da muhokama qilamiz."},
-       {from:"patient", t:"Rahmat! Bir savolim bor edi, dori dozasini o'zgartirish kerakmi?"}
+       {from:"patient", t:"Assalomu alaykum. Kecha qilgan tahlillarimni shifokor ko'rdimi?", tm:"09:10"},
+       {from:"admin", t:"Salom, Jahongir! Tahlillaringiz kardiologga yetkazildi, bugun 11:00 da muhokama qilamiz.", tm:"09:11"},
+       {from:"patient", t:"Rahmat! Bir savolim bor edi, dori dozasini o'zgartirish kerakmi?", tm:"09:12"}
      ]},
     {id:3, name:"Aliyeva Malika", ava:"AM", chan:"Mini-app", time:"Yesterday 18:04", unread:1,
      msgs:[
-       {from:"patient", t:"Bolamning terisida toshma chiqdi, dermatologga yozish mumkinmi?"},
+       {from:"patient", t:"Bolamning terisida toshma chiqdi, dermatologga yozish mumkinmi?", tm:"18:02"},
        {from:"system", t:"Bot: dermatolog uchun bo'sh vaqtlar yuborildi"},
-       {from:"patient", t:"Ertaga 15:00 mos keladi."}
+       {from:"patient", t:"Ertaga 15:00 mos keladi.", tm:"18:04"}
      ]},
     {id:4, name:"Naimov Sanjar", ava:"NS", chan:"Telegram", time:"Mon 11 Aug", unread:0,
      msgs:[
-       {from:"patient", t:"Assalomu alaykum, kechagi qabul uchun rahmat. Farzandim ancha yaxshi."},
-       {from:"admin", t:"Xush kelibsiz! Yaxshi xabar. 2 haftadan keyin nazoratga keling."}
+       {from:"patient", t:"Assalomu alaykum, kechagi qabul uchun rahmat. Farzandim ancha yaxshi.", tm:"Mon 09:02"},
+       {from:"admin", t:"Xush kelibsiz! Yaxshi xabar. 2 haftadan keyin nazoratga keling.", tm:"Mon 09:05"}
      ]}
   ];
+
+  /* ---------- day strip (geometry computed from time + duration) ---------- */
+  const LANE_START = 9*60, LANE_END = 18*60, LANE = LANE_END - LANE_START;
+  const toMin = t => { const [h,m] = t.split(":").map(Number); return h*60+m; };
+  const fmtEnd = (t,d) => { const e = toMin(t)+d; return String(Math.floor(e/60)).padStart(2,"0")+":"+String(e%60).padStart(2,"0"); };
+  const STRIP = [
+    {doctor:"Karimov A.", spec:"Terapevt", blocks:[
+      {t:"09:00", d:20, p:"Rustamov O.", s:"Terapevt qabuli", st:"completed"},
+      {t:"09:20", d:20, p:"Toirova M.", s:"Terapevt qabuli", st:"completed"},
+      {t:"09:40", d:20, p:"Yusupov D.", s:"Terapevt qabuli", st:"progress"},
+      {t:"10:00", d:20, p:"Ergasheva N.", s:"Terapevt qabuli", st:"checked"},
+      {t:"10:20", d:20, p:"Mirzaev B.", s:"Terapevt qabuli", st:"confirmed"},
+      {t:"10:40", d:30, p:"Qodirova S.", s:"Kardiolog qabuli", st:"confirmed"},
+      {t:"12:20", d:20, p:"Nazarov T.", s:"Terapevt qabuli", st:"pending"},
+      {t:"13:00", d:20, p:"Ismoilov F.", s:"Terapevt qabuli", st:"confirmed"},
+      {t:"14:00", d:20, p:"Azizova G.", s:"Terapevt qabuli", st:"confirmed"},
+      {t:"16:20", d:20, p:"Hamidov K.", s:"Terapevt qabuli", st:"confirmed"}
+    ]},
+    {doctor:"Rahimova D.", spec:"Kardiolog", blocks:[
+      {t:"09:00", d:30, p:"Sa'dullaeva Z.", s:"Kardiolog qabuli", st:"completed"},
+      {t:"09:30", d:30, p:"Boboyev A.", s:"Kardiolog qabuli", st:"completed"},
+      {t:"11:00", d:30, p:"Rahmonov J.", s:"Kardiolog qabuli", st:"checked"},
+      {t:"11:30", d:30, p:"Karimova L.", s:"Kardiolog qabuli", st:"confirmed"},
+      {t:"12:00", d:30, p:"Umarov S.", s:"Kardiolog qabuli", st:"progress"},
+      {t:"14:30", d:30, p:"Xolmatova D.", s:"Kardiolog qabuli", st:"confirmed"}
+    ]},
+    {doctor:"Yusupova M.", spec:"Pediatr", blocks:[
+      {t:"09:20", d:20, p:"Aliyev R.", s:"Pediatr qabuli", st:"completed"},
+      {t:"09:40", d:20, p:"Valiyeva M.", s:"Pediatr qabuli", st:"pending"},
+      {t:"10:40", d:20, p:"Naimov S.", s:"Pediatr qabuli", st:"checked"},
+      {t:"11:00", d:20, p:"Rashidova F.", s:"Pediatr qabuli", st:"confirmed"},
+      {t:"12:40", d:20, p:"Otabekov J.", s:"Pediatr qabuli", st:"confirmed"},
+      {t:"15:00", d:30, p:"Djalilova H.", s:"Pediatr qabuli", st:"confirmed"}
+    ]}
+  ];
+  (function renderStrip(){
+    const rows = document.getElementById("strip-rows");
+    rows.innerHTML = STRIP.map(row => {
+      const blocks = row.blocks.map(b => {
+        const left = (toMin(b.t) - LANE_START) / LANE * 100;
+        const width = b.d / LANE * 100;
+        const wide = width > 6.5;
+        return `<div class="block st-${b.st}" style="left:${left}%;width:${width}%" title="${b.t}–${fmtEnd(b.t,b.d)} · ${b.p} · ${b.s}">`
+             + `<b>${b.t}</b>${wide ? `<span>${b.p}</span>` : ""}</div>`;
+      }).join("");
+      return `<div class="strip-row"><div class="strip-dr">${row.doctor}<small>${row.spec}</small></div>`
+           + `<div class="strip-lane">${blocks}</div></div>`;
+    }).join("");
+  })();
 
   /* ---------- nav ---------- */
   const views = document.querySelectorAll(".view");
@@ -586,10 +599,10 @@
     document.getElementById("th-chan").textContent = activeConv.chan + " · " + (activeConv.id === 1 ? "assigned to you" : "open");
     threadBody.innerHTML = activeConv.msgs.map(m =>
       m.from === "admin"
-        ? `<div class="msg admin">${m.t}<span class="m-time">You · 09:15</span></div>`
+        ? `<div class="msg admin">${m.t}<span class="m-time">You · ${m.tm || "now"}</span></div>`
         : m.from === "system"
         ? `<div class="msg system">${m.t}</div>`
-        : `<div class="msg patient">${m.t}<span class="m-time">${m.from === "patient" ? "Patient · " + activeConv.time : ""}</span></div>`
+        : `<div class="msg patient">${m.t}<span class="m-time">${m.tm || ""}</span></div>`
     ).join("");
     threadBody.scrollTop = threadBody.scrollHeight;
   };
