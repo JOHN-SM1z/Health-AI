@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
     const supabase = createAdminClient();
     const clinic = await getDefaultClinic();
 
-    const [services, doctors, specialties, doctorServices] = await Promise.all([
+    const [services, doctors, specialties] = await Promise.all([
       supabase
         .from("services")
         .select("id, name, description, price, duration_minutes, preparation_text, specialty_id")
@@ -38,8 +38,17 @@ export async function GET(request: NextRequest) {
         .eq("clinic_id", clinic.id)
         .eq("active", true)
         .order("sort_order"),
-      supabase.from("doctor_services").select("doctor_id, service_id"),
     ]);
+
+    // Only this clinic's doctor→service links matter; a link to a doctor of
+    // another clinic must never surface here.
+    const { data: doctorServices } = await supabase
+      .from("doctor_services")
+      .select("doctor_id, service_id")
+      .in(
+        "doctor_id",
+        (doctors.data ?? []).map((d) => d.id),
+      );
 
     return ok({
       clinic: {
@@ -57,8 +66,8 @@ export async function GET(request: NextRequest) {
         doctors: (doctors.data ?? [])
           .filter(
             (d) =>
-              !doctorServices.data?.length ||
-              doctorServices.data.some((ds) => ds.service_id === s.id && ds.doctor_id === d.id),
+              !doctorServices?.length ||
+              doctorServices.some((ds) => ds.service_id === s.id && ds.doctor_id === d.id),
           )
           .map((d) => d.id),
       })),

@@ -6,15 +6,26 @@ describe("canTransition (payment status machine)", () => {
   it("allows the documented legal transitions", () => {
     expect(canTransition("unpaid", "paid")).toBe(true);
     expect(canTransition("unpaid", "pending")).toBe(true);
+    expect(canTransition("unpaid", "manual_review")).toBe(true);
     expect(canTransition("pending", "paid")).toBe(true);
     expect(canTransition("pending", "failed")).toBe(true);
+    expect(canTransition("pending", "manual_review")).toBe(true);
     expect(canTransition("manual_review", "paid")).toBe(true);
+    expect(canTransition("manual_review", "failed")).toBe(true);
+    expect(canTransition("manual_review", "unpaid")).toBe(true);
     expect(canTransition("paid", "refunded")).toBe(true);
     expect(canTransition("paid", "manual_review")).toBe(true);
     expect(canTransition("failed", "pending")).toBe(true);
+    expect(canTransition("failed", "unpaid")).toBe(true);
   });
 
-  it("blocks illegal and terminal transitions", () => {
+  it("blocks dangerous and illegal transitions", () => {
+    // Cannot refund money that was never collected
+    expect(canTransition("unpaid", "refunded")).toBe(false);
+    expect(canTransition("pending", "refunded")).toBe(false);
+    expect(canTransition("manual_review", "refunded")).toBe(false);
+    expect(canTransition("failed", "refunded")).toBe(false);
+    // Terminal and identity transitions
     expect(canTransition("paid", "unpaid")).toBe(false);
     expect(canTransition("paid", "paid")).toBe(false);
     expect(canTransition("refunded", "paid")).toBe(false);

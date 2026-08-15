@@ -16,7 +16,7 @@ payment provider) — see [docs/go-live-checklist.md](docs/go-live-checklist.md)
 | Admin panel | `/admin` — today, appointments, calendar, conversations, doctors, services, specialties, FAQs, analytics, settings |
 | Doctor panel | `/doctor` — queue (checked-in → in-progress → completed), schedule + self-service breaks |
 | Backend | booking engine (no double-booking), payment status machine, notifications queue, OpenAI-compatible AI, Telegram webhook |
-| Database | 14 migrations: schema, RLS policies, functions/triggers, grants, release-blocker hardening; seed data for demo clinic |
+| Database | 21 migrations: schema, RLS policies, functions/triggers, grants, release-blocker hardening, slot-validation + integrity fixes; seed data for demo clinic |
 | Tests | unit + integration against local Supabase (integration suites skip cleanly when the local stack is unavailable) |
 
 ## Stack

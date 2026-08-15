@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, ATextArea } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, ATextArea, LoadingRow } from "@/components/admin/ui";
+import { MessagesSquare } from "lucide-react";
 import { adminApi, AdminApiError, formatDateTime } from "@/lib/admin/client";
 
 type Conversation = {
@@ -101,9 +102,15 @@ export default function ConversationsPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <div>
           {list === null ? (
-            <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
+            <Card><LoadingRow /></Card>
           ) : list.length === 0 ? (
-            <Card><AEmpty title="Suhbatlar yo‘q" subtitle="Bemorlar Telegram orqali yozganda bu yerda paydo bo‘ladi" /></Card>
+            <Card>
+              <AEmpty
+                title="Suhbatlar yo‘q"
+                subtitle="Bemorlar Telegram orqali yozganda bu yerda paydo bo‘ladi"
+                icon={<MessagesSquare className="h-6 w-6" />}
+              />
+            </Card>
           ) : (
             <ATable headers={["Bemor", "Holat", "Oxirgi faoliyat", ""]}>
               {list.map((c) => (
@@ -131,7 +138,13 @@ export default function ConversationsPage() {
 
         <div>
           {!open ? (
-            <Card><AEmpty title="Suhbatni tanlang" subtitle="Chapdagi ro‘yxatdan birini oching" /></Card>
+            <Card>
+              <AEmpty
+                title="Suhbatni tanlang"
+                subtitle="Chapdagi ro‘yxatdan birini oching"
+                icon={<MessagesSquare className="h-6 w-6" />}
+              />
+            </Card>
           ) : (
             <Card className="flex h-[480px] flex-col">
               <div className="mb-3 flex items-center justify-between border-b border-hairline pb-3">

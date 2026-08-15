@@ -104,73 +104,103 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
     const jobId = job.id;
     const nextAttempts = job.attempts + 1;
 
-    // Pause automated messages while an admin holds the conversation.
-    if (job.conversation_id) {
-      const { data: conv } = await supabase
-        .from("conversations")
-        .select("status")
-        .eq("id", job.conversation_id)
-        .maybeSingle();
-      if (conv && conv.status === "assigned") {
-        // Defer: mark skipped so an admin can retry after release.
-        await markJob(jobId, "skipped", nextAttempts, "conversation held by admin", supabase);
-        continue;
+    // Any unexpected failure must RELEASE the claim so the next run retries
+    // it. Otherwise the job stays 'in_progress' forever and is never picked
+    // up again (claim_due_notification_jobs only claims 'pending' rows).
+    try {
+      // Pause automated messages while an admin holds the conversation.
+      if (job.conversation_id) {
+        const { data: conv } = await supabase
+          .from("conversations")
+          .select("status")
+          .eq("id", job.conversation_id)
+          .maybeSingle();
+        if (conv && conv.status === "assigned") {
+          // Defer: mark skipped so an admin can retry after release.
+          await markJob(jobId, "skipped", nextAttempts, "conversation held by admin", supabase);
+          continue;
+        }
       }
-    }
 
-    if (!job.patient_telegram_user_id) {
-      await markJob(jobId, "failed", nextAttempts, "no telegram recipient", supabase);
-      failed += 1;
-      continue;
-    }
-
-    if (job.appointment_id) {
-      const ctx = await loadAppointmentContext(supabase, job.appointment_id);
-      if (!ctx) {
-        await markJob(jobId, "skipped", nextAttempts, "appointment gone", supabase);
+      if (!job.patient_telegram_user_id) {
+        await markJob(jobId, "failed", nextAttempts, "no telegram recipient", supabase);
+        failed += 1;
         continue;
       }
 
-      // If the appointment was cancelled or closed, skip sending reminders.
-      if (
-        (job.type === "reminder_24h" || job.type === "reminder_2h") &&
-        ["cancelled", "no_show", "completed"].includes(ctx.status)
-      ) {
-        await markJob(jobId, "skipped", nextAttempts, `appointment is ${ctx.status}`, supabase);
-        continue;
-      }
-      const { data: clinic } = await supabase
-        .from("clinics")
-        .select("timezone")
-        .eq("id", job.clinic_id)
-        .maybeSingle();
+      if (job.appointment_id) {
+        const ctx = await loadAppointmentContext(supabase, job.appointment_id);
+        if (!ctx) {
+          await markJob(jobId, "skipped", nextAttempts, "appointment gone", supabase);
+          continue;
+        }
 
-      const text = MESSAGE_TEMPLATES[job.type](ctx, clinic?.timezone ?? "Asia/Tashkent");
-      const messageId = await sendTelegramMessage({
-        chatId: job.patient_telegram_user_id,
-        text,
-        replyMarkup: {
-          inline_keyboard: [
-            [{ text: "📅 Qabulga yozilish", url: miniAppUrl() }],
-            [{ text: "👤 Operator bilan bog‘lanish", callback_data: "contact_operator" }],
-          ],
-        },
+        // If the appointment was cancelled or closed, skip sending reminders.
+        if (
+          (job.type === "reminder_24h" || job.type === "reminder_2h") &&
+          ["cancelled", "no_show", "completed"].includes(ctx.status)
+        ) {
+          await markJob(jobId, "skipped", nextAttempts, `appointment is ${ctx.status}`, supabase);
+          continue;
+        }
+        const { data: clinic } = await supabase
+          .from("clinics")
+          .select("timezone")
+          .eq("id", job.clinic_id)
+          .maybeSingle();
+
+        const text = MESSAGE_TEMPLATES[job.type](ctx, clinic?.timezone ?? "Asia/Tashkent");
+        const messageId = await sendTelegramMessage({
+          chatId: job.patient_telegram_user_id,
+          text,
+          replyMarkup: {
+            inline_keyboard: [
+              [{ text: "📅 Qabulga yozilish", url: miniAppUrl() }],
+              [{ text: "👤 Operator bilan bog‘lanish", callback_data: "contact_operator" }],
+            ],
+          },
+        });
+
+        if (messageId !== null) {
+          sent += 1;
+          // The message was already delivered. If recording it fails we
+          // must NOT release the job for retry — that would send the same
+          // message to the patient a second time.
+          try {
+            await supabase
+              .from("notification_jobs")
+              .update({ status: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, attempts: nextAttempts })
+              .eq("id", jobId);
+          } catch (e) {
+            logger.error("notification sent but not recorded", {
+              jobId,
+              error: e instanceof Error ? e.message : String(e),
+            });
+            await markJob(jobId, "failed", nextAttempts, "sent but not recorded", supabase);
+            failed += 1;
+          }
+        } else if (nextAttempts >= (job.max_attempts ?? 3)) {
+          await markJob(jobId, "failed", nextAttempts, "send failed after retries", supabase);
+          failed += 1;
+        } else {
+          await markJob(jobId, "pending", nextAttempts, "send failed, retrying", supabase);
+        }
+      } else {
+        await markJob(jobId, "skipped", nextAttempts, "job has no appointment", supabase);
+      }
+    } catch (e) {
+      // Release the claim so the next run retries. After max attempts the
+      // job is failed so it stops consuming worker time.
+      logger.error("notification job processing failed, releasing claim", {
+        jobId,
+        error: e instanceof Error ? e.message : String(e),
       });
-
-      if (messageId !== null) {
-        await supabase
-          .from("notification_jobs")
-          .update({ status: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, attempts: nextAttempts })
-          .eq("id", jobId);
-        sent += 1;
-      } else if (nextAttempts >= (job.max_attempts ?? 3)) {
-        await markJob(jobId, "failed", nextAttempts, "send failed after retries", supabase);
+      if (nextAttempts >= (job.max_attempts ?? 3)) {
+        await markJob(jobId, "failed", nextAttempts, "processing error after retries", supabase);
         failed += 1;
       } else {
-        await markJob(jobId, "pending", nextAttempts, "send failed, retrying", supabase);
+        await markJob(jobId, "pending", nextAttempts, "processing error, retrying", supabase);
       }
-    } else {
-      await markJob(jobId, "skipped", nextAttempts, "job has no appointment", supabase);
     }
   }
 
@@ -194,5 +224,14 @@ async function markJob(
   error: string,
   supabase: ReturnType<typeof createAdminClient>,
 ) {
-  await supabase.from("notification_jobs").update({ status, attempts, error }).eq("id", jobId);
+  try {
+    await supabase.from("notification_jobs").update({ status, attempts, error }).eq("id", jobId);
+  } catch (e) {
+    // Never let a failed bookkeeping write crash the whole batch.
+    logger.error("failed to update notification job", {
+      jobId,
+      status,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
 }

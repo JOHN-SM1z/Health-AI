@@ -4,7 +4,8 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTelegramInitData } from "@/components/mini-app/telegram-provider";
 import { apiGet, apiPost } from "@/lib/client/api";
-import { Button, Card, Badge, Spinner, ErrorBanner, SectionTitle } from "@/components/mini-app/ui";
+import { Button, Card, Badge, Spinner, ErrorBanner, SectionTitle, EmptyState } from "@/components/mini-app/ui";
+import { CalendarCheck } from "lucide-react";
 
 type MyAppointmentsResponse = {
   appointments: Array<{
@@ -89,11 +90,19 @@ function MyAppointmentsInner() {
     <div className="flex flex-col gap-3">
       <SectionTitle>Mening qabullarim</SectionTitle>
       {data.appointments.length === 0 && (
-        <Card className="text-center text-sm text-[var(--tg-hint,#8a9699)]">
-          Hozircha qabullar yo‘q.{" "}
-          <a href="/book" className="underline">
-            Yozilish
-          </a>
+        <Card>
+          <EmptyState
+            title="Hozircha qabullar yo‘q"
+            subtitle={
+              <>
+                Qabulga yozilish uchun{" "}
+                <a href="/book" className="underline">
+                  yozilish sahifasini oching
+                </a>
+              </>
+            }
+            icon={<CalendarCheck className="h-6 w-6" />}
+          />
         </Card>
       )}
       {data.appointments.map((a) => {

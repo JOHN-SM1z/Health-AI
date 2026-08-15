@@ -41,7 +41,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
 
     const { data: appointment, error: fetchError } = await supabase
       .from("appointments")
-      .select("id, patient_id, status, patients!inner(telegram_user_id)")
+      .select("id, patient_id, status, cancelled_at, cancelled_reason, cancelled_by, patients!inner(telegram_user_id)")
       .eq("id", id)
       .eq("clinic_id", staff.clinicId)
       .maybeSingle();
@@ -79,8 +79,33 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
     }
 
     if (body.action === "status") {
-      const { error } = await supabase.from("appointments").update({ status: body.status }).eq("id", id);
+      // Keep cancellation fields consistent: a direct "cancelled" status
+      // change must record who/when and notify the patient exactly like the
+      // dedicated cancel action — otherwise the patient is never told.
+      const isCancel = body.status === "cancelled";
+      const wasClosed = ["cancelled", "no_show", "completed"].includes(appointment.status);
+      const { error } = await supabase
+        .from("appointments")
+        .update({
+          status: body.status,
+          ...(isCancel
+            ? {
+                cancelled_at: appointment.cancelled_at ?? new Date().toISOString(),
+                cancelled_reason: appointment.cancelled_reason ?? "Xodim tomonidan bekor qilindi",
+                cancelled_by: appointment.cancelled_by ?? staff.profileId,
+              }
+            : {}),
+        })
+        .eq("id", id);
       if (error) throw new ApiError(500, "Holatni yangilab bo‘lmadi");
+
+      if (isCancel && !wasClosed && appointment.patients?.telegram_user_id) {
+        await enqueueCancellationNotification({
+          clinicId: staff.clinicId,
+          appointmentId: id,
+          patientTelegramUserId: appointment.patients.telegram_user_id,
+        });
+      }
       return ok({ updated: true });
     }
 

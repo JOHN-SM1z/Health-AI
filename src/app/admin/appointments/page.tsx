@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect, LoadingRow } from "@/components/admin/ui";
+import { ClipboardList } from "lucide-react";
 import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatDateTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
 
 type Row = {
@@ -91,9 +92,15 @@ export default function AppointmentsPage() {
       </div>
 
       {rows === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
+        <Card><LoadingRow /></Card>
       ) : (filtered?.length ?? 0) === 0 ? (
-        <Card><AEmpty title="Topilmadi" subtitle="Filtr yoki qidiruv so‘zini o‘zgartiring" /></Card>
+        <Card>
+          <AEmpty
+            title="Topilmadi"
+            subtitle="Filtr yoki qidiruv so‘zini o‘zgartiring"
+            icon={<ClipboardList className="h-6 w-6" />}
+          />
+        </Card>
       ) : (
         <ATable headers={["Sana", "Bemor", "Xizmat", "Shifokor", "Manba", "Holat", "To‘lov", "Boshqarish"]}>
           {filtered!.map((r) => (

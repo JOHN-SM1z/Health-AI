@@ -6,7 +6,7 @@ import { ChevronLeft, HeartPulse } from "lucide-react";
  */
 export default function MiniAppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col gap-4 px-4 pb-10 pt-4">
+    <div className="mx-auto flex w-full max-w-md flex-col gap-4 px-4 pb-10 pt-5">
       <header className="flex items-center gap-3">
         <Link
           href="/"

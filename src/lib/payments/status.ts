@@ -8,9 +8,9 @@ import type { Database } from "@/lib/supabase/database.types";
 type PaymentStatus = Database["public"]["Enums"]["payment_status"];
 
 const LEGAL_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
-  unpaid: ["pending", "paid", "failed", "manual_review", "refunded"],
-  pending: ["paid", "failed", "manual_review", "unpaid", "refunded"],
-  manual_review: ["paid", "failed", "unpaid", "refunded"],
+  unpaid: ["pending", "paid", "manual_review"],
+  pending: ["paid", "failed", "manual_review"],
+  manual_review: ["paid", "failed", "unpaid"],
   paid: ["refunded", "manual_review"],
   failed: ["pending", "unpaid"],
   refunded: [],
@@ -28,7 +28,7 @@ export function canTransition(from: PaymentStatus, to: PaymentStatus): boolean {
 export async function transitionPaymentStatus(opts: {
   paymentId?: string;
   appointmentId?: string;
-  clinicId?: string;
+  clinicId: string;
   to: PaymentStatus;
   actorId?: string | null;
   actorType?: "staff" | "system";
@@ -43,16 +43,13 @@ export async function transitionPaymentStatus(opts: {
 
   let query = supabase
     .from("payments")
-    .select("id, status, clinic_id, appointment_id, amount, currency, provider, paid_at, paid_by, provider_reference");
+    .select("id, status, clinic_id, appointment_id, amount, currency, provider, paid_at, paid_by, provider_reference")
+    .eq("clinic_id", opts.clinicId);
 
   if (opts.paymentId) {
     query = query.eq("id", opts.paymentId);
   } else if (opts.appointmentId) {
     query = query.eq("appointment_id", opts.appointmentId);
-  }
-
-  if (opts.clinicId) {
-    query = query.eq("clinic_id", opts.clinicId);
   }
 
   const { data: payment, error: fetchError } = await query.maybeSingle();

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ATextArea, ASelect } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ATextArea, ASelect, AModal } from "@/components/admin/ui";
 import { adminApi, AdminApiError, formatPrice } from "@/lib/admin/client";
 
 type Service = {
@@ -195,59 +195,61 @@ function ServiceModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-foreground/50 p-4" onClick={onClose}>
-      <Card className="pointer-events-auto mt-10 w-full max-w-lg">
-        <p className="mb-4 text-lg font-bold text-foreground">{isEdit ? "Xizmatni boshqarish" : "Yangi xizmat"}</p>
-        <div className="flex flex-col gap-3">
-          <AInput value={name} onChange={setName} placeholder="Xizmat nomi" aria-label="Nomi" />
-          {!isEdit && (
-            <ASelect
-              value={specialtyId}
-              onChange={setSpecialtyId}
-              options={[{ value: "", label: "Yo‘nalish tanlash…" }, ...specialties.map((s) => ({ value: s.id, label: s.name }))]}
-              aria-label="Yo‘nalish"
-            />
-          )}
-          <ATextArea value={description} onChange={setDescription} placeholder="Tavsif" />
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <p className="mb-1 text-xs text-ink-muted">Davomiylik (daq.)</p>
-              <AInput value={duration} onChange={setDuration} type="number" aria-label="Davomiylik" />
-            </div>
-            <div>
-              <p className="mb-1 text-xs text-ink-muted">Narx (so‘m)</p>
-              <AInput value={price} onChange={setPrice} type="number" aria-label="Narx" />
-            </div>
-          </div>
-          <ATextArea value={preparation} onChange={setPreparation} placeholder="Tayyorgarlik (bemorga ko‘rsatiladi)" rows={2} />
-          <label className="flex items-center gap-2 text-sm text-ink-muted">
-            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 accent-pine" />
-            Faol
-          </label>
-          <div className="rounded-lg border border-hairline p-3">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Qaysi shifokorlar bajaradi</p>
-            <div className="flex flex-wrap gap-2">
-              {doctors.map((d) => (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => toggleDoctor(d.id)}
-                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                    doctorIds.includes(d.id) ? "bg-pine text-white" : "bg-sand text-ink-muted hover:bg-hairline"
-                  }`}
-                >
-                  {d.name}
-                </button>
-              ))}
-              {doctors.length === 0 && <p className="text-xs text-ink-muted">Avval shifokor qo‘shing</p>}
-            </div>
-          </div>
-        </div>
-        <div className="mt-5 flex justify-end gap-2">
+    <AModal
+      title={isEdit ? "Xizmatni boshqarish" : "Yangi xizmat"}
+      onClose={onClose}
+      footer={
+        <>
           <AButton variant="outline" onClick={onClose}>Bekor</AButton>
           <AButton loading={saving} onClick={() => void save()}>Saqlash</AButton>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <AInput value={name} onChange={setName} placeholder="Xizmat nomi" aria-label="Nomi" />
+        {!isEdit && (
+          <ASelect
+            value={specialtyId}
+            onChange={setSpecialtyId}
+            options={[{ value: "", label: "Yo‘nalish tanlash…" }, ...specialties.map((s) => ({ value: s.id, label: s.name }))]}
+            aria-label="Yo‘nalish"
+          />
+        )}
+        <ATextArea value={description} onChange={setDescription} placeholder="Tavsif" />
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <p className="mb-1 text-xs text-ink-muted">Davomiylik (daq.)</p>
+            <AInput value={duration} onChange={setDuration} type="number" aria-label="Davomiylik" />
+          </div>
+          <div>
+            <p className="mb-1 text-xs text-ink-muted">Narx (so‘m)</p>
+            <AInput value={price} onChange={setPrice} type="number" aria-label="Narx" />
+          </div>
         </div>
-      </Card>
-    </div>
+        <ATextArea value={preparation} onChange={setPreparation} placeholder="Tayyorgarlik (bemorga ko‘rsatiladi)" rows={2} />
+        <label className="flex items-center gap-2 text-sm text-ink-muted">
+          <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 accent-pine" />
+          Faol
+        </label>
+        <div className="rounded-lg border border-hairline bg-surface-2 p-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Qaysi shifokorlar bajaradi</p>
+          <div className="flex flex-wrap gap-2">
+            {doctors.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => toggleDoctor(d.id)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  doctorIds.includes(d.id) ? "bg-pine text-white" : "bg-sand text-ink-muted hover:bg-hairline"
+                }`}
+              >
+                {d.name}
+              </button>
+            ))}
+            {doctors.length === 0 && <p className="text-xs text-ink-muted">Avval shifokor qo‘shing</p>}
+          </div>
+        </div>
+      </div>
+    </AModal>
   );
 }

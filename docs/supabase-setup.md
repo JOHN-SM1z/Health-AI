@@ -37,7 +37,7 @@ Prerequisite for a full local run: `npm run db:reset-local` (above) and a
 
 ## Migrations
 
-14 migrations in `supabase/migrations/` (ordered, repeatable on any environment):
+21 migrations in `supabase/migrations/` (ordered, repeatable on any environment):
 
 1. `0001`–`0008` — schema: clinics, profiles, staff_roles, patients, specialties,
    services, doctors, doctor_services, working hours, time blocks, appointments,
@@ -51,6 +51,11 @@ Prerequisite for a full local run: `npm run db:reset-local` (above) and a
    every API call fails with `permission denied`).
 5. `0014` — release-blocker hardening: booking RPCs are `service_role`-only,
    `notification_jobs.in_progress` + atomic claim RPC, atomic webhook claim RPC.
+6. `0015`–`0021` — follow-up fixes: reschedule duration overrides, doctor
+   status-only edits, staff reply/upload RLS, walk-in patients, optional voice
+   file ids, booking availability validation on all writes, and integrity gaps
+   (payment inserts, conversation timestamps, Telegram-identity protection,
+   notification indexes).
 
 Regenerate TypeScript types after schema changes:
 

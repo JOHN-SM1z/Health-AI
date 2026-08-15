@@ -8,11 +8,13 @@ const sora = Sora({ subsets: ["latin"], variable: "--font-sora", display: "swap"
 const jetbrains = JetBrains_Mono({ subsets: ["latin", "cyrillic"], variable: "--font-jetbrains", display: "swap" });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://app.healthai.uz"),
   title: {
     default: "Health AI — Klinika",
     template: "%s — Health AI",
   },
   description: "Klinika qabuliga yozilish va ma‘lumot olish xizmati",
+  robots: { index: false, follow: false },
 };
 
 export const viewport: Viewport = {

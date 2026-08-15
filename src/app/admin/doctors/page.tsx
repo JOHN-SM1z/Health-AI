@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect, AModal } from "@/components/admin/ui";
 import { adminApi, AdminApiError } from "@/lib/admin/client";
 
 type Doctor = {
@@ -153,74 +153,74 @@ function DoctorModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-foreground/50 p-4" onClick={onClose}>
-      <Card className="mt-10 w-full max-w-lg" >
-        <div className="pointer-events-auto">
-          <p className="mb-4 text-lg font-bold text-foreground">{isEdit ? "Shifokorni boshqarish" : "Yangi shifokor"}</p>
-          <div className="flex flex-col gap-3">
-            <AInput value={name} onChange={setName} placeholder="F.I.Sh." aria-label="Ism" />
-            <AInput value={title} onChange={setTitle} placeholder="Lavozim (masalan: Terapevt)" aria-label="Lavozim" />
-            {!isEdit && (
-              <ASelect
-                value={specialtyId}
-                onChange={setSpecialtyId}
-                options={[{ value: "", label: "Yo‘nalish tanlash…" }, ...specialties.map((s) => ({ value: s.id, label: s.name }))]}
-                aria-label="Yo‘nalish"
-              />
-            )}
-            <label className="flex items-center gap-2 text-sm text-ink-muted">
-              <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 accent-pine" />
-              Faol
-            </label>
-            {isEdit && (
-              <div className="rounded-lg border border-hairline p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Haftalik ish jadvali</p>
-                <div className="space-y-1.5">
-                  {WEEKDAYS.map((dayName, idx) => {
-                    const wd = idx + 1;
-                    const slot = hours.find((h) => h.weekday === wd);
-                    return (
-                      <div key={wd} className="flex items-center gap-2 text-sm">
-                        <span className="w-28 shrink-0 text-ink-muted">{dayName}</span>
-                        <AInput
-                          value={slot?.start_time ?? ""}
-                          type="time"
-                          className="w-28"
-                          onChange={(v) => setHours(updateSlot(wd, { start_time: v, end_time: slot?.end_time ?? "" }))}
-                          aria-label={`${dayName} boshlanish`}
-                        />
-                        <span className="text-ink-muted">—</span>
-                        <AInput
-                          value={slot?.end_time ?? ""}
-                          type="time"
-                          className="w-28"
-                          onChange={(v) => setHours(updateSlot(wd, { start_time: slot?.start_time ?? "", end_time: v }))}
-                          aria-label={`${dayName} tugash`}
-                        />
-                        <AButton size="sm" variant="ghost" onClick={() => setHours((prev) => prev.filter((h) => h.weekday !== wd))}>
-                          ×
-                        </AButton>
-                      </div>
-                    );
-                  })}
-                </div>
-                <AButton
-                  size="sm"
-                  variant="outline"
-                  className="mt-2"
-                  onClick={() => setHours((prev) => [...prev, { weekday: (prev.length % 7) + 1, start_time: "09:00", end_time: "18:00" }])}
-                >
-                  + Kun qo‘shish
-                </AButton>
-              </div>
-            )}
+    <AModal
+      title={isEdit ? "Shifokorni boshqarish" : "Yangi shifokor"}
+      onClose={onClose}
+      footer={
+        <>
+          <AButton variant="outline" onClick={onClose}>Bekor</AButton>
+          <AButton loading={saving} onClick={() => void save()}>Saqlash</AButton>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <AInput value={name} onChange={setName} placeholder="F.I.Sh." aria-label="Ism" />
+        <AInput value={title} onChange={setTitle} placeholder="Lavozim (masalan: Terapevt)" aria-label="Lavozim" />
+        {!isEdit && (
+          <ASelect
+            value={specialtyId}
+            onChange={setSpecialtyId}
+            options={[{ value: "", label: "Yo‘nalish tanlash…" }, ...specialties.map((s) => ({ value: s.id, label: s.name }))]}
+            aria-label="Yo‘nalish"
+          />
+        )}
+        <label className="flex items-center gap-2 text-sm text-ink-muted">
+          <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 accent-pine" />
+          Faol
+        </label>
+        {isEdit && (
+          <div className="rounded-lg border border-hairline bg-surface-2 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Haftalik ish jadvali</p>
+            <div className="space-y-1.5">
+              {WEEKDAYS.map((dayName, idx) => {
+                const wd = idx + 1;
+                const slot = hours.find((h) => h.weekday === wd);
+                return (
+                  <div key={wd} className="flex items-center gap-2 text-sm">
+                    <span className="w-28 shrink-0 text-ink-muted">{dayName}</span>
+                    <AInput
+                      value={slot?.start_time ?? ""}
+                      type="time"
+                      className="w-28"
+                      onChange={(v) => setHours(updateSlot(wd, { start_time: v, end_time: slot?.end_time ?? "" }))}
+                      aria-label={`${dayName} boshlanish`}
+                    />
+                    <span className="text-ink-muted">—</span>
+                    <AInput
+                      value={slot?.end_time ?? ""}
+                      type="time"
+                      className="w-28"
+                      onChange={(v) => setHours(updateSlot(wd, { start_time: slot?.start_time ?? "", end_time: v }))}
+                      aria-label={`${dayName} tugash`}
+                    />
+                    <AButton size="sm" variant="ghost" onClick={() => setHours((prev) => prev.filter((h) => h.weekday !== wd))}>
+                      ×
+                    </AButton>
+                  </div>
+                );
+              })}
+            </div>
+            <AButton
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              onClick={() => setHours((prev) => [...prev, { weekday: (prev.length % 7) + 1, start_time: "09:00", end_time: "18:00" }])}
+            >
+              + Kun qo‘shish
+            </AButton>
           </div>
-          <div className="mt-5 flex justify-end gap-2">
-            <AButton variant="outline" onClick={onClose}>Bekor</AButton>
-            <AButton loading={saving} onClick={() => void save()}>Saqlash</AButton>
-          </div>
-        </div>
-      </Card>
-    </div>
+        )}
+      </div>
+    </AModal>
   );
 }

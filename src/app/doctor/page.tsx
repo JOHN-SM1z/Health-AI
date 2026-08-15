@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, LoadingRow } from "@/components/admin/ui";
+import { ListOrdered } from "lucide-react";
 import { STATUS_LABELS, STATUS_TONES, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
 
 type Row = {
@@ -118,16 +119,23 @@ export default function DoctorQueuePage() {
       )}
 
       {rows === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
+        <Card><LoadingRow /></Card>
       ) : doctorName === null ? (
         <Card>
           <AEmpty
             title="Shifokor hisobi ulanmagan"
             subtitle="Admin panelda shifokor kartasiga profilingizni bog‘lang (Shifokorlar → Boshqarish)."
+            icon={<ListOrdered className="h-6 w-6" />}
           />
         </Card>
       ) : rows.length === 0 ? (
-        <Card><AEmpty title="Bugun navbat yo‘q" subtitle="Barcha qabullar yakunlangan yoki rejalashtirilmagan" /></Card>
+        <Card>
+          <AEmpty
+            title="Bugun navbat yo‘q"
+            subtitle="Barcha qabullar yakunlangan yoki rejalashtirilmagan"
+            icon={<ListOrdered className="h-6 w-6" />}
+          />
+        </Card>
       ) : (
         <ATable headers={["Vaqt", "Bemor", "Xizmat", "Narx", "Holat", "Amallar"]}>
           {rows.map((r) => (

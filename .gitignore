@@ -51,3 +51,6 @@ supabase/.status
 /tmp-*
 *.mp3
 *.ogg
+
+# local IDE / editor caches
+.freebuff/

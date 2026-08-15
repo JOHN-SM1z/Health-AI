@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
-import { PageHeader, Card, AEmpty, AError, ASelect } from "@/components/admin/ui";
+import { PageHeader, Card, AEmpty, AError, ASelect, StatCard, LoadingRow } from "@/components/admin/ui";
+import { BarChart3 } from "lucide-react";
 
 type AnalyticsRow = {
   event_type: string;
@@ -68,36 +69,36 @@ export default function AnalyticsPage() {
       {error && <AError message={error} />}
 
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Card>
-          <p className="text-xs uppercase tracking-wide text-ink-muted">Jami hodisalar</p>
-          <p className="mt-1 text-2xl font-bold text-foreground">{stats.total.toLocaleString("uz-UZ")}</p>
-        </Card>
-        <Card>
-          <p className="text-xs uppercase tracking-wide text-ink-muted">Faol bemorlar</p>
-          <p className="mt-1 text-2xl font-bold text-foreground">{stats.uniquePatients.size.toLocaleString("uz-UZ")}</p>
-        </Card>
-        <Card>
-          <p className="text-xs uppercase tracking-wide text-ink-muted">Turli hodisalar</p>
-          <p className="mt-1 text-2xl font-bold text-foreground">{stats.sorted.length}</p>
-        </Card>
+        <StatCard label="Jami hodisalar" value={stats.total.toLocaleString("uz-UZ")} tone="neutral" />
+        <StatCard label="Faol bemorlar" value={stats.uniquePatients.size.toLocaleString("uz-UZ")} tone="pine" />
+        <StatCard label="Turli hodisalar" value={stats.sorted.length.toLocaleString("uz-UZ")} tone="info" />
       </div>
 
       {rows === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
+        <Card><LoadingRow /></Card>
       ) : stats.sorted.length === 0 ? (
-        <Card><AEmpty title="Ma'lumot yo‘q" subtitle="Tanlangan davrda hodisalar qayd etilmagan" /></Card>
+        <Card>
+          <AEmpty
+            title="Ma'lumot yo‘q"
+            subtitle="Tanlangan davrda hodisalar qayd etilmagan"
+            icon={<BarChart3 className="h-6 w-6" />}
+          />
+        </Card>
       ) : (
         <Card>
           <p className="mb-4 text-sm font-bold text-foreground">Hodisalar bo‘yicha</p>
-          <div className="space-y-3">
+          <div className="space-y-3.5">
             {stats.sorted.map(([type, count]) => (
               <div key={type}>
-                <div className="mb-1 flex justify-between text-sm">
+                <div className="mb-1.5 flex justify-between text-sm">
                   <span className="text-ink-muted">{type}</span>
-                  <span className="font-medium text-foreground">{count.toLocaleString("uz-UZ")}</span>
+                  <span className="font-numeric font-medium text-foreground">{count.toLocaleString("uz-UZ")}</span>
                 </div>
-                <div className="h-2 rounded-full bg-sand">
-                  <div className="h-2 rounded-full bg-pine" style={{ width: `${(count / maxCount) * 100}%` }} />
+                <div className="h-1.5 overflow-hidden rounded-full bg-sand">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-pine to-mint transition-[width] duration-500"
+                    style={{ width: `${Math.max((count / maxCount) * 100, 4)}%` }}
+                  />
                 </div>
               </div>
             ))}

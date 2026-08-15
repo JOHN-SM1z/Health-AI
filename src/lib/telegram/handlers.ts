@@ -491,6 +491,15 @@ export async function handleVoiceCorrect(opts: { chatId: number; voiceMessageId:
     .maybeSingle();
   if (!voiceRow || !voiceRow.transcription) return;
 
+  // AI automation must stay silent while the conversation is under human
+  // control — the same rule as plain text messages.
+  if (await conversationIsHeld(voiceRow.conversation_id)) {
+    logger.info("voice transcription confirmed, conversation held by admin — no auto-reply", {
+      conversationId: voiceRow.conversation_id,
+    });
+    return;
+  }
+
   const clinic = await getDefaultClinic();
   const { data: conv } = await supabase
     .from("conversations")

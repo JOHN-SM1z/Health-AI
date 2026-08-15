@@ -4,28 +4,34 @@
   /* Health AI design tokens — clinical calm, warm human ground.
      `pine` = calm teal primary; `sand` = warm page ground; `ink` = soft text.
      Mini App surfaces fall back to Telegram theme vars when available. */
-  --background: #f7f5f0; /* sand */
-  --foreground: #0e2a2f; /* ink */
+  --background: #f7f6f2; /* sand */
+  --foreground: #10282e; /* ink */
   --surface: #ffffff;
-  --hairline: #e8e4dc;
+  --surface-2: #fbfaf7; /* subtle raised panel */
+  --hairline: #e9e6df;
   --pine: #0b6e5c;
-  --pine-deep: #08584a;
-  --pine-tint: #e2f0ec;
+  --pine-deep: #075448;
+  --pine-tint: #e1f0eb;
   --mint: #9bd8c9;
-  --ink-muted: #5c6b6e;
+  --ink-muted: #5d6b6e;
   --clay: #d97b54;
   --clay-tint: #fbeae2;
   --clay-deep: #a35532;
-  --danger: #c7402e;
+  --danger: #c2402e;
   --danger-tint: #fbe9e6;
   --info: #2e6fbf;
   --info-tint: #e6eefa;
+
+  --shadow-card: 0 1px 2px rgba(16, 40, 46, 0.04), 0 1px 6px rgba(16, 40, 46, 0.04);
+  --shadow-pop: 0 2px 8px rgba(16, 40, 46, 0.06), 0 16px 40px rgba(16, 40, 46, 0.1);
+  --ring: rgba(11, 110, 92, 0.35);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-hairline: var(--hairline);
   --color-pine: var(--pine);
   --color-pine-deep: var(--pine-deep);
@@ -44,15 +50,45 @@
   --font-display: var(--font-sora);
   --font-mono: var(--font-jetbrains);
 
-  --shadow-card: 0 1px 2px rgba(14, 42, 47, 0.04), 0 2px 8px rgba(14, 42, 47, 0.05);
-  --shadow-pop: 0 4px 12px rgba(14, 42, 47, 0.08), 0 12px 32px rgba(14, 42, 47, 0.1);
+  --shadow-card: 0 1px 2px rgba(16, 40, 46, 0.04), 0 1px 6px rgba(16, 40, 46, 0.04);
+  --shadow-pop: 0 2px 8px rgba(16, 40, 46, 0.06), 0 16px 40px rgba(16, 40, 46, 0.1);
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
+  /* A faint warm glow at the top keeps the sand ground alive without noise. */
+  background:
+    radial-gradient(1100px 480px at 50% -8%, rgba(155, 216, 201, 0.16), transparent 62%),
+    var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--pine-tint);
+  color: var(--pine-deep);
+}
+
+/* Thin, quiet scrollbars that match the hairline language. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--hairline);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Numbers read like clinical instrument readouts. */
@@ -61,10 +97,11 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Accessible keyboard focus everywhere. */
+/* Accessible keyboard focus everywhere — soft ring, not a hard outline. */
 :where(a, button, input, select, textarea, [tabindex]):focus-visible {
-  outline: 2px solid var(--pine);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+  border-radius: inherit;
 }
 
 /* Respect reduced motion. */
@@ -125,4 +162,9 @@ body {
 .card-hover:hover {
   transform: translateY(-1px);
   box-shadow: var(--shadow-pop);
+}
+
+/* Quiet focus-friendly panel used by admin shells. */
+.panel-shell {
+  background: var(--surface);
 }

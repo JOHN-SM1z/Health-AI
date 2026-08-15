@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, LoadingRow } from "@/components/admin/ui";
+import { CalendarRange } from "lucide-react";
 import { adminApi, AdminApiError, formatDateTime } from "@/lib/admin/client";
 
 const WEEKDAYS = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"];
@@ -73,14 +74,18 @@ export default function DoctorSchedulePage() {
 
       {doctorId === null ? (
         <Card>
-          <AEmpty title="Shifokor hisobi ulanmagan" subtitle="Admin panelda shifokor kartasiga profilingizni bog‘lang." />
+          <AEmpty
+            title="Shifokor hisobi ulanmagan"
+            subtitle="Admin panelda shifokor kartasiga profilingizni bog‘lang."
+            icon={<CalendarRange className="h-6 w-6" />}
+          />
         </Card>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
             <p className="mb-3 text-sm font-bold text-foreground">Haftalik ish jadvali</p>
             {hours === null ? (
-              <div className="h-2 w-full animate-pulse rounded bg-hairline" />
+              <LoadingRow />
             ) : hours.length === 0 ? (
               <p className="py-4 text-sm text-ink-muted">Jadval o‘rnatilmagan — admin panel sozlaydi.</p>
             ) : (
@@ -117,7 +122,7 @@ export default function DoctorSchedulePage() {
             </div>
             <div className="mt-2">
               {blocks === null ? (
-                <div className="h-2 w-full animate-pulse rounded bg-hairline" />
+                <LoadingRow />
               ) : blocks.length === 0 ? (
                 <p className="py-2 text-sm text-ink-muted">Tanaffuslar yo‘q</p>
               ) : (

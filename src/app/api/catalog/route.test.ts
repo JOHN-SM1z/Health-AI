@@ -76,7 +76,9 @@ const supabaseMock = {
     }
     if (table === "doctor_services") {
       return {
-        select: vi.fn(async () => ({ data: [{ doctor_id: "doc-1", service_id: "service-1" }], error: null })),
+        select: vi.fn(() => ({
+          in: vi.fn(async () => ({ data: [{ doctor_id: "doc-1", service_id: "service-1" }], error: null })),
+        })),
       };
     }
     return {};

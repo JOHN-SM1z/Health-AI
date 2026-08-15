@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ATextArea } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ATextArea, LoadingRow } from "@/components/admin/ui";
+import { MessagesSquare } from "lucide-react";
 import { adminApi, AdminApiError } from "@/lib/admin/client";
 
 type Faq = { id: string; question: string; answer: string; category: string | null; active: boolean };
@@ -57,9 +58,15 @@ export default function FaqsPage() {
       <PageHeader title="Savol-javoblar" subtitle="Bot AI bilim bazasi manbasi" />
       {error && <AError message={error} />}
       {rows === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
+        <Card><LoadingRow /></Card>
       ) : rows.length === 0 ? (
-        <Card><AEmpty title="Savollar yo‘q" subtitle="Bot javob berishi uchun kamida bir nechta savol qo‘shing" /></Card>
+        <Card>
+          <AEmpty
+            title="Savollar yo‘q"
+            subtitle="Bot javob berishi uchun kamida bir nechta savol qo‘shing"
+            icon={<MessagesSquare className="h-6 w-6" />}
+          />
+        </Card>
       ) : (
         <ATable headers={["Savol", "Kategoriya", "Holat", "Amallar"]}>
           {rows.map((f) => (

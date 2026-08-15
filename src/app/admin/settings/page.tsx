@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
-import { PageHeader, Card, AEmpty, AError, AButton, AInput } from "@/components/admin/ui";
+import { PageHeader, Card, AEmpty, AError, AButton, AInput, LoadingRow } from "@/components/admin/ui";
+import { Settings as SettingsIcon } from "lucide-react";
 import { adminApi, AdminApiError } from "@/lib/admin/client";
 
 type Setting = { key: string; value: unknown };
@@ -57,7 +58,7 @@ export default function SettingsPage() {
       <PageHeader title="Sozlamalar" subtitle="Klinika matn sozlamalari (owner)" />
       {error && <AError message={error} />}
       {settings === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
+        <Card><LoadingRow /></Card>
       ) : (
         <Card className="flex max-w-xl flex-col gap-4">
           {SETTING_DEFS.map((def) => (
@@ -82,6 +83,7 @@ export default function SettingsPage() {
           <AEmpty
             title="Bot sozlamalari"
             subtitle="AI greeting, manzil va telefon ma'lumotlari bot bilim bazasiga avtomatik kiritiladi (ai_knowledge refresh orqali)."
+            icon={<SettingsIcon className="h-6 w-6" />}
           />
         </Card>
       </div>

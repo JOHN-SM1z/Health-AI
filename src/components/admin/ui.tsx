@@ -5,7 +5,7 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
       <div>
-        <p className="font-numeric text-[11px] font-medium uppercase tracking-[0.14em] text-ink-muted">
+        <p className="font-numeric text-[11px] font-medium uppercase tracking-[0.16em] text-ink-muted">
           Health AI — Boshqaruv
         </p>
         <h1 className="font-display mt-1 text-2xl font-bold tracking-tight text-foreground">{title}</h1>
@@ -48,7 +48,7 @@ export function StatCard({
   return (
     <div className="rounded-2xl border border-hairline bg-surface p-4 shadow-[var(--shadow-card)]">
       <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-ink-muted">{label}</p>
-      <p className={`font-numeric mt-1.5 text-2xl font-bold ${tones[tone ?? "neutral"]}`}>{value}</p>
+      <p className={`font-numeric mt-1.5 text-2xl font-bold tracking-tight ${tones[tone ?? "neutral"]}`}>{value}</p>
     </div>
   );
 }
@@ -73,11 +73,11 @@ export function AButton({
   className?: string;
 }) {
   const styles: Record<string, string> = {
-    primary: "bg-pine text-white shadow-sm hover:brightness-110 active:brightness-95",
-    secondary: "bg-pine-tint text-pine-deep hover:brightness-95",
+    primary: "bg-pine text-white shadow-sm hover:brightness-[1.07] active:brightness-[0.97]",
+    secondary: "bg-pine-tint text-pine-deep hover:brightness-[0.97]",
     outline: "border border-hairline bg-surface text-foreground hover:bg-sand",
     ghost: "text-pine hover:bg-pine-tint",
-    danger: "bg-danger text-white shadow-sm hover:brightness-110",
+    danger: "bg-danger text-white shadow-sm hover:brightness-[1.07]",
   };
   const sizes: Record<string, string> = {
     sm: "px-2.5 py-1.5 text-xs rounded-lg",
@@ -90,7 +90,7 @@ export function AButton({
       onClick={onClick}
       disabled={disabled || loading}
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 font-medium transition-[filter,background-color] disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex items-center justify-center gap-1.5 font-medium transition-[filter,background-color,box-shadow] duration-150 disabled:cursor-not-allowed disabled:opacity-50",
         styles[variant],
         sizes[size],
         className,
@@ -105,7 +105,7 @@ export function AButton({
 }
 
 const fieldBase =
-  "w-full rounded-lg border border-hairline bg-surface px-3 py-2 text-sm text-foreground transition-[border-color] placeholder:text-ink-muted/70 focus:border-pine";
+  "w-full rounded-lg border border-hairline bg-surface px-3 py-2 text-sm text-foreground transition-[border-color,box-shadow] duration-150 placeholder:text-ink-muted/70 focus:border-pine";
 
 export function AInput({
   value,
@@ -113,6 +113,7 @@ export function AInput({
   placeholder,
   type = "text",
   className,
+  autoComplete,
   "aria-label": ariaLabel,
 }: {
   value: string;
@@ -120,6 +121,7 @@ export function AInput({
   placeholder?: string;
   type?: string;
   className?: string;
+  autoComplete?: string;
   "aria-label"?: string;
 }) {
   return (
@@ -128,6 +130,7 @@ export function AInput({
       value={value}
       aria-label={ariaLabel}
       placeholder={placeholder}
+      autoComplete={autoComplete}
       onChange={(e) => onChange(e.target.value)}
       className={cn(fieldBase, className)}
     />
@@ -152,7 +155,7 @@ export function ASelect({
       value={value}
       aria-label={ariaLabel}
       onChange={(e) => onChange(e.target.value)}
-      className={cn(fieldBase, className)}
+      className={cn(fieldBase, "bg-surface", className)}
     >
       {options.map((o) => (
         <option key={o.value} value={o.value}>
@@ -207,7 +210,7 @@ export function ABadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold tracking-wide",
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold tracking-wide",
         tones[tone],
       )}
     >
@@ -221,7 +224,7 @@ export function ATable({ headers, children }: { headers: string[]; children: Rea
     <div className="overflow-x-auto rounded-2xl border border-hairline bg-surface shadow-[var(--shadow-card)]">
       <table className="w-full text-left text-sm">
         <thead>
-          <tr className="border-b border-hairline bg-sand/60">
+          <tr className="border-b border-hairline">
             {headers.map((h) => (
               <th
                 key={h}
@@ -238,9 +241,18 @@ export function ATable({ headers, children }: { headers: string[]; children: Rea
   );
 }
 
-export function AEmpty({ title, subtitle }: { title: string; subtitle?: string }) {
+export function AEmpty({
+  title,
+  subtitle,
+  icon,
+}: {
+  title: string;
+  subtitle?: string;
+  icon?: ReactNode;
+}) {
   return (
-    <div className="py-10 text-center">
+    <div className="flex flex-col items-center justify-center py-10 text-center">
+      {icon && <div className="mb-3 text-ink-muted/60">{icon}</div>}
       <p className="font-display font-semibold text-ink-muted">{title}</p>
       {subtitle && <p className="mt-1 text-sm text-ink-muted/80">{subtitle}</p>}
     </div>
@@ -249,8 +261,47 @@ export function AEmpty({ title, subtitle }: { title: string; subtitle?: string }
 
 export function AError({ message }: { message: string }) {
   return (
-    <div className="mb-4 rounded-xl border border-danger/25 bg-danger-tint px-4 py-3 text-sm font-medium text-danger">
-      {message}
+    <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-danger/25 bg-danger-tint px-4 py-3 text-sm font-medium text-danger">
+      <span aria-hidden>⚠️</span>
+      <span>{message}</span>
+    </div>
+  );
+}
+
+/**
+ * Shared modal shell. Backdrop clicks close the modal; clicks inside the
+ * panel never do (target check, not event bubbling).
+ */
+export function AModal({
+  title,
+  onClose,
+  children,
+  footer,
+  maxWidth = "max-w-lg",
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+  maxWidth?: string;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-foreground/40 p-4 backdrop-blur-[2px]"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
+      <div className={`mt-10 w-full ${maxWidth}`}>
+        <Card className="flex flex-col gap-4 p-5 shadow-[var(--shadow-pop)]">
+          <p className="font-display text-lg font-bold tracking-tight text-foreground">{title}</p>
+          {children}
+          {footer && <div className="mt-1 flex justify-end gap-2">{footer}</div>}
+        </Card>
+      </div>
     </div>
   );
 }

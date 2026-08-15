@@ -41,6 +41,7 @@ export async function GET(request: NextRequest) {
         .from("services")
         .select("duration_minutes, clinic_id")
         .eq("id", serviceId)
+        .eq("clinic_id", clinic.id)
         .eq("active", true)
         .maybeSingle();
       if (!service) return fail("Xizmat topilmadi", 404, "service_not_found");

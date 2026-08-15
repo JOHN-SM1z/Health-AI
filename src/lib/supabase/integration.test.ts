@@ -198,8 +198,11 @@ describeDb("local Supabase booking engine", () => {
     expect(first.error).toBeNull();
 
     const overlap = await admin.from("appointments").insert(row).select("id").single();
-    // Either the constraint rejects it or the advisory lock serializes —
-    // the engine must never produce two overlapping active bookings.
+    // Either the BEFORE trigger rejects it (P0001 — raise exception from
+    // appointments_validate_slot) or the exclusion constraint does
+    // (23P01); if the advisory lock serializes instead, the second write
+    // never lands. The engine must never produce two overlapping active
+    // bookings.
     if (!overlap.error) {
       const { count } = await admin
         .from("appointments")
@@ -209,7 +212,7 @@ describeDb("local Supabase booking engine", () => {
         .in("status", ["pending", "confirmed", "checked_in", "in_progress"]);
       expect(count).toBe(1);
     } else {
-      expect(overlap.error.code).toBe("23P01"); // exclusion_constraint_violation
+      expect(["P0001", "23P01"]).toContain(overlap.error.code);
     }
 
     await admin.from("appointments").delete().eq("id", first.data!.id);

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getStaffContext, hasRole } from "@/lib/auth/staff";
+import { NavLink } from "@/components/admin/nav-link";
 import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList } from "lucide-react";
 
 export const metadata = { title: "Boshqaruv paneli" };
@@ -13,7 +14,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const isOwner = hasRole(ctx, "owner");
 
   const nav = [
-    { href: "/admin", label: "Bugun", icon: <LayoutDashboard className="h-4 w-4" /> },
+    { href: "/admin", label: "Bugun", icon: <LayoutDashboard className="h-4 w-4" />, show: true },
     { href: "/admin/appointments", label: "Qabullar", icon: <ClipboardList className="h-4 w-4" />, show: isAdminLike },
     { href: "/admin/calendar", label: "Kalendar", icon: <CalendarDays className="h-4 w-4" />, show: isAdminLike },
     { href: "/admin/conversations", label: "Suhbatlar", icon: <MessagesSquare className="h-4 w-4" />, show: isAdminLike },
@@ -48,9 +49,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           ))}
         </nav>
         <div className="border-t border-hairline px-5 py-4">
-          <p className="font-numeric text-xs text-ink-muted">
-            {ctx.profileId.slice(0, 8)}
-          </p>
+          <p className="font-numeric text-xs text-ink-muted">{ctx.profileId.slice(0, 8)}</p>
           <p className="mt-0.5 text-xs font-medium text-pine-deep">{ctx.roles.join(", ")}</p>
         </div>
       </aside>
@@ -68,17 +67,5 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <div className="flex-1 overflow-x-hidden p-4 md:p-8">{children}</div>
       </div>
     </div>
-  );
-}
-
-function NavLink({ href, children, icon }: { href: string; children: React.ReactNode; icon: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-ink-muted transition-colors hover:bg-pine-tint hover:text-pine-deep"
-    >
-      {icon}
-      {children}
-    </Link>
   );
 }

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getStaffContext, hasRole } from "@/lib/auth/staff";
+import { NavLink } from "@/components/admin/nav-link";
 import { HeartPulse, ListOrdered, CalendarRange } from "lucide-react";
 
 export const metadata = { title: "Shifokor paneli" };
@@ -26,8 +27,8 @@ export default async function DoctorLayout({ children }: { children: React.React
           <p className="font-numeric px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.16em] text-ink-muted/80">
             Ish jarayoni
           </p>
-          <DocNavLink href="/doctor" icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</DocNavLink>
-          <DocNavLink href="/doctor/schedule" icon={<CalendarRange className="h-4 w-4" />}>Jadvalim</DocNavLink>
+          <NavLink href="/doctor" icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
+          <NavLink href="/doctor/schedule" icon={<CalendarRange className="h-4 w-4" />}>Jadvalim</NavLink>
           {hasRole(ctx, "admin") && (
             <Link
               href="/admin"
@@ -55,17 +56,5 @@ export default async function DoctorLayout({ children }: { children: React.React
         <div className="flex-1 overflow-x-hidden p-4 md:p-8">{children}</div>
       </div>
     </div>
-  );
-}
-
-function DocNavLink({ href, children, icon }: { href: string; children: React.ReactNode; icon: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-ink-muted transition-colors hover:bg-pine-tint hover:text-pine-deep"
-    >
-      {icon}
-      {children}
-    </Link>
   );
 }

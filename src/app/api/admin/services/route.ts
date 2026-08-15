@@ -48,9 +48,11 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.doctorIds && body.doctorIds.length > 0) {
-      await supabase.from("doctor_services").insert(
-        body.doctorIds.map((doctorId) => ({ doctor_id: doctorId, service_id: data.id })),
+      const doctorIds = await assertDoctorsInClinic(supabase, body.doctorIds, staff.clinicId);
+      const { error: linkError } = await supabase.from("doctor_services").insert(
+        doctorIds.map((doctorId) => ({ doctor_id: doctorId, service_id: data.id })),
       );
+      if (linkError) throw new ApiError(500, "Shifokorlarni bog‘lab bo‘lmadi");
     }
 
     return ok({ service: data }, { status: 201 });
@@ -88,9 +90,11 @@ export async function PATCH(request: NextRequest) {
     if (body.doctorIds) {
       await supabase.from("doctor_services").delete().eq("service_id", id);
       if (body.doctorIds.length > 0) {
-        await supabase
+        const doctorIds = await assertDoctorsInClinic(supabase, body.doctorIds, staff.clinicId);
+        const { error: linkError } = await supabase
           .from("doctor_services")
-          .insert(body.doctorIds.map((doctorId) => ({ doctor_id: doctorId, service_id: id })));
+          .insert(doctorIds.map((doctorId) => ({ doctor_id: doctorId, service_id: id })));
+        if (linkError) throw new ApiError(500, "Shifokorlarni bog‘lab bo‘lmadi");
       }
     }
 
@@ -98,4 +102,29 @@ export async function PATCH(request: NextRequest) {
   } catch (e) {
     return handleApiError(e);
   }
+}
+
+/**
+ * Tenant isolation: a staff member may only link doctors of their OWN
+ * clinic to a service. Unknown or cross-clinic ids are rejected outright so
+ * a service never silently loses links.
+ */
+async function assertDoctorsInClinic(
+  supabase: ReturnType<typeof createAdminClient>,
+  doctorIds: string[],
+  clinicId: string,
+): Promise<string[]> {
+  const { data: doctors, error } = await supabase
+    .from("doctors")
+    .select("id")
+    .eq("clinic_id", clinicId)
+    .in("id", doctorIds);
+  if (error) throw new ApiError(500, "Shifokorlarni tekshirib bo‘lmadi");
+
+  const found = new Set((doctors ?? []).map((d) => d.id));
+  const missing = doctorIds.filter((id) => !found.has(id));
+  if (missing.length > 0) {
+    throw new ApiError(400, "Shifokorlar ro‘yxatida xato bor", "doctor_not_in_clinic");
+  }
+  return doctorIds;
 }

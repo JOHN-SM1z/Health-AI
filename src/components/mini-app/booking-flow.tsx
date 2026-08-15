@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CalendarDays, Stethoscope, UserRound } from "lucide-react";
 import { useTelegramInitData } from "@/components/mini-app/telegram-provider";
 import { Button, Card, Input, Badge, Spinner, EmptyState, ErrorBanner, NoticeBanner, SectionTitle, cn } from "@/components/mini-app/ui";
 import { apiGet, apiPost } from "@/lib/client/api";
@@ -322,7 +323,9 @@ export function BookingFlow() {
                   </p>
                 </button>
               ))}
-            {catalog.services.length === 0 && <EmptyState title="Xizmatlar hozircha kiritilmagan" />}
+            {catalog.services.length === 0 && (
+              <EmptyState title="Xizmatlar hozircha kiritilmagan" icon={<Stethoscope className="h-6 w-6" />} />
+            )}
           </div>
         </div>
       )}
@@ -330,7 +333,9 @@ export function BookingFlow() {
       {step.name === "doctor" && selectedService && (
         <div className="flex flex-col gap-3">
           <SectionTitle>Shifokorni tanlang</SectionTitle>
-          {serviceDoctors.length === 0 && <EmptyState title="Bu xizmat uchun shifokor hozircha yo‘q" />}
+          {serviceDoctors.length === 0 && (
+            <EmptyState title="Bu xizmat uchun shifokor hozircha yo‘q" icon={<UserRound className="h-6 w-6" />} />
+          )}
           {serviceDoctors.map((d) => (
             <button
               key={d.id}
@@ -363,7 +368,11 @@ export function BookingFlow() {
           {loadingSlots ? (
             <Spinner label="Bo‘sh vaqtlar yuklanmoqda..." />
           ) : slots.length === 0 ? (
-            <EmptyState title="14 kun ichida bo‘sh vaqt yo‘q" subtitle="Iltimos, operatorlarga murojaat qiling" />
+            <EmptyState
+              title="14 kun ichida bo‘sh vaqt yo‘q"
+              subtitle="Iltimos, operatorlarga murojaat qiling"
+              icon={<CalendarDays className="h-6 w-6" />}
+            />
           ) : (
             <div className="flex flex-col gap-4">
               {groupSlotsByDay.map(([day, daySlots]) => (

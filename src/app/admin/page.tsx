@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, StatCard } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, StatCard, LoadingRow } from "@/components/admin/ui";
+import { CalendarDays } from "lucide-react";
 import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
 
 type Row = {
@@ -86,12 +87,15 @@ export default function TodayPage() {
 
       {rows === null ? (
         <Card>
-          <div className="h-2 w-full animate-pulse rounded bg-hairline" />
-          <div className="mt-2 h-2 w-3/4 animate-pulse rounded bg-sand" />
+          <LoadingRow />
         </Card>
       ) : rows.length === 0 ? (
         <Card>
-          <AEmpty title="Bugungi qabullar yo‘q" subtitle="Yangi qabul qo‘shish uchun yuqoridagi tugmadan foydalaning" />
+          <AEmpty
+            title="Bugungi qabullar yo‘q"
+            subtitle="Yangi qabul qo‘shish uchun yuqoridagi tugmadan foydalaning"
+            icon={<CalendarDays className="h-6 w-6" />}
+          />
         </Card>
       ) : (
         <ATable headers={["Vaqt", "Bemor", "Xizmat", "Shifokor", "Manba", "Holat", "To‘lov", "Amallar"]}>

@@ -27,15 +27,14 @@ export function Button({
 }: ButtonProps) {
   const styles: Record<NonNullable<ButtonProps["variant"]>, string> = {
     primary:
-      "bg-[var(--tg-button,var(--pine))] text-[var(--tg-button-text,#fff)] shadow-sm hover:brightness-105 active:brightness-95",
+      "bg-[var(--tg-button,var(--pine))] text-[var(--tg-button-text,#fff)] shadow-sm hover:brightness-[1.06] active:brightness-[0.97]",
     secondary:
-      "bg-[var(--tg-secondary-bg,#eef1ed)] text-[var(--tg-text,var(--foreground))] hover:brightness-95 active:brightness-90",
+      "bg-[var(--tg-secondary-bg,#eef1ed)] text-[var(--tg-text,var(--foreground))] hover:brightness-[0.97] active:brightness-[0.93]",
     outline:
-      "border border-[var(--tg-secondary-bg,var(--hairline))] text-[var(--tg-text,var(--foreground))] hover:bg-[var(--tg-secondary-bg,#f1f5f9)]",
-    ghost:
-      "text-[var(--tg-link,var(--pine))] hover:bg-[var(--tg-secondary-bg,#f1f5f9)]",
-    danger: "bg-[var(--danger)] text-white shadow-sm hover:brightness-105",
-    success: "bg-[var(--pine)] text-white shadow-sm hover:brightness-105",
+      "border border-[var(--tg-secondary-bg,var(--hairline))] bg-[var(--tg-bg,var(--surface))] text-[var(--tg-text,var(--foreground))] hover:bg-[var(--tg-secondary-bg,#f1f5f9)]",
+    ghost: "text-[var(--tg-link,var(--pine))] hover:bg-[var(--tg-secondary-bg,#f1f5f9)]",
+    danger: "bg-[var(--danger)] text-white shadow-sm hover:brightness-[1.06]",
+    success: "bg-[var(--pine)] text-white shadow-sm hover:brightness-[1.06]",
   };
   const sizes: Record<NonNullable<ButtonProps["size"]>, string> = {
     sm: "px-3 py-1.5 text-sm rounded-lg",
@@ -50,7 +49,7 @@ export function Button({
       onClick={onClick}
       disabled={disabled || loading}
       className={cn(
-        "inline-flex items-center justify-center gap-2 font-medium transition-[filter,background-color,opacity] disabled:opacity-50 disabled:cursor-not-allowed",
+        "inline-flex items-center justify-center gap-2 font-medium transition-[filter,background-color,box-shadow,opacity] duration-150 disabled:cursor-not-allowed disabled:opacity-50",
         styles[variant],
         sizes[size],
         className,
@@ -112,7 +111,7 @@ export function Input({
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       className={cn(
-        "w-full rounded-xl border border-[var(--tg-secondary-bg,var(--hairline))] bg-[var(--tg-bg,var(--surface))] px-4 py-3 text-sm text-[var(--tg-text,var(--foreground))] transition-[border-color] placeholder:text-[var(--tg-hint,#8a9699)] focus:border-[var(--tg-button,var(--pine))]",
+        "w-full rounded-xl border border-[var(--tg-secondary-bg,var(--hairline))] bg-[var(--tg-bg,var(--surface))] px-4 py-3 text-sm text-[var(--tg-text,var(--foreground))] transition-[border-color,box-shadow] duration-150 placeholder:text-[var(--tg-hint,#8a9699)] focus:border-[var(--tg-button,var(--pine))]",
         className,
       )}
     />
@@ -140,7 +139,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold tracking-wide",
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold tracking-wide",
         tones[tone],
         className,
       )}
@@ -159,9 +158,18 @@ export function Spinner({ label }: { label?: string }) {
   );
 }
 
-export function EmptyState({ title, subtitle }: { title: string; subtitle?: string }) {
+export function EmptyState({
+  title,
+  subtitle,
+  icon,
+}: {
+  title: string;
+  subtitle?: ReactNode;
+  icon?: ReactNode;
+}) {
   return (
-    <div className="py-10 text-center">
+    <div className="flex flex-col items-center justify-center py-10 text-center">
+      {icon && <div className="mb-3 text-[var(--tg-hint,#8a9699)]">{icon}</div>}
       <p className="font-display font-semibold text-[var(--tg-text,var(--foreground))]">{title}</p>
       {subtitle && <p className="mt-1 text-sm text-[var(--tg-hint,#8a9699)]">{subtitle}</p>}
     </div>
@@ -187,16 +195,18 @@ export function SectionTitle({ children }: { children: ReactNode }) {
 
 export function ErrorBanner({ message }: { message: string }) {
   return (
-    <div className="mb-4 rounded-xl border border-[var(--danger)]/25 bg-[var(--danger-tint)] px-4 py-3 text-sm font-medium text-[var(--danger)]">
-      {message}
+    <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-[var(--danger)]/25 bg-[var(--danger-tint)] px-4 py-3 text-sm font-medium text-[var(--danger)]">
+      <span aria-hidden>⚠️</span>
+      <span>{message}</span>
     </div>
   );
 }
 
 export function NoticeBanner({ message }: { message: string }) {
   return (
-    <div className="mb-4 rounded-xl border border-clay/25 bg-clay-tint px-4 py-3 text-sm font-medium text-clay-deep">
-      {message}
+    <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-clay/25 bg-clay-tint px-4 py-3 text-sm font-medium text-clay-deep">
+      <span aria-hidden>ℹ️</span>
+      <span>{message}</span>
     </div>
   );
 }
