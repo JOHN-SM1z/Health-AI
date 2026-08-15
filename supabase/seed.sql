@@ -44,6 +44,16 @@ from public.doctors d
 join public.specialties sp on sp.id = d.specialty_id
 join public.services s on s.specialty_id = sp.id;
 
+-- The general consultation (no specialty) is offered by the general
+-- therapist; otherwise it is unbookable because the doctors above have
+-- explicit (closed) service lists.
+insert into public.doctor_services (doctor_id, service_id)
+select d.id, s.id
+from public.doctors d
+cross join public.services s
+where s.name = 'Umumiy konsultatsiya'
+  and d.name = 'Karimov Alisher';
+
 insert into public.doctor_working_hours (clinic_id, doctor_id, weekday, start_time, end_time)
 select '11111111-1111-4111-8111-111111111111', d.id, wh.weekday, wh.start_time, wh.end_time
 from public.doctors d
