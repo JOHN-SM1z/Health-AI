@@ -21,29 +21,26 @@ payment provider) — see [docs/go-live-checklist.md](docs/go-live-checklist.md)
 
 ## Stack
 
-- **Next.js 16** (App Router, React 19, Turbopack, standalone output) — one codebase for bot-facing API, Mini App and panels
-- **Supabase** — Postgres, Auth (staff only), Storage (voice notes), RLS; patients are verified Telegram users, not auth users
+- **Next.js 16** (App Router, React 19, Turbopack, standalone output) — bot API, Mini App, admin and doctor panels
+- **Supabase** — Postgres, Auth (staff only), Storage (voice notes), RLS; patients verified via Telegram WebApp initData
 - **Telegram Bot API** — webhook-driven; initData verified with HMAC-SHA256
-- **AI** — any OpenAI-compatible chat-completions endpoint (feature-flagged); transcription likewise
-- **Payments** — status machine (`pending → paid/failed/…`) with `manual` provider for the pilot; Click/PayMe adapter stubs
-- **Google Cloud Run** — Docker (standalone server, distroless-style runtime image)
+- **AI** — provider-agnostic OpenAI-compatible chat completions (feature-flagged)
+- **Payments** — server-controlled status machine (`pending → paid/failed/…`) with `manual` mode for pilot launch
+- **Hosting** — Vercel / Node.js standalone server / Cloud Run
 
 ## Quick start (local development)
 
-Requirements: Node 26+, Docker (local Supabase stack).
+Requirements: Node 20+.
 
 ```bash
-# 1. Start local Supabase; `db reset` applies ALL migrations + seed in one
-#    clean-state command (required before integration tests after migration changes)
-npx supabase start
-npm run db:reset-local   # npx supabase db reset --local
+# 1. Install dependencies
+npm install
 
 # 2. Configure environment
 cp .env.example .env
-# edit .env — at minimum SUPABASE_URL + the two SUPABASE keys from `npx supabase status`
+# Fill in your SUPABASE_URL and Supabase keys
 
-# 3. Install and run
-npm install
+# 3. Start development server
 npm run dev          # http://localhost:3000
 ```
 
@@ -68,11 +65,11 @@ See [docs/telegram-setup.md](docs/telegram-setup.md).
 
 | Doc | Contents |
 | --- | --- |
+| [🚀 Production Deployment](docs/deployment.md) | **Step-by-step production deployment (Vercel, Node.js, Cloud Run), keys, webhook setup** |
 | [Architecture](docs/architecture.md) | System diagram, data model, booking engine, notifications, AI pipeline |
 | [Security](docs/security.md) | Authentication model, RLS, rate limiting, secrets, audit, incident response |
-| [Supabase setup](docs/supabase-setup.md) | Local stack, migrations, seed, staff accounts, RPC functions |
+| [Supabase setup](docs/supabase-setup.md) | Database setup, migrations, seed, staff accounts, RPC functions |
 | [Telegram setup](docs/telegram-setup.md) | Bot creation, webhook, Mini App, dev mode |
-| [Deploy to Cloud Run](docs/deploy-cloud-run.md) | Docker build, Artifact Registry, Secret Manager, Cloud Run, HTTPS LB, scheduler, rollback |
 | [AI provider setup](docs/ai-provider-setup.md) | OpenAI-compatible endpoint config, grounding, safety policy |
 | [Payment provider](docs/payment-provider.md) | Status machine, manual mode, Click/PayMe adapter interface |
 | [Manual QA checklist](docs/manual-qa-checklist.md) | End-to-end walkthrough before go-live |
