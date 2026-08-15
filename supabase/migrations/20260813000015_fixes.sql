@@ -86,10 +86,13 @@ begin
   end if;
 
   begin
+    -- Preserve the appointment's current status: a reschedule moves the
+    -- appointment in time and must not silently downgrade a confirmed (or
+    -- checked-in) appointment to pending. Re-confirmation after a
+    -- patient-initiated reschedule is an application-layer decision.
     update public.appointments
       set start_at = p_new_start_at,
-          end_at = v_new_end_at,
-          status = 'pending'::public.appointment_status
+          end_at = v_new_end_at
       where id = p_appointment_id;
     error_code := null;
     return;
