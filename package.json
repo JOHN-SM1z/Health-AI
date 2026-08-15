@@ -9,6 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "db:reset-local": "npx supabase db reset --local",
     "create-owner": "node --env-file=.env scripts/create-owner.ts"
   },
   "dependencies": {

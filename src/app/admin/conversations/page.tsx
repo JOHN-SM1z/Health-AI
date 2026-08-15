@@ -101,16 +101,16 @@ export default function ConversationsPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <div>
           {list === null ? (
-            <Card><div className="h-2 w-full animate-pulse rounded bg-slate-200" /></Card>
+            <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
           ) : list.length === 0 ? (
             <Card><AEmpty title="Suhbatlar yo‘q" subtitle="Bemorlar Telegram orqali yozganda bu yerda paydo bo‘ladi" /></Card>
           ) : (
             <ATable headers={["Bemor", "Holat", "Oxirgi faoliyat", ""]}>
               {list.map((c) => (
-                <tr key={c.id} className="cursor-pointer hover:bg-slate-50" onClick={() => void openConversation(c)}>
+                <tr key={c.id} className="cursor-pointer hover:bg-sand" onClick={() => void openConversation(c)}>
                   <td className="px-4 py-3">
-                    <p className="font-medium text-slate-900">{c.patients?.full_name ?? "Noma’lum"}</p>
-                    {c.patients?.phone && <p className="text-xs text-slate-400">{c.patients.phone}</p>}
+                    <p className="font-medium text-foreground">{c.patients?.full_name ?? "Noma’lum"}</p>
+                    {c.patients?.phone && <p className="text-xs text-ink-muted">{c.patients.phone}</p>}
                   </td>
                   <td className="px-4 py-3">
                     {c.status === "assigned" ? (
@@ -121,7 +121,7 @@ export default function ConversationsPage() {
                       <ABadge tone="amber">Kutmoqda</ABadge>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-xs text-slate-400">{formatDateTime(c.updated_at)}</td>
+                  <td className="px-4 py-3 text-xs text-ink-muted">{formatDateTime(c.updated_at)}</td>
                   <td className="px-4 py-3"><AButton size="sm" variant="ghost">Ochish</AButton></td>
                 </tr>
               ))}
@@ -134,10 +134,10 @@ export default function ConversationsPage() {
             <Card><AEmpty title="Suhbatni tanlang" subtitle="Chapdagi ro‘yxatdan birini oching" /></Card>
           ) : (
             <Card className="flex h-[480px] flex-col">
-              <div className="mb-3 flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="mb-3 flex items-center justify-between border-b border-hairline pb-3">
                 <div>
-                  <p className="font-bold text-slate-900">{open.patients?.full_name ?? "Noma’lum"}</p>
-                  <p className="text-xs text-slate-400">
+                  <p className="font-bold text-foreground">{open.patients?.full_name ?? "Noma’lum"}</p>
+                  <p className="text-xs text-ink-muted">
                     {isAssigned ? "Operator qabul qilgan" : open.ai_enabled ? "Bot javob beradi" : "Bot to‘xtatilgan"}
                   </p>
                 </div>
@@ -148,23 +148,23 @@ export default function ConversationsPage() {
 
               <div className="flex-1 space-y-2 overflow-y-auto pr-1">
                 {messages === null ? (
-                  <div className="h-2 w-full animate-pulse rounded bg-slate-200" />
+                  <div className="h-2 w-full animate-pulse rounded bg-hairline" />
                 ) : messages.length === 0 ? (
-                  <p className="py-6 text-center text-sm text-slate-400">Xabarlar yo‘q</p>
+                  <p className="py-6 text-center text-sm text-ink-muted">Xabarlar yo‘q</p>
                 ) : (
                   messages.map((m) => (
                     <div
                       key={m.id}
                       className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${
                         m.role === "patient"
-                          ? "rounded-tl-sm bg-emerald-600 text-white"
+                          ? "rounded-tl-sm bg-pine text-white"
                           : m.role === "admin"
-                            ? "rounded-tr-sm bg-slate-800 text-white"
-                            : "rounded-tr-sm bg-slate-100 text-slate-600"
+                            ? "rounded-tr-sm bg-foreground text-white"
+                            : "rounded-tr-sm bg-sand text-ink-muted"
                       }`}
                     >
                       <p className="whitespace-pre-wrap break-words">{m.content}</p>
-                      <p className={`mt-1 text-[10px] ${m.role === "patient" ? "text-emerald-200" : "text-slate-400"}`}>
+                      <p className={`mt-1 text-[10px] ${m.role === "patient" ? "text-pine-tint" : "text-ink-muted"}`}>
                         {formatDateTime(m.created_at)}
                       </p>
                     </div>
@@ -172,7 +172,7 @@ export default function ConversationsPage() {
                 )}
               </div>
 
-              <div className="mt-3 flex gap-2 border-t border-slate-100 pt-3">
+              <div className="mt-3 flex gap-2 border-t border-hairline pt-3">
                 <ATextArea value={reply} onChange={setReply} placeholder="Javob yozing…" rows={2} className="flex-1" />
                 <AButton loading={busy === "reply"} onClick={() => void sendReply()}>Yuborish</AButton>
               </div>

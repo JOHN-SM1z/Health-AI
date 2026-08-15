@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { env } from "@/lib/env";
-import { isWebhookProcessed, markWebhookProcessed } from "@/lib/telegram/idempotency";
+import { claimWebhookProcessing, finishWebhookProcessing, releaseWebhookProcessing } from "@/lib/telegram/idempotency";
 import { rateLimit, keyFromIp } from "@/lib/rate-limit";
 import { logger } from "@/lib/logger";
 import {
@@ -84,9 +84,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
-  // 3. Idempotency: duplicate deliveries are dropped.
-  const alreadyProcessed = await isWebhookProcessed("telegram", String(updateId));
-  if (alreadyProcessed) {
+  // 3. Idempotency: atomically claim this update. The first delivery wins;
+  //    duplicates return success without dispatching any work.
+  let claimed: boolean;
+  try {
+    claimed = await claimWebhookProcessing("telegram", String(updateId));
+  } catch {
+    // Claiming is a DB write; if it fails we cannot safely dispatch — tell
+    // Telegram to retry instead of risking duplicate side effects.
+    logger.error("telegram webhook: could not claim update", { updateId });
+    return NextResponse.json({ ok: false }, { status: 500 });
+  }
+  if (!claimed) {
     logger.debug("telegram webhook duplicate dropped", { updateId });
     return NextResponse.json({ ok: true, duplicate: true });
   }
@@ -94,16 +103,17 @@ export async function POST(request: NextRequest) {
   try {
     await dispatchUpdate(update);
   } catch (e) {
-    // Return non-2xx so Telegram retries; the update is only marked
-    // processed after a successful run.
+    // Release the claim so Telegram's retry re-claims and processes the
+    // update; a failed delivery must never be marked processed.
     logger.error("telegram update handling failed", {
       updateId,
       error: e instanceof Error ? e.message : String(e),
     });
+    await releaseWebhookProcessing("telegram", String(updateId)).catch(() => {});
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 
-  await markWebhookProcessed("telegram", String(updateId));
+  await finishWebhookProcessing("telegram", String(updateId)).catch(() => {});
   return NextResponse.json({ ok: true });
 }
 
@@ -140,7 +150,7 @@ async function dispatchUpdate(update: TelegramUpdate) {
       return;
     }
 
-    await handleTelegramMessage({ chatId, from, text, updateId: update.update_id ?? 0 });
+    await handleTelegramMessage({ chatId, from, text, voice: message.voice, updateId: update.update_id ?? 0 });
     return;
   }
 

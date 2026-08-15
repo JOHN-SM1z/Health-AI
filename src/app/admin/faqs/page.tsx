@@ -57,18 +57,18 @@ export default function FaqsPage() {
       <PageHeader title="Savol-javoblar" subtitle="Bot AI bilim bazasi manbasi" />
       {error && <AError message={error} />}
       {rows === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-slate-200" /></Card>
+        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
       ) : rows.length === 0 ? (
         <Card><AEmpty title="Savollar yo‘q" subtitle="Bot javob berishi uchun kamida bir nechta savol qo‘shing" /></Card>
       ) : (
         <ATable headers={["Savol", "Kategoriya", "Holat", "Amallar"]}>
           {rows.map((f) => (
-            <tr key={f.id} className="hover:bg-slate-50">
+            <tr key={f.id} className="hover:bg-sand">
               <td className="px-4 py-3">
-                <p className="font-medium text-slate-900">{f.question}</p>
-                <p className="max-w-md truncate text-xs text-slate-400">{f.answer}</p>
+                <p className="font-medium text-foreground">{f.question}</p>
+                <p className="max-w-md truncate text-xs text-ink-muted">{f.answer}</p>
               </td>
-              <td className="px-4 py-3 text-slate-500">{f.category ?? "—"}</td>
+              <td className="px-4 py-3 text-ink-muted">{f.category ?? "—"}</td>
               <td className="px-4 py-3"><ABadge tone={f.active ? "green" : "gray"}>{f.active ? "Faol" : "Nofaol"}</ABadge></td>
               <td className="px-4 py-3">
                 <div className="flex gap-1.5">
@@ -95,7 +95,7 @@ export default function FaqsPage() {
       )}
 
       <Card className="mt-4 flex flex-col gap-3">
-        <p className="text-sm font-bold text-slate-900">{editing?.id ? "Savolni tahrirlash" : "Yangi savol"}</p>
+        <p className="text-sm font-bold text-foreground">{editing?.id ? "Savolni tahrirlash" : "Yangi savol"}</p>
         <AInput value={question} onChange={setQuestion} placeholder="Savol" aria-label="Savol" />
         <ATextArea value={answer} onChange={setAnswer} placeholder="Javob" />
         <AInput value={category} onChange={setCategory} placeholder="Kategoriya (masalan: Qabul)" aria-label="Kategoriya" />

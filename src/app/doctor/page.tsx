@@ -98,12 +98,15 @@ export default function DoctorQueuePage() {
       {error && <AError message={error} />}
 
       {nextPatient && (
-        <Card className="mb-6 border-emerald-300 bg-emerald-50/60">
+        <Card className="mb-6 border-pine/30 bg-pine-tint/60">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Navbatdagi bemor</p>
-              <p className="mt-1 text-lg font-bold text-slate-900">{nextPatient.patients?.full_name ?? "—"}</p>
-              <p className="text-sm text-slate-500">
+              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-pine-deep">
+                <span className="pulse-dot" />
+                Navbatdagi bemor
+              </p>
+              <p className="font-display mt-1 text-lg font-bold text-foreground">{nextPatient.patients?.full_name ?? "—"}</p>
+              <p className="font-numeric text-sm text-ink-muted">
                 {formatTime(nextPatient.start_at)} · {nextPatient.services?.name ?? "—"} · {formatPrice(nextPatient.services?.price)}
               </p>
             </div>
@@ -115,7 +118,7 @@ export default function DoctorQueuePage() {
       )}
 
       {rows === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-slate-200" /></Card>
+        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
       ) : doctorName === null ? (
         <Card>
           <AEmpty
@@ -128,14 +131,14 @@ export default function DoctorQueuePage() {
       ) : (
         <ATable headers={["Vaqt", "Bemor", "Xizmat", "Narx", "Holat", "Amallar"]}>
           {rows.map((r) => (
-            <tr key={r.id} className={r.id === nextPatient?.id ? "bg-emerald-50/50" : "hover:bg-slate-50"}>
-              <td className="px-4 py-3 font-semibold text-slate-900">{formatTime(r.start_at)}</td>
+            <tr key={r.id} className={r.id === nextPatient?.id ? "bg-pine-tint/50" : "hover:bg-sand"}>
+              <td className="px-4 py-3 font-semibold text-foreground">{formatTime(r.start_at)}</td>
               <td className="px-4 py-3">
-                <p className="font-medium text-slate-900">{r.patients?.full_name ?? "—"}</p>
-                {r.patients?.phone && <p className="text-xs text-slate-400">{r.patients.phone}</p>}
+                <p className="font-medium text-foreground">{r.patients?.full_name ?? "—"}</p>
+                {r.patients?.phone && <p className="text-xs text-ink-muted">{r.patients.phone}</p>}
               </td>
-              <td className="px-4 py-3 text-slate-800">{r.services?.name ?? "—"}</td>
-              <td className="px-4 py-3 text-slate-800">{formatPrice(r.services?.price)}</td>
+              <td className="px-4 py-3 text-foreground">{r.services?.name ?? "—"}</td>
+              <td className="px-4 py-3 text-foreground">{formatPrice(r.services?.price)}</td>
               <td className="px-4 py-3"><ABadge tone={STATUS_TONES[r.status]}>{STATUS_LABELS[r.status]}</ABadge></td>
               <td className="px-4 py-3">
                 {r.status !== "completed" && (

@@ -222,9 +222,9 @@ export function BookingFlow() {
                 type="checkbox"
                 checked={consentChecked}
                 onChange={(e) => setConsentChecked(e.target.checked)}
-                className="mt-0.5 h-4 w-4 accent-[var(--tg-button,#16a34a)]"
+                className="mt-0.5 h-4 w-4 accent-[var(--tg-button,var(--pine))]"
               />
-              <span className="text-[var(--tg-text,#0f172a)]">
+              <span className="text-[var(--tg-text,var(--foreground))]">
                 Shaxsiy ma‘lumotlarimni qabul tashkil qilish uchun ishlatishga roziman
               </span>
             </label>
@@ -258,7 +258,7 @@ export function BookingFlow() {
           >
             🤔 Tanlashda yordam kerak
           </Button>
-          <p className="text-xs text-[var(--tg-hint,#64748b)]">
+          <p className="text-xs text-[var(--tg-hint,#8a9699)]">
             Tanlashda yordam yo‘nalishni aniqlashga yordam beradi — tashxis qo‘ymaydi.
           </p>
         </div>
@@ -273,7 +273,7 @@ export function BookingFlow() {
                 variant="secondary"
                 size="md"
                 onClick={() => setStep({ name: "service", mode: "help", specialtyId: null })}
-                className={cn(!step.specialtyId && "ring-2 ring-[var(--tg-button,#16a34a)]")}
+                className={cn(!step.specialtyId && "ring-2 ring-[var(--tg-button,var(--pine))]")}
               >
                 Barcha xizmatlar
               </Button>
@@ -283,12 +283,12 @@ export function BookingFlow() {
                   variant="secondary"
                   size="md"
                   onClick={() => setStep({ name: "service", mode: "help", specialtyId: sp.id })}
-                  className={cn(step.specialtyId === sp.id && "ring-2 ring-[var(--tg-button,#16a34a)]")}
+                  className={cn(step.specialtyId === sp.id && "ring-2 ring-[var(--tg-button,var(--pine))]")}
                 >
                   {sp.name}
                 </Button>
               ))}
-              <p className="text-xs text-[var(--tg-hint,#64748b)]">
+              <p className="text-xs text-[var(--tg-hint,#8a9699)]">
                 Yo‘nalishingizni bilmasangiz, botdagi “Shifokor tanlashda yordam” xizmatidan foydalaning.
               </p>
             </>
@@ -308,15 +308,15 @@ export function BookingFlow() {
                   className={cn(
                     "rounded-xl border p-3 text-left transition-colors",
                     serviceId === s.id
-                      ? "border-[var(--tg-button,#16a34a)] bg-[var(--tg-secondary-bg,#f1f5f9)]"
+                      ? "border-[var(--tg-button,var(--pine))] bg-[var(--tg-secondary-bg,#f1f5f9)]"
                       : "border-[var(--tg-secondary-bg,#e2e8f0)] bg-[var(--tg-secondary-bg,#ffffff)]",
                   )}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-[var(--tg-text,#0f172a)]">{s.name}</span>
+                    <span className="text-sm font-medium text-[var(--tg-text,var(--foreground))]">{s.name}</span>
                     <Badge tone="blue">{fmt(s.price)} {catalog.clinic.currency}</Badge>
                   </div>
-                  <p className="mt-1 text-xs text-[var(--tg-hint,#64748b)]">
+                  <p className="mt-1 text-xs text-[var(--tg-hint,#8a9699)]">
                     {s.duration_minutes} daqiqa
                     {s.description ? ` — ${s.description}` : ""}
                   </p>
@@ -341,12 +341,12 @@ export function BookingFlow() {
               className={cn(
                 "rounded-xl border p-3 text-left transition-colors",
                 doctorId === d.id
-                  ? "border-[var(--tg-button,#16a34a)] bg-[var(--tg-secondary-bg,#f1f5f9)]"
+                  ? "border-[var(--tg-button,var(--pine))] bg-[var(--tg-secondary-bg,#f1f5f9)]"
                   : "border-[var(--tg-secondary-bg,#e2e8f0)] bg-[var(--tg-secondary-bg,#ffffff)]",
               )}
             >
-              <p className="text-sm font-medium text-[var(--tg-text,#0f172a)]">{d.name}</p>
-              {d.title && <p className="mt-0.5 text-xs text-[var(--tg-hint,#64748b)]">{d.title}</p>}
+              <p className="text-sm font-medium text-[var(--tg-text,var(--foreground))]">{d.name}</p>
+              {d.title && <p className="mt-0.5 text-xs text-[var(--tg-hint,#8a9699)]">{d.title}</p>}
             </button>
           ))}
         </div>
@@ -368,7 +368,7 @@ export function BookingFlow() {
             <div className="flex flex-col gap-4">
               {groupSlotsByDay.map(([day, daySlots]) => (
                 <div key={day}>
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--tg-hint,#64748b)]">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--tg-hint,#8a9699)]">
                     {new Date(`${day}T00:00:00`).toLocaleDateString("uz-UZ", { weekday: "long", day: "numeric", month: "long" })}
                   </p>
                   <div className="grid grid-cols-3 gap-2">
@@ -379,8 +379,8 @@ export function BookingFlow() {
                         className={cn(
                           "rounded-lg border py-2 text-sm transition-colors",
                           selectedSlot?.start === s.start
-                            ? "border-[var(--tg-button,#16a34a)] bg-[var(--tg-button,#16a34a)] text-[var(--tg-button-text,#fff)]"
-                            : "border-[var(--tg-secondary-bg,#cbd5e1)] bg-[var(--tg-secondary-bg,#ffffff)] text-[var(--tg-text,#0f172a)]",
+                            ? "border-[var(--tg-button,var(--pine))] bg-[var(--tg-button,var(--pine))] text-[var(--tg-button-text,#fff)]"
+                            : "border-[var(--tg-secondary-bg,#cbd5e1)] bg-[var(--tg-secondary-bg,#ffffff)] text-[var(--tg-text,var(--foreground))]",
                         )}
                       >
                         {s.startLocal}
@@ -406,7 +406,7 @@ export function BookingFlow() {
           <SectionTitle>Ma‘lumotlaringiz</SectionTitle>
           <Card className="flex flex-col gap-3">
             <div>
-              <label htmlFor="patient-name" className="mb-1 block text-xs font-medium text-[var(--tg-hint,#64748b)]">
+              <label htmlFor="patient-name" className="mb-1 block text-xs font-medium text-[var(--tg-hint,#8a9699)]">
                 Ism va familiya
               </label>
               <Input
@@ -418,7 +418,7 @@ export function BookingFlow() {
               />
             </div>
             <div>
-              <label htmlFor="patient-phone" className="mb-1 block text-xs font-medium text-[var(--tg-hint,#64748b)]">
+              <label htmlFor="patient-phone" className="mb-1 block text-xs font-medium text-[var(--tg-hint,#8a9699)]">
                 Telefon raqam
               </label>
               <Input
@@ -496,14 +496,14 @@ function StepHeader({ step }: { step: string }) {
     review: "Tasdiqlash",
     result: "Natija",
   };
-  return <p className="text-xs font-medium uppercase tracking-wide text-[var(--tg-hint,#64748b)]">{labels[step] ?? step}</p>;
+  return <p className="font-numeric text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--tg-hint,#8a9699)]">{labels[step] ?? step}</p>;
 }
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-[var(--tg-hint,#64748b)]">{label}</span>
-      <span className="text-right font-medium text-[var(--tg-text,#0f172a)]">{value}</span>
+      <span className="text-[var(--tg-hint,#8a9699)]">{label}</span>
+      <span className="text-right font-medium text-[var(--tg-text,var(--foreground))]">{value}</span>
     </div>
   );
 }
@@ -524,12 +524,12 @@ function ResultView({
   return (
     <div className="flex flex-col gap-4">
       <Card className="text-center">
-        <div className={cn("mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full text-2xl", ok ? "bg-green-100" : "bg-amber-100")}>
+        <div className={cn("mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full text-2xl", ok ? "bg-pine-tint" : "bg-clay-tint")}>
           {ok ? "✅" : "⚠️"}
         </div>
-        <p className="font-medium text-[var(--tg-text,#0f172a)]">{message}</p>
+        <p className="font-medium text-[var(--tg-text,var(--foreground))]">{message}</p>
         {ok && appointmentId && (
-          <p className="mt-2 text-xs text-[var(--tg-hint,#64748b)]">Tasdiqlash: #{appointmentId.slice(0, 8)}</p>
+          <p className="mt-2 text-xs text-[var(--tg-hint,#8a9699)]">Tasdiqlash: #{appointmentId.slice(0, 8)}</p>
         )}
       </Card>
       {!ok && onRetry && (

@@ -1,18 +1,128 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
+  /* Health AI design tokens — clinical calm, warm human ground.
+     `pine` = calm teal primary; `sand` = warm page ground; `ink` = soft text.
+     Mini App surfaces fall back to Telegram theme vars when available. */
+  --background: #f7f5f0; /* sand */
+  --foreground: #0e2a2f; /* ink */
+  --surface: #ffffff;
+  --hairline: #e8e4dc;
+  --pine: #0b6e5c;
+  --pine-deep: #08584a;
+  --pine-tint: #e2f0ec;
+  --mint: #9bd8c9;
+  --ink-muted: #5c6b6e;
+  --clay: #d97b54;
+  --clay-tint: #fbeae2;
+  --clay-deep: #a35532;
+  --danger: #c7402e;
+  --danger-tint: #fbe9e6;
+  --info: #2e6fbf;
+  --info-tint: #e6eefa;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-hairline: var(--hairline);
+  --color-pine: var(--pine);
+  --color-pine-deep: var(--pine-deep);
+  --color-pine-tint: var(--pine-tint);
+  --color-mint: var(--mint);
+  --color-ink-muted: var(--ink-muted);
+  --color-clay: var(--clay);
+  --color-clay-tint: var(--clay-tint);
+  --color-clay-deep: var(--clay-deep);
+  --color-danger: var(--danger);
+  --color-danger-tint: var(--danger-tint);
+  --color-info: var(--info);
+  --color-info-tint: var(--info-tint);
+
   --font-sans: var(--font-inter);
+  --font-display: var(--font-sora);
+  --font-mono: var(--font-jetbrains);
+
+  --shadow-card: 0 1px 2px rgba(14, 42, 47, 0.04), 0 2px 8px rgba(14, 42, 47, 0.05);
+  --shadow-pop: 0 4px 12px rgba(14, 42, 47, 0.08), 0 12px 32px rgba(14, 42, 47, 0.1);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Numbers read like clinical instrument readouts. */
+.font-numeric {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Accessible keyboard focus everywhere. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--pine);
+  outline-offset: 2px;
+}
+
+/* Respect reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Live pulse dot — the signature "alive" mark. */
+.pulse-dot {
+  position: relative;
+  display: inline-flex;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: var(--pine);
+}
+.pulse-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--pine);
+  animation: pulse-ring 2s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+}
+@keyframes pulse-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  70%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+/* Brand mark tile with the soft mint halo. */
+.brand-tile {
+  background: linear-gradient(145deg, var(--pine) 0%, #0d7f6a 100%);
+  box-shadow:
+    0 0 0 4px rgba(155, 216, 201, 0.35),
+    0 4px 14px rgba(11, 110, 92, 0.35);
+}
+
+/* Soft attention sweep for cards with the pulse motif. */
+.card-hover {
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+.card-hover:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-pop);
 }

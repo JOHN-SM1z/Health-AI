@@ -69,35 +69,35 @@ export default function AnalyticsPage() {
 
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Card>
-          <p className="text-xs uppercase tracking-wide text-slate-400">Jami hodisalar</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{stats.total.toLocaleString("uz-UZ")}</p>
+          <p className="text-xs uppercase tracking-wide text-ink-muted">Jami hodisalar</p>
+          <p className="mt-1 text-2xl font-bold text-foreground">{stats.total.toLocaleString("uz-UZ")}</p>
         </Card>
         <Card>
-          <p className="text-xs uppercase tracking-wide text-slate-400">Faol bemorlar</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{stats.uniquePatients.size.toLocaleString("uz-UZ")}</p>
+          <p className="text-xs uppercase tracking-wide text-ink-muted">Faol bemorlar</p>
+          <p className="mt-1 text-2xl font-bold text-foreground">{stats.uniquePatients.size.toLocaleString("uz-UZ")}</p>
         </Card>
         <Card>
-          <p className="text-xs uppercase tracking-wide text-slate-400">Turli hodisalar</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{stats.sorted.length}</p>
+          <p className="text-xs uppercase tracking-wide text-ink-muted">Turli hodisalar</p>
+          <p className="mt-1 text-2xl font-bold text-foreground">{stats.sorted.length}</p>
         </Card>
       </div>
 
       {rows === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-slate-200" /></Card>
+        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
       ) : stats.sorted.length === 0 ? (
         <Card><AEmpty title="Ma'lumot yo‘q" subtitle="Tanlangan davrda hodisalar qayd etilmagan" /></Card>
       ) : (
         <Card>
-          <p className="mb-4 text-sm font-bold text-slate-900">Hodisalar bo‘yicha</p>
+          <p className="mb-4 text-sm font-bold text-foreground">Hodisalar bo‘yicha</p>
           <div className="space-y-3">
             {stats.sorted.map(([type, count]) => (
               <div key={type}>
                 <div className="mb-1 flex justify-between text-sm">
-                  <span className="text-slate-700">{type}</span>
-                  <span className="font-medium text-slate-900">{count.toLocaleString("uz-UZ")}</span>
+                  <span className="text-ink-muted">{type}</span>
+                  <span className="font-medium text-foreground">{count.toLocaleString("uz-UZ")}</span>
                 </div>
-                <div className="h-2 rounded-full bg-slate-100">
-                  <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${(count / maxCount) * 100}%` }} />
+                <div className="h-2 rounded-full bg-sand">
+                  <div className="h-2 rounded-full bg-pine" style={{ width: `${(count / maxCount) * 100}%` }} />
                 </div>
               </div>
             ))}

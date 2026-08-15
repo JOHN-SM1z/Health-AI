@@ -5,8 +5,11 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h1 className="text-xl font-bold text-slate-900">{title}</h1>
-        {subtitle && <p className="mt-0.5 text-sm text-slate-500">{subtitle}</p>}
+        <p className="font-numeric text-[11px] font-medium uppercase tracking-[0.14em] text-ink-muted">
+          Health AI — Boshqaruv
+        </p>
+        <h1 className="font-display mt-1 text-2xl font-bold tracking-tight text-foreground">{title}</h1>
+        {subtitle && <p className="mt-1 text-sm text-ink-muted">{subtitle}</p>}
       </div>
       {action}
     </div>
@@ -15,8 +18,37 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
 
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("rounded-xl border border-slate-200 bg-white p-4 shadow-sm", className)}>
+    <div
+      className={cn(
+        "rounded-2xl border border-hairline bg-surface p-4 shadow-[var(--shadow-card)]",
+        className,
+      )}
+    >
       {children}
+    </div>
+  );
+}
+
+/** Stat tile: mono numeral + label — the "instrument readout" voice. */
+export function StatCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  tone?: "pine" | "clay" | "info" | "neutral";
+}) {
+  const tones = {
+    pine: "text-pine",
+    clay: "text-clay",
+    info: "text-info",
+    neutral: "text-foreground",
+  } as const;
+  return (
+    <div className="rounded-2xl border border-hairline bg-surface p-4 shadow-[var(--shadow-card)]">
+      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-ink-muted">{label}</p>
+      <p className={`font-numeric mt-1.5 text-2xl font-bold ${tones[tone ?? "neutral"]}`}>{value}</p>
     </div>
   );
 }
@@ -41,11 +73,11 @@ export function AButton({
   className?: string;
 }) {
   const styles: Record<string, string> = {
-    primary: "bg-emerald-600 text-white hover:bg-emerald-700",
-    secondary: "bg-slate-100 text-slate-800 hover:bg-slate-200",
-    outline: "border border-slate-300 text-slate-700 hover:bg-slate-50",
-    ghost: "text-emerald-700 hover:bg-emerald-50",
-    danger: "bg-red-600 text-white hover:bg-red-700",
+    primary: "bg-pine text-white shadow-sm hover:brightness-110 active:brightness-95",
+    secondary: "bg-pine-tint text-pine-deep hover:brightness-95",
+    outline: "border border-hairline bg-surface text-foreground hover:bg-sand",
+    ghost: "text-pine hover:bg-pine-tint",
+    danger: "bg-danger text-white shadow-sm hover:brightness-110",
   };
   const sizes: Record<string, string> = {
     sm: "px-2.5 py-1.5 text-xs rounded-lg",
@@ -58,7 +90,7 @@ export function AButton({
       onClick={onClick}
       disabled={disabled || loading}
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex items-center justify-center gap-1.5 font-medium transition-[filter,background-color] disabled:cursor-not-allowed disabled:opacity-50",
         styles[variant],
         sizes[size],
         className,
@@ -71,6 +103,9 @@ export function AButton({
     </button>
   );
 }
+
+const fieldBase =
+  "w-full rounded-lg border border-hairline bg-surface px-3 py-2 text-sm text-foreground transition-[border-color] placeholder:text-ink-muted/70 focus:border-pine";
 
 export function AInput({
   value,
@@ -94,10 +129,7 @@ export function AInput({
       aria-label={ariaLabel}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
-      className={cn(
-        "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500",
-        className,
-      )}
+      className={cn(fieldBase, className)}
     />
   );
 }
@@ -120,10 +152,7 @@ export function ASelect({
       value={value}
       aria-label={ariaLabel}
       onChange={(e) => onChange(e.target.value)}
-      className={cn(
-        "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-500",
-        className,
-      )}
+      className={cn(fieldBase, className)}
     >
       {options.map((o) => (
         <option key={o.value} value={o.value}>
@@ -153,41 +182,57 @@ export function ATextArea({
       rows={rows}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
-      className={cn(
-        "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-500",
-        className,
-      )}
+      className={cn(fieldBase, className)}
     />
   );
 }
 
-export function ABadge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "green" | "red" | "amber" | "blue" | "gray" | "purple" }) {
+export function ABadge({
+  children,
+  tone = "neutral",
+}: {
+  children: ReactNode;
+  tone?: "neutral" | "green" | "red" | "amber" | "blue" | "gray" | "purple" | "pine";
+}) {
   const tones: Record<string, string> = {
-    neutral: "bg-slate-100 text-slate-700",
-    green: "bg-green-100 text-green-800",
-    red: "bg-red-100 text-red-700",
-    amber: "bg-amber-100 text-amber-800",
-    blue: "bg-blue-100 text-blue-800",
-    gray: "bg-gray-100 text-gray-600",
-    purple: "bg-purple-100 text-purple-800",
+    neutral: "bg-ink-muted/10 text-ink-muted",
+    green: "bg-pine-tint text-pine-deep",
+    red: "bg-danger-tint text-danger",
+    amber: "bg-clay-tint text-clay-deep",
+    blue: "bg-info-tint text-info",
+    gray: "bg-ink-muted/5 text-ink-muted",
+    purple: "bg-[#efe9f8] text-[#6d4aa8]",
+    pine: "bg-pine text-white",
   };
-  return <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium", tones[tone])}>{children}</span>;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold tracking-wide",
+        tones[tone],
+      )}
+    >
+      {children}
+    </span>
+  );
 }
 
 export function ATable({ headers, children }: { headers: string[]; children: ReactNode }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div className="overflow-x-auto rounded-2xl border border-hairline bg-surface shadow-[var(--shadow-card)]">
       <table className="w-full text-left text-sm">
-        <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-          <tr>
+        <thead>
+          <tr className="border-b border-hairline bg-sand/60">
             {headers.map((h) => (
-              <th key={h} className="px-4 py-3 font-medium">
+              <th
+                key={h}
+                className="px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted"
+              >
                 {h}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100">{children}</tbody>
+        <tbody className="divide-y divide-hairline/70">{children}</tbody>
       </table>
     </div>
   );
@@ -196,20 +241,25 @@ export function ATable({ headers, children }: { headers: string[]; children: Rea
 export function AEmpty({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div className="py-10 text-center">
-      <p className="font-medium text-slate-700">{title}</p>
-      {subtitle && <p className="mt-1 text-sm text-slate-400">{subtitle}</p>}
+      <p className="font-display font-semibold text-ink-muted">{title}</p>
+      {subtitle && <p className="mt-1 text-sm text-ink-muted/80">{subtitle}</p>}
     </div>
   );
 }
 
 export function AError({ message }: { message: string }) {
   return (
-    <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+    <div className="mb-4 rounded-xl border border-danger/25 bg-danger-tint px-4 py-3 text-sm font-medium text-danger">
       {message}
     </div>
   );
 }
 
 export function LoadingRow() {
-  return <div className="space-y-2 py-6">{createElement("div", { className: "h-2 w-full animate-pulse rounded bg-slate-200" })}</div>;
+  return (
+    <div className="space-y-2 py-6">
+      {createElement("div", { className: "h-2 w-full animate-pulse rounded bg-hairline" })}
+      {createElement("div", { className: "h-2 w-3/4 animate-pulse rounded bg-hairline/70" })}
+    </div>
+  );
 }

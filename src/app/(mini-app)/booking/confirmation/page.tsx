@@ -71,29 +71,29 @@ function ConfirmationInner() {
   return (
     <div className="flex flex-col gap-4">
       <Card className="text-center">
-        <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-green-100 text-2xl">✅</div>
-        <p className="font-medium text-[var(--tg-text,#0f172a)]">Qabul tasdiqlandi!</p>
-        <p className="mt-1 text-xs text-[var(--tg-hint,#64748b)]">
+        <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-pine-tint text-2xl">✅</div>
+        <p className="font-medium text-[var(--tg-text,var(--foreground))]">Qabul tasdiqlandi!</p>
+        <p className="mt-1 text-xs text-[var(--tg-hint,#8a9699)]">
           Sizga Telegram bot orqali tasdiq va eslatmalar keladi.
         </p>
       </Card>
 
       <Card className="flex flex-col gap-2 text-sm">
-        <p className="font-medium text-[var(--tg-text,#0f172a)]">{appointment.doctors?.name}</p>
-        {appointment.doctors?.title && <p className="text-xs text-[var(--tg-hint,#64748b)]">{appointment.doctors.title}</p>}
+        <p className="font-medium text-[var(--tg-text,var(--foreground))]">{appointment.doctors?.name}</p>
+        {appointment.doctors?.title && <p className="text-xs text-[var(--tg-hint,#8a9699)]">{appointment.doctors.title}</p>}
         <div className="mt-1 flex items-center justify-between">
-          <span className="text-[var(--tg-hint,#64748b)]">Sana va vaqt</span>
+          <span className="text-[var(--tg-hint,#8a9699)]">Sana va vaqt</span>
           <span className="font-medium">
             {start.toLocaleDateString("uz-UZ", { day: "numeric", month: "long" })},{" "}
             {start.toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit" })}
           </span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-[var(--tg-hint,#64748b)]">Xizmat</span>
+          <span className="text-[var(--tg-hint,#8a9699)]">Xizmat</span>
           <span className="font-medium">{appointment.services?.name}</span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-[var(--tg-hint,#64748b)]">To‘lov</span>
+          <span className="text-[var(--tg-hint,#8a9699)]">To‘lov</span>
           <Badge tone={appointment.payments?.status === "paid" ? "green" : "amber"}>
             {appointment.payments?.status === "paid" ? "To‘langan" : "Qabulxonada to‘lanadi"}
           </Badge>

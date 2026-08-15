@@ -12,39 +12,58 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const isAdminLike = hasRole(ctx, "admin");
   const isOwner = hasRole(ctx, "owner");
 
+  const nav = [
+    { href: "/admin", label: "Bugun", icon: <LayoutDashboard className="h-4 w-4" /> },
+    { href: "/admin/appointments", label: "Qabullar", icon: <ClipboardList className="h-4 w-4" />, show: isAdminLike },
+    { href: "/admin/calendar", label: "Kalendar", icon: <CalendarDays className="h-4 w-4" />, show: isAdminLike },
+    { href: "/admin/conversations", label: "Suhbatlar", icon: <MessagesSquare className="h-4 w-4" />, show: isAdminLike },
+    { href: "/admin/doctors", label: "Shifokorlar", icon: <Stethoscope className="h-4 w-4" />, show: isAdminLike },
+    { href: "/admin/services", label: "Xizmatlar", icon: <Scissors className="h-4 w-4" />, show: isAdminLike },
+    { href: "/admin/specialties", label: "Yo‘nalishlar", icon: <Sparkles className="h-4 w-4" />, show: isAdminLike },
+    { href: "/admin/faqs", label: "Savol-javoblar", icon: <MessagesSquare className="h-4 w-4" />, show: isAdminLike },
+    { href: "/admin/analytics", label: "Tahlillar", icon: <BarChart3 className="h-4 w-4" />, show: isOwner },
+    { href: "/admin/settings", label: "Sozlamalar", icon: <Settings className="h-4 w-4" />, show: isOwner },
+  ].filter((n) => n.show !== false);
+
   return (
-    <div className="flex min-h-dvh bg-slate-50">
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-200 bg-white p-4 md:flex">
-        <div className="mb-6 flex items-center gap-2 px-2">
-          <HeartPulse className="h-6 w-6 text-emerald-600" />
+    <div className="flex min-h-dvh bg-sand">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-hairline bg-surface md:flex">
+        <div className="flex items-center gap-3 px-5 pb-5 pt-6">
+          <span className="brand-tile flex h-9 w-9 items-center justify-center rounded-xl text-white">
+            <HeartPulse className="h-5 w-5" />
+          </span>
           <div>
-            <p className="text-sm font-bold text-slate-900">Health AI</p>
-            <p className="text-xs text-slate-400">{ctx.clinicName}</p>
+            <p className="font-display text-sm font-bold tracking-tight text-foreground">Health AI</p>
+            <p className="max-w-[10rem] truncate text-xs text-ink-muted">{ctx.clinicName}</p>
           </div>
         </div>
-        <nav className="flex flex-1 flex-col gap-1 text-sm">
-          <NavLink href="/admin" icon={<LayoutDashboard className="h-4 w-4" />}>Bugun</NavLink>
-          {isAdminLike && <NavLink href="/admin/appointments" icon={<ClipboardList className="h-4 w-4" />}>Qabullar</NavLink>}
-          {isAdminLike && <NavLink href="/admin/calendar" icon={<CalendarDays className="h-4 w-4" />}>Kalendar</NavLink>}
-          {isAdminLike && <NavLink href="/admin/conversations" icon={<MessagesSquare className="h-4 w-4" />}>Suhbatlar</NavLink>}
-          {isAdminLike && <NavLink href="/admin/doctors" icon={<Stethoscope className="h-4 w-4" />}>Shifokorlar</NavLink>}
-          {isAdminLike && <NavLink href="/admin/services" icon={<Scissors className="h-4 w-4" />}>Xizmatlar</NavLink>}
-          {isAdminLike && <NavLink href="/admin/specialties" icon={<Sparkles className="h-4 w-4" />}>Yo‘nalishlar</NavLink>}
-          {isAdminLike && <NavLink href="/admin/faqs" icon={<MessagesSquare className="h-4 w-4" />}>Savol-javoblar</NavLink>}
-          {isOwner && <NavLink href="/admin/analytics" icon={<BarChart3 className="h-4 w-4" />}>Tahlillar</NavLink>}
-          {isOwner && <NavLink href="/admin/settings" icon={<Settings className="h-4 w-4" />}>Sozlamalar</NavLink>}
+        <nav className="flex flex-1 flex-col gap-1 px-3 text-sm">
+          <p className="font-numeric px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.16em] text-ink-muted/80">
+            Boshqaruv
+          </p>
+          {nav.map((n) => (
+            <NavLink key={n.href} href={n.href} icon={n.icon}>
+              {n.label}
+            </NavLink>
+          ))}
         </nav>
-        <div className="border-t border-slate-100 pt-3 text-xs text-slate-400">
-          {ctx.profileId.slice(0, 8)} · {ctx.roles.join(", ")}
+        <div className="border-t border-hairline px-5 py-4">
+          <p className="font-numeric text-xs text-ink-muted">
+            {ctx.profileId.slice(0, 8)}
+          </p>
+          <p className="mt-0.5 text-xs font-medium text-pine-deep">{ctx.roles.join(", ")}</p>
         </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 md:hidden">
-          <Link href="/admin" className="flex items-center gap-2">
-            <HeartPulse className="h-5 w-5 text-emerald-600" />
-            <span className="text-sm font-bold">Health AI</span>
+        <header className="flex items-center justify-between border-b border-hairline bg-surface px-4 py-3 md:hidden">
+          <Link href="/admin" className="flex items-center gap-2.5">
+            <span className="brand-tile flex h-8 w-8 items-center justify-center rounded-lg text-white">
+              <HeartPulse className="h-4 w-4" />
+            </span>
+            <span className="font-display text-sm font-bold tracking-tight">Health AI</span>
           </Link>
+          <span className="pulse-dot" title="Jonli" />
         </header>
         <div className="flex-1 overflow-x-hidden p-4 md:p-8">{children}</div>
       </div>
@@ -56,7 +75,7 @@ function NavLink({ href, children, icon }: { href: string; children: React.React
   return (
     <Link
       href={href}
-      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
+      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-ink-muted transition-colors hover:bg-pine-tint hover:text-pine-deep"
     >
       {icon}
       {children}

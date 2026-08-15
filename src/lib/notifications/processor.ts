@@ -70,10 +70,12 @@ async function loadAppointmentContext(supabase: ReturnType<typeof createAdminCli
 
 /**
  * Processes due notification jobs.
- * - Locks due rows with SKIP LOCKED so concurrent cron invocations do not
- *   send duplicate messages.
- * - Idempotency keys prevent enqueue-time duplicates; status transitions
- *   prevent send-time duplicates.
+ * - `claim_due_notification_jobs` atomically claims due rows with
+ *   `FOR UPDATE SKIP LOCKED` and moves them to `in_progress`, so concurrent
+ *   cron invocations can never both send the same job.
+ * - Only the worker that claimed a job may mark it sent, retry, failed, or
+ *   skipped; other workers never see its `in_progress` rows.
+ * - Idempotency keys prevent enqueue-time duplicates.
  * - Automated messages pause while the conversation is taken over by an
  *   admin (conversation.status = 'assigned').
  */
@@ -84,13 +86,13 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
     return { processed: 0, sent: 0, failed: 0 };
   }
 
-  const { data: jobs } = await supabase
-    .from("notification_jobs")
-    .select("*")
-    .eq("status", "pending")
-    .lte("scheduled_for", new Date().toISOString())
-    .order("scheduled_for", { ascending: true })
-    .limit(limit);
+  const { data: jobs, error: claimError } = await supabase.rpc("claim_due_notification_jobs", {
+    p_limit: limit,
+  });
+  if (claimError) {
+    logger.error("notification processor: claim failed", { error: claimError.message });
+    return { processed: 0, sent: 0, failed: 0 };
+  }
   if (!jobs || jobs.length === 0) return { processed: 0, sent: 0, failed: 0 };
 
   let sent = 0;
@@ -109,7 +111,7 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
         .maybeSingle();
       if (conv && conv.status === "assigned") {
         // Defer: mark skipped so an admin can retry after release.
-        await supabase.from("notification_jobs").update({ status: "skipped" }).eq("id", jobId);
+        await markJob(jobId, "skipped", nextAttempts, "conversation held by admin", supabase);
         continue;
       }
     }

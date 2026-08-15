@@ -26,12 +26,16 @@ export function Button({
   className,
 }: ButtonProps) {
   const styles: Record<NonNullable<ButtonProps["variant"]>, string> = {
-    primary: "bg-[var(--tg-button,#16a34a)] text-[var(--tg-button-text,#fff)] hover:opacity-90",
-    secondary: "bg-[var(--tg-secondary-bg,#f1f5f9)] text-[var(--tg-text,#0f172a)] hover:opacity-90",
-    outline: "border border-[var(--tg-secondary-bg,#cbd5e1)] text-[var(--tg-text,#0f172a)] hover:bg-[var(--tg-secondary-bg,#f1f5f9)]",
-    ghost: "text-[var(--tg-link,#0284c7)] hover:bg-[var(--tg-secondary-bg,#f1f5f9)]",
-    danger: "bg-red-600 text-white hover:opacity-90",
-    success: "bg-green-600 text-white hover:opacity-90",
+    primary:
+      "bg-[var(--tg-button,var(--pine))] text-[var(--tg-button-text,#fff)] shadow-sm hover:brightness-105 active:brightness-95",
+    secondary:
+      "bg-[var(--tg-secondary-bg,#eef1ed)] text-[var(--tg-text,var(--foreground))] hover:brightness-95 active:brightness-90",
+    outline:
+      "border border-[var(--tg-secondary-bg,var(--hairline))] text-[var(--tg-text,var(--foreground))] hover:bg-[var(--tg-secondary-bg,#f1f5f9)]",
+    ghost:
+      "text-[var(--tg-link,var(--pine))] hover:bg-[var(--tg-secondary-bg,#f1f5f9)]",
+    danger: "bg-[var(--danger)] text-white shadow-sm hover:brightness-105",
+    success: "bg-[var(--pine)] text-white shadow-sm hover:brightness-105",
   };
   const sizes: Record<NonNullable<ButtonProps["size"]>, string> = {
     sm: "px-3 py-1.5 text-sm rounded-lg",
@@ -46,7 +50,7 @@ export function Button({
       onClick={onClick}
       disabled={disabled || loading}
       className={cn(
-        "inline-flex items-center justify-center gap-2 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+        "inline-flex items-center justify-center gap-2 font-medium transition-[filter,background-color,opacity] disabled:opacity-50 disabled:cursor-not-allowed",
         styles[variant],
         sizes[size],
         className,
@@ -64,7 +68,7 @@ export function Card({ children, className }: { children: ReactNode; className?:
   return (
     <div
       className={cn(
-        "rounded-2xl border border-[var(--tg-secondary-bg,#e2e8f0)] bg-[var(--tg-secondary-bg,#ffffff)] p-4",
+        "rounded-2xl border border-[var(--tg-secondary-bg,var(--hairline))] bg-[var(--tg-secondary-bg,var(--surface))] p-4 shadow-[var(--shadow-card)]",
         className,
       )}
     >
@@ -108,7 +112,7 @@ export function Input({
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       className={cn(
-        "w-full rounded-xl border border-[var(--tg-secondary-bg,#cbd5e1)] bg-[var(--tg-bg,#ffffff)] px-4 py-3 text-sm text-[var(--tg-text,#0f172a)] outline-none focus:border-[var(--tg-button,#16a34a)]",
+        "w-full rounded-xl border border-[var(--tg-secondary-bg,var(--hairline))] bg-[var(--tg-bg,var(--surface))] px-4 py-3 text-sm text-[var(--tg-text,var(--foreground))] transition-[border-color] placeholder:text-[var(--tg-hint,#8a9699)] focus:border-[var(--tg-button,var(--pine))]",
         className,
       )}
     />
@@ -121,19 +125,26 @@ export function Badge({
   className,
 }: {
   children: ReactNode;
-  tone?: "neutral" | "green" | "red" | "amber" | "blue" | "gray";
+  tone?: "neutral" | "green" | "red" | "amber" | "blue" | "gray" | "pine";
   className?: string;
 }) {
   const tones: Record<string, string> = {
-    neutral: "bg-slate-100 text-slate-700",
-    green: "bg-green-100 text-green-800",
-    red: "bg-red-100 text-red-700",
-    amber: "bg-amber-100 text-amber-800",
-    blue: "bg-blue-100 text-blue-800",
-    gray: "bg-gray-100 text-gray-600",
+    neutral: "bg-[var(--ink-muted)]/10 text-[var(--ink-muted)]",
+    green: "bg-[var(--pine-tint)] text-[var(--pine-deep)]",
+    red: "bg-[var(--danger-tint)] text-[var(--danger)]",
+    amber: "bg-[var(--clay-tint)] text-[var(--clay)]",
+    blue: "bg-[var(--info-tint)] text-[var(--info)]",
+    gray: "bg-[var(--ink-muted)]/5 text-[var(--ink-muted)]",
+    pine: "bg-[var(--pine)] text-white",
   };
   return (
-    <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium", tones[tone], className)}>
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold tracking-wide",
+        tones[tone],
+        className,
+      )}
+    >
       {children}
     </span>
   );
@@ -141,8 +152,8 @@ export function Badge({
 
 export function Spinner({ label }: { label?: string }) {
   return (
-    <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--tg-hint,#64748b)]">
-      <span className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--tg-button,#16a34a)] border-t-transparent" />
+    <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--tg-hint,#8a9699)]">
+      <span className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--tg-button,var(--pine))] border-t-transparent" />
       {label ?? "Yuklanmoqda..."}
     </div>
   );
@@ -151,19 +162,32 @@ export function Spinner({ label }: { label?: string }) {
 export function EmptyState({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div className="py-10 text-center">
-      <p className="font-medium text-[var(--tg-text,#0f172a)]">{title}</p>
-      {subtitle && <p className="mt-1 text-sm text-[var(--tg-hint,#64748b)]">{subtitle}</p>}
+      <p className="font-display font-semibold text-[var(--tg-text,var(--foreground))]">{title}</p>
+      {subtitle && <p className="mt-1 text-sm text-[var(--tg-hint,#8a9699)]">{subtitle}</p>}
     </div>
   );
 }
 
+/** Small mono uppercase label — the "eyebrow" above section titles. */
+export function Eyebrow({ children }: { children: ReactNode }) {
+  return (
+    <p className="font-numeric text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--tg-hint,#8a9699)]">
+      {children}
+    </p>
+  );
+}
+
 export function SectionTitle({ children }: { children: ReactNode }) {
-  return <h2 className="mb-2 text-base font-semibold text-[var(--tg-text,#0f172a)]">{children}</h2>;
+  return (
+    <h2 className="font-display mb-2 text-base font-semibold tracking-tight text-[var(--tg-text,var(--foreground))]">
+      {children}
+    </h2>
+  );
 }
 
 export function ErrorBanner({ message }: { message: string }) {
   return (
-    <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+    <div className="mb-4 rounded-xl border border-[var(--danger)]/25 bg-[var(--danger-tint)] px-4 py-3 text-sm font-medium text-[var(--danger)]">
       {message}
     </div>
   );
@@ -171,7 +195,7 @@ export function ErrorBanner({ message }: { message: string }) {
 
 export function NoticeBanner({ message }: { message: string }) {
   return (
-    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+    <div className="mb-4 rounded-xl border border-clay/25 bg-clay-tint px-4 py-3 text-sm font-medium text-clay-deep">
       {message}
     </div>
   );

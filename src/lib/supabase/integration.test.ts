@@ -1,21 +1,36 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { localDbAvailable } from "@/test/local-db";
+
+vi.mock("@/lib/telegram/bot", () => ({
+  sendTelegramMessage: vi.fn(async () => 1),
+  getTelegramFileUrl: vi.fn(async () => null),
+  telegramConfigured: vi.fn(() => true),
+}));
+
+vi.mock("@/lib/transcription/provider", () => ({
+  getTranscriptionProvider: vi.fn(() => ({ name: "test-provider", transcribe: async () => "..." })),
+}));
+
+import { sendTelegramMessage } from "@/lib/telegram/bot";
+import { handleTelegramMessage } from "@/lib/telegram/handlers";
 
 /**
  * Integration tests against the LOCAL Supabase stack (Docker).
  *
- * They run only when real local keys are present (a .env file with
- * SUPABASE_URL=http://127.0.0.1:54321 and the local service role key).
- * With the placeholder .env.test.example values they are skipped.
+ * They run only when the stack is up, migrated and seeded (probed by
+ * src/test/global-setup.ts → localDbAvailable()); otherwise they skip with
+ * a clear warning — a half-configured database never produces a misleading
+ * failed run.
  *
- * Requires: supabase/migrations + supabase/seed.sql applied (see README).
+ * Requires: `npm run db:reset-local` (migrations + seed) and a `.env` with
+ * the real local keys (see README / docs/supabase-setup.md).
  */
 
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
 const URL = process.env.SUPABASE_URL ?? "";
 
-const isPlaceholder = !URL || SERVICE_KEY.startsWith("test-") || ANON_KEY.startsWith("test-");
 const CLINIC_ID = "11111111-1111-4111-8111-111111111111";
 const TZ = "Asia/Tashkent"; // UTC+5
 
@@ -25,21 +40,37 @@ let doctorId: string;
 let serviceId: string;
 let patientId: string;
 
-function skip(): boolean {
-  if (isPlaceholder) return true;
-  try {
-    admin = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
-    anon = createClient(URL, ANON_KEY, { auth: { persistSession: false } });
-    return false;
-  } catch {
-    return true;
-  }
+const describeDb = describe.skipIf(!localDbAvailable());
+
+function buildClients(): { admin: SupabaseClient; anon: SupabaseClient } {
+  admin = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
+  anon = createClient(URL, ANON_KEY, { auth: { persistSession: false } });
+  return { admin, anon };
 }
 
-const describeDb = describe.skipIf(skip());
+/** Next occurrence of `weekday` (1=Mon..7=Sun) at 10:00 Tashkent, ≥48h ahead. */
+function nextWeekdayAt10(weekday: number, minDaysAhead = 2): string {
+  const now = new Date();
+  const target = new Date(now.getTime() + minDaysAhead * 86400000);
+  // Local calendar date in Tashkent, then its ISO weekday.
+  const localDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(target);
+  const day = new Date(`${localDate}T00:00:00Z`);
+  const localWeekday = day.getUTCDay() === 0 ? 7 : day.getUTCDay(); // Sun=7
+  const diff = ((weekday - localWeekday) % 7 + 7) % 7;
+  target.setUTCDate(target.getUTCDate() + diff);
+  // 10:00 Tashkent == 05:00 UTC.
+  const startUtc = new Date(target.toISOString().slice(0, 10) + "T05:00:00Z");
+  return startUtc.toISOString();
+}
 
 describeDb("local Supabase booking engine", () => {
   beforeAll(async () => {
+    buildClients();
     // Seed fixture lookups.
     const [{ data: doctor }, { data: service }, { data: patient }] = await Promise.all([
       admin.from("doctors").select("id").eq("name", "Karimov Alisher").single(),
@@ -55,25 +86,6 @@ describeDb("local Supabase booking engine", () => {
   });
 
   /** Next occurrence of `weekday` (1=Mon..7=Sun) at 10:00 Tashkent, ≥48h ahead. */
-  function nextWeekdayAt10(weekday: number, minDaysAhead = 2): string {
-    const now = new Date();
-    const target = new Date(now.getTime() + minDaysAhead * 86400000);
-    // Local calendar date in Tashkent, then its ISO weekday.
-    const localDate = new Intl.DateTimeFormat("en-CA", {
-      timeZone: TZ,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(target);
-    const day = new Date(`${localDate}T00:00:00Z`);
-    const localWeekday = day.getUTCDay() === 0 ? 7 : day.getUTCDay(); // Sun=7
-    const diff = ((weekday - localWeekday) % 7 + 7) % 7;
-    target.setUTCDate(target.getUTCDate() + diff);
-    // 10:00 Tashkent == 05:00 UTC.
-    const startUtc = new Date(target.toISOString().slice(0, 10) + "T05:00:00Z");
-    return startUtc.toISOString();
-  }
-
   it("books an appointment via RPC within working hours", async () => {
     const startAt = nextWeekdayAt10(1); // Monday 10:00 local
     const { data, error } = await admin.rpc("book_appointment", {
@@ -205,6 +217,10 @@ describeDb("local Supabase booking engine", () => {
 });
 
 describeDb("local Supabase security posture", () => {
+  beforeAll(() => {
+    buildClients();
+  });
+
   it("blocks anonymous clients from reading patient data (RLS)", async () => {
     const { data, error } = await anon
       .from("patients")
@@ -226,5 +242,234 @@ describeDb("local Supabase security posture", () => {
       source: "telegram_mini_app",
     });
     expect(error).not.toBeNull();
+  });
+
+  it("blocks anonymous clients from executing the booking RPC", async () => {
+    const { data, error } = await anon.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: "00000000-0000-0000-0000-000000000000",
+      p_doctor_id: "00000000-0000-0000-0000-000000000000",
+      p_service_id: "00000000-0000-0000-0000-000000000000",
+      p_start_at: new Date(Date.now() + 86400000).toISOString(),
+    });
+    expect(error).not.toBeNull();
+    expect(data).toBeNull();
+  });
+});
+
+describeDb("RPC authorization + tenant isolation", () => {
+  let userClient: SupabaseClient;
+  let userId: string;
+  const email = `rpc-denial-${Date.now()}@test.local`;
+  const password = "TestPassword123!";
+
+  beforeAll(async () => {
+    buildClients();
+    const { data, error } = await anon.auth.signUp({ email, password });
+    expect(error).toBeNull();
+    expect(data.session).toBeTruthy();
+    userId = data.user!.id;
+    userClient = createClient(URL, ANON_KEY, { auth: { persistSession: false } });
+    await userClient.auth.setSession(data.session!);
+  });
+
+  afterAll(async () => {
+    if (userId) {
+      await admin.auth.admin.deleteUser(userId);
+    }
+  });
+
+  it("denies book_appointment to an authenticated non-staff user (no cross-clinic booking)", async () => {
+    const { data, error } = await userClient.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: "00000000-0000-0000-0000-000000000000",
+      p_doctor_id: "00000000-0000-0000-0000-000000000000",
+      p_service_id: "00000000-0000-0000-0000-000000000000",
+      p_start_at: new Date(Date.now() + 86400000).toISOString(),
+      p_status: "pending",
+      p_source: "telegram_mini_app",
+    });
+    expect(error).not.toBeNull();
+    expect(data).toBeNull();
+  });
+
+  it("denies reschedule_appointment to an authenticated non-staff user", async () => {
+    const { data, error } = await userClient.rpc("reschedule_appointment", {
+      p_appointment_id: "00000000-0000-0000-0000-000000000000",
+      p_new_start_at: new Date(Date.now() + 2 * 86400000).toISOString(),
+    });
+    expect(error).not.toBeNull();
+    expect(data).toBeNull();
+  });
+
+  it("blocks an authenticated non-staff user from inserting appointments (RLS)", async () => {
+    const { error } = await userClient.from("appointments").insert({
+      clinic_id: CLINIC_ID,
+      patient_id: "00000000-0000-0000-0000-000000000000",
+      doctor_id: "00000000-0000-0000-0000-000000000000",
+      service_id: "00000000-0000-0000-0000-000000000000",
+      start_at: new Date(Date.now() + 86400000).toISOString(),
+      end_at: new Date(Date.now() + 86400000 + 3600000).toISOString(),
+      status: "pending",
+      source: "telegram_mini_app",
+    });
+    expect(error).not.toBeNull();
+  });
+
+  it("hides other clinics' patient data from an authenticated non-staff user", async () => {
+    const { data, error } = await userClient.from("patients").select("id");
+    expect(error).toBeNull();
+    expect(data ?? []).toHaveLength(0);
+  });
+
+  it("service_role can still book after the revoke (server path unaffected)", async () => {
+    const [{ data: doctor }, { data: service }, { data: patient }] = await Promise.all([
+      admin.from("doctors").select("id").eq("name", "Karimov Alisher").single(),
+      admin.from("services").select("id").eq("name", "Terapevt qabuli").single(),
+      admin.from("patients").select("id").eq("telegram_user_id", 777000).single(),
+    ]);
+    const startAt = nextWeekdayAt10(5); // Friday 10:00 local — within working hours
+    const { data, error } = await admin.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: patient!.id,
+      p_doctor_id: doctor!.id,
+      p_service_id: service!.id,
+      p_start_at: startAt,
+      p_status: "pending",
+      p_source: "telegram_mini_app",
+    });
+    expect(error).toBeNull();
+    expect((data as { error_code: string | null }).error_code).toBeNull();
+    if (data?.appointment_id) {
+      await admin.from("appointments").delete().eq("id", data.appointment_id);
+    }
+  });
+});
+
+describeDb("telegram voice consent flow", () => {
+  const voiceUserId = 777100;
+
+  beforeAll(() => {
+    buildClients();
+    vi.mocked(sendTelegramMessage).mockClear();
+  });
+
+  afterAll(async () => {
+    const { data: patients } = await admin.from("patients").select("id").eq("telegram_user_id", voiceUserId);
+    const patientIds = (patients ?? []).map((p) => p.id);
+    if (patientIds.length > 0) {
+      const { data: convs } = await admin.from("conversations").select("id").in("patient_id", patientIds);
+      const convIds = (convs ?? []).map((c) => c.id);
+      if (convIds.length > 0) {
+        await admin.from("voice_messages").delete().in("conversation_id", convIds);
+        await admin.from("messages").delete().in("conversation_id", convIds);
+        await admin.from("conversations").delete().in("id", convIds);
+      }
+      await admin.from("patients").delete().in("id", patientIds);
+    }
+  });
+
+  it("routes a voice update into metadata storage and consent — no transcription without consent", async () => {
+    await handleTelegramMessage({
+      chatId: voiceUserId,
+      from: { id: voiceUserId, first_name: "Ovoz" },
+      voice: {
+        file_id: "voice-file-123",
+        file_unique_id: "voice-unique-123",
+        duration: 6,
+        mime_type: "audio/ogg",
+        file_size: 2048,
+      },
+      updateId: 700001,
+    });
+
+    // 1. Voice metadata was persisted first, with transcription NOT started.
+    const { data: voiceRows, error } = await admin
+      .from("voice_messages")
+      .select("telegram_file_id, transcription_status, conversation_id")
+      .eq("telegram_file_unique_id", "voice-unique-123");
+    expect(error).toBeNull();
+    expect(voiceRows).toHaveLength(1);
+    expect(voiceRows![0].telegram_file_id).toBe("voice-file-123");
+    expect(voiceRows![0].transcription_status).toBe("none");
+
+    // 2. The patient was asked for consent (explicit consent gate).
+    const consentCall = vi.mocked(sendTelegramMessage).mock.calls.find((c) =>
+      String(c[0].text).includes("Ruxsat berasizmi"),
+    );
+    expect(consentCall).toBeTruthy();
+    type InlineButton = { text: string; callback_data?: string };
+    const replyMarkup = consentCall![0].replyMarkup as { inline_keyboard: InlineButton[][] } | undefined;
+    const keyboard = replyMarkup?.inline_keyboard ?? [];
+    const buttons = keyboard.flat();
+    expect(buttons.map((b) => b.callback_data)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^voice_consent_yes:/),
+        expect.stringMatching(/^voice_consent_no:/),
+      ]),
+    );
+
+    // 3. Nothing was transcribed: status is still 'none' after handling.
+    const { data: after } = await admin
+      .from("voice_messages")
+      .select("transcription_status")
+      .eq("telegram_file_unique_id", "voice-unique-123")
+      .single();
+    expect(after!.transcription_status).toBe("none");
+  });
+});
+
+describeDb("webhook idempotency atomic claim", () => {
+  const source = `test-${Date.now()}`;
+
+  beforeAll(() => {
+    buildClients();
+  });
+
+  afterAll(async () => {
+    await admin.from("processed_webhooks").delete().eq("source", source);
+  });
+
+  it("exactly one of ten concurrent claims wins", async () => {
+    const externalId = "dup-1";
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () =>
+        admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId }),
+      ),
+    );
+    const winners = results.filter((r) => !r.error && r.data === true);
+    expect(winners).toHaveLength(1);
+  });
+
+  it("a released claim can be claimed again (failed handler → safe retry)", async () => {
+    const externalId = "dup-2";
+    const first = await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    expect(first.data).toBe(true);
+    await admin.rpc("release_webhook_update", { p_source: source, p_external_id: externalId });
+    const second = await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    expect(second.data).toBe(true);
+    await admin.rpc("finish_webhook_update", { p_source: source, p_external_id: externalId });
+  });
+
+  it("a finished claim is never processed again", async () => {
+    const externalId = "dup-3";
+    await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    await admin.rpc("finish_webhook_update", { p_source: source, p_external_id: externalId });
+    const again = await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    expect(again.data).toBe(false);
+  });
+
+  it("release only removes processing claims (finished rows stay)", async () => {
+    const externalId = "dup-4";
+    await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    await admin.rpc("finish_webhook_update", { p_source: source, p_external_id: externalId });
+    await admin.rpc("release_webhook_update", { p_source: source, p_external_id: externalId });
+    const { data } = await admin
+      .from("processed_webhooks")
+      .select("status")
+      .eq("source", source)
+      .eq("external_id", externalId)
+      .single();
+    expect(data!.status).toBe("processed");
   });
 });

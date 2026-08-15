@@ -51,18 +51,18 @@ export default function DoctorsPage() {
       {error && <AError message={error} />}
 
       {rows === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-slate-200" /></Card>
+        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
       ) : rows.length === 0 ? (
         <Card><AEmpty title="Shifokorlar yo‘q" subtitle="Birinchi shifokorni qo‘shing" /></Card>
       ) : (
         <ATable headers={["Ism", "Yo‘nalish", "Holat", "Amallar"]}>
           {rows.map((d) => (
-            <tr key={d.id} className="hover:bg-slate-50">
+            <tr key={d.id} className="hover:bg-sand">
               <td className="px-4 py-3">
-                <p className="font-medium text-slate-900">{d.name}</p>
-                {d.title && <p className="text-xs text-slate-400">{d.title}</p>}
+                <p className="font-medium text-foreground">{d.name}</p>
+                {d.title && <p className="text-xs text-ink-muted">{d.title}</p>}
               </td>
-              <td className="px-4 py-3 text-slate-800">{d.specialties?.name ?? "—"}</td>
+              <td className="px-4 py-3 text-foreground">{d.specialties?.name ?? "—"}</td>
               <td className="px-4 py-3"><ABadge tone={d.active ? "green" : "gray"}>{d.active ? "Faol" : "Nofaol"}</ABadge></td>
               <td className="px-4 py-3"><AButton size="sm" variant="outline" onClick={() => setEditing(d)}>Boshqarish</AButton></td>
             </tr>
@@ -153,10 +153,10 @@ function DoctorModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-foreground/50 p-4" onClick={onClose}>
       <Card className="mt-10 w-full max-w-lg" >
         <div className="pointer-events-auto">
-          <p className="mb-4 text-lg font-bold text-slate-900">{isEdit ? "Shifokorni boshqarish" : "Yangi shifokor"}</p>
+          <p className="mb-4 text-lg font-bold text-foreground">{isEdit ? "Shifokorni boshqarish" : "Yangi shifokor"}</p>
           <div className="flex flex-col gap-3">
             <AInput value={name} onChange={setName} placeholder="F.I.Sh." aria-label="Ism" />
             <AInput value={title} onChange={setTitle} placeholder="Lavozim (masalan: Terapevt)" aria-label="Lavozim" />
@@ -168,20 +168,20 @@ function DoctorModal({
                 aria-label="Yo‘nalish"
               />
             )}
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 accent-emerald-600" />
+            <label className="flex items-center gap-2 text-sm text-ink-muted">
+              <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 accent-pine" />
               Faol
             </label>
             {isEdit && (
-              <div className="rounded-lg border border-slate-200 p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Haftalik ish jadvali</p>
+              <div className="rounded-lg border border-hairline p-3">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Haftalik ish jadvali</p>
                 <div className="space-y-1.5">
                   {WEEKDAYS.map((dayName, idx) => {
                     const wd = idx + 1;
                     const slot = hours.find((h) => h.weekday === wd);
                     return (
                       <div key={wd} className="flex items-center gap-2 text-sm">
-                        <span className="w-28 shrink-0 text-slate-600">{dayName}</span>
+                        <span className="w-28 shrink-0 text-ink-muted">{dayName}</span>
                         <AInput
                           value={slot?.start_time ?? ""}
                           type="time"
@@ -189,7 +189,7 @@ function DoctorModal({
                           onChange={(v) => setHours(updateSlot(wd, { start_time: v, end_time: slot?.end_time ?? "" }))}
                           aria-label={`${dayName} boshlanish`}
                         />
-                        <span className="text-slate-400">—</span>
+                        <span className="text-ink-muted">—</span>
                         <AInput
                           value={slot?.end_time ?? ""}
                           type="time"

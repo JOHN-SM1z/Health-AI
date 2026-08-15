@@ -77,20 +77,20 @@ export default function CalendarPage() {
           const isToday = isSameDay(day, new Date());
           const appts = dayAppointments(day, doctorFilter);
           return (
-            <Card key={day.toISOString()} className={`min-h-40 p-3 ${isToday ? "border-emerald-300 bg-emerald-50/50" : ""}`}>
-              <p className={`mb-2 text-sm font-bold ${isToday ? "text-emerald-700" : "text-slate-700"}`}>
+            <Card key={day.toISOString()} className={`min-h-40 p-3 ${isToday ? "border-pine/30 bg-pine-tint/50" : ""}`}>
+              <p className={`mb-2 text-sm font-bold ${isToday ? "text-pine-deep" : "text-ink-muted"}`}>
                 {day.toLocaleDateString("uz-UZ", { weekday: "short", day: "numeric", month: "short" })}
               </p>
               <div className="space-y-1.5">
                 {appts.map((a) => (
-                  <div key={a.id} className="rounded-lg bg-white p-2 shadow-sm ring-1 ring-slate-100">
-                    <p className="text-xs font-semibold text-slate-900">{formatTime(a.start_at)}</p>
-                    <p className="truncate text-xs text-slate-600">{a.patients?.full_name ?? "—"}</p>
-                    <p className="truncate text-[11px] text-slate-400">{a.services?.name}</p>
+                  <div key={a.id} className="rounded-lg bg-surface p-2 shadow-sm ring-1 ring-hairline">
+                    <p className="text-xs font-semibold text-foreground">{formatTime(a.start_at)}</p>
+                    <p className="truncate text-xs text-ink-muted">{a.patients?.full_name ?? "—"}</p>
+                    <p className="truncate text-[11px] text-ink-muted">{a.services?.name}</p>
                     <div className="mt-1"><ABadge tone={STATUS_TONES[a.status]}>{STATUS_LABELS[a.status]}</ABadge></div>
                   </div>
                 ))}
-                {appts.length === 0 && <p className="text-xs text-slate-300">Bo‘sh</p>}
+                {appts.length === 0 && <p className="text-xs text-ink-muted/70">Bo‘sh</p>}
               </div>
             </Card>
           );

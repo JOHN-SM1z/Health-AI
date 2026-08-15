@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { HeartPulse } from "lucide-react";
 import { createClient } from "@/lib/supabase/browser";
 import { AButton, AInput, AError, Card } from "@/components/admin/ui";
 
@@ -32,28 +33,38 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="mx-auto flex min-h-dvh max-w-sm flex-col justify-center gap-4 px-4">
-      <div className="text-center">
-        <h1 className="text-xl font-bold text-slate-900">Health AI — Xodimlar</h1>
-        <p className="mt-1 text-sm text-slate-500">Admin va shifokor paneliga kirish</p>
+    <div className="flex min-h-dvh flex-col items-center justify-center bg-sand px-4 py-10">
+      <div className="w-full max-w-sm">
+        <div className="mb-6 text-center">
+          <div className="brand-tile mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl text-white">
+            <HeartPulse className="h-7 w-7" />
+          </div>
+          <p className="font-numeric text-[11px] font-medium uppercase tracking-[0.16em] text-ink-muted">
+            Health AI — Xodimlar
+          </p>
+          <h1 className="font-display mt-1 text-2xl font-bold tracking-tight text-foreground">
+            Panelga kirish
+          </h1>
+          <p className="mt-1 text-sm text-ink-muted">Admin va shifokor paneliga kirish</p>
+        </div>
+        <Card className="flex flex-col gap-3 p-5">
+          {error && <AError message={error} />}
+          <label className="text-sm">
+            <span className="mb-1 block text-xs font-semibold text-ink-muted">Email</span>
+            <AInput value={email} onChange={setEmail} type="email" placeholder="xodim@klinika.uz" />
+          </label>
+          <label className="text-sm">
+            <span className="mb-1 block text-xs font-semibold text-ink-muted">Parol</span>
+            <AInput value={password} onChange={setPassword} type="password" placeholder="••••••••" />
+          </label>
+          <AButton size="lg" loading={loading} onClick={submit} className="mt-1">
+            Kirish
+          </AButton>
+        </Card>
+        <p className="mt-4 text-center text-xs text-ink-muted/80">
+          Hisob yo‘qmi? Administrator yoki owner hisobini yaratish bo‘yicha READMEga qarang.
+        </p>
       </div>
-      <Card className="flex flex-col gap-3">
-        {error && <AError message={error} />}
-        <label className="text-sm">
-          <span className="mb-1 block text-xs font-medium text-slate-500">Email</span>
-          <AInput value={email} onChange={setEmail} type="email" placeholder="xodim@klinika.uz" />
-        </label>
-        <label className="text-sm">
-          <span className="mb-1 block text-xs font-medium text-slate-500">Parol</span>
-          <AInput value={password} onChange={setPassword} type="password" placeholder="••••••••" />
-        </label>
-        <AButton size="lg" loading={loading} onClick={submit}>
-          Kirish
-        </AButton>
-      </Card>
-      <p className="text-center text-xs text-slate-400">
-        Hisob yo‘qmi? Administrator yoki owner hisobini yaratish bo‘yicha READMEga qarang.
-      </p>
     </div>
   );
 }

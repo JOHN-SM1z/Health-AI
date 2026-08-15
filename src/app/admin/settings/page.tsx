@@ -57,12 +57,12 @@ export default function SettingsPage() {
       <PageHeader title="Sozlamalar" subtitle="Klinika matn sozlamalari (owner)" />
       {error && <AError message={error} />}
       {settings === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-slate-200" /></Card>
+        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
       ) : (
         <Card className="flex max-w-xl flex-col gap-4">
           {SETTING_DEFS.map((def) => (
             <div key={def.key}>
-              <p className="mb-1 text-sm font-medium text-slate-700">{def.label}</p>
+              <p className="mb-1 text-sm font-medium text-ink-muted">{def.label}</p>
               <AInput
                 value={values[def.key] ?? ""}
                 onChange={(v) => setValues((prev) => ({ ...prev, [def.key]: v }))}
@@ -71,7 +71,7 @@ export default function SettingsPage() {
               />
             </div>
           ))}
-          {saved && <p className="text-sm text-emerald-700">Saqlangan ✓</p>}
+          {saved && <p className="text-sm text-pine-deep">Saqlangan ✓</p>}
           <div>
             <AButton loading={busy} onClick={() => void save()}>Saqlash</AButton>
           </div>

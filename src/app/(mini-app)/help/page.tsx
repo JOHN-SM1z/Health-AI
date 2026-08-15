@@ -8,7 +8,7 @@ export default function HelpPage() {
   return (
     <div className="flex flex-col gap-4">
       <SectionTitle>Yordam</SectionTitle>
-      <Card className="flex flex-col gap-3 text-sm leading-relaxed text-[var(--tg-text,#0f172a)]">
+      <Card className="flex flex-col gap-3 text-sm leading-relaxed text-[var(--tg-text,var(--foreground))]">
         <div>
           <p className="font-medium">Qabulga qanday yozilaman?</p>
           <p className="mt-1 text-[var(--tg-hint,#475569)]">

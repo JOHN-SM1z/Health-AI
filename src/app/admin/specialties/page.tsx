@@ -54,15 +54,15 @@ export default function SpecialtiesPage() {
       <PageHeader title="Yo‘nalishlar" subtitle="Shifokorlar va xizmatlar guruhlanishi" />
       {error && <AError message={error} />}
       {rows === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-slate-200" /></Card>
+        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
       ) : rows.length === 0 ? (
         <Card><AEmpty title="Yo‘nalishlar yo‘q" /></Card>
       ) : (
         <ATable headers={["Nomi", "Tavsif", "Holat", "Amallar"]}>
           {rows.map((s) => (
-            <tr key={s.id} className="hover:bg-slate-50">
-              <td className="px-4 py-3 font-medium text-slate-900">{s.name}</td>
-              <td className="px-4 py-3 text-slate-500">{s.description ?? "—"}</td>
+            <tr key={s.id} className="hover:bg-sand">
+              <td className="px-4 py-3 font-medium text-foreground">{s.name}</td>
+              <td className="px-4 py-3 text-ink-muted">{s.description ?? "—"}</td>
               <td className="px-4 py-3"><ABadge tone={s.active ? "green" : "gray"}>{s.active ? "Faol" : "Nofaol"}</ABadge></td>
               <td className="px-4 py-3">
                 <div className="flex gap-1.5">
@@ -94,7 +94,7 @@ export default function SpecialtiesPage() {
       )}
 
       <Card className="mt-4 flex flex-col gap-3">
-        <p className="text-sm font-bold text-slate-900">{editing?.id ? "Yo‘nalishni tahrirlash" : "Yangi yo‘nalish"}</p>
+        <p className="text-sm font-bold text-foreground">{editing?.id ? "Yo‘nalishni tahrirlash" : "Yangi yo‘nalish"}</p>
         <AInput value={name} onChange={setName} placeholder="Nomi (masalan: Kardiologiya)" aria-label="Nomi" />
         <ATextArea value={description} onChange={setDescription} placeholder="Tavsif" rows={2} />
         <div className="flex gap-2">

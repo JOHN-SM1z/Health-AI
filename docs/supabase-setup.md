@@ -7,15 +7,37 @@ npx supabase start
 ```
 
 - Starts Postgres + Auth + Storage + Studio in Docker (project ref `local`).
-- On first start (or when migrations change): `npx supabase db push --local`
-  applies `supabase/migrations/*.sql`; `npx supabase db seed --local` applies
-  `supabase/seed.sql` if you want the demo clinic.
+- Clean-state setup (applies ALL migrations + seed in one command):
+
+```bash
+npm run db:reset-local    # npx supabase db reset --local
+```
+
+  Use this after pulling new migrations; it recreates the database from
+  scratch, applies `supabase/migrations/*.sql` in order, then runs
+  `supabase/seed.sql` (demo clinic).
+- To apply just new migrations without wiping data:
+  `npx supabase db push --local`.
 - Get local keys: `npx supabase status` → copy `API URL` (http://127.0.0.1:54321),
   `anon key`, `service_role key` into `.env`.
 
+## Integration tests
+
+`npm test` runs unit tests always; the DB integration suites
+(`src/lib/supabase/integration.test.ts`, `src/lib/notifications/processor.test.ts`)
+probe the local stack at startup (service-role lookup of the seed clinic):
+
+- stack up + migrations + seed applied → suites run,
+- stack down or partially configured → suites SKIP with a clear warning
+  (`local Supabase unavailable — integration suites skipped`), never a
+  misleading failed run.
+
+Prerequisite for a full local run: `npm run db:reset-local` (above) and a
+`.env` with the real local keys.
+
 ## Migrations
 
-13 migrations in `supabase/migrations/` (ordered, repeatable on any environment):
+14 migrations in `supabase/migrations/` (ordered, repeatable on any environment):
 
 1. `0001`–`0008` — schema: clinics, profiles, staff_roles, patients, specialties,
    services, doctors, doctor_services, working hours, time blocks, appointments,
@@ -27,6 +49,8 @@ npx supabase start
    constraint + storage buckets (voice notes).
 4. `0013` — grants for `service_role` and `authenticated` (required — without it
    every API call fails with `permission denied`).
+5. `0014` — release-blocker hardening: booking RPCs are `service_role`-only,
+   `notification_jobs.in_progress` + atomic claim RPC, atomic webhook claim RPC.
 
 Regenerate TypeScript types after schema changes:
 

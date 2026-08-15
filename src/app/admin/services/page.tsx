@@ -75,27 +75,27 @@ export default function ServicesPage() {
       {error && <AError message={error} />}
 
       {rows === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-slate-200" /></Card>
+        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
       ) : rows.length === 0 ? (
         <Card><AEmpty title="Xizmatlar yo‘q" subtitle="Birinchi xizmatni qo‘shing" /></Card>
       ) : (
         <ATable headers={["Nomi", "Yo‘nalish", "Davomiylik", "Narx", "Shifokorlar", "Holat", "Amallar"]}>
           {rows.map((s) => (
-            <tr key={s.id} className="hover:bg-slate-50">
+            <tr key={s.id} className="hover:bg-sand">
               <td className="px-4 py-3">
-                <p className="font-medium text-slate-900">{s.name}</p>
-                {s.description && <p className="max-w-xs truncate text-xs text-slate-400">{s.description}</p>}
+                <p className="font-medium text-foreground">{s.name}</p>
+                {s.description && <p className="max-w-xs truncate text-xs text-ink-muted">{s.description}</p>}
               </td>
-              <td className="px-4 py-3 text-slate-800">{s.specialties?.name ?? "—"}</td>
-              <td className="px-4 py-3 text-slate-800">{s.duration_minutes} daq.</td>
-              <td className="px-4 py-3 font-semibold text-slate-900">{formatPrice(s.price)}</td>
+              <td className="px-4 py-3 text-foreground">{s.specialties?.name ?? "—"}</td>
+              <td className="px-4 py-3 text-foreground">{s.duration_minutes} daq.</td>
+              <td className="px-4 py-3 font-semibold text-foreground">{formatPrice(s.price)}</td>
               <td className="px-4 py-3">
                 <div className="flex max-w-44 flex-wrap gap-1">
                   {(s.doctor_services ?? []).length === 0 ? (
-                    <span className="text-xs text-slate-300">Yo‘q</span>
+                    <span className="text-xs text-ink-muted/70">Yo‘q</span>
                   ) : (
                     s.doctor_services!.map((ds) => (
-                      <span key={ds.doctors.id} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                      <span key={ds.doctors.id} className="rounded-full bg-sand px-2 py-0.5 text-xs text-ink-muted">
                         {ds.doctors.name}
                       </span>
                     ))
@@ -195,9 +195,9 @@ function ServiceModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-foreground/50 p-4" onClick={onClose}>
       <Card className="pointer-events-auto mt-10 w-full max-w-lg">
-        <p className="mb-4 text-lg font-bold text-slate-900">{isEdit ? "Xizmatni boshqarish" : "Yangi xizmat"}</p>
+        <p className="mb-4 text-lg font-bold text-foreground">{isEdit ? "Xizmatni boshqarish" : "Yangi xizmat"}</p>
         <div className="flex flex-col gap-3">
           <AInput value={name} onChange={setName} placeholder="Xizmat nomi" aria-label="Nomi" />
           {!isEdit && (
@@ -211,21 +211,21 @@ function ServiceModal({
           <ATextArea value={description} onChange={setDescription} placeholder="Tavsif" />
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <p className="mb-1 text-xs text-slate-500">Davomiylik (daq.)</p>
+              <p className="mb-1 text-xs text-ink-muted">Davomiylik (daq.)</p>
               <AInput value={duration} onChange={setDuration} type="number" aria-label="Davomiylik" />
             </div>
             <div>
-              <p className="mb-1 text-xs text-slate-500">Narx (so‘m)</p>
+              <p className="mb-1 text-xs text-ink-muted">Narx (so‘m)</p>
               <AInput value={price} onChange={setPrice} type="number" aria-label="Narx" />
             </div>
           </div>
           <ATextArea value={preparation} onChange={setPreparation} placeholder="Tayyorgarlik (bemorga ko‘rsatiladi)" rows={2} />
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 accent-emerald-600" />
+          <label className="flex items-center gap-2 text-sm text-ink-muted">
+            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 accent-pine" />
             Faol
           </label>
-          <div className="rounded-lg border border-slate-200 p-3">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Qaysi shifokorlar bajaradi</p>
+          <div className="rounded-lg border border-hairline p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Qaysi shifokorlar bajaradi</p>
             <div className="flex flex-wrap gap-2">
               {doctors.map((d) => (
                 <button
@@ -233,13 +233,13 @@ function ServiceModal({
                   type="button"
                   onClick={() => toggleDoctor(d.id)}
                   className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                    doctorIds.includes(d.id) ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    doctorIds.includes(d.id) ? "bg-pine text-white" : "bg-sand text-ink-muted hover:bg-hairline"
                   }`}
                 >
                   {d.name}
                 </button>
               ))}
-              {doctors.length === 0 && <p className="text-xs text-slate-400">Avval shifokor qo‘shing</p>}
+              {doctors.length === 0 && <p className="text-xs text-ink-muted">Avval shifokor qo‘shing</p>}
             </div>
           </div>
         </div>

@@ -927,18 +927,21 @@ export type Database = {
           payload_hash: string | null
           processed_at: string
           source: string
+          status: string
         }
         Insert: {
           external_id: string
           payload_hash?: string | null
           processed_at?: string
           source: string
+          status?: string
         }
         Update: {
           external_id?: string
           payload_hash?: string | null
           processed_at?: string
           source?: string
+          status?: string
         }
         Relationships: []
       }
@@ -1206,12 +1209,53 @@ export type Database = {
         }
         Returns: Record<string, unknown>
       }
+      claim_due_notification_jobs: {
+        Args: { p_limit: number }
+        Returns: {
+          appointment_id: string | null
+          attempts: number
+          channel: string
+          clinic_id: string
+          conversation_id: string | null
+          created_at: string
+          error: string | null
+          id: string
+          idempotency_key: string
+          max_attempts: number
+          patient_telegram_user_id: number | null
+          recipient_type: string
+          scheduled_for: string
+          sent_at: string | null
+          status: Database["public"]["Enums"]["notification_job_status"]
+          telegram_message_id: number | null
+          type: Database["public"]["Enums"]["notification_job_type"]
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "notification_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_webhook_update: {
+        Args: { p_external_id: string; p_source: string }
+        Returns: boolean
+      }
+      finish_webhook_update: {
+        Args: { p_external_id: string; p_source: string }
+        Returns: undefined
+      }
       is_clinic_staff: {
         Args: {
           p_clinic_id: string
           p_roles?: Database["public"]["Enums"]["staff_role"][]
         }
         Returns: boolean
+      }
+      release_webhook_update: {
+        Args: { p_external_id: string; p_source: string }
+        Returns: undefined
       }
       reschedule_appointment: {
         Args: {
@@ -1243,6 +1287,7 @@ export type Database = {
       message_type: "text" | "voice" | "button" | "callback" | "system"
       notification_job_status:
         | "pending"
+        | "in_progress"
         | "sent"
         | "failed"
         | "skipped"
@@ -1417,6 +1462,7 @@ export const Constants = {
       message_type: ["text", "voice", "button", "callback", "system"],
       notification_job_status: [
         "pending",
+        "in_progress",
         "sent",
         "failed",
         "skipped",

@@ -78,19 +78,19 @@ export default function DoctorSchedulePage() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
-            <p className="mb-3 text-sm font-bold text-slate-900">Haftalik ish jadvali</p>
+            <p className="mb-3 text-sm font-bold text-foreground">Haftalik ish jadvali</p>
             {hours === null ? (
-              <div className="h-2 w-full animate-pulse rounded bg-slate-200" />
+              <div className="h-2 w-full animate-pulse rounded bg-hairline" />
             ) : hours.length === 0 ? (
-              <p className="py-4 text-sm text-slate-400">Jadval o‘rnatilmagan — admin panel sozlaydi.</p>
+              <p className="py-4 text-sm text-ink-muted">Jadval o‘rnatilmagan — admin panel sozlaydi.</p>
             ) : (
               <div className="space-y-1.5">
                 {WEEKDAYS.map((dayName, idx) => {
                   const slot = hours.find((h) => h.weekday === idx + 1);
                   return (
-                    <div key={idx + 1} className="flex items-center justify-between border-b border-slate-50 pb-1.5 text-sm">
-                      <span className="text-slate-700">{dayName}</span>
-                      <span className="font-medium text-slate-900">
+                    <div key={idx + 1} className="flex items-center justify-between border-b border-hairline pb-1.5 text-sm">
+                      <span className="text-ink-muted">{dayName}</span>
+                      <span className="font-medium text-foreground">
                         {slot ? `${slot.start_time} — ${slot.end_time}` : "Ishlamaydi"}
                       </span>
                     </div>
@@ -101,14 +101,14 @@ export default function DoctorSchedulePage() {
           </Card>
 
           <Card className="flex flex-col gap-3">
-            <p className="text-sm font-bold text-slate-900">Tanaffus / bo‘sh vaqt qo‘shish</p>
+            <p className="text-sm font-bold text-foreground">Tanaffus / bo‘sh vaqt qo‘shish</p>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <p className="mb-1 text-xs text-slate-500">Boshlanishi</p>
+                <p className="mb-1 text-xs text-ink-muted">Boshlanishi</p>
                 <AInput value={start} onChange={setStart} type="datetime-local" aria-label="Boshlanishi" />
               </div>
               <div>
-                <p className="mb-1 text-xs text-slate-500">Tugashi</p>
+                <p className="mb-1 text-xs text-ink-muted">Tugashi</p>
                 <AInput value={end} onChange={setEnd} type="datetime-local" aria-label="Tugashi" />
               </div>
             </div>
@@ -117,14 +117,14 @@ export default function DoctorSchedulePage() {
             </div>
             <div className="mt-2">
               {blocks === null ? (
-                <div className="h-2 w-full animate-pulse rounded bg-slate-200" />
+                <div className="h-2 w-full animate-pulse rounded bg-hairline" />
               ) : blocks.length === 0 ? (
-                <p className="py-2 text-sm text-slate-400">Tanaffuslar yo‘q</p>
+                <p className="py-2 text-sm text-ink-muted">Tanaffuslar yo‘q</p>
               ) : (
                 <ATable headers={["Vaqt", "Sabab", ""]}>
                   {blocks.map((b) => (
                     <tr key={b.id}>
-                      <td className="px-3 py-2 text-sm text-slate-800">{formatDateTime(b.starts_at)} — {formatDateTime(b.ends_at)}</td>
+                      <td className="px-3 py-2 text-sm text-foreground">{formatDateTime(b.starts_at)} — {formatDateTime(b.ends_at)}</td>
                       <td className="px-3 py-2"><ABadge tone={b.reason === "absence" ? "amber" : "blue"}>{b.reason === "absence" ? "Ishda yo‘q" : "Tanaffus"}</ABadge></td>
                       <td className="px-3 py-2"><AButton size="sm" variant="ghost" onClick={() => void deleteBlock(b.id)}>O‘chirish</AButton></td>
                     </tr>

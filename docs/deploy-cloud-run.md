@@ -29,12 +29,12 @@ gcloud services enable run.googleapis.com \
 gcloud artifacts repositories create health-ai \
   --repository-format=docker --location=us-central1
 
-# Secrets (real values from your providers)
+# Secrets (real values from your providers). NEXT_PUBLIC_* are NOT here:
+# they are public build-time values passed as substitutions (see §2).
 SECRETS=(SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY \
-         NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY \
          TELEGRAM_BOT_TOKEN TELEGRAM_WEBHOOK_SECRET \
          AI_BASE_URL AI_API_KEY AI_MODEL \
-         WEBHOOK_SECRET CRON_SECRET)
+         CRON_SECRET)
 for s in "${SECRETS[@]}"; do
   printf '%s' "${!s}" | gcloud secrets create "$s" --data-file=- --replication-policy=automatic
 done
@@ -42,16 +42,31 @@ done
 
 Notes:
 
-- `WEBHOOK_SECRET` and `CRON_SECRET` must be long random strings
+- `TELEGRAM_WEBHOOK_SECRET` and `CRON_SECRET` must be long random strings
   (`openssl rand -hex 32`).
+- There is no `WEBHOOK_SECRET` secret — the webhook secret is
+  `TELEGRAM_WEBHOOK_SECRET` (the app validates it at startup and the webhook
+  rejects requests without the matching `X-Telegram-Bot-Api-Secret-Token`).
 - If you have an existing secrets file you can create them with
   `gcloud secrets versions add <name> --data-file=-`.
 
 ## 2. Deploy (first time)
 
 ```bash
-gcloud builds submit --config=cloudbuild.yaml --substitutions=_REGION=us-central1,_PUBLIC_URL=https://health.example.com
+gcloud builds submit --config=cloudbuild.yaml \
+  --substitutions=_REGION=us-central1,\
+_PUBLIC_SUPABASE_URL=https://YOURPROJECT.supabase.co,\
+_PUBLIC_SUPABASE_ANON_KEY=your-anon-key,\
+_PUBLIC_URL=https://health.example.com
 ```
+
+`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` and
+`NEXT_PUBLIC_APP_URL` are inlined into the client **and** server bundles at
+**build time** (Next.js `NEXT_PUBLIC_*` semantics — runtime env vars do NOT
+override them), so they are passed to the Docker build as `--build-arg` (see
+`cloudbuild.yaml`). Changing one of them requires a rebuild + redeploy. The
+Supabase anon key is public by design; the service-role key is never baked
+into the image.
 
 This builds the Docker image, pushes it, and deploys `health-ai` with the secrets wired
 as env vars. Verify:
@@ -64,14 +79,25 @@ curl -s https://<url>/api/health
 
 ## 3. HTTPS + domain
 
-```bash
-# Static IP + LB (or use Cloud Run domain mapping for the managed <run.app> domain)
-gcloud run domain-mappings create --service health-ai --region=us-central1 \
-  --domain health.example.com   # follow the printed DNS verification
+Production uses the external HTTPS load balancer with a custom domain —
+Cloud Run's preview `domain-mappings` (run.app subdomains) are NOT
+recommended for this service because the Telegram webhook and Mini App need
+a stable, branded HTTPS origin.
 
-# If using a load balancer: create forwarding rules with a Google-managed cert;
-# the app serves the health check on /api/health.
+```bash
+# External HTTPS LB (global): static IP, URL map, backend NEG, Google-managed cert.
+gcloud compute addresses create health-ai-ip --global
+# Create a backend service pointing at the Cloud Run NEG, then:
+gcloud compute url-maps create health-ai-url-map --default-service=health-ai-backend
+gcloud compute ssl-certificates create health-ai-cert --domains=health.example.com
+gcloud compute target-https-proxies create health-ai-proxy --url-map=health-ai-url-map --ssl-certificates=health-ai-cert
+gcloud compute forwarding-rules create health-ai-fr --global --target-https-proxy=health-ai-proxy --address=health-ai-ip --ports=443
 ```
+
+Point an A record for `health.example.com` at the static IP. Until the
+custom domain is live you can still pilot on the service's default
+`https://<service>-<hash>-uc.a.run.app` URL (HTTPS included), but the
+webhook and Mini App should be pointed at the LB URL before going live.
 
 Set `NEXT_PUBLIC_APP_URL=https://health.example.com` (a substitution
 `_PUBLIC_URL`) and redeploy.
@@ -101,7 +127,10 @@ See `cloudbuild-trigger.yaml`:
 gcloud beta builds triggers create github \
   --repo-owner=ORG --repo-name=REPO \
   --branch-pattern="^main$" --build-config=cloudbuild.yaml \
-  --substitutions=_REGION=us-central1,_PUBLIC_URL=https://health.example.com
+  --substitutions=_REGION=us-central1,\
+_PUBLIC_SUPABASE_URL=https://YOURPROJECT.supabase.co,\
+_PUBLIC_SUPABASE_ANON_KEY=your-anon-key,\
+_PUBLIC_URL=https://health.example.com
 ```
 
 ## Scaling & settings

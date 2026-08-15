@@ -16,8 +16,8 @@ payment provider) — see [docs/go-live-checklist.md](docs/go-live-checklist.md)
 | Admin panel | `/admin` — today, appointments, calendar, conversations, doctors, services, specialties, FAQs, analytics, settings |
 | Doctor panel | `/doctor` — queue (checked-in → in-progress → completed), schedule + self-service breaks |
 | Backend | booking engine (no double-booking), payment status machine, notifications queue, OpenAI-compatible AI, Telegram webhook |
-| Database | 13 migrations: schema, RLS policies, functions/triggers, grants; seed data for demo clinic |
-| Tests | 39 tests (32 unit + 7 integration against local Supabase) |
+| Database | 14 migrations: schema, RLS policies, functions/triggers, grants, release-blocker hardening; seed data for demo clinic |
+| Tests | unit + integration against local Supabase (integration suites skip cleanly when the local stack is unavailable) |
 
 ## Stack
 
@@ -33,8 +33,10 @@ payment provider) — see [docs/go-live-checklist.md](docs/go-live-checklist.md)
 Requirements: Node 26+, Docker (local Supabase stack).
 
 ```bash
-# 1. Start local Supabase (first run: creates project, applies migrations + seed)
+# 1. Start local Supabase; `db reset` applies ALL migrations + seed in one
+#    clean-state command (required before integration tests after migration changes)
 npx supabase start
+npm run db:reset-local   # npx supabase db reset --local
 
 # 2. Configure environment
 cp .env.example .env
@@ -48,11 +50,14 @@ npm run dev          # http://localhost:3000
 Useful scripts:
 
 ```bash
-npm run typecheck    # tsc --noEmit
-npm run lint         # eslint
-npm test             # vitest (integration tests run when .env has real local keys)
-npm run create-owner # create the first owner account + clinic (see supabase-setup.md)
-npm run build        # production build (standalone)
+npm run typecheck      # tsc --noEmit
+npm run lint           # eslint
+npm test               # vitest — DB integration suites probe the local stack and
+                       # SKIP with a clear warning when it is unavailable (never a
+                       # misleading failure from a half-configured database)
+npm run db:reset-local # clean local DB: migrations + seed, one command
+npm run create-owner   # create the first owner account + clinic (see supabase-setup.md)
+npm run build          # production build (standalone)
 ```
 
 Telegram integration needs a real bot (set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_URL`);

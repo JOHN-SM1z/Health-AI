@@ -27,8 +27,9 @@
 - All secrets live in environment variables; locally in `.env` (gitignored), in production in
   Secret Manager, referenced from Cloud Run with `--set-secrets`.
 - `.env.example` / `.env.test.example` are the only committed env files, with placeholders.
-- `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, `AI_API_KEY`, `WEBHOOK_SECRET`,
-  `CRON_SECRET` must never be committed or exposed to the browser.
+- `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, `AI_API_KEY`,
+  `TELEGRAM_WEBHOOK_SECRET`, `CRON_SECRET` must never be committed or
+  exposed to the browser.
 - Service role key is only available server-side; browser builds receive only the anon key.
 
 ## API hardening

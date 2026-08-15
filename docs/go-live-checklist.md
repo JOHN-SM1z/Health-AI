@@ -21,9 +21,9 @@ Server-side (`src/lib/env.ts` validates):
 
 | Var | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `NEXT_PUBLIC_APP_URL` | yes | http://localhost:3000 | public base URL |
-| `NEXT_PUBLIC_SUPABASE_URL` | yes | – | browser client |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | – | browser client (public) |
+| `NEXT_PUBLIC_APP_URL` | yes | http://localhost:3000 | public base URL; build-time (substitution, not Secret Manager) |
+| `NEXT_PUBLIC_SUPABASE_URL` | yes | – | browser client; build-time (substitution) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | – | browser client (public); build-time (substitution) |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | – | server only |
 | `TELEGRAM_BOT_TOKEN` | yes* | – | *required for bot to answer |
 | `TELEGRAM_WEBHOOK_SECRET` | yes* | – | *required for webhook |
@@ -41,7 +41,8 @@ Server-side (`src/lib/env.ts` validates):
 ## 3. Bootstrap order
 
 1. Apply migrations + seed to the production Supabase project (supabase-setup.md).
-2. Create secrets in Secret Manager (deploy-cloud-run.md §1).
+2. Create secrets in Secret Manager (deploy-cloud-run.md §1) and configure the
+   public build-time substitutions (`_PUBLIC_SUPABASE_URL`, `_PUBLIC_SUPABASE_ANON_KEY`, `_PUBLIC_URL`).
 3. Deploy Cloud Run (§2); verify `/api/health`.
 4. HTTPS + DNS (§3); register Telegram webhook (§4); Cloud Scheduler (§5).
 5. `npm run create-owner` with `OWNER_EMAIL`/`OWNER_PASSWORD` in `.env` (production-safe;
@@ -61,4 +62,8 @@ scheduler running, rollback rehearsed, and at least one real end-to-end booking
 - Watch Cloud Logging error rates daily.
 - Verify notifications arrive on time (check a reminder with a test booking).
 - Confirm no double-bookings occur under real concurrency.
-- Keep `PAYMENT_PROVIDER=manual` until the Click/PayMe adapter is validated.
+- Keep `PAYMENT_PROVIDER=manual` until the Click/PayMe adapter is validated —
+  selecting `click`/`payme` now fails at startup by design (payment-provider.md).
+- Watch for startup crashes caused by the fail-closed checks
+  (`src/instrumentation.ts`): `CRON_SECRET` must be set and not the default,
+  and `TELEGRAM_WEBHOOK_SECRET` must exist whenever the bot token is set.

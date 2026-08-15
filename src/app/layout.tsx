@@ -1,9 +1,11 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Sora, JetBrains_Mono } from "next/font/google";
 import { TelegramProvider } from "@/components/mini-app/telegram-provider";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin", "cyrillic"] });
+const inter = Inter({ subsets: ["latin", "cyrillic"], variable: "--font-inter" });
+const sora = Sora({ subsets: ["latin"], variable: "--font-sora", display: "swap" });
+const jetbrains = JetBrains_Mono({ subsets: ["latin", "cyrillic"], variable: "--font-jetbrains", display: "swap" });
 
 export const metadata: Metadata = {
   title: {
@@ -18,15 +20,17 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
-  themeColor: "#ffffff",
+  themeColor: "#f7f5f0",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="uz" suppressHydrationWarning>
-      <body className={`${inter.className} bg-[var(--tg-bg,#f8fafc)] text-[var(--tg-text,#0f172a)] antialiased`}>
+      <body
+        className={`${inter.variable} ${sora.variable} ${jetbrains.variable} bg-[var(--tg-bg,var(--background))] text-[var(--tg-text,var(--foreground))] antialiased`}
+      >
         <TelegramProvider>
-          <main className="mx-auto min-h-dvh w-full max-w-md px-4 pb-10 pt-4">{children}</main>
+          <main className="min-h-dvh">{children}</main>
         </TelegramProvider>
       </body>
     </html>

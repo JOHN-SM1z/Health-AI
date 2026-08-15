@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, StatCard } from "@/components/admin/ui";
 import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
 
 type Row = {
@@ -78,16 +78,16 @@ export default function TodayPage() {
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
         <StatCard label="Jami" value={counts.today} />
-        <StatCard label="Kutilmoqda" value={counts.pending} tone="amber" />
-        <StatCard label="Tasdiqlangan" value={counts.confirmed} tone="blue" />
-        <StatCard label="Yakunlangan" value={counts.completed} tone="green" />
+        <StatCard label="Kutilmoqda" value={counts.pending} tone="clay" />
+        <StatCard label="Tasdiqlangan" value={counts.confirmed} tone="info" />
+        <StatCard label="Yakunlangan" value={counts.completed} tone="pine" />
         <StatCard label="Tushum (to‘langan)" value={`${counts.revenue.toLocaleString("uz-UZ")} so‘m`} />
       </div>
 
       {rows === null ? (
         <Card>
-          <div className="h-2 w-full animate-pulse rounded bg-slate-200" />
-          <div className="mt-2 h-2 w-3/4 animate-pulse rounded bg-slate-100" />
+          <div className="h-2 w-full animate-pulse rounded bg-hairline" />
+          <div className="mt-2 h-2 w-3/4 animate-pulse rounded bg-sand" />
         </Card>
       ) : rows.length === 0 ? (
         <Card>
@@ -96,17 +96,17 @@ export default function TodayPage() {
       ) : (
         <ATable headers={["Vaqt", "Bemor", "Xizmat", "Shifokor", "Manba", "Holat", "To‘lov", "Amallar"]}>
           {rows.map((r) => (
-            <tr key={r.id} className="hover:bg-slate-50">
-              <td className="px-4 py-3 font-semibold text-slate-900">{formatTime(r.start_at)}</td>
+            <tr key={r.id} className="hover:bg-sand">
+              <td className="px-4 py-3 font-semibold text-foreground">{formatTime(r.start_at)}</td>
               <td className="px-4 py-3">
-                <p className="font-medium text-slate-900">{r.patients?.full_name ?? "—"}</p>
-                {r.patients?.phone && <p className="text-xs text-slate-400">{r.patients.phone}</p>}
+                <p className="font-medium text-foreground">{r.patients?.full_name ?? "—"}</p>
+                {r.patients?.phone && <p className="text-xs text-ink-muted">{r.patients.phone}</p>}
               </td>
               <td className="px-4 py-3">
-                <p className="text-slate-800">{r.services?.name ?? "—"}</p>
-                <p className="text-xs text-slate-400">{formatPrice(r.services?.price)}</p>
+                <p className="text-foreground">{r.services?.name ?? "—"}</p>
+                <p className="text-xs text-ink-muted">{formatPrice(r.services?.price)}</p>
               </td>
-              <td className="px-4 py-3 text-slate-800">{r.doctors?.name ?? "—"}</td>
+              <td className="px-4 py-3 text-foreground">{r.doctors?.name ?? "—"}</td>
               <td className="px-4 py-3"><ABadge tone="gray">{SOURCE_LABELS[r.source] ?? r.source}</ABadge></td>
               <td className="px-4 py-3"><ABadge tone={STATUS_TONES[r.status]}>{STATUS_LABELS[r.status]}</ABadge></td>
               <td className="px-4 py-3">
@@ -132,7 +132,7 @@ export default function TodayPage() {
                     </AButton>
                   )}
                   {!["cancelled", "no_show", "completed"].includes(r.status) && (
-                    <Link href={`/admin/appointments?id=${r.id}`} className="inline-flex items-center rounded-lg px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
+                    <Link href={`/admin/appointments?id=${r.id}`} className="inline-flex items-center rounded-lg px-2.5 py-1.5 text-xs font-medium text-pine-deep hover:bg-pine-tint">
                       Boshqarish
                     </Link>
                   )}
@@ -143,19 +143,5 @@ export default function TodayPage() {
         </ATable>
       )}
     </div>
-  );
-}
-
-function StatCard({ label, value, tone }: { label: string; value: number | string; tone?: "amber" | "blue" | "green" }) {
-  const tones = {
-    amber: "text-amber-700",
-    blue: "text-blue-700",
-    green: "text-green-700",
-  };
-  return (
-    <Card className="p-4">
-      <p className="text-xs uppercase tracking-wide text-slate-400">{label}</p>
-      <p className={`mt-1 text-lg font-bold ${tone ? tones[tone] : "text-slate-900"}`}>{value}</p>
-    </Card>
   );
 }

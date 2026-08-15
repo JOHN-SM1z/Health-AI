@@ -91,7 +91,7 @@ export default function AppointmentsPage() {
       </div>
 
       {rows === null ? (
-        <Card><div className="h-2 w-full animate-pulse rounded bg-slate-200" /></Card>
+        <Card><div className="h-2 w-full animate-pulse rounded bg-hairline" /></Card>
       ) : (filtered?.length ?? 0) === 0 ? (
         <Card><AEmpty title="Topilmadi" subtitle="Filtr yoki qidiruv so‘zini o‘zgartiring" /></Card>
       ) : (
@@ -121,17 +121,17 @@ function AppointmentRow({ row, onChanged, onError }: { row: Row; onChanged: () =
   };
 
   return (
-    <tr className="hover:bg-slate-50">
-      <td className="px-4 py-3 font-semibold text-slate-900">{formatDateTime(row.start_at)}</td>
+    <tr className="hover:bg-sand">
+      <td className="px-4 py-3 font-semibold text-foreground">{formatDateTime(row.start_at)}</td>
       <td className="px-4 py-3">
-        <p className="font-medium text-slate-900">{row.patients?.full_name ?? "—"}</p>
-        {row.patients?.phone && <p className="text-xs text-slate-400">{row.patients.phone}</p>}
+        <p className="font-medium text-foreground">{row.patients?.full_name ?? "—"}</p>
+        {row.patients?.phone && <p className="text-xs text-ink-muted">{row.patients.phone}</p>}
       </td>
       <td className="px-4 py-3">
-        <p className="text-slate-800">{row.services?.name ?? "—"}</p>
-        <p className="text-xs text-slate-400">{formatPrice(row.services?.price)}</p>
+        <p className="text-foreground">{row.services?.name ?? "—"}</p>
+        <p className="text-xs text-ink-muted">{formatPrice(row.services?.price)}</p>
       </td>
-      <td className="px-4 py-3 text-slate-800">{row.doctors?.name ?? "—"}</td>
+      <td className="px-4 py-3 text-foreground">{row.doctors?.name ?? "—"}</td>
       <td className="px-4 py-3"><ABadge tone="gray">{SOURCE_LABELS[row.source] ?? row.source}</ABadge></td>
       <td className="px-4 py-3"><ABadge tone={STATUS_TONES[row.status]}>{STATUS_LABELS[row.status]}</ABadge></td>
       <td className="px-4 py-3">

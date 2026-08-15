@@ -44,12 +44,25 @@ if (!parsed.success) {
   throw new Error("Invalid environment configuration. See logs for details.");
 }
 
-export const env = parsed.data;
-
 /** True when running `next build` / static generation (env may be incomplete). */
 export const isBuildTime = process.env.NEXT_PHASE === "phase-production-build";
 
 export const isProduction = process.env.NODE_ENV === "production";
+
+// Payment truthfulness: `manual` is the only production-usable mode until a
+// Click/PayMe adapter with merchant credentials exists. Selecting a real
+// provider must fail at configuration/startup time — never silently, and
+// never only when a patient tries to pay.
+if (!isBuildTime && parsed.data.PAYMENT_PROVIDER !== "manual") {
+  logger.error("unsupported payment provider", { provider: parsed.data.PAYMENT_PROVIDER });
+  throw new Error(
+    `PAYMENT_PROVIDER=${parsed.data.PAYMENT_PROVIDER} is not implemented. ` +
+      `Click/PayMe require merchant credentials and a verified adapter (payment-provider.md). ` +
+      `Keep PAYMENT_PROVIDER=manual until then.`,
+  );
+}
+
+export const env = parsed.data;
 
 /** Telegram dev mode is allowed ONLY outside production and MUST be explicit. */
 export const telegramDevModeEnabled = () =>

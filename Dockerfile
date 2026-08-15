@@ -23,6 +23,15 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Do not bake real secrets; Cloud Run injects them via Secret Manager.
 ARG NODE_ENV=production
 ENV NODE_ENV=$NODE_ENV
+# NEXT_PUBLIC_* values are inlined into the client bundle at build time, so
+# they must be passed via --build-arg (see cloudbuild.yaml). They are public
+# values (Supabase project URL + anon key, app URL), not secrets.
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_APP_URL
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
+    NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 
 RUN npm run build
 

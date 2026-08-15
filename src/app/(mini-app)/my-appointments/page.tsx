@@ -89,7 +89,7 @@ function MyAppointmentsInner() {
     <div className="flex flex-col gap-3">
       <SectionTitle>Mening qabullarim</SectionTitle>
       {data.appointments.length === 0 && (
-        <Card className="text-center text-sm text-[var(--tg-hint,#64748b)]">
+        <Card className="text-center text-sm text-[var(--tg-hint,#8a9699)]">
           Hozircha qabullar yo‘q.{" "}
           <a href="/book" className="underline">
             Yozilish
@@ -103,13 +103,13 @@ function MyAppointmentsInner() {
           <Card key={a.id}>
             <div className="mb-2 flex items-center justify-between">
               <Badge tone={st.tone}>{st.label}</Badge>
-              <span className="text-xs text-[var(--tg-hint,#64748b)]">
+              <span className="text-xs text-[var(--tg-hint,#8a9699)]">
                 {start.toLocaleDateString("uz-UZ", { day: "numeric", month: "long" })},{" "}
                 {start.toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit" })}
               </span>
             </div>
-            <p className="text-sm font-medium text-[var(--tg-text,#0f172a)]">{a.doctors?.name ?? "Shifokor"}</p>
-            <p className="text-xs text-[var(--tg-hint,#64748b)]">{a.services?.name}</p>
+            <p className="text-sm font-medium text-[var(--tg-text,var(--foreground))]">{a.doctors?.name ?? "Shifokor"}</p>
+            <p className="text-xs text-[var(--tg-hint,#8a9699)]">{a.services?.name}</p>
             {a.payments && (
               <p className="mt-2 text-xs">
                 <Badge tone={a.payments.status === "paid" ? "green" : a.payments.status === "cancelled" ? "red" : "amber"}>
