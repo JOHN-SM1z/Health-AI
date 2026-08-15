@@ -1,9 +1,18 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { env } from "@/lib/env";
 import { claimWebhookProcessing, finishWebhookProcessing, releaseWebhookProcessing } from "@/lib/telegram/idempotency";
 import { rateLimit, keyFromIp } from "@/lib/rate-limit";
 import { logger } from "@/lib/logger";
+
+function timingSafeCheck(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
 import {
   handleTelegramMessage,
   handleTelegramCommand,
@@ -48,7 +57,7 @@ export async function POST(request: NextRequest) {
   // 1. Reject anything without the secret token. Telegram is the only
   //    legitimate caller and it always sends X-Telegram-Bot-Api-Secret-Token.
   const secret = request.headers.get("x-telegram-bot-api-secret-token");
-  if (!env.TELEGRAM_WEBHOOK_SECRET || secret !== env.TELEGRAM_WEBHOOK_SECRET) {
+  if (!timingSafeCheck(secret, env.TELEGRAM_WEBHOOK_SECRET)) {
     logger.warn("telegram webhook rejected: missing/invalid secret token", { ip });
     return new NextResponse("Unauthorized", { status: 401 });
   }

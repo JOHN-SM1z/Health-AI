@@ -97,12 +97,38 @@ export async function enqueueBookingNotifications(opts: {
   }
 }
 
+/** Cancels all pending reminder jobs for a cancelled/rescheduled appointment. */
+export async function cancelPendingAppointmentReminders(opts: {
+  clinicId: string;
+  appointmentId: string;
+}): Promise<void> {
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("notification_jobs")
+    .update({ status: "cancelled", error: "appointment cancelled or rescheduled" })
+    .eq("clinic_id", opts.clinicId)
+    .eq("appointment_id", opts.appointmentId)
+    .in("type", ["reminder_24h", "reminder_2h"])
+    .in("status", ["pending", "in_progress"]);
+
+  if (error) {
+    logger.error("failed to cancel pending appointment reminders", {
+      appointmentId: opts.appointmentId,
+      error: error.message,
+    });
+  }
+}
+
 export async function enqueueCancellationNotification(opts: {
   clinicId: string;
   appointmentId: string;
   patientTelegramUserId: number;
 }) {
   const { clinicId, appointmentId, patientTelegramUserId } = opts;
+
+  // Cancel any upcoming reminders first so the patient isn't alerted for a dead slot.
+  await cancelPendingAppointmentReminders({ clinicId, appointmentId });
+
   await enqueueNotificationJob({
     clinicId,
     type: "cancellation",
@@ -117,14 +143,46 @@ export async function enqueueRescheduleNotification(opts: {
   clinicId: string;
   appointmentId: string;
   patientTelegramUserId: number;
+  newStartAt?: Date;
 }) {
-  const { clinicId, appointmentId, patientTelegramUserId } = opts;
+  const { clinicId, appointmentId, patientTelegramUserId, newStartAt } = opts;
+
+  // Cancel old reminders first.
+  await cancelPendingAppointmentReminders({ clinicId, appointmentId });
+
   await enqueueNotificationJob({
     clinicId,
     type: "reschedule",
     appointmentId,
     patientTelegramUserId,
     scheduledFor: new Date(),
-    idempotencyKey: `reschedule:${appointmentId}`,
+    idempotencyKey: `reschedule:${appointmentId}:${newStartAt ? newStartAt.getTime() : Date.now()}`,
   });
+
+  // Re-enqueue reminders for the new appointment time if provided.
+  if (newStartAt) {
+    const reminder24 = new Date(newStartAt.getTime() - 24 * 60 * 60 * 1000);
+    if (reminder24.getTime() > Date.now()) {
+      await enqueueNotificationJob({
+        clinicId,
+        type: "reminder_24h",
+        appointmentId,
+        patientTelegramUserId,
+        scheduledFor: reminder24,
+        idempotencyKey: `rem24:${appointmentId}:${newStartAt.getTime()}`,
+      });
+    }
+
+    const reminder2 = new Date(newStartAt.getTime() - 2 * 60 * 60 * 1000);
+    if (reminder2.getTime() > Date.now()) {
+      await enqueueNotificationJob({
+        clinicId,
+        type: "reminder_2h",
+        appointmentId,
+        patientTelegramUserId,
+        scheduledFor: reminder2,
+        idempotencyKey: `rem2:${appointmentId}:${newStartAt.getTime()}`,
+      });
+    }
+  }
 }

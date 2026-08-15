@@ -44,6 +44,7 @@ type AppointmentContext = {
   doctorName: string;
   serviceName: string;
   startAt: string;
+  status: Database["public"]["Enums"]["appointment_status"];
   amount: number;
   currency: string;
 };
@@ -55,7 +56,7 @@ function formatPrice(amount: number, currency: string): string {
 async function loadAppointmentContext(supabase: ReturnType<typeof createAdminClient>, appointmentId: string) {
   const { data } = await supabase
     .from("appointments")
-    .select("start_at, doctors!inner(name), services!inner(name), payments!inner(amount, currency)")
+    .select("start_at, status, doctors!inner(name), services!inner(name), payments!inner(amount, currency)")
     .eq("id", appointmentId)
     .maybeSingle();
   if (!data) return null;
@@ -63,6 +64,7 @@ async function loadAppointmentContext(supabase: ReturnType<typeof createAdminCli
     doctorName: data.doctors?.name ?? "Shifokor",
     serviceName: data.services?.name ?? "Xizmat",
     startAt: data.start_at,
+    status: data.status,
     amount: data.payments?.amount ?? 0,
     currency: data.payments?.currency ?? "UZS",
   } satisfies AppointmentContext;
@@ -126,6 +128,15 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
       const ctx = await loadAppointmentContext(supabase, job.appointment_id);
       if (!ctx) {
         await markJob(jobId, "skipped", nextAttempts, "appointment gone", supabase);
+        continue;
+      }
+
+      // If the appointment was cancelled or closed, skip sending reminders.
+      if (
+        (job.type === "reminder_24h" || job.type === "reminder_2h") &&
+        ["cancelled", "no_show", "completed"].includes(ctx.status)
+      ) {
+        await markJob(jobId, "skipped", nextAttempts, `appointment is ${ctx.status}`, supabase);
         continue;
       }
       const { data: clinic } = await supabase

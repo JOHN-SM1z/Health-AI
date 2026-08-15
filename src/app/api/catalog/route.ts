@@ -74,3 +74,7 @@ export async function GET(request: NextRequest) {
     return handleApiError(e);
   }
 }
+
+export async function POST(request: NextRequest) {
+  return GET(request);
+}

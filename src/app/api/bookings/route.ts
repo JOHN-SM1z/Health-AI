@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
     if (result.error_code || !result.appointment_id) {
       if (result.error_code === "slot_taken") {
         await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "booking_slot_taken" });
-        return ok({ errorCode: "slot_taken" }, { status: 409 });
+        return fail(result.error_message ?? "Bu vaqt band qilingan", 409, "slot_taken");
       }
       throw new ApiError(
         409,

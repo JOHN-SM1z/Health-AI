@@ -34,7 +34,8 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
     }
 
     const result = await transitionPaymentStatus({
-      paymentId: id,
+      appointmentId: id,
+      clinicId: staff.clinicId,
       to: body.status,
       actorId: staff.profileId,
       actorType: "staff",

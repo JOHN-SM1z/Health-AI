@@ -4,12 +4,12 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   async headers() {
+    const telegramCsp = "frame-ancestors 'self' https://t.me https://telegram.me https://web.telegram.org https://*.telegram.org";
     return [
       {
         source: "/:path*",
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "DENY" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           {
             key: "Permissions-Policy",
@@ -22,11 +22,18 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        // Telegram Mini App iframes may embed pages; allow Telegram domains only.
-        source: "/book/:path*",
+        // Patient Mini App pages: allow embedding within official Telegram surfaces only.
+        source: "/:route((?!admin|doctor|api).*)",
         headers: [
-          { key: "X-Frame-Options", value: "SAMEORIGIN" },
-          { key: "Content-Security-Policy", value: "frame-ancestors 'self' https://t.me https://telegram.me" },
+          { key: "Content-Security-Policy", value: telegramCsp },
+        ],
+      },
+      {
+        // Staff portals & APIs: strictly prohibit framing.
+        source: "/:route(admin|doctor|api)/:path*",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
         ],
       },
     ];

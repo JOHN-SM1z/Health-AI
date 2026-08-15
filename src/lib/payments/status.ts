@@ -26,7 +26,9 @@ export function canTransition(from: PaymentStatus, to: PaymentStatus): boolean {
  * The `paid_by` profile is recorded for manual confirmations.
  */
 export async function transitionPaymentStatus(opts: {
-  paymentId: string;
+  paymentId?: string;
+  appointmentId?: string;
+  clinicId?: string;
   to: PaymentStatus;
   actorId?: string | null;
   actorType?: "staff" | "system";
@@ -35,11 +37,25 @@ export async function transitionPaymentStatus(opts: {
 }): Promise<{ ok: boolean; alreadyInState?: boolean }> {
   const supabase = createAdminClient();
 
-  const { data: payment, error: fetchError } = await supabase
+  if (!opts.paymentId && !opts.appointmentId) {
+    throw new ApiError(400, "paymentId yoki appointmentId talab qilinadi", "missing_id");
+  }
+
+  let query = supabase
     .from("payments")
-    .select("id, status, clinic_id, appointment_id, amount, currency, provider, paid_at, paid_by, provider_reference")
-    .eq("id", opts.paymentId)
-    .maybeSingle();
+    .select("id, status, clinic_id, appointment_id, amount, currency, provider, paid_at, paid_by, provider_reference");
+
+  if (opts.paymentId) {
+    query = query.eq("id", opts.paymentId);
+  } else if (opts.appointmentId) {
+    query = query.eq("appointment_id", opts.appointmentId);
+  }
+
+  if (opts.clinicId) {
+    query = query.eq("clinic_id", opts.clinicId);
+  }
+
+  const { data: payment, error: fetchError } = await query.maybeSingle();
   if (fetchError || !payment) {
     throw new ApiError(404, "To‘lov topilmadi", "payment_not_found");
   }

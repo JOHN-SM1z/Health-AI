@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { env } from "@/lib/env";
@@ -7,6 +8,14 @@ import { rateLimit, keyFromIp } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+function timingSafeCheck(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
 
 /**
  * Authenticated endpoint that processes due notification jobs.
@@ -18,7 +27,7 @@ export async function POST(request: NextRequest) {
   try {
     const auth = request.headers.get("authorization");
     const expected = `Bearer ${env.CRON_SECRET}`;
-    if (!auth || auth !== expected) {
+    if (!timingSafeCheck(auth, expected)) {
       return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
     }
 

@@ -104,6 +104,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
         clinicId: staff.clinicId,
         appointmentId: id,
         patientTelegramUserId: appointment.patients.telegram_user_id,
+        newStartAt: new Date(body.newStartAt),
       });
     }
 

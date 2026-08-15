@@ -120,16 +120,17 @@ export async function PUT(request: NextRequest, ctx: RouteContext) {
   }
 }
 
-/** Removes a time block. */
+/** Removes a time block for a doctor. */
 export async function DELETE(request: NextRequest, ctx: RouteContext) {
   try {
     const staff = await requireStaff("admin");
     const { id } = await ctx.params;
+    const blockId = request.nextUrl.searchParams.get("blockId") || id;
     const supabase = createAdminClient();
     const { error } = await supabase
       .from("doctor_time_blocks")
       .delete()
-      .eq("id", id)
+      .eq("id", blockId)
       .eq("clinic_id", staff.clinicId);
     if (error) throw new ApiError(500, "Blokni o‘chirib bo‘lmadi");
     return ok({ deleted: true });
