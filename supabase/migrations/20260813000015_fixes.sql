@@ -119,15 +119,19 @@ security definer
 set search_path = public
 as $$
 begin
-  -- Server-side code (service role) and owner/admin sessions are unrestricted.
-  if auth.role() <> 'authenticated'
+  -- Server-side code (service role, no JWT) and owner/admin sessions are
+  -- unrestricted. coalesce() matters: without JWT claims auth.role() is NULL
+  -- and `NULL <> 'authenticated'` is NULL (false), which would wrongly apply
+  -- the doctor restriction to server-side calls.
+  if coalesce(auth.role(), '') <> 'authenticated'
      or public.is_clinic_staff(new.clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role]) then
     return new;
   end if;
 
-  -- Doctor session: only the status column may change.
-  if new.status is distinct from old.status
-     or new.clinic_id is distinct from old.clinic_id
+  -- Doctor session: only the status column may change. Raise when any
+  -- non-status column changes (status itself is allowed to change).
+  -- updated_at is excluded because the set_updated_at trigger manages it.
+  if new.clinic_id is distinct from old.clinic_id
      or new.patient_id is distinct from old.patient_id
      or new.doctor_id is distinct from old.doctor_id
      or new.service_id is distinct from old.service_id
