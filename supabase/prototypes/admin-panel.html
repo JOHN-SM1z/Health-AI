@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Namuna Klinikasi — Admin</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9' fill='%23211D19'/><text x='16' y='22' font-family='Georgia,serif' font-size='18' fill='%23F6F4EF' text-anchor='middle'>N</text></svg>">
 <style>
   /* ---------- tokens ---------- */
   :root{
@@ -44,7 +45,11 @@
     -webkit-font-smoothing:antialiased;
   }
   :focus-visible{outline:none;box-shadow:var(--focus);border-radius:6px}
+  ::selection{background:var(--clay-wash);color:var(--clay-ink)}
   button{font-family:inherit;cursor:pointer}
+  .conv-list::-webkit-scrollbar,.thread-body::-webkit-scrollbar{width:8px}
+  .conv-list::-webkit-scrollbar-thumb,.thread-body::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:4px}
+  .conv-list::-webkit-scrollbar-track,.thread-body::-webkit-scrollbar-track{background:transparent}
   .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 
   /* ---------- shell ---------- */
@@ -120,7 +125,7 @@
   .strip-head{display:flex;align-items:baseline;gap:12px;margin-bottom:18px}
   .strip-head h3{font-family:var(--serif);font-size:17px;font-weight:600}
   .strip-head .date{font-size:12px;color:var(--ink-faint)}
-  .strip-head .legend{margin-left:auto;display:flex;gap:14px;font-size:11px;color:var(--ink-soft)}
+  .strip-head .legend{margin-left:auto;display:flex;gap:14px;font-size:11px;color:var(--ink-soft);flex-wrap:wrap;justify-content:flex-end}
   .legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:1px}
   .strip{position:relative;height:auto}
   .strip-hours{display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink-faint);font-family:var(--mono);margin-bottom:6px}
@@ -280,7 +285,7 @@
         <div class="date" id="today-label">—</div>
       </div>
       <div class="spacer"></div>
-      <div class="search">⌕ <input placeholder="Search patients, IDs…"></div>
+      <div class="search">⌕ <input id="global-search" placeholder="Search appointments…" autocomplete="off"></div>
       <div class="avatar">KA</div>
     </div>
 
@@ -320,21 +325,15 @@
         <div class="card">
           <div class="card-head">
             <h3>Next arrivals</h3>
-            <div class="tabs">
-              <button class="tab active">All</button>
-              <button class="tab">Waiting</button>
-              <button class="tab">Later</button>
+            <div class="tabs" id="arrivals-tabs">
+              <button class="tab active" data-arrival="all">All</button>
+              <button class="tab" data-arrival="waiting">Waiting</button>
+              <button class="tab" data-arrival="later">Later</button>
             </div>
           </div>
           <table>
             <thead><tr><th>Time</th><th>Patient</th><th>Doctor</th><th>Service</th><th>Status</th><th></th></tr></thead>
-            <tbody>
-              <tr><td class="time">10:00</td><td><div class="cell-name">Ergasheva Nilufar</div><div class="cell-sub">+998 90 123 45 67</div></td><td>Karimov A.</td><td>Terapevt qabuli</td><td><span class="badge b-checked"><i></i>Checked in</span></td><td><button class="ghost-btn">Open</button></td></tr>
-              <tr><td class="time">10:20</td><td><div class="cell-name">Mirzaev Behzod</div><div class="cell-sub">+998 91 234 56 78</div></td><td>Karimov A.</td><td>Terapevt qabuli</td><td><span class="badge b-confirmed"><i></i>Confirmed</span></td><td><button class="ghost-btn">Open</button></td></tr>
-              <tr><td class="time">10:40</td><td><div class="cell-name">Qodirova Shirin</div><div class="cell-sub">+998 93 345 67 89</div></td><td>Karimov A.</td><td>Kardiolog qabuli · 30 min</td><td><span class="badge b-confirmed"><i></i>Confirmed</span></td><td><button class="ghost-btn">Open</button></td></tr>
-              <tr><td class="time">11:00</td><td><div class="cell-name">Rahmonov Jahongir</div><div class="cell-sub">+998 94 456 78 90</div></td><td>Rahimova D.</td><td>Kardiolog qabuli</td><td><span class="badge b-checked"><i></i>Checked in</span></td><td><button class="ghost-btn">Open</button></td></tr>
-              <tr><td class="time">11:30</td><td><div class="cell-name">Karimova Laylo</div><div class="cell-sub">+998 95 567 89 01</div></td><td>Rahimova D.</td><td>Kardiolog qabuli</td><td><span class="badge b-pending"><i></i>Pending</span></td><td><button class="ghost-btn">Open</button></td></tr>
-            </tbody>
+            <tbody id="arrivals-body"></tbody>
           </table>
         </div>
       </section>
@@ -576,6 +575,41 @@
     document.querySelectorAll("#status-tabs .tab").forEach(x => x.classList.remove("active"));
     t.classList.add("active");
     draw(t.dataset.filter);
+  });
+
+  /* ---------- next arrivals (overview) ---------- */
+  const ARRIVALS = [
+    {time:"10:00", name:"Ergasheva Nilufar", sub:"+998 90 123 45 67", doctor:"Karimov A.", service:"Terapevt qabuli", status:"checked"},
+    {time:"10:20", name:"Mirzaev Behzod", sub:"+998 91 234 56 78", doctor:"Karimov A.", service:"Terapevt qabuli", status:"confirmed"},
+    {time:"10:40", name:"Qodirova Shirin", sub:"+998 93 345 67 89", doctor:"Karimov A.", service:"Kardiolog qabuli", status:"confirmed"},
+    {time:"11:00", name:"Rahmonov Jahongir", sub:"+998 94 456 78 90", doctor:"Rahimova D.", service:"Kardiolog qabuli", status:"checked"},
+    {time:"11:30", name:"Karimova Laylo", sub:"+998 95 567 89 01", doctor:"Rahimova D.", service:"Kardiolog qabuli", status:"pending"}
+  ];
+  const arrivalsBody = document.getElementById("arrivals-body");
+  const drawArrivals = filter => {
+    const rows = ARRIVALS.filter(a => filter === "all"
+      || (filter === "waiting" && (a.status === "checked" || a.status === "progress"))
+      || (filter === "later" && (a.status === "confirmed" || a.status === "pending")));
+    arrivalsBody.innerHTML = rows.map(a => {
+      const [label, cls] = STATUS[a.status];
+      return `<tr><td class="time">${a.time}</td><td><div class="cell-name">${a.name}</div><div class="cell-sub">${a.sub}</div></td><td>${a.doctor}</td><td>${a.service}</td><td><span class="badge ${cls}"><i></i>${label}</span></td><td><button class="ghost-btn">Open</button></td></tr>`;
+    }).join("");
+  };
+  drawArrivals("all");
+  document.getElementById("arrivals-tabs").addEventListener("click", e => {
+    const t = e.target.closest(".tab"); if (!t) return;
+    document.querySelectorAll("#arrivals-tabs .tab").forEach(x => x.classList.remove("active"));
+    t.classList.add("active");
+    drawArrivals(t.dataset.arrival);
+  });
+
+  /* ---------- global search (filters the schedule) ---------- */
+  document.getElementById("global-search").addEventListener("input", e => {
+    const q = e.target.value.trim().toLowerCase();
+    const rows = document.querySelectorAll("#schedule-body tr");
+    rows.forEach(r => {
+      r.style.display = !q || r.textContent.toLowerCase().includes(q) ? "" : "none";
+    });
   });
 
   /* ---------- conversations ---------- */
