@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "node_modules/**",
+    "coverage/**",
+    ".freebuff/**",
     // Local supabase runtime files (generated, not part of the app).
     "supabase/.temp/**",
     "supabase/seed.sql",
