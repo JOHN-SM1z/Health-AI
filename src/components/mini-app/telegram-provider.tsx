@@ -28,32 +28,94 @@ function cssVars(): Partial<ThemeVars> {
 }
 
 /**
- * Raw initData, exposed reactively. The SDK does NOT populate it during
- * init(): initData.restore() parses tgWebAppData from the URL, and it only
- * exists when the app runs inside Telegram. Until the provider has restored
- * it, consumers see null; once available, subscribers re-render with the
- * real value.
+ * Key for storing Telegram initData across internal page transitions
+ * and client-side router navigation in the Mini App / browser.
+ */
+const INIT_DATA_STORAGE_KEY = "tg_init_data";
+
+function getStoredInitData(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return sessionStorage.getItem(INIT_DATA_STORAGE_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveInitData(data: string | null) {
+  if (typeof window === "undefined" || !data) return;
+  try {
+    sessionStorage.setItem(INIT_DATA_STORAGE_KEY, data);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Raw initData, exposed reactively.
  */
 let rawInitData: string | null = null;
 const initDataListeners = new Set<() => void>();
 
-function publishInitData() {
+function publishInitData(data: string | null) {
+  rawInitData = data;
+  saveInitData(data);
   for (const listener of initDataListeners) listener();
+}
+
+/**
+ * Attempts to extract initData from various sources:
+ * 1. @tma.js/sdk initData.raw()
+ * 2. window.Telegram.WebApp.initData
+ * 3. URL search params or hash params (#tgWebAppData=...)
+ * 4. sessionStorage fallback
+ */
+function extractInitData(): string | null {
+  if (typeof window === "undefined") return null;
+
+  // 1. Check TMA SDK
+  try {
+    const raw = initData.raw();
+    if (raw) return raw;
+  } catch {
+    // ignore
+  }
+
+  // 2. Check window.Telegram.WebApp
+  try {
+    const tg = (window as unknown as { Telegram?: { WebApp?: { initData?: string } } }).Telegram;
+    if (tg?.WebApp?.initData) return tg.WebApp.initData;
+  } catch {
+    // ignore
+  }
+
+  // 3. Check URL query / hash params
+  try {
+    const hash = window.location.hash.slice(1);
+    if (hash) {
+      const hashParams = new URLSearchParams(hash);
+      const tgWebAppData = hashParams.get("tgWebAppData");
+      if (tgWebAppData) return tgWebAppData;
+    }
+    const searchParams = new URLSearchParams(window.location.search);
+    const queryTgWebAppData = searchParams.get("tgWebAppData");
+    if (queryTgWebAppData) return queryTgWebAppData;
+  } catch {
+    // ignore
+  }
+
+  // 4. Check sessionStorage
+  return getStoredInitData();
 }
 
 /**
  * Boots the Telegram Mini App SDK once per page load:
  * init -> initData restored -> WebApp.ready() -> theme vars -> viewport.
- * In a plain browser (development) init() is a safe no-op-ish call and
- * raw initData stays null — the app must handle that.
  */
 export function TelegramProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     try {
       init();
-      // Restores initData from the launch params in the URL. Without this,
-      // initData.raw() is always undefined and the app can never see the
-      // Telegram identity — even inside a properly opened Mini App.
       initData.restore();
       miniApp.ready();
       viewport.expand();
@@ -63,28 +125,25 @@ export function TelegramProvider({ children }: { children: ReactNode }) {
         document.documentElement.style.setProperty(key, value);
       }
     } catch (e) {
-      // Outside Telegram (browser dev) some calls are unavailable — ignore.
       console.warn("Telegram Mini App init skipped:", e);
     } finally {
-      rawInitData = initData.raw() ?? null;
-      publishInitData();
+      const resolved = extractInitData();
+      publishInitData(resolved);
     }
   }, []);
 
   return <>{children}</>;
 }
 
-/** Raw initData string for the current session (null outside Telegram). */
+/** Raw initData string for the current session. */
 export function useTelegramInitData(): string | null {
   useSyncExternalStore(
     (onStoreChange) => {
       initDataListeners.add(onStoreChange);
       return () => initDataListeners.delete(onStoreChange);
     },
-    () => rawInitData,
-    // Server render has no Telegram identity — the store is populated only in
-    // the client effect after initData.restore().
+    () => rawInitData ?? getStoredInitData(),
     () => null,
   );
-  return rawInitData;
+  return rawInitData ?? getStoredInitData();
 }

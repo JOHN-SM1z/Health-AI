@@ -51,7 +51,6 @@ function MyAppointmentsInner() {
 
   const load = useCallback(async () => {
     if (!identity) {
-      setError("Telegram orqali kirilmagan");
       setLoading(false);
       return;
     }
@@ -84,6 +83,31 @@ function MyAppointmentsInner() {
 
   if (loading) return <Spinner label="Qabullar yuklanmoqda..." />;
   if (error) return <ErrorBanner message={error} />;
+
+  if (!identity) {
+    return (
+      <div className="flex flex-col gap-3">
+        <SectionTitle>Mening qabullarim</SectionTitle>
+        <Card>
+          <EmptyState
+            title="Qabullarni ko‘rish"
+            subtitle={
+              <>
+                Sizning qabullaringizni ko‘rish uchun Telegram botimizdan foydalaning yoki yangi qabulga yoziling.
+              </>
+            }
+            icon={<CalendarCheck className="h-6 w-6" />}
+          />
+          <div className="mt-4 flex flex-col gap-2">
+            <a href="/book">
+              <Button size="full">Qabulga yozilish</Button>
+            </a>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   if (!data) return null;
 
   return (
