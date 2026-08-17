@@ -12,11 +12,35 @@ import { recordAudit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { getTranscriptionProvider } from "@/lib/transcription/provider";
 
-const MINI_APP_URL = () => `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/book`;
+/**
+ * Absolute Mini App URL, or null when NEXT_PUBLIC_APP_URL is unset or not an
+ * absolute URL. Telegram rejects buttons whose web_app/url target is relative
+ * or non-http(s) — an invalid button fails the WHOLE message, so the bot must
+ * never attach one.
+ */
+const miniAppUrl = (): string | null => {
+  const base = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
+  if (!base) return null;
+  // Telegram deep-link form when the app is hosted on t.me.
+  if (base === "https://t.me" || base.startsWith("https://t.me/")) return base;
+  try {
+    const url = new URL(`${base}/book`);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+};
+
+const bookUrl = miniAppUrl();
 
 const mainKeyboard = {
   keyboard: [
-    [{ text: "📅 Qabulga yozilish", web_app: { url: MINI_APP_URL() } }],
+    // Without a configured app URL the web_app button would be rejected by
+    // Telegram (BUTTON_URL_INVALID). Fall back to a plain text button, which
+    // routes to handleMenuButton and replies with a text link/operator prompt.
+    ...(bookUrl
+      ? [{ text: "📅 Qabulga yozilish", web_app: { url: bookUrl } }]
+      : [{ text: "📅 Qabulga yozilish" }]),
     [{ text: "🤖 Shifokor tanlashda yordam" }],
     [{ text: "💰 Narxlar" }],
     [{ text: "📍 Manzil" }],
@@ -195,10 +219,14 @@ export async function handleMenuButton(opts: {
   }
 
   if (opts.button.includes("Qabulga yozilish")) {
-    // Button is a web_app button; text fallback when web_app unsupported.
+    // Button is a web_app button; text fallback when web_app unsupported or
+    // no app URL is configured.
+    const url = miniAppUrl();
     await sendTelegramMessage({
       chatId: opts.chatId,
-      text: `Qabulga yozilish uchun ilovani oching: ${MINI_APP_URL()}`,
+      text: url
+        ? `Qabulga yozilish uchun ilovani oching: ${url}`
+        : "Qabulga yozilish hozircha onlayn sozlanmagan. Iltimos, operatorlarimizga murojaat qiling.",
     });
     return;
   }
