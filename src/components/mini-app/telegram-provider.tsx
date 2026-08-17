@@ -82,6 +82,9 @@ export function useTelegramInitData(): string | null {
       return () => initDataListeners.delete(onStoreChange);
     },
     () => rawInitData,
+    // Server render has no Telegram identity — the store is populated only in
+    // the client effect after initData.restore().
+    () => null,
   );
   return rawInitData;
 }
