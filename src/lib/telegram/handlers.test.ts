@@ -32,7 +32,7 @@ vi.mock("@/lib/telegram/bot", () => ({
   sendTelegramMessage: vi.fn(async () => 1),
 }));
 
-import { handleVoiceCorrect, mainKeyboard } from "@/lib/telegram/handlers";
+import { handleVoiceCorrect, buildMainKeyboard, buildHeldKeyboard, exitOperatorChat } from "@/lib/telegram/handlers";
 import { conversationIsHeld } from "@/lib/telegram/store";
 import { generateReceptionistReply } from "@/lib/ai/receptionist";
 import { sendTelegramMessage } from "@/lib/telegram/bot";
@@ -73,13 +73,115 @@ beforeEach(() => {
   });
 });
 
-describe("mainKeyboard", () => {
-  it("never contains web_app buttons so Telegram can never reject the menu", () => {
-    const buttons = mainKeyboard.keyboard.flat();
+describe("buildMainKeyboard", () => {
+  it("keeps a plain text booking button when no app URL is configured", () => {
+    delete process.env.NEXT_PUBLIC_APP_URL;
+    const buttons = buildMainKeyboard().keyboard.flat();
     expect(buttons.length).toBeGreaterThan(0);
     for (const b of buttons) {
       expect(b).not.toHaveProperty("web_app");
     }
+  });
+
+  it("attaches a web_app booking button when an HTTPS app URL is configured", () => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://health.example.com";
+    const buttons = buildMainKeyboard().keyboard.flat();
+    expect(buttons[0]).toEqual({
+      text: "📅 Qabulga yozilish",
+      web_app: { url: "https://health.example.com/book" },
+    });
+    // Other buttons stay plain text.
+    for (const b of buttons.slice(1)) {
+      expect(b).not.toHaveProperty("web_app");
+    }
+  });
+
+  it("never attaches web_app for a t.me deep-link base", () => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://t.me/health_bot/book";
+    const buttons = buildMainKeyboard().keyboard.flat();
+    expect(buttons[0]).not.toHaveProperty("web_app");
+  });
+});
+
+describe("buildHeldKeyboard", () => {
+  it("offers only the exit-operator-chat button", () => {
+    const buttons = buildHeldKeyboard().keyboard.flat();
+    expect(buttons).toEqual([{ text: "🚪 Suhbatni yakunlash" }]);
+  });
+});
+
+describe("exitOperatorChat", () => {
+  it("releases a held conversation back to the bot and shows the main menu", async () => {
+    let updateValues: Record<string, unknown> | undefined;
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === "conversations") {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              maybeSingle: vi.fn(async () => ({ data: { status: "assigned", ai_enabled: false }, error: null })),
+            })),
+          })),
+          update: (values: Record<string, unknown>) => {
+            updateValues = values;
+            return { eq: vi.fn(async () => ({ error: null })) };
+          },
+        };
+      }
+      return {};
+    });
+
+    await exitOperatorChat({
+      clinicId: "clinic-1",
+      patientId: "p-1",
+      conversationId: "conv-1",
+      chatId: 777000,
+      patientLabel: "@ali",
+    });
+
+    expect(updateValues).toEqual({
+      status: "open",
+      ai_enabled: true,
+      taken_over_by: null,
+      taken_over_at: null,
+      released_at: expect.any(String),
+    });
+    expect(sendTelegramMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: 777000,
+        text: expect.stringContaining("Suhbat yakunlandi"),
+        replyMarkup: buildMainKeyboard(),
+      }),
+    );
+  });
+
+  it("just shows the main menu when the conversation is not held", async () => {
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === "conversations") {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              maybeSingle: vi.fn(async () => ({ data: { status: "open", ai_enabled: true }, error: null })),
+            })),
+          })),
+        };
+      }
+      return {};
+    });
+
+    await exitOperatorChat({
+      clinicId: "clinic-1",
+      patientId: "p-1",
+      conversationId: "conv-1",
+      chatId: 777000,
+      patientLabel: "@ali",
+    });
+
+    expect(sendTelegramMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: 777000,
+        replyMarkup: buildMainKeyboard(),
+      }),
+    );
   });
 });
 

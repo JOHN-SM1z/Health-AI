@@ -13,12 +13,11 @@ import { logger } from "@/lib/logger";
 import { getTranscriptionProvider } from "@/lib/transcription/provider";
 
 /**
- * Absolute Mini App URL, or null when NEXT_PUBLIC_APP_URL is unset or not an
- * absolute URL. Telegram rejects buttons whose web_app/url target is relative
- * or non-http(s) — an invalid button fails the WHOLE message, so the bot must
- * never attach one.
+ * Booking link for text replies, or null when NEXT_PUBLIC_APP_URL is unset or
+ * not an absolute URL. Supports the t.me deep-link form — tapping it opens the
+ * Mini App inside Telegram with valid initData.
  */
-const miniAppUrl = (): string | null => {
+const bookingLink = (): string | null => {
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
   if (!base) return null;
   // Telegram deep-link form when the app is hosted on t.me.
@@ -31,22 +30,60 @@ const miniAppUrl = (): string | null => {
   }
 };
 
-export const mainKeyboard = {
-  keyboard: [
-    // Deliberately a PLAIN text button, never web_app: Telegram rejects the
-    // WHOLE message (BUTTON_URL_INVALID) when a web_app button's domain is
-    // not whitelisted in @BotFather or the URL is not a valid HTTPS Mini App
-    // URL — and then the reply keyboard never appears. A plain text button
-    // can never be rejected, so the menu always renders. Tapping it routes
-    // to handleMenuButton, which replies with the booking link.
-    [{ text: "📅 Qabulga yozilish" }],
-    [{ text: "🤖 Shifokor tanlashda yordam" }],
-    [{ text: "💰 Narxlar" }],
-    [{ text: "📍 Manzil" }],
-    [{ text: "👤 Operator bilan bog‘lanish" }],
-  ],
-  resize_keyboard: true,
+/**
+ * HTTPS Mini App URL for a web_app button, or null when unavailable.
+ * Telegram rejects the WHOLE message (BUTTON_URL_INVALID) when a web_app
+ * button's domain is not whitelisted in @BotFather, so the button is only
+ * attached when an HTTPS app URL is configured (never for a t.me deep-link
+ * base). sendTelegramMessage still downgrades it to a plain text button if
+ * Telegram rejects it anyway, so the menu always renders.
+ */
+const webAppUrl = (): string | null => {
+  const base = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
+  if (!base || base === "https://t.me" || base.startsWith("https://t.me/")) return null;
+  try {
+    const url = new URL(`${base}/book`);
+    return url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
 };
+
+/**
+ * Reply keyboard for the main menu. The booking button is a web_app button
+ * when a whitelisted HTTPS Mini App URL is configured — tapping it opens the
+ * booking app directly inside Telegram with valid initData. Otherwise it
+ * degrades to a plain text button that routes to handleMenuButton, which
+ * replies with the booking link.
+ */
+export function buildMainKeyboard() {
+  const url = webAppUrl();
+  const bookingButton = url
+    ? { text: "📅 Qabulga yozilish", web_app: { url } }
+    : { text: "📅 Qabulga yozilish" };
+  return {
+    keyboard: [
+      [bookingButton],
+      [{ text: "🤖 Shifokor tanlashda yordam" }],
+      [{ text: "💰 Narxlar" }],
+      [{ text: "📍 Manzil" }],
+      [{ text: "👤 Operator bilan bog‘lanish" }],
+    ],
+    resize_keyboard: true,
+  };
+}
+
+/**
+ * Reply keyboard shown while the conversation is held by a human operator.
+ * The only action is leaving the operator chat — the patient must have a way
+ * out, since every other tap is blocked while the conversation is held.
+ */
+export function buildHeldKeyboard() {
+  return {
+    keyboard: [[{ text: "🚪 Suhbatni yakunlash" }]],
+    resize_keyboard: true,
+  };
+}
 
 export const WELCOME_UZ =
   `Assalomu alaykum! 👋\n` +
@@ -111,7 +148,7 @@ export async function handleTelegramMessage(opts: {
       await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "navigation_answer" });
       const reply = await suggestNavigation(clinic.id, text);
       await updateConversationState(conversation.id, { ...state, [NAVIGATION_STATE_KEY]: { step: 2 } });
-      await sendTelegramMessage({ chatId: opts.chatId, text: reply, replyMarkup: mainKeyboard });
+      await sendTelegramMessage({ chatId: opts.chatId, text: reply, replyMarkup: buildMainKeyboard() });
       await appendMessage({
         conversationId: conversation.id,
         clinicId: clinic.id,
@@ -126,7 +163,7 @@ export async function handleTelegramMessage(opts: {
     await sendTelegramMessage({
       chatId: opts.chatId,
       text: reply.text,
-      replyMarkup: reply.handoff ? mainKeyboard : undefined,
+      replyMarkup: reply.handoff ? buildMainKeyboard() : undefined,
     });
     await appendMessage({
       conversationId: conversation.id,
@@ -179,11 +216,31 @@ export async function handleTelegramCommand(opts: {
         await sendTelegramMessage({
           chatId: opts.chatId,
           text: "Hozir operator bilan suhbatlashyapsiz. Operator javobini kuting.",
+          replyMarkup: buildHeldKeyboard(),
         });
         return;
       }
-      await sendTelegramMessage({ chatId: opts.chatId, text: WELCOME_UZ, replyMarkup: mainKeyboard });
+      await sendTelegramMessage({ chatId: opts.chatId, text: WELCOME_UZ, replyMarkup: buildMainKeyboard() });
       await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "bot_started" });
+      break;
+    }
+    case "/chiqish":
+    case "/stop":
+    case "/exit": {
+      await appendMessage({
+        conversationId: conversation.id,
+        clinicId: clinic.id,
+        role: "patient",
+        type: "system",
+        content: opts.command,
+      });
+      await exitOperatorChat({
+        clinicId: clinic.id,
+        patientId: patient.id,
+        conversationId: conversation.id,
+        chatId: opts.chatId,
+        patientLabel: opts.from.username ? `@${opts.from.username}` : String(opts.from.id),
+      });
       break;
     }
     default:
@@ -209,18 +266,33 @@ export async function handleMenuButton(opts: {
   });
   const held = await conversationIsHeld(conversation.id);
 
+  // Leaving the operator chat must work even while the conversation is held.
+  if (opts.button.includes("Suhbatni yakunlash")) {
+    await exitOperatorChat({
+      clinicId: clinic.id,
+      patientId: patient.id,
+      conversationId: conversation.id,
+      chatId: opts.chatId,
+      patientLabel: opts.from.username ? `@${opts.from.username}` : String(opts.from.id),
+    });
+    return;
+  }
+
   if (held) {
     await sendTelegramMessage({
       chatId: opts.chatId,
       text: "Hozir operator bilan suhbatlashyapsiz. Operator javobini kuting.",
+      replyMarkup: buildHeldKeyboard(),
     });
     return;
   }
 
   if (opts.button.includes("Qabulga yozilish")) {
-    // Plain text menu button (the menu never uses web_app — see mainKeyboard).
-    // Reply with the booking link when an app URL is configured.
-    const url = miniAppUrl();
+    // Fallback path: normally the menu's booking button is a web_app button
+    // that opens the Mini App directly in Telegram. This branch handles the
+    // plain-text downgrade (sendTelegramMessage strips web_app on
+    // BUTTON_URL_INVALID) by replying with the booking link.
+    const url = bookingLink();
     await sendTelegramMessage({
       chatId: opts.chatId,
       text: url
@@ -236,7 +308,7 @@ export async function handleMenuButton(opts: {
       [NAVIGATION_STATE_KEY]: { step: 1 },
     });
     const question = await startNavigation();
-    await sendTelegramMessage({ chatId: opts.chatId, text: question, replyMarkup: mainKeyboard });
+    await sendTelegramMessage({ chatId: opts.chatId, text: question, replyMarkup: buildMainKeyboard() });
     await appendMessage({
       conversationId: conversation.id,
       clinicId: clinic.id,
@@ -261,7 +333,7 @@ export async function handleMenuButton(opts: {
         services.map((s) => `• ${s.name} — ${new Intl.NumberFormat("uz-UZ").format(Number(s.price))} ${clinic.currency}, ${s.duration_minutes} daq.`).join("\n") +
         "\n\nQabulga yozilish uchun “Qabulga yozilish” tugmasini bosing."
       : "Narxlar ro‘yxati hozircha kiritilmagan. Operatorlarimizga murojaat qiling.";
-    await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: mainKeyboard });
+    await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: buildMainKeyboard() });
     return;
   }
 
@@ -269,7 +341,7 @@ export async function handleMenuButton(opts: {
     const text = clinic.address
       ? `📍 Manzil: ${clinic.address}\n\n☎️ Telefon: ${clinic.phone ?? "ko‘rsatilmagan"}\n\nIsh vaqti haqida ma‘lumot uchun operatorlarga murojaat qiling.`
       : "Manzil hozircha kiritilmagan. Operatorlarimizga murojaat qiling.";
-    await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: mainKeyboard });
+    await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: buildMainKeyboard() });
     return;
   }
 
@@ -317,6 +389,7 @@ export async function requestHumanHandoff(opts: {
   await sendTelegramMessage({
     chatId: opts.chatId,
     text: "Operatorlarimiz siz bilan bog‘lanadi. Biroz kuting. ⏳\n\nOperator javob berguncha avtomatik xabarlar to‘xtatiladi.",
+    replyMarkup: buildHeldKeyboard(),
   });
   await appendMessage({
     conversationId: opts.conversationId,
@@ -328,6 +401,71 @@ export async function requestHumanHandoff(opts: {
   await trackAnalytics({ clinicId: opts.clinicId, patientId: opts.patientId, eventType: "human_handoff_requested" });
 
   await notifyAdmins(`👤 Bemor operator so‘radi: ${opts.patientLabel}`);
+}
+
+/**
+ * Patient ends the operator chat and returns to the bot. Idempotent: when the
+ * conversation is not held it only shows the main menu again.
+ */
+export async function exitOperatorChat(opts: {
+  clinicId: string;
+  patientId: string;
+  conversationId: string;
+  chatId: number;
+  patientLabel: string;
+}): Promise<void> {
+  const supabase = createAdminClient();
+  const { data: conv } = await supabase
+    .from("conversations")
+    .select("status, ai_enabled")
+    .eq("id", opts.conversationId)
+    .maybeSingle();
+  const held = !!conv && (conv.status === "assigned" || conv.ai_enabled === false);
+
+  if (!held) {
+    await sendTelegramMessage({
+      chatId: opts.chatId,
+      text: "Hozir operator bilan faol suhbat yo‘q. Qanday yordam kerak?",
+      replyMarkup: buildMainKeyboard(),
+    });
+    return;
+  }
+
+  // Release back to the bot — same state transition as an admin release.
+  await supabase
+    .from("conversations")
+    .update({
+      status: "open",
+      ai_enabled: true,
+      taken_over_by: null,
+      taken_over_at: null,
+      released_at: new Date().toISOString(),
+    })
+    .eq("id", opts.conversationId);
+
+  await recordAudit({
+    clinicId: opts.clinicId,
+    action: "conversation_patient_exit",
+    entityType: "conversations",
+    entityId: opts.conversationId,
+    actor: { actorType: "telegram" },
+  });
+
+  await sendTelegramMessage({
+    chatId: opts.chatId,
+    text: "Suhbat yakunlandi. ✅\n\nEndi bot yana javob beradi. Qanday yordam kerak?",
+    replyMarkup: buildMainKeyboard(),
+  });
+  await appendMessage({
+    conversationId: opts.conversationId,
+    clinicId: opts.clinicId,
+    role: "bot",
+    type: "system",
+    content: "Bemor operator bilan suhbatni yakunladi — avtomatik javoblar qayta yoqildi.",
+  });
+  await trackAnalytics({ clinicId: opts.clinicId, patientId: opts.patientId, eventType: "human_handoff_ended" });
+
+  await notifyAdmins(`🚪 Bemor operator bilan suhbatni yakunladi: ${opts.patientLabel}`);
 }
 
 async function notifyAdmins(message: string) {

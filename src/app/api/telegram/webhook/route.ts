@@ -145,11 +145,7 @@ async function dispatchUpdate(update: TelegramUpdate) {
 
     if (text.startsWith("/")) {
       const command = text.split(" ")[0];
-      if (command === "/start") {
-        await handleTelegramCommand({ chatId, from, command });
-        return;
-      }
-      await handleTelegramCommand({ chatId, from, command: "unknown" });
+      await handleTelegramCommand({ chatId, from, command });
       return;
     }
 
@@ -205,6 +201,7 @@ const MENU_BUTTONS = [
   "Manzil",
   "Operator bilan bog‘lanish",
   "Operator bilan bog`lanish",
+  "Suhbatni yakunlash",
 ];
 
 function isMenuButton(text: string): boolean {
