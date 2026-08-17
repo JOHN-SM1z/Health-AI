@@ -35,7 +35,7 @@ Configure these environment variables in your hosting provider's dashboard:
 
 | Variable | Required | Description | Example |
 |---|---|---|---|
-| `NEXT_PUBLIC_APP_URL` | **Yes** | Public HTTPS URL of your deployment | `https://health-ai.vercel.app` |
+| `NEXT_PUBLIC_APP_URL` | Optional | Public URL used for booking links in Telegram notifications (omit if unused) | `https://health-ai.vercel.app` |
 | `NEXT_PUBLIC_SUPABASE_URL` | **Yes** | Supabase project endpoint | `https://xyzcompany.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | **Yes** | Supabase public anon key | `eyJhbGciOi...` |
 | `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Supabase privileged service-role key (server-only) | `eyJhbGciOi...` |

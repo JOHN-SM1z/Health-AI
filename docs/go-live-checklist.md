@@ -21,7 +21,7 @@ Server-side (`src/lib/env.ts` validates):
 
 | Var | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `NEXT_PUBLIC_APP_URL` | yes | http://localhost:3000 | public base URL; build-time (substitution, not Secret Manager) |
+| `NEXT_PUBLIC_APP_URL` | no | – | booking links in notifications/bot; optional |
 | `NEXT_PUBLIC_SUPABASE_URL` | yes | – | browser client; build-time (substitution) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | – | browser client (public); build-time (substitution) |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | – | server only |

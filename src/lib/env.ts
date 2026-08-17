@@ -2,25 +2,33 @@ import "server-only";
 import { z } from "zod";
 import { logger } from "@/lib/logger";
 
+/** True when running `next build` / static generation (env may be incomplete). */
+export const isBuildTime = process.env.NEXT_PHASE === "phase-production-build";
+
+// Hosting platforms (e.g. Vercel) store blank env vars as ""; treat those as
+// unset so validation only fails on genuinely invalid values.
+const optionalUrl = () =>
+  z.preprocess((v) => (v === "" ? undefined : v), z.string().url().optional());
+
 const envSchema = z.object({
-  NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
-  NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
+  NEXT_PUBLIC_APP_URL: optionalUrl(),
+  NEXT_PUBLIC_SUPABASE_URL: optionalUrl(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
 
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
-  TELEGRAM_WEBHOOK_URL: z.string().optional(),
+  TELEGRAM_WEBHOOK_URL: optionalUrl(),
   TELEGRAM_ADMIN_CHAT_IDS: z.string().optional(),
   ENABLE_TELEGRAM_DEV_MODE: z.enum(["true", "false"]).default("false"),
 
-  AI_BASE_URL: z.string().url().optional(),
+  AI_BASE_URL: optionalUrl(),
   AI_API_KEY: z.string().optional(),
   AI_MODEL: z.string().default("gpt-4o-mini"),
   AI_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.2),
   ENABLE_AI: z.enum(["true", "false"]).default("false"),
 
-  TRANSCRIPTION_BASE_URL: z.string().url().optional(),
+  TRANSCRIPTION_BASE_URL: optionalUrl(),
   TRANSCRIPTION_API_KEY: z.string().optional(),
   TRANSCRIPTION_MODEL: z.string().default("whisper-1"),
   ENABLE_TRANSCRIPTION: z.enum(["true", "false"]).default("false"),
@@ -37,15 +45,14 @@ const envSchema = z.object({
 
 const parsed = envSchema.safeParse(process.env);
 
-if (!parsed.success) {
+// Fail closed at runtime, but let `next build` run with incomplete env:
+// secrets/URLs are often only present in the deployed environment.
+if (!parsed.success && !isBuildTime) {
   logger.error("invalid environment configuration", {
     issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
   });
   throw new Error("Invalid environment configuration. See logs for details.");
 }
-
-/** True when running `next build` / static generation (env may be incomplete). */
-export const isBuildTime = process.env.NEXT_PHASE === "phase-production-build";
 
 export const isProduction = process.env.NODE_ENV === "production";
 
@@ -53,7 +60,7 @@ export const isProduction = process.env.NODE_ENV === "production";
 // Click/PayMe adapter with merchant credentials exists. Selecting a real
 // provider must fail at configuration/startup time — never silently, and
 // never only when a patient tries to pay.
-if (!isBuildTime && parsed.data.PAYMENT_PROVIDER !== "manual") {
+if (!isBuildTime && parsed.success && parsed.data.PAYMENT_PROVIDER !== "manual") {
   logger.error("unsupported payment provider", { provider: parsed.data.PAYMENT_PROVIDER });
   throw new Error(
     `PAYMENT_PROVIDER=${parsed.data.PAYMENT_PROVIDER} is not implemented. ` +
@@ -62,7 +69,9 @@ if (!isBuildTime && parsed.data.PAYMENT_PROVIDER !== "manual") {
   );
 }
 
-export const env = parsed.data;
+// At build time (or when env is incomplete) fall back to pure defaults so
+// static generation can proceed; the runtime still validates strictly.
+export const env = parsed.success ? parsed.data : envSchema.parse({});
 
 /** Telegram dev mode is allowed ONLY outside production and MUST be explicit. */
 export const telegramDevModeEnabled = () =>
