@@ -81,6 +81,9 @@ export function BookingFlow() {
       setError("Telegram orqali kirilmagan. Botdan “Qabulga yozilish” tugmasini bosing.");
       return;
     }
+    // Identity became available after the SDK restored it — drop the
+    // "not logged in" error before loading the catalog.
+    setError(null);
     apiGet<Catalog>("/api/catalog", identity).then((res) => {
       if (res.ok) setCatalog(res.data);
       else setError(res.error);

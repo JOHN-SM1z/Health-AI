@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { init, initData, themeParams, viewport, miniApp } from "@tma.js/sdk";
 
 type ThemeVars = {
@@ -28,15 +28,33 @@ function cssVars(): Partial<ThemeVars> {
 }
 
 /**
+ * Raw initData, exposed reactively. The SDK does NOT populate it during
+ * init(): initData.restore() parses tgWebAppData from the URL, and it only
+ * exists when the app runs inside Telegram. Until the provider has restored
+ * it, consumers see null; once available, subscribers re-render with the
+ * real value.
+ */
+let rawInitData: string | null = null;
+const initDataListeners = new Set<() => void>();
+
+function publishInitData() {
+  for (const listener of initDataListeners) listener();
+}
+
+/**
  * Boots the Telegram Mini App SDK once per page load:
- * init -> WebApp.ready() -> theme vars bound -> viewport expanded.
+ * init -> initData restored -> WebApp.ready() -> theme vars -> viewport.
  * In a plain browser (development) init() is a safe no-op-ish call and
- * initDataRaw() returns null — the app must handle that.
+ * raw initData stays null — the app must handle that.
  */
 export function TelegramProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     try {
       init();
+      // Restores initData from the launch params in the URL. Without this,
+      // initData.raw() is always undefined and the app can never see the
+      // Telegram identity — even inside a properly opened Mini App.
+      initData.restore();
       miniApp.ready();
       viewport.expand();
       themeParams.mount();
@@ -47,6 +65,9 @@ export function TelegramProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       // Outside Telegram (browser dev) some calls are unavailable — ignore.
       console.warn("Telegram Mini App init skipped:", e);
+    } finally {
+      rawInitData = initData.raw() ?? null;
+      publishInitData();
     }
   }, []);
 
@@ -55,5 +76,12 @@ export function TelegramProvider({ children }: { children: ReactNode }) {
 
 /** Raw initData string for the current session (null outside Telegram). */
 export function useTelegramInitData(): string | null {
-  return initData.raw() ?? null;
+  useSyncExternalStore(
+    (onStoreChange) => {
+      initDataListeners.add(onStoreChange);
+      return () => initDataListeners.delete(onStoreChange);
+    },
+    () => rawInitData,
+  );
+  return rawInitData;
 }
