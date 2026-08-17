@@ -72,6 +72,47 @@ describe("sendTelegramMessage", () => {
     });
   });
 
+  it("falls back to a plain message when the keyboard structure is rejected", async () => {
+    // No web_app buttons, so the stripped keyboard is identical — the fallback
+    // must send without any reply_markup instead.
+    sendMessageMock
+      .mockRejectedValueOnce(new Error("Bad Request: expected an Array of KeyboardButton"))
+      .mockResolvedValueOnce({ message_id: 5 });
+
+    const result = await sendTelegramMessage({
+      chatId: 777000,
+      text: "Salom",
+      replyMarkup: {
+        keyboard: [[{ text: "Narxlar" }]],
+        resize_keyboard: true,
+      },
+    });
+
+    expect(result).toBe(5);
+    expect(sendMessageMock).toHaveBeenCalledTimes(2);
+    expect(sendMessageMock.mock.calls[1][2].reply_markup).toBeUndefined();
+  });
+
+  it("drops the keyboard entirely when the web_app-stripped retry also fails", async () => {
+    sendMessageMock
+      .mockRejectedValueOnce(new Error("Bad Request: BUTTON_URL_INVALID"))
+      .mockRejectedValueOnce(new Error("Bad Request: expected an Array of KeyboardButton"))
+      .mockResolvedValueOnce({ message_id: 9 });
+
+    const result = await sendTelegramMessage({
+      chatId: 777000,
+      text: "Salom",
+      replyMarkup: {
+        keyboard: [[{ text: "📅 Qabulga yozilish", web_app: { url: "https://example.com/book" } }]],
+        resize_keyboard: true,
+      },
+    });
+
+    expect(result).toBe(9);
+    expect(sendMessageMock).toHaveBeenCalledTimes(3);
+    expect(sendMessageMock.mock.calls[2][2].reply_markup).toBeUndefined();
+  });
+
   it("does not retry on unrelated errors", async () => {
     sendMessageMock.mockRejectedValueOnce(new Error("chat not found"));
 

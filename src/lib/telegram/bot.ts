@@ -84,37 +84,48 @@ export async function sendTelegramMessage(payload: TelegramMessagePayload): Prom
     });
     return null;
   }
-  try {
+
+  const send = async (markup: unknown): Promise<number | null> => {
     const b = getBot();
     const res = await b.api.sendMessage(payload.chatId, payload.text, {
-      reply_markup: payload.replyMarkup as never,
+      reply_markup: markup as never,
       parse_mode: payload.parseMode ?? "HTML",
     });
     return res.message_id;
+  };
+
+  try {
+    return await send(payload.replyMarkup);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    // Telegram rejects the WHOLE message when a web_app button's domain is
-    // not whitelisted in @BotFather (BUTTON_URL_INVALID) — the bot then looks
-    // dead while the send fails silently. Retry once without web_app buttons
-    // so the message still goes through.
-    if (message.includes("BUTTON_URL_INVALID") && payload.replyMarkup) {
+    // Telegram rejects the WHOLE message when a button is invalid — either an
+    // un-whitelisted web_app domain (BUTTON_URL_INVALID) or a malformed
+    // keyboard. The bot must never look dead over a keyboard problem, so
+    // degrade gracefully: first drop web_app buttons, then drop the keyboard
+    // entirely, so the message still reaches the patient.
+    const keyboardProblem =
+      message.includes("BUTTON_URL_INVALID") || message.includes("KeyboardButton");
+    if (keyboardProblem && payload.replyMarkup) {
       const stripped = stripWebAppButtons(payload.replyMarkup);
       if (stripped !== payload.replyMarkup) {
         try {
-          const b = getBot();
-          const res = await b.api.sendMessage(payload.chatId, payload.text, {
-            reply_markup: stripped as never,
-            parse_mode: payload.parseMode ?? "HTML",
-          });
+          const id = await send(stripped);
           logger.warn("telegram send succeeded without web_app buttons", { chatId: payload.chatId });
-          return res.message_id;
-        } catch (e2) {
-          logger.error("telegram send failed even without web_app buttons", {
-            chatId: payload.chatId,
-            error: e2 instanceof Error ? e2.message : String(e2),
-          });
-          return null;
+          return id;
+        } catch {
+          // Structural problem — fall through to a plain send.
         }
+      }
+      try {
+        const id = await send(undefined);
+        logger.warn("telegram send succeeded without keyboard", { chatId: payload.chatId });
+        return id;
+      } catch (e2) {
+        logger.error("telegram send failed", {
+          chatId: payload.chatId,
+          error: e2 instanceof Error ? e2.message : String(e2),
+        });
+        return null;
       }
     }
     logger.error("telegram send failed", {
