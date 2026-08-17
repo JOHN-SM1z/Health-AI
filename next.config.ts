@@ -1,7 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // Standalone output is required for Docker / Cloud Run, but it breaks
+  // Vercel builds on Next 16.3 (vercel/next.js#96646): the `onBuildComplete`
+  // hook expects `.next/next-server.js.nft.json`, which standalone no longer
+  // emits. Vercel uses its own serverless pipeline, so disable it there.
+  output: process.env.VERCEL ? undefined : "standalone",
   poweredByHeader: false,
   async headers() {
     const telegramCsp = "frame-ancestors 'self' https://t.me https://telegram.me https://web.telegram.org https://*.telegram.org";
