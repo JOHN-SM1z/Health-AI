@@ -35,12 +35,13 @@ import {
   finishWebhookProcessing,
   releaseWebhookProcessing,
 } from "@/lib/telegram/idempotency";
-import { handleTelegramMessage } from "@/lib/telegram/handlers";
+import { handleTelegramMessage, handleMenuButton } from "@/lib/telegram/handlers";
 
 const claimMock = vi.mocked(claimWebhookProcessing);
 const finishMock = vi.mocked(finishWebhookProcessing);
 const releaseMock = vi.mocked(releaseWebhookProcessing);
 const handleMessageMock = vi.mocked(handleTelegramMessage);
+const menuButtonMock = vi.mocked(handleMenuButton);
 
 function post(body: unknown, secretToken: string | null = "test-webhook-secret"): Promise<Response> {
   const headers = new Headers({ "content-type": "application/json" });
@@ -110,6 +111,30 @@ describe("telegram webhook route", () => {
     const call = handleMessageMock.mock.calls[0][0];
     expect(call.text).toBe("Assalomu alaykum");
     expect(call.voice).toBeUndefined();
+  });
+
+  it("routes emoji-prefixed reply-keyboard taps to handleMenuButton, not the AI", async () => {
+    const buttons = [
+      "📅 Qabulga yozilish",
+      "🤖 Shifokor tanlashda yordam",
+      "💰 Narxlar",
+      "📍 Manzil",
+      "👤 Operator bilan bog‘lanish",
+    ];
+    for (let i = 0; i < buttons.length; i++) {
+      menuButtonMock.mockClear();
+      handleMessageMock.mockClear();
+      const res = await post({
+        ...textUpdate(100 + i),
+        message: { ...textUpdate(100 + i).message, text: buttons[i] },
+      });
+      expect(res.status).toBe(200);
+      expect(menuButtonMock).toHaveBeenCalledTimes(1);
+      expect(menuButtonMock).toHaveBeenCalledWith(
+        expect.objectContaining({ button: buttons[i] }),
+      );
+      expect(handleMessageMock).not.toHaveBeenCalled();
+    }
   });
 
   it("drops duplicates without dispatching any work", async () => {

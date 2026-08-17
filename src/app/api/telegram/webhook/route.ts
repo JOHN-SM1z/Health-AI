@@ -208,7 +208,11 @@ const MENU_BUTTONS = [
 ];
 
 function isMenuButton(text: string): boolean {
-  return MENU_BUTTONS.some((b) => text === b || text.startsWith(b.slice(0, 12)));
+  // Reply-keyboard buttons are prefixed with emojis ("💰 Narxlar") while the
+  // labels above are bare text. Strip leading non-word characters so taps on
+  // the menu reach handleMenuButton instead of the free-text/AI path.
+  const normalized = text.replace(/^\W+/, "");
+  return MENU_BUTTONS.some((b) => normalized === b || normalized.startsWith(b.slice(0, 12)));
 }
 
 async function requestHumanHandoffFromCallback(
