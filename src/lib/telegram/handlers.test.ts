@@ -32,7 +32,7 @@ vi.mock("@/lib/telegram/bot", () => ({
   sendTelegramMessage: vi.fn(async () => 1),
 }));
 
-import { handleVoiceCorrect } from "@/lib/telegram/handlers";
+import { handleVoiceCorrect, mainKeyboard } from "@/lib/telegram/handlers";
 import { conversationIsHeld } from "@/lib/telegram/store";
 import { generateReceptionistReply } from "@/lib/ai/receptionist";
 import { sendTelegramMessage } from "@/lib/telegram/bot";
@@ -70,6 +70,16 @@ beforeEach(() => {
       };
     }
     return {};
+  });
+});
+
+describe("mainKeyboard", () => {
+  it("never contains web_app buttons so Telegram can never reject the menu", () => {
+    const buttons = mainKeyboard.keyboard.flat();
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const b of buttons) {
+      expect(b).not.toHaveProperty("web_app");
+    }
   });
 });
 

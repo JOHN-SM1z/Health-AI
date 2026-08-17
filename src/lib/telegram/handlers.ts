@@ -31,16 +31,15 @@ const miniAppUrl = (): string | null => {
   }
 };
 
-const bookUrl = miniAppUrl();
-
-const mainKeyboard = {
+export const mainKeyboard = {
   keyboard: [
-    // Without a configured app URL the web_app button would be rejected by
-    // Telegram (BUTTON_URL_INVALID). Fall back to a plain text button, which
-    // routes to handleMenuButton and replies with a text link/operator prompt.
-    ...(bookUrl
-      ? [{ text: "📅 Qabulga yozilish", web_app: { url: bookUrl } }]
-      : [{ text: "📅 Qabulga yozilish" }]),
+    // Deliberately a PLAIN text button, never web_app: Telegram rejects the
+    // WHOLE message (BUTTON_URL_INVALID) when a web_app button's domain is
+    // not whitelisted in @BotFather or the URL is not a valid HTTPS Mini App
+    // URL — and then the reply keyboard never appears. A plain text button
+    // can never be rejected, so the menu always renders. Tapping it routes
+    // to handleMenuButton, which replies with the booking link.
+    [{ text: "📅 Qabulga yozilish" }],
     [{ text: "🤖 Shifokor tanlashda yordam" }],
     [{ text: "💰 Narxlar" }],
     [{ text: "📍 Manzil" }],
@@ -219,8 +218,8 @@ export async function handleMenuButton(opts: {
   }
 
   if (opts.button.includes("Qabulga yozilish")) {
-    // Button is a web_app button; text fallback when web_app unsupported or
-    // no app URL is configured.
+    // Plain text menu button (the menu never uses web_app — see mainKeyboard).
+    // Reply with the booking link when an app URL is configured.
     const url = miniAppUrl();
     await sendTelegramMessage({
       chatId: opts.chatId,
