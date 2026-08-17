@@ -77,12 +77,8 @@ export function BookingFlow() {
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    if (!identity) {
-      setError("Telegram orqali kirilmagan. Botdan “Qabulga yozilish” tugmasini bosing.");
-      return;
-    }
-    // Identity became available after the SDK restored it — drop the
-    // "not logged in" error before loading the catalog.
+    // Catalog is public read-only clinic data. Load it immediately so the user
+    // can choose services and doctor whether opened inside or outside Telegram.
     setError(null);
     apiGet<Catalog>("/api/catalog", identity).then((res) => {
       if (res.ok) setCatalog(res.data);
@@ -137,7 +133,7 @@ export function BookingFlow() {
   };
 
   const confirmBooking = async () => {
-    if (!identity || !serviceId || !doctorId || !selectedSlot) return;
+    if (!serviceId || !doctorId || !selectedSlot) return;
     setCreating(true);
     setError(null);
     const res = await apiPost<AppointmentResponse>(

@@ -58,6 +58,55 @@ export async function getOrCreatePatient(opts: {
 }
 
 /**
+ * Resolves (or creates) a patient row by verified contact information (phone number)
+ * for web bookings made directly or outside of Telegram initData context.
+ */
+export async function getOrCreatePatientByContact(opts: {
+  clinicId: string;
+  phone: string;
+  fullName: string;
+}) {
+  const supabase = createAdminClient();
+
+  const { data: existing } = await supabase
+    .from("patients")
+    .select("*")
+    .eq("clinic_id", opts.clinicId)
+    .eq("phone", opts.phone)
+    .maybeSingle();
+
+  if (existing) {
+    await supabase
+      .from("patients")
+      .update({
+        full_name: opts.fullName || existing.full_name,
+        last_seen_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id);
+    return existing;
+  }
+
+  const { data: created, error } = await supabase
+    .from("patients")
+    .insert({
+      clinic_id: opts.clinicId,
+      full_name: opts.fullName,
+      phone: opts.phone,
+      consent_given: true,
+      consent_given_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString(),
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    logger.error("patient create by contact failed", { error: error.message });
+    throw new Error("patient_create_failed");
+  }
+  return created;
+}
+
+/**
  * Patient identity for the Mini App. Returns null when initData is invalid.
  * The development identity is usable ONLY in local development with
  * ENABLE_TELEGRAM_DEV_MODE=true; production never allows it.

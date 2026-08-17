@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getDefaultClinic } from "@/lib/clinics/context";
-import { resolvePatientFromInitData, devIdentityAllowed } from "@/lib/patients/identity";
+import { resolvePatientFromInitData, devIdentityAllowed, getOrCreatePatientByContact } from "@/lib/patients/identity";
 import { handleApiError, ApiError, ok, fail } from "@/lib/api/errors";
 import { parseBody } from "@/lib/api/validate";
 import { phoneSchema, nameSchema, uuidSchema } from "@/lib/api/validate";
@@ -14,7 +14,7 @@ import { logger } from "@/lib/logger";
 export const dynamic = "force-dynamic";
 
 const createBookingSchema = z.object({
-  initData: z.string().min(1),
+  initData: z.string().nullable().optional(),
   doctorId: uuidSchema,
   serviceId: uuidSchema,
   startAt: z.string().datetime(),
@@ -35,12 +35,25 @@ export async function POST(request: NextRequest) {
     }
 
     const clinic = await getDefaultClinic();
-    const resolved = await resolvePatientFromInitData(body.initData, clinic.id);
-    if (!resolved) {
-      throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
+    let patient;
+    let source: "telegram_mini_app" | "walk_in" = "telegram_mini_app";
+
+    if (body.initData) {
+      const resolved = await resolvePatientFromInitData(body.initData, clinic.id);
+      if (!resolved) {
+        throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
+      }
+      patient = resolved.patient;
+    } else {
+      // Direct Web Booking fallback
+      patient = await getOrCreatePatientByContact({
+        clinicId: clinic.id,
+        phone: body.phone,
+        fullName: body.patientName,
+      });
+      source = "walk_in";
     }
 
-    const patient = resolved.patient;
     const supabase = createAdminClient();
 
     // Record consent + contact details on the patient.
@@ -66,7 +79,7 @@ export async function POST(request: NextRequest) {
       p_service_id: body.serviceId,
       p_start_at: body.startAt,
       p_status: "pending",
-      p_source: "telegram_mini_app",
+      p_source: source,
       p_notes: undefined,
       p_created_by: undefined,
     });

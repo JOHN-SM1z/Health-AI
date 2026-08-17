@@ -288,16 +288,26 @@ export async function handleMenuButton(opts: {
   }
 
   if (opts.button.includes("Qabulga yozilish")) {
-    // Fallback path: normally the menu's booking button is a web_app button
-    // that opens the Mini App directly in Telegram. This branch handles the
-    // plain-text downgrade (sendTelegramMessage strips web_app on
-    // BUTTON_URL_INVALID) by replying with the booking link.
     const url = bookingLink();
+    const isHttps = url && url.startsWith("https://");
+    const replyMarkup = url
+      ? {
+          inline_keyboard: [
+            [
+              isHttps
+                ? { text: "📅 Qabulga yozilish (Ilovani ochish)", web_app: { url } }
+                : { text: "📅 Qabulga yozilish (Havola)", url },
+            ],
+          ],
+        }
+      : undefined;
+
     await sendTelegramMessage({
       chatId: opts.chatId,
       text: url
-        ? `Qabulga yozilish uchun ilovani oching: ${url}`
+        ? `Qabulga yozilish uchun quyidagi tugmani bosing:`
         : "Qabulga yozilish hozircha onlayn sozlanmagan. Iltimos, operatorlarimizga murojaat qiling.",
+      replyMarkup,
     });
     return;
   }
