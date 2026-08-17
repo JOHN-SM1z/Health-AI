@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
-import { init, initDataRaw, themeParams, viewport, miniApp } from "@telegram-apps/sdk";
+import { init, initData, themeParams, viewport, miniApp } from "@tma.js/sdk";
 
 type ThemeVars = {
   "--tg-bg": string;
@@ -16,8 +16,8 @@ type ThemeVars = {
 
 function cssVars(): Partial<ThemeVars> {
   const vars: Partial<ThemeVars> = {};
-  if (themeParams.backgroundColor()) vars["--tg-bg"] = themeParams.backgroundColor() as string;
-  if (themeParams.secondaryBackgroundColor()) vars["--tg-secondary-bg"] = themeParams.secondaryBackgroundColor() as string;
+  if (themeParams.bgColor()) vars["--tg-bg"] = themeParams.bgColor() as string;
+  if (themeParams.secondaryBgColor()) vars["--tg-secondary-bg"] = themeParams.secondaryBgColor() as string;
   if (themeParams.textColor()) vars["--tg-text"] = themeParams.textColor() as string;
   if (themeParams.hintColor()) vars["--tg-hint"] = themeParams.hintColor() as string;
   if (themeParams.buttonColor()) vars["--tg-button"] = themeParams.buttonColor() as string;
@@ -55,5 +55,5 @@ export function TelegramProvider({ children }: { children: ReactNode }) {
 
 /** Raw initData string for the current session (null outside Telegram). */
 export function useTelegramInitData(): string | null {
-  return initDataRaw() ?? null;
+  return initData.raw() ?? null;
 }
