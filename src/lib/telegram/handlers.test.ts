@@ -16,7 +16,14 @@ vi.mock("@/lib/telegram/store", () => ({
 }));
 
 vi.mock("@/lib/clinics/context", () => ({
-  getDefaultClinic: vi.fn(async () => ({ id: "clinic-1", timezone: "Asia/Tashkent" })),
+  getClinicById: vi.fn(async () => ({
+    id: "clinic-1",
+    name: "Test Klinika",
+    timezone: "Asia/Tashkent",
+    currency: "UZS",
+    address: "Toshkent sh.",
+    phone: "+998901234567",
+  })),
 }));
 
 vi.mock("@/lib/ai/receptionist", () => ({
@@ -76,19 +83,19 @@ beforeEach(() => {
 describe("buildMainKeyboard", () => {
   it("keeps a plain text booking button when no app URL is configured", () => {
     delete process.env.NEXT_PUBLIC_APP_URL;
-    const buttons = buildMainKeyboard().keyboard.flat();
+    const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
     expect(buttons.length).toBeGreaterThan(0);
     for (const b of buttons) {
       expect(b).not.toHaveProperty("web_app");
     }
   });
 
-  it("attaches a web_app booking button when an HTTPS app URL is configured", () => {
+  it("attaches a web_app booking button with the clinic tenant when an HTTPS app URL is configured", () => {
     process.env.NEXT_PUBLIC_APP_URL = "https://health.example.com";
-    const buttons = buildMainKeyboard().keyboard.flat();
+    const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
     expect(buttons[0]).toEqual({
       text: "📅 Qabulga yozilish",
-      web_app: { url: "https://health.example.com/book" },
+      web_app: { url: "https://health.example.com/book?clinic=clinic-1" },
     });
     // Other buttons stay plain text.
     for (const b of buttons.slice(1)) {
@@ -98,7 +105,7 @@ describe("buildMainKeyboard", () => {
 
   it("never attaches web_app for a t.me deep-link base", () => {
     process.env.NEXT_PUBLIC_APP_URL = "https://t.me/health_bot/book";
-    const buttons = buildMainKeyboard().keyboard.flat();
+    const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
     expect(buttons[0]).not.toHaveProperty("web_app");
   });
 });
@@ -149,8 +156,9 @@ describe("exitOperatorChat", () => {
       expect.objectContaining({
         chatId: 777000,
         text: expect.stringContaining("Suhbat yakunlandi"),
-        replyMarkup: buildMainKeyboard(),
+        replyMarkup: buildMainKeyboard("clinic-1"),
       }),
+      "clinic-1",
     );
   });
 
@@ -179,8 +187,9 @@ describe("exitOperatorChat", () => {
     expect(sendTelegramMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         chatId: 777000,
-        replyMarkup: buildMainKeyboard(),
+        replyMarkup: buildMainKeyboard("clinic-1"),
       }),
+      "clinic-1",
     );
   });
 });
@@ -205,6 +214,7 @@ describe("handleVoiceCorrect", () => {
     );
     expect(sendTelegramMessage).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: 777000 }),
+      "clinic-1",
     );
   });
 });

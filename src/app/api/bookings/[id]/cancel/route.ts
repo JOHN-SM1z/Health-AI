@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getDefaultClinic } from "@/lib/clinics/context";
+import { getClinicFromRequest } from "@/lib/clinics/context";
 import { resolvePatientFromInitData, devIdentityAllowed } from "@/lib/patients/identity";
 import { handleApiError, ApiError, ok, fail } from "@/lib/api/errors";
 import { parseBody } from "@/lib/api/validate";
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
       throw new ApiError(403, "Development identity is not allowed", "dev_identity_forbidden");
     }
 
-    const clinic = await getDefaultClinic();
+    const clinic = await getClinicFromRequest(request);
     const resolved = await resolvePatientFromInitData(body.initData, clinic.id);
     if (!resolved) throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
 

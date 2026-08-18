@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getDefaultClinic } from "@/lib/clinics/context";
+import { getClinicFromRequest } from "@/lib/clinics/context";
 import { generateSlots } from "@/lib/booking/slots";
 import { handleApiError, fail, ok } from "@/lib/api/errors";
 import { rateLimit, keyFromIp } from "@/lib/rate-limit";
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
 
     const { serviceId, doctorId, days } = query.data;
     const supabase = createAdminClient();
-    const clinic = await getDefaultClinic();
+    const clinic = await getClinicFromRequest(request);
     const timezone = clinic.timezone;
 
     // Service determines the slot duration.

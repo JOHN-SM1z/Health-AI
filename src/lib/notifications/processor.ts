@@ -150,20 +150,23 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
           .maybeSingle();
 
         const text = MESSAGE_TEMPLATES[job.type](ctx, clinic?.timezone ?? "Asia/Tashkent");
-        const bookUrl = miniAppUrl();
-        const messageId = await sendTelegramMessage({
-          chatId: job.patient_telegram_user_id,
-          text,
-          replyMarkup: {
-            inline_keyboard: [
-              // Only attach the booking button when the URL is absolute —
-              // Telegram rejects relative button URLs and would drop the
-              // whole reminder.
-              ...(bookUrl ? [{ text: "📅 Qabulga yozilish", url: bookUrl }] : []),
-              [{ text: "👤 Operator bilan bog‘lanish", callback_data: "contact_operator" }],
-            ],
+        const bookUrl = miniAppUrl(job.clinic_id);
+        const messageId = await sendTelegramMessage(
+          {
+            chatId: job.patient_telegram_user_id,
+            text,
+            replyMarkup: {
+              inline_keyboard: [
+                // Only attach the booking button when the URL is absolute —
+                // Telegram rejects relative button URLs and would drop the
+                // whole reminder.
+                ...(bookUrl ? [{ text: "📅 Qabulga yozilish", url: bookUrl }] : []),
+                [{ text: "👤 Operator bilan bog‘lanish", callback_data: "contact_operator" }],
+              ],
+            },
           },
-        });
+          job.clinic_id,
+        );
 
         if (messageId !== null) {
           sent += 1;
@@ -212,14 +215,14 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
   return { processed: jobs.length, sent, failed };
 }
 
-/** Absolute booking URL, or null when NEXT_PUBLIC_APP_URL is unset/invalid. */
-function miniAppUrl(): string | null {
+/** Absolute booking URL for a clinic, or null when NEXT_PUBLIC_APP_URL is unset/invalid. */
+function miniAppUrl(clinicId: string): string | null {
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
   if (!base) return null;
   // Telegram deep link form when the app is hosted on t.me.
   if (base === "https://t.me" || base.startsWith("https://t.me/")) return base;
   try {
-    const url = new URL(`${base}/book`);
+    const url = new URL(`${base}/book?clinic=${encodeURIComponent(clinicId)}`);
     return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
   } catch {
     return null;

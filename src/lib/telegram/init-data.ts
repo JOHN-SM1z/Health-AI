@@ -1,6 +1,7 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "@/lib/env";
+import { getAllActiveBotTokens } from "@/lib/telegram/bots";
 
 export type VerifiedTelegramUser = {
   id: number;
@@ -68,4 +69,22 @@ export function validateTelegramInitData(initData: string, botToken = env.TELEGR
   if (!user.id || typeof user.id !== "number") return null;
 
   return { user, authDate: new Date(authDate * 1000) };
+}
+
+/**
+ * Multi-tenant validation: the Mini App button can be issued by ANY clinic's
+ * bot, so the initData signature is tried against every active bot token
+ * (plus the legacy global bot). Returns null when no bot signed it.
+ */
+export async function validateTelegramInitDataAny(initData: string): Promise<VerifiedInitData | null> {
+  if (!initData) return null;
+
+  const candidates = await getAllActiveBotTokens();
+  if (env.TELEGRAM_BOT_TOKEN) candidates.push(env.TELEGRAM_BOT_TOKEN);
+
+  for (const token of candidates) {
+    const verified = validateTelegramInitData(initData, token);
+    if (verified) return verified;
+  }
+  return null;
 }

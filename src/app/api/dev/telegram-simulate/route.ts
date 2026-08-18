@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { telegramDevModeEnabled, isProduction } from "@/lib/env";
 import { handleTelegramMessage, handleTelegramCommand } from "@/lib/telegram/handlers";
 import { DEV_TELEGRAM_USER_ID } from "@/lib/patients/identity";
+import { getClinicFromRequest } from "@/lib/clinics/context";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,12 @@ export async function POST(request: Request) {
     | { text?: string; voice?: boolean; command?: string }
     | null;
 
+  const clinic = await getClinicFromRequest(request);
+  if (!clinic) {
+    return NextResponse.json({ ok: false, error: "no clinic context" }, { status: 400 });
+  }
+  const clinicId = clinic.id;
+
   const from = {
     id: DEV_TELEGRAM_USER_ID,
     first_name: "Local",
@@ -28,12 +35,13 @@ export async function POST(request: Request) {
   const chatId = DEV_TELEGRAM_USER_ID;
 
   if (body?.command === "/start") {
-    await handleTelegramCommand({ chatId, from, command: "/start" });
+    await handleTelegramCommand({ clinicId, chatId, from, command: "/start" });
     return NextResponse.json({ ok: true, note: "dev-simulated /start" });
   }
 
   if (body?.voice) {
     await handleTelegramMessage({
+      clinicId,
       chatId,
       from,
       updateId: Date.now(),
@@ -46,6 +54,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "send { text } or { voice: true }" }, { status: 400 });
   }
 
-  await handleTelegramMessage({ chatId, from, text: body.text, updateId: Date.now() });
+  await handleTelegramMessage({ clinicId, chatId, from, text: body.text, updateId: Date.now() });
   return NextResponse.json({ ok: true, note: "dev-simulated text message" });
 }

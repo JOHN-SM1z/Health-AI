@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getDefaultClinic } from "@/lib/clinics/context";
+import { getClinicFromRequest } from "@/lib/clinics/context";
 import { handleApiError, fail, ok } from "@/lib/api/errors";
 import { rateLimit, keyFromIp } from "@/lib/rate-limit";
 
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     if (!limit.ok) return fail("Juda ko‘p so‘rov", 429, "rate_limited");
 
     const supabase = createAdminClient();
-    const clinic = await getDefaultClinic();
+    const clinic = await getClinicFromRequest(request);
 
     const [services, doctors, specialties] = await Promise.all([
       supabase

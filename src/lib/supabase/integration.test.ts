@@ -374,6 +374,7 @@ describeDb("telegram voice consent flow", () => {
 
   it("routes a voice update into metadata storage and consent — no transcription without consent", async () => {
     await handleTelegramMessage({
+      clinicId: CLINIC_ID,
       chatId: voiceUserId,
       from: { id: voiceUserId, first_name: "Ovoz" },
       voice: {

@@ -90,7 +90,7 @@ vi.mock("@/lib/supabase/admin", () => ({
 }));
 
 vi.mock("@/lib/clinics/context", () => ({
-  getDefaultClinic: async () => mockClinic,
+  getClinicFromRequest: async () => mockClinic,
 }));
 
 import { GET, POST } from "./route";

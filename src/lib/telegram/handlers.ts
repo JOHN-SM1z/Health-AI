@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { adminChatIds } from "@/lib/env";
-import { getDefaultClinic } from "@/lib/clinics/context";
+import { getClinicById } from "@/lib/clinics/context";
 import { getOrCreatePatient } from "@/lib/patients/identity";
 import { getOrCreateConversation, appendMessage, conversationIsHeld, updateConversationState } from "@/lib/telegram/store";
 import { sendTelegramMessage, getTelegramFileUrl } from "@/lib/telegram/bot";
@@ -13,17 +13,17 @@ import { logger } from "@/lib/logger";
 import { getTranscriptionProvider } from "@/lib/transcription/provider";
 
 /**
- * Booking link for text replies, or null when NEXT_PUBLIC_APP_URL is unset or
- * not an absolute URL. Supports the t.me deep-link form — tapping it opens the
- * Mini App inside Telegram with valid initData.
+ * Booking link for a clinic, or null when NEXT_PUBLIC_APP_URL is unset or
+ * not an absolute URL. Supports the t.me deep-link form — tapping it opens
+ * the Mini App inside Telegram with valid initData. The clinic is embedded
+ * so the Mini App opens the right tenant.
  */
-const bookingLink = (): string | null => {
+const bookingLink = (clinicId: string): string | null => {
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
   if (!base) return null;
-  // Telegram deep-link form when the app is hosted on t.me.
   if (base === "https://t.me" || base.startsWith("https://t.me/")) return base;
   try {
-    const url = new URL(`${base}/book`);
+    const url = new URL(`${base}/book?clinic=${encodeURIComponent(clinicId)}`);
     return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
   } catch {
     return null;
@@ -31,18 +31,18 @@ const bookingLink = (): string | null => {
 };
 
 /**
- * HTTPS Mini App URL for a web_app button, or null when unavailable.
- * Telegram rejects the WHOLE message (BUTTON_URL_INVALID) when a web_app
- * button's domain is not whitelisted in @BotFather, so the button is only
- * attached when an HTTPS app URL is configured (never for a t.me deep-link
- * base). sendTelegramMessage still downgrades it to a plain text button if
- * Telegram rejects it anyway, so the menu always renders.
+ * HTTPS Mini App URL for a web_app button of a clinic, or null when
+ * unavailable. Telegram rejects the WHOLE message (BUTTON_URL_INVALID) when a
+ * web_app button's domain is not whitelisted in @BotFather, so the button is
+ * only attached when an HTTPS app URL is configured (never for a t.me
+ * deep-link base). sendTelegramMessage still downgrades it to a plain text
+ * button if Telegram rejects it anyway, so the menu always renders.
  */
-const webAppUrl = (): string | null => {
+const webAppUrl = (clinicId: string): string | null => {
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
   if (!base || base === "https://t.me" || base.startsWith("https://t.me/")) return null;
   try {
-    const url = new URL(`${base}/book`);
+    const url = new URL(`${base}/book?clinic=${encodeURIComponent(clinicId)}`);
     return url.protocol === "https:" ? url.toString() : null;
   } catch {
     return null;
@@ -50,14 +50,14 @@ const webAppUrl = (): string | null => {
 };
 
 /**
- * Reply keyboard for the main menu. The booking button is a web_app button
- * when a whitelisted HTTPS Mini App URL is configured — tapping it opens the
- * booking app directly inside Telegram with valid initData. Otherwise it
- * degrades to a plain text button that routes to handleMenuButton, which
- * replies with the booking link.
+ * Reply keyboard for the main menu of a clinic. The booking button is a
+ * web_app button when a whitelisted HTTPS Mini App URL is configured — tapping
+ * it opens the booking app directly inside Telegram with valid initData.
+ * Otherwise it degrades to a plain text button that routes to
+ * handleMenuButton, which replies with the booking link.
  */
-export function buildMainKeyboard() {
-  const url = webAppUrl();
+export function buildMainKeyboard(clinicId: string) {
+  const url = webAppUrl(clinicId);
   const bookingButton = url
     ? { text: "📅 Qabulga yozilish", web_app: { url } }
     : { text: "📅 Qabulga yozilish" };
@@ -85,14 +85,18 @@ export function buildHeldKeyboard() {
   };
 }
 
-export const WELCOME_UZ =
-  `Assalomu alaykum! 👋\n` +
-  `Bu — ${"klinikamiz"}ning rasmiy qabul boti.\n\n` +
-  `Men klinika ma‘lumotlari (manzil, narxlar, ish vaqti) va qabulga yozilishda yordam beraman. ` +
-  `Bot tibbiy tashxis qo‘ymaydi va davolash tavsiya qilmaydi.\n\n` +
-  `Qulay tugmani tanlang 👇`;
+export function welcomeText(clinicName: string): string {
+  return (
+    `Assalomu alaykum! 👋\n` +
+    `Bu — ${clinicName}ning rasmiy qabul boti.\n\n` +
+    `Men klinika ma‘lumotlari (manzil, narxlar, ish vaqti) va qabulga yozilishda yordam beraman. ` +
+    `Bot tibbiy tashxis qo‘ymaydi va davolash tavsiya qilmaydi.\n\n` +
+    `Qulay tugmani tanlang 👇`
+  );
+}
 
 export async function handleTelegramMessage(opts: {
+  clinicId: string;
   chatId: number;
   from: { id: number; first_name?: string; last_name?: string; username?: string };
   text?: string;
@@ -100,7 +104,7 @@ export async function handleTelegramMessage(opts: {
   updateId: number;
 }): Promise<void> {
   try {
-    const clinic = await getDefaultClinic();
+    const clinic = await getClinicById(opts.clinicId);
     const patient = await getOrCreatePatient({
       clinicId: clinic.id,
       user: opts.from,
@@ -148,7 +152,7 @@ export async function handleTelegramMessage(opts: {
       await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "navigation_answer" });
       const reply = await suggestNavigation(clinic.id, text);
       await updateConversationState(conversation.id, { ...state, [NAVIGATION_STATE_KEY]: { step: 2 } });
-      await sendTelegramMessage({ chatId: opts.chatId, text: reply, replyMarkup: buildMainKeyboard() });
+      await sendTelegramMessage({ chatId: opts.chatId, text: reply, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
       await appendMessage({
         conversationId: conversation.id,
         clinicId: clinic.id,
@@ -160,11 +164,14 @@ export async function handleTelegramMessage(opts: {
     }
 
     const reply = await generateReceptionistReply({ clinicId: clinic.id, userText: text });
-    await sendTelegramMessage({
-      chatId: opts.chatId,
-      text: reply.text,
-      replyMarkup: reply.handoff ? buildMainKeyboard() : undefined,
-    });
+    await sendTelegramMessage(
+      {
+        chatId: opts.chatId,
+        text: reply.text,
+        replyMarkup: reply.handoff ? buildMainKeyboard(clinic.id) : undefined,
+      },
+      clinic.id,
+    );
     await appendMessage({
       conversationId: conversation.id,
       clinicId: clinic.id,
@@ -186,12 +193,13 @@ export async function handleTelegramMessage(opts: {
 }
 
 export async function handleTelegramCommand(opts: {
+  clinicId: string;
   chatId: number;
   from: { id: number; first_name?: string; last_name?: string; username?: string };
   command: string;
   text?: string;
 }): Promise<void> {
-  const clinic = await getDefaultClinic();
+  const clinic = await getClinicById(opts.clinicId);
   const patient = await getOrCreatePatient({
     clinicId: clinic.id,
     user: opts.from,
@@ -213,14 +221,17 @@ export async function handleTelegramCommand(opts: {
         content: "/start",
       });
       if (held) {
-        await sendTelegramMessage({
-          chatId: opts.chatId,
-          text: "Hozir operator bilan suhbatlashyapsiz. Operator javobini kuting.",
-          replyMarkup: buildHeldKeyboard(),
-        });
+        await sendTelegramMessage(
+          {
+            chatId: opts.chatId,
+            text: "Hozir operator bilan suhbatlashyapsiz. Operator javobini kuting.",
+            replyMarkup: buildHeldKeyboard(),
+          },
+          clinic.id,
+        );
         return;
       }
-      await sendTelegramMessage({ chatId: opts.chatId, text: WELCOME_UZ, replyMarkup: buildMainKeyboard() });
+      await sendTelegramMessage({ chatId: opts.chatId, text: welcomeText(clinic.name), replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
       await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "bot_started" });
       break;
     }
@@ -244,17 +255,21 @@ export async function handleTelegramCommand(opts: {
       break;
     }
     default:
-      await sendTelegramMessage({ chatId: opts.chatId, text: "Noma‘lum buyruq. Iltimos, tugmalardan foydalaning." });
+      await sendTelegramMessage(
+        { chatId: opts.chatId, text: "Noma‘lum buyruq. Iltimos, tugmalardan foydalaning." },
+        clinic.id,
+      );
   }
 }
 
 /** Menu button handler — the shared text-based commands. */
 export async function handleMenuButton(opts: {
+  clinicId: string;
   chatId: number;
   from: { id: number; first_name?: string; last_name?: string; username?: string };
   button: string;
 }): Promise<void> {
-  const clinic = await getDefaultClinic();
+  const clinic = await getClinicById(opts.clinicId);
   const patient = await getOrCreatePatient({
     clinicId: clinic.id,
     user: opts.from,
@@ -279,16 +294,19 @@ export async function handleMenuButton(opts: {
   }
 
   if (held) {
-    await sendTelegramMessage({
-      chatId: opts.chatId,
-      text: "Hozir operator bilan suhbatlashyapsiz. Operator javobini kuting.",
-      replyMarkup: buildHeldKeyboard(),
-    });
+    await sendTelegramMessage(
+      {
+        chatId: opts.chatId,
+        text: "Hozir operator bilan suhbatlashyapsiz. Operator javobini kuting.",
+        replyMarkup: buildHeldKeyboard(),
+      },
+      clinic.id,
+    );
     return;
   }
 
   if (opts.button.includes("Qabulga yozilish")) {
-    const url = bookingLink();
+    const url = bookingLink(clinic.id);
     const isHttps = url && url.startsWith("https://");
     const replyMarkup = url
       ? {
@@ -302,13 +320,16 @@ export async function handleMenuButton(opts: {
         }
       : undefined;
 
-    await sendTelegramMessage({
-      chatId: opts.chatId,
-      text: url
-        ? `Qabulga yozilish uchun quyidagi tugmani bosing:`
-        : "Qabulga yozilish hozircha onlayn sozlanmagan. Iltimos, operatorlarimizga murojaat qiling.",
-      replyMarkup,
-    });
+    await sendTelegramMessage(
+      {
+        chatId: opts.chatId,
+        text: url
+          ? `Qabulga yozilish uchun quyidagi tugmani bosing:`
+          : "Qabulga yozilish hozircha onlayn sozlanmagan. Iltimos, operatorlarimizga murojaat qiling.",
+        replyMarkup,
+      },
+      clinic.id,
+    );
     return;
   }
 
@@ -318,7 +339,7 @@ export async function handleMenuButton(opts: {
       [NAVIGATION_STATE_KEY]: { step: 1 },
     });
     const question = await startNavigation();
-    await sendTelegramMessage({ chatId: opts.chatId, text: question, replyMarkup: buildMainKeyboard() });
+    await sendTelegramMessage({ chatId: opts.chatId, text: question, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
     await appendMessage({
       conversationId: conversation.id,
       clinicId: clinic.id,
@@ -343,7 +364,7 @@ export async function handleMenuButton(opts: {
         services.map((s) => `• ${s.name} — ${new Intl.NumberFormat("uz-UZ").format(Number(s.price))} ${clinic.currency}, ${s.duration_minutes} daq.`).join("\n") +
         "\n\nQabulga yozilish uchun “Qabulga yozilish” tugmasini bosing."
       : "Narxlar ro‘yxati hozircha kiritilmagan. Operatorlarimizga murojaat qiling.";
-    await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: buildMainKeyboard() });
+    await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
     return;
   }
 
@@ -351,7 +372,7 @@ export async function handleMenuButton(opts: {
     const text = clinic.address
       ? `📍 Manzil: ${clinic.address}\n\n☎️ Telefon: ${clinic.phone ?? "ko‘rsatilmagan"}\n\nIsh vaqti haqida ma‘lumot uchun operatorlarga murojaat qiling.`
       : "Manzil hozircha kiritilmagan. Operatorlarimizga murojaat qiling.";
-    await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: buildMainKeyboard() });
+    await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
     return;
   }
 
@@ -367,6 +388,7 @@ export async function handleMenuButton(opts: {
   }
 
   await handleTelegramMessage({
+    clinicId: clinic.id,
     chatId: opts.chatId,
     from: opts.from,
     text: opts.button,
@@ -396,11 +418,14 @@ export async function requestHumanHandoff(opts: {
     actor: { actorType: "telegram" },
   });
 
-  await sendTelegramMessage({
-    chatId: opts.chatId,
-    text: "Operatorlarimiz siz bilan bog‘lanadi. Biroz kuting. ⏳\n\nOperator javob berguncha avtomatik xabarlar to‘xtatiladi.",
-    replyMarkup: buildHeldKeyboard(),
-  });
+  await sendTelegramMessage(
+    {
+      chatId: opts.chatId,
+      text: "Operatorlarimiz siz bilan bog‘lanadi. Biroz kuting. ⏳\n\nOperator javob berguncha avtomatik xabarlar to‘xtatiladi.",
+      replyMarkup: buildHeldKeyboard(),
+    },
+    opts.clinicId,
+  );
   await appendMessage({
     conversationId: opts.conversationId,
     clinicId: opts.clinicId,
@@ -433,11 +458,14 @@ export async function exitOperatorChat(opts: {
   const held = !!conv && (conv.status === "assigned" || conv.ai_enabled === false);
 
   if (!held) {
-    await sendTelegramMessage({
-      chatId: opts.chatId,
-      text: "Hozir operator bilan faol suhbat yo‘q. Qanday yordam kerak?",
-      replyMarkup: buildMainKeyboard(),
-    });
+    await sendTelegramMessage(
+      {
+        chatId: opts.chatId,
+        text: "Hozir operator bilan faol suhbat yo‘q. Qanday yordam kerak?",
+        replyMarkup: buildMainKeyboard(opts.clinicId),
+      },
+      opts.clinicId,
+    );
     return;
   }
 
@@ -461,11 +489,14 @@ export async function exitOperatorChat(opts: {
     actor: { actorType: "telegram" },
   });
 
-  await sendTelegramMessage({
-    chatId: opts.chatId,
-    text: "Suhbat yakunlandi. ✅\n\nEndi bot yana javob beradi. Qanday yordam kerak?",
-    replyMarkup: buildMainKeyboard(),
-  });
+  await sendTelegramMessage(
+    {
+      chatId: opts.chatId,
+      text: "Suhbat yakunlandi. ✅\n\nEndi bot yana javob beradi. Qanday yordam kerak?",
+      replyMarkup: buildMainKeyboard(opts.clinicId),
+    },
+    opts.clinicId,
+  );
   await appendMessage({
     conversationId: opts.conversationId,
     clinicId: opts.clinicId,
@@ -517,10 +548,13 @@ async function handleVoiceMessage(opts: {
     .single();
   if (error || !voiceRow) {
     logger.error("voice metadata save failed", { error: error?.message });
-    await sendTelegramMessage({
-      chatId,
-      text: "Ovozli xabarni saqlashda xatolik yuz berdi. Iltimos, qayta yuboring yoki matn shaklida yozing.",
-    });
+    await sendTelegramMessage(
+      {
+        chatId,
+        text: "Ovozli xabarni saqlashda xatolik yuz berdi. Iltimos, qayta yuboring yoki matn shaklida yozing.",
+      },
+      clinicId,
+    );
     return;
   }
 
@@ -535,30 +569,36 @@ async function handleVoiceMessage(opts: {
 
   // 2. Transcription must be enabled AND consented before processing.
   if (!getTranscriptionProvider()) {
-    await sendTelegramMessage({
-      chatId,
-      text:
-        "Ovozli xabaringiz qabul qilindi. Hozircha uni avtomatik tushunish yoqilmagan, shuning uchun eshitilgan matn sifatida javob bera olmaymiz. " +
-        "Iltimos, xabaringizni matn shaklida yozing yoki “Operator bilan bog‘lanish” tugmasini bosing — operatorlar yordam beradi. 📩",
-    });
+    await sendTelegramMessage(
+      {
+        chatId,
+        text:
+          "Ovozli xabaringiz qabul qilindi. Hozircha uni avtomatik tushunish yoqilmagan, shuning uchun eshitilgan matn sifatida javob bera olmaymiz. " +
+          "Iltimos, xabaringizni matn shaklida yozing yoki “Operator bilan bog‘lanish” tugmasini bosing — operatorlar yordam beradi. 📩",
+      },
+      clinicId,
+    );
     return;
   }
 
   // 3. Ask for consent before downloading/transcribing.
-  await sendTelegramMessage({
-    chatId,
-    text:
-      "Ovozli xabaringizni tushunish uchun uni matnga aylantirishimiz kerak. " +
-      "Matn faqat qabulga yordam berish uchun ishlatiladi. Ruxsat berasizmi?",
-    replyMarkup: {
-      inline_keyboard: [
-        [
-          { text: "Ha, ruxsat", callback_data: `voice_consent_yes:${voiceRow.id}` },
-          { text: "Yo‘q", callback_data: `voice_consent_no:${voiceRow.id}` },
+  await sendTelegramMessage(
+    {
+      chatId,
+      text:
+        "Ovozli xabaringizni tushunish uchun uni matnga aylantirishimiz kerak. " +
+        "Matn faqat qabulga yordam berish uchun ishlatiladi. Ruxsat berasizmi?",
+      replyMarkup: {
+        inline_keyboard: [
+          [
+            { text: "Ha, ruxsat", callback_data: `voice_consent_yes:${voiceRow.id}` },
+            { text: "Yo‘q", callback_data: `voice_consent_no:${voiceRow.id}` },
+          ],
         ],
-      ],
+      },
     },
-  });
+    clinicId,
+  );
 }
 
 export async function handleVoiceConsent(opts: {
@@ -579,25 +619,28 @@ export async function handleVoiceConsent(opts: {
 
   if (!opts.consent) {
     await supabase.from("voice_messages").update({ consent_given: false }).eq("id", voiceRow.id);
-    await sendTelegramMessage({
-      chatId: opts.chatId,
-      text:
-        "Tushundim, ovozli xabaringizni qayta ishlamaymiz. " +
-        "Agar yordam kerak bo‘lsa, matn shaklida yozing yoki operatorlarimiz bilan bog‘laning.",
-    });
+    await sendTelegramMessage(
+      {
+        chatId: opts.chatId,
+        text:
+          "Tushundim, ovozli xabaringizni qayta ishlamaymiz. " +
+          "Agar yordam kerak bo‘lsa, matn shaklida yozing yoki operatorlarimiz bilan bog‘laning.",
+      },
+      voiceRow.clinic_id,
+    );
     return;
   }
 
   // 4. Consent given: download server-side, store privately, transcribe.
   await supabase.from("voice_messages").update({ consent_given: true }).eq("id", voiceRow.id);
-  await sendTelegramMessage({
-    chatId: opts.chatId,
-    text: "Ovozli xabaringizni qayta ishlayapmiz... ⏳",
-  });
+  await sendTelegramMessage(
+    { chatId: opts.chatId, text: "Ovozli xabaringizni qayta ishlayapmiz... ⏳" },
+    voiceRow.clinic_id,
+  );
 
   try {
     if (!voiceRow.telegram_file_id) throw new Error("telegram file id unavailable");
-    const fileUrl = await getTelegramFileUrl(voiceRow.telegram_file_id);
+    const fileUrl = await getTelegramFileUrl(voiceRow.telegram_file_id, voiceRow.clinic_id);
     if (!fileUrl) throw new Error("telegram file url unavailable");
 
     const res = await fetch(fileUrl, { signal: AbortSignal.timeout(30_000) });
@@ -630,30 +673,36 @@ export async function handleVoiceConsent(opts: {
 
     // 5. Show the transcription so the patient can correct it, then use it
     // for navigation (consent was already given).
-    await sendTelegramMessage({
-      chatId: opts.chatId,
-      text: `Siz aytdingiz:\n“${result.text}”\n\nBu to‘g‘rimi?`,
-      replyMarkup: {
-        inline_keyboard: [
-          [
-            { text: "✅ To‘g‘ri", callback_data: `voice_correct:${voiceRow.id}` },
-            { text: "✏️ Tuzatish kerak", callback_data: `voice_wrong:${voiceRow.id}` },
+    await sendTelegramMessage(
+      {
+        chatId: opts.chatId,
+        text: `Siz aytdingiz:\n“${result.text}”\n\nBu to‘g‘rimi?`,
+        replyMarkup: {
+          inline_keyboard: [
+            [
+              { text: "✅ To‘g‘ri", callback_data: `voice_correct:${voiceRow.id}` },
+              { text: "✏️ Tuzatish kerak", callback_data: `voice_wrong:${voiceRow.id}` },
+            ],
           ],
-        ],
+        },
       },
-    });
+      voiceRow.clinic_id,
+    );
   } catch (e) {
     logger.error("voice transcription failed", { voiceId: voiceRow.id, error: String(e) });
     await supabase
       .from("voice_messages")
       .update({ transcription_status: "failed", transcription_error: String(e).slice(0, 500) })
       .eq("id", voiceRow.id);
-    await sendTelegramMessage({
-      chatId: opts.chatId,
-      text:
-        "Kechirasiz, ovozli xabaringizni qayta ishlay olmadim va eshitilgan matn sifatida javob bera olmayman. " +
-        "Iltimos, xabaringizni matn shaklida yozing yoki operatorlarimizga murojaat qiling — ular yordam beradi.",
-    });
+    await sendTelegramMessage(
+      {
+        chatId: opts.chatId,
+        text:
+          "Kechirasiz, ovozli xabaringizni qayta ishlay olmadim va eshitilgan matn sifatida javob bera olmayman. " +
+          "Iltimos, xabaringizni matn shaklida yozing yoki operatorlarimizga murojaat qiling — ular yordam beradi.",
+      },
+      voiceRow.clinic_id,
+    );
   }
 }
 
@@ -676,7 +725,7 @@ export async function handleVoiceCorrect(opts: { chatId: number; voiceMessageId:
     return;
   }
 
-  const clinic = await getDefaultClinic();
+  const clinic = await getClinicById(voiceRow.clinic_id);
   const { data: conv } = await supabase
     .from("conversations")
     .select("patient_id")
@@ -684,7 +733,7 @@ export async function handleVoiceCorrect(opts: { chatId: number; voiceMessageId:
     .maybeSingle();
 
   const reply = await generateReceptionistReply({ clinicId: clinic.id, userText: voiceRow.transcription });
-  await sendTelegramMessage({ chatId: opts.chatId, text: reply.text });
+  await sendTelegramMessage({ chatId: opts.chatId, text: reply.text }, clinic.id);
   if (conv) {
     await appendMessage({
       conversationId: voiceRow.conversation_id,
@@ -706,8 +755,18 @@ export async function handleVoiceCorrect(opts: { chatId: number; voiceMessageId:
 
 /** Patient wants to correct the transcription — ask them to type it. */
 export async function handleVoiceWrong(opts: { chatId: number; voiceMessageId: string }) {
-  await sendTelegramMessage({
-    chatId: opts.chatId,
-    text: "Iltimos, aytmoqchi bo‘lgan narsangizni matn shaklida yozing. Tuzatilgan matn qabulga yordam berishda ishlatiladi.",
-  });
+  const supabase = createAdminClient();
+  const { data: voiceRow } = await supabase
+    .from("voice_messages")
+    .select("clinic_id")
+    .eq("id", opts.voiceMessageId)
+    .maybeSingle();
+  if (!voiceRow) return;
+  await sendTelegramMessage(
+    {
+      chatId: opts.chatId,
+      text: "Iltimos, aytmoqchi bo‘lgan narsangizni matn shaklida yozing. Tuzatilgan matn qabulga yordam berishda ishlatiladi.",
+    },
+    voiceRow.clinic_id,
+  );
 }

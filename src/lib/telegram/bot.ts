@@ -2,6 +2,7 @@ import "server-only";
 import { Bot } from "grammy";
 import { env, telegramDevModeEnabled } from "@/lib/env";
 import { logger } from "@/lib/logger";
+import { getClinicBot } from "@/lib/telegram/bots";
 
 let bot: Bot | null = null;
 
@@ -13,9 +14,9 @@ export type TelegramMessagePayload = {
 };
 
 /**
- * Returns the shared grammY bot instance. Throws when Telegram is not
- * configured — callers must check telegramConfigured() first, and
- * development mode must be explicit (ENABLE_TELEGRAM_DEV_MODE=true).
+ * Returns the shared grammY bot instance for the legacy global bot
+ * (admin notifications, platform-level sends). Throws when Telegram is not
+ * configured — callers must check telegramConfigured() first.
  */
 export function getBot(): Bot {
   if (bot) return bot;
@@ -72,12 +73,27 @@ function stripWebAppButtons(markup: unknown): unknown {
 }
 
 /**
- * Sends a plain text message. Returns the Telegram message id, or null when
- * sending is not possible (development mode without a real bot).
- * Never throws — failures are logged and reported to the caller.
+ * Sends a plain text message THROUGH THE CLINIC'S OWN BOT. Returns the
+ * Telegram message id, or null when sending is not possible (no active bot,
+ * development mode). Never throws — failures are logged and reported.
  */
-export async function sendTelegramMessage(payload: TelegramMessagePayload): Promise<number | null> {
-  if (!telegramConfigured()) {
+export async function sendTelegramMessage(payload: TelegramMessagePayload, clinicId?: string): Promise<number | null> {
+  if (telegramDevModeEnabled()) {
+    logger.info("telegram send skipped (dev mode)", { chatId: payload.chatId, clinicId });
+    return null;
+  }
+
+  let target: Bot;
+  if (clinicId) {
+    try {
+      target = await getClinicBot(clinicId);
+    } catch {
+      logger.warn("telegram send skipped (clinic bot not configured)", { chatId: payload.chatId, clinicId });
+      return null;
+    }
+  } else if (telegramConfigured()) {
+    target = getBot();
+  } else {
     logger.info("telegram send skipped (not configured)", {
       chatId: payload.chatId,
       devMode: telegramDevModeEnabled(),
@@ -86,8 +102,7 @@ export async function sendTelegramMessage(payload: TelegramMessagePayload): Prom
   }
 
   const send = async (markup: unknown): Promise<number | null> => {
-    const b = getBot();
-    const res = await b.api.sendMessage(payload.chatId, payload.text, {
+    const res = await target.api.sendMessage(payload.chatId, payload.text, {
       reply_markup: markup as never,
       parse_mode: payload.parseMode ?? "HTML",
     });
@@ -136,13 +151,14 @@ export async function sendTelegramMessage(payload: TelegramMessagePayload): Prom
   }
 }
 
-/** Fetches a Telegram file download URL (file_id -> file_path). */
-export async function getTelegramFileUrl(fileId: string): Promise<string | null> {
+/** Fetches a Telegram file download URL (file_id -> file_path) using the
+ * clinic's bot (the file belongs to that bot's chat). */
+export async function getTelegramFileUrl(fileId: string, clinicId: string): Promise<string | null> {
   try {
-    const b = getBot();
-    const file = await b.api.getFile(fileId);
+    const target = await getClinicBot(clinicId);
+    const file = await target.api.getFile(fileId);
     if (!file.file_path) return null;
-    return `https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+    return `https://api.telegram.org/file/bot${target.token}/${file.file_path}`;
   } catch (e) {
     logger.error("telegram getFile failed", { error: e instanceof Error ? e.message : String(e) });
     return null;

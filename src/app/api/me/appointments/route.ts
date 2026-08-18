@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
-import { getDefaultClinic } from "@/lib/clinics/context";
+import { getClinicFromRequest } from "@/lib/clinics/context";
 import { resolvePatientFromInitData, devIdentityAllowed } from "@/lib/patients/identity";
 import { handleApiError, ApiError, ok, fail } from "@/lib/api/errors";
 import { rateLimit, keyFromIp } from "@/lib/rate-limit";
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       throw new ApiError(403, "Development identity is not allowed", "dev_identity_forbidden");
     }
 
-    const clinic = await getDefaultClinic();
+    const clinic = await getClinicFromRequest(request);
     const resolved = await resolvePatientFromInitData(body.initData, clinic.id);
     if (!resolved) throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
 

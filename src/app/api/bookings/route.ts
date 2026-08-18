@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getDefaultClinic } from "@/lib/clinics/context";
+import { getClinicFromRequest } from "@/lib/clinics/context";
 import { resolvePatientFromInitData, devIdentityAllowed, getOrCreatePatientByContact } from "@/lib/patients/identity";
 import { handleApiError, ApiError, ok, fail } from "@/lib/api/errors";
 import { parseBody } from "@/lib/api/validate";
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
       throw new ApiError(403, "Development identity is not allowed", "dev_identity_forbidden");
     }
 
-    const clinic = await getDefaultClinic();
+    const clinic = await getClinicFromRequest(request);
     let patient;
     let source: "telegram_mini_app" | "walk_in" = "telegram_mini_app";
 

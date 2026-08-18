@@ -1,18 +1,9 @@
-import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { env } from "@/lib/env";
+import { resolveClinicByBotUsername, botWebhookSecret, timingSafeCheck } from "@/lib/telegram/bots";
 import { claimWebhookProcessing, finishWebhookProcessing, releaseWebhookProcessing } from "@/lib/telegram/idempotency";
 import { rateLimit, keyFromIp } from "@/lib/rate-limit";
 import { logger } from "@/lib/logger";
-
-function timingSafeCheck(a: string | null | undefined, b: string | null | undefined): boolean {
-  if (!a || !b) return false;
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
-}
 import {
   handleTelegramMessage,
   handleTelegramCommand,
@@ -54,24 +45,33 @@ function clientIp(request: NextRequest): string {
 export async function POST(request: NextRequest) {
   const ip = clientIp(request);
 
-  // 1. Reject anything without the secret token. Telegram is the only
-  //    legitimate caller and it always sends X-Telegram-Bot-Api-Secret-Token.
+  // 1. Routing: the webhook URL identifies WHICH bot (and clinic) this
+  //    update belongs to. Unknown bots are rejected outright.
+  const botUsername = request.nextUrl.searchParams.get("bot") ?? "";
+  const resolved = await resolveClinicByBotUsername(botUsername);
+  if (!resolved) {
+    logger.warn("telegram webhook rejected: unknown bot", { bot: botUsername, ip });
+    return new NextResponse("Unauthorized", { status: 401 });
+  }
+  const { clinicId, integration } = resolved;
+
+  // 2. Authenticate: Telegram echoes back the secret token set during
+  //    webhook registration. It is derived per bot, so a valid token also
+  //    proves this bot really was registered by the platform.
   const secret = request.headers.get("x-telegram-bot-api-secret-token");
-  if (!timingSafeCheck(secret, env.TELEGRAM_WEBHOOK_SECRET)) {
-    logger.warn("telegram webhook rejected: missing/invalid secret token", { ip });
+  let expected: string;
+  try {
+    expected = botWebhookSecret(integration.telegram_bot_token);
+  } catch {
+    logger.error("telegram webhook rejected: webhook secret env missing", { clinicId, ip });
+    return new NextResponse("Unauthorized", { status: 401 });
+  }
+  if (!timingSafeCheck(secret, expected)) {
+    logger.warn("telegram webhook rejected: missing/invalid secret token", { clinicId, bot: botUsername, ip });
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
-  if (!env.TELEGRAM_BOT_TOKEN) {
-    // Local development without a real bot: accept nothing, but stay honest
-    // about it (never pretend Telegram is connected).
-    return NextResponse.json(
-      { ok: false, error: "telegram not configured — local dev mode active" },
-      { status: 200 },
-    );
-  }
-
-  // 2. Basic abuse protection.
+  // 3. Basic abuse protection.
   const limit = rateLimit({ key: keyFromIp(ip, "tg-webhook"), limit: 30, windowMs: 10_000 });
   if (!limit.ok) {
     return NextResponse.json(
@@ -93,40 +93,38 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
-  // 3. Idempotency: atomically claim this update. The first delivery wins;
-  //    duplicates return success without dispatching any work.
+  // 4. Idempotency: atomically claim this update. The first delivery wins;
+  //    duplicates return success without dispatching any work. Claims are
+  //    per (bot, update_id) so two clinics' bots never collide.
   let claimed: boolean;
   try {
-    claimed = await claimWebhookProcessing("telegram", String(updateId));
+    claimed = await claimWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId));
   } catch {
-    // Claiming is a DB write; if it fails we cannot safely dispatch — tell
-    // Telegram to retry instead of risking duplicate side effects.
-    logger.error("telegram webhook: could not claim update", { updateId });
+    logger.error("telegram webhook: could not claim update", { updateId, clinicId });
     return NextResponse.json({ ok: false }, { status: 500 });
   }
   if (!claimed) {
-    logger.debug("telegram webhook duplicate dropped", { updateId });
+    logger.debug("telegram webhook duplicate dropped", { updateId, clinicId });
     return NextResponse.json({ ok: true, duplicate: true });
   }
 
   try {
-    await dispatchUpdate(update);
+    await dispatchUpdate(update, clinicId);
   } catch (e) {
-    // Release the claim so Telegram's retry re-claims and processes the
-    // update; a failed delivery must never be marked processed.
     logger.error("telegram update handling failed", {
       updateId,
+      clinicId,
       error: e instanceof Error ? e.message : String(e),
     });
-    await releaseWebhookProcessing("telegram", String(updateId)).catch(() => {});
+    await releaseWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId)).catch(() => {});
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 
-  await finishWebhookProcessing("telegram", String(updateId)).catch(() => {});
+  await finishWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId)).catch(() => {});
   return NextResponse.json({ ok: true });
 }
 
-async function dispatchUpdate(update: TelegramUpdate) {
+async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
   const message = update.message;
   const callback = update.callback_query;
 
@@ -145,17 +143,17 @@ async function dispatchUpdate(update: TelegramUpdate) {
 
     if (text.startsWith("/")) {
       const command = text.split(" ")[0];
-      await handleTelegramCommand({ chatId, from, command });
+      await handleTelegramCommand({ clinicId, chatId, from, command });
       return;
     }
 
     // Menu button hits (exact matches) versus free text.
     if (isMenuButton(text)) {
-      await handleMenuButton({ chatId, from, button: text });
+      await handleMenuButton({ clinicId, chatId, from, button: text });
       return;
     }
 
-    await handleTelegramMessage({ chatId, from, text, voice: message.voice, updateId: update.update_id ?? 0 });
+    await handleTelegramMessage({ clinicId, chatId, from, text, voice: message.voice, updateId: update.update_id ?? 0 });
     return;
   }
 
@@ -188,7 +186,7 @@ async function dispatchUpdate(update: TelegramUpdate) {
       return;
     }
     if (data === "contact_operator") {
-      await requestHumanHandoffFromCallback(chatId, from);
+      await requestHumanHandoffFromCallback(clinicId, chatId, from);
       return;
     }
   }
@@ -213,21 +211,20 @@ function isMenuButton(text: string): boolean {
 }
 
 async function requestHumanHandoffFromCallback(
+  clinicId: string,
   chatId: number,
   from: { id: number; first_name?: string; last_name?: string; username?: string },
 ) {
-  const { getDefaultClinic } = await import("@/lib/clinics/context");
   const { getOrCreatePatient } = await import("@/lib/patients/identity");
   const { getOrCreateConversation } = await import("@/lib/telegram/store");
-  const clinic = await getDefaultClinic();
-  const patient = await getOrCreatePatient({ clinicId: clinic.id, user: from });
+  const patient = await getOrCreatePatient({ clinicId, user: from });
   const conversation = await getOrCreateConversation({
-    clinicId: clinic.id,
+    clinicId,
     patientId: patient.id,
     channel: "telegram",
   });
   await requestHumanHandoff({
-    clinicId: clinic.id,
+    clinicId,
     patientId: patient.id,
     conversationId: conversation.id,
     chatId,

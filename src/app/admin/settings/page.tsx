@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import { PageHeader, Card, AEmpty, AError, AButton, AInput, LoadingRow } from "@/components/admin/ui";
+import { BotIntegrationPanel } from "@/components/admin/bot-integration";
 import { Settings as SettingsIcon } from "lucide-react";
 import { adminApi, AdminApiError } from "@/lib/admin/client";
 
@@ -79,9 +80,12 @@ export default function SettingsPage() {
         </Card>
       )}
       <div className="mt-4 max-w-xl">
+        <BotIntegrationPanel />
+      </div>
+      <div className="mt-4 max-w-xl">
         <Card>
           <AEmpty
-            title="Bot sozlamalari"
+            title="AI bilim bazasi"
             subtitle="AI greeting, manzil va telefon ma'lumotlari bot bilim bazasiga avtomatik kiritiladi (ai_knowledge refresh orqali)."
             icon={<SettingsIcon className="h-6 w-6" />}
           />
