@@ -80,9 +80,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Reject oversized bodies before reading them: Telegram updates are small
+  // (voice file_id references only), so anything larger is not a real update.
+  const contentLength = Number(request.headers.get("content-length") ?? 0);
+  if (contentLength > 100_000) {
+    logger.warn("telegram webhook rejected: oversized payload", { bytes: contentLength, ip });
+    return NextResponse.json({ ok: false, error: "payload too large" }, { status: 413 });
+  }
+
   let update: TelegramUpdate;
   try {
-    update = (await request.json()) as TelegramUpdate;
+    const raw = await request.text();
+    if (raw.length > 100_000) {
+      logger.warn("telegram webhook rejected: oversized payload body", { bytes: raw.length, ip });
+      return NextResponse.json({ ok: false, error: "payload too large" }, { status: 413 });
+    }
+    update = JSON.parse(raw) as TelegramUpdate;
   } catch {
     return NextResponse.json({ ok: false, error: "bad json" }, { status: 400 });
   }
@@ -170,19 +183,19 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
     };
 
     if (data.startsWith("voice_consent_yes:")) {
-      await handleVoiceConsent({ chatId, voiceMessageId: data.split(":")[1], consent: true });
+      await handleVoiceConsent({ clinicId, chatId, voiceMessageId: data.split(":")[1], consent: true });
       return;
     }
     if (data.startsWith("voice_consent_no:")) {
-      await handleVoiceConsent({ chatId, voiceMessageId: data.split(":")[1], consent: false });
+      await handleVoiceConsent({ clinicId, chatId, voiceMessageId: data.split(":")[1], consent: false });
       return;
     }
     if (data.startsWith("voice_correct:")) {
-      await handleVoiceCorrect({ chatId, voiceMessageId: data.split(":")[1] });
+      await handleVoiceCorrect({ clinicId, chatId, voiceMessageId: data.split(":")[1] });
       return;
     }
     if (data.startsWith("voice_wrong:")) {
-      await handleVoiceWrong({ chatId, voiceMessageId: data.split(":")[1] });
+      await handleVoiceWrong({ clinicId, chatId, voiceMessageId: data.split(":")[1] });
       return;
     }
     if (data === "contact_operator") {

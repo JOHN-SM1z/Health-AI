@@ -123,6 +123,22 @@ export function deterministicRoute(text: string): "urgent" | "human" | "ai" {
   return "ai";
 }
 
+/**
+ * Markers that an AI reply is echoing its own system instructions or
+ * internal details (prompt-leak / prompt-echo). When detected, the reply is
+ * discarded and the conversation is routed to a human.
+ */
+export const PROMPT_LEAK_PATTERNS: RegExp[] = [
+  /QAT'?IY\s+QOIDALAR/i,
+  /tizim\s+(ko'?rsatma|instruktsiya|qoida|ko‘rsatma)/i,
+  /system\s+prompt/i,
+  /siz\s+qabulxona\s+yordamchisisiz/i,
+  /"system"\s*:/i,
+  /"role"\s*:\s*"system"/i,
+  /KLINIKA MA'?LUMOTLARI/i,
+];
+
 export function assertSafeAiOutput(text: string): boolean {
-  return !containsDisallowedClaim(text);
+  if (containsDisallowedClaim(text)) return false;
+  return !PROMPT_LEAK_PATTERNS.some((re) => re.test(text));
 }

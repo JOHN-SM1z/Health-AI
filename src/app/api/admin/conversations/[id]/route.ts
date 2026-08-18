@@ -37,7 +37,9 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
     if (fetchError || !conversation) throw new ApiError(404, "Suhbat topilmadi", "conversation_not_found");
 
     const isTakeover = body.action === "takeover";
-    const { error } = await supabase
+    // Compare-and-swap: a takeover only wins on an open (unheld) conversation,
+    // so two operators can never both claim it.
+    const { data: claimed, error } = await supabase
       .from("conversations")
       .update({
         status: isTakeover ? "assigned" : "open",
@@ -46,8 +48,14 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
         taken_over_at: isTakeover ? new Date().toISOString() : null,
         released_at: isTakeover ? null : new Date().toISOString(),
       })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("status", isTakeover ? "open" : "assigned")
+      .select("id")
+      .maybeSingle();
     if (error) throw new ApiError(500, "Suhbat holatini yangilab bo‘lmadi");
+    if (!claimed) {
+      throw new ApiError(409, "Suhbat boshqa operator tomonidan qabul qilingan", "conversation_already_held");
+    }
 
     await recordAudit({
       clinicId: staff.clinicId,
@@ -105,6 +113,13 @@ export async function PUT(request: NextRequest, ctx: RouteContext) {
       .eq("clinic_id", staff.clinicId)
       .maybeSingle();
     if (fetchError || !conversation) throw new ApiError(404, "Suhbat topilmadi", "conversation_not_found");
+
+    // One authoritative mode: an operator reply is only valid while this
+    // operator still holds the conversation. A stale browser session (or a
+    // second operator) must not send after takeover ended.
+    if (conversation.status !== "assigned") {
+      throw new ApiError(409, "Suhbat endi operator qo‘lida emas", "conversation_not_held");
+    }
 
     await appendMessage({
       conversationId: id,

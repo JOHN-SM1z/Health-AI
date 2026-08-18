@@ -47,12 +47,23 @@ const CONVERSATION = {
   ai_enabled: true,
 };
 
+const HELD_CONVERSATION = { ...CONVERSATION, status: "assigned", ai_enabled: false };
+
 function mockConversationLookup(data: unknown) {
   supabaseMock.from.mockImplementation((table: string) => {
     if (table === "conversations") {
       return {
         select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data, error: null })) })) })) })),
-        update: (values: Record<string, unknown>) => ({ eq: vi.fn(async () => ({ error: null, values })) }),
+        // CAS takeover: update ... eq(id) eq(status) select(id).maybeSingle()
+        update: () => ({
+          eq: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              select: vi.fn(() => ({
+                maybeSingle: vi.fn(async () => ({ data: { id: data ? (data as { id?: string }).id : "conv-1" }, error: null })),
+              })),
+            })),
+          })),
+        }),
       };
     }
     if (table === "patients") {
@@ -97,7 +108,7 @@ beforeEach(() => {
 });
 
 describe("admin conversation takeover", () => {
-  it("takes over a conversation and notifies the patient via the CLINIC's own bot", async () => {
+  it("takes over an open conversation and notifies the patient via the CLINIC's own bot", async () => {
     const res = await POST(...postReq({ action: "takeover" }));
     expect(res.status).toBe(200);
 
@@ -116,7 +127,7 @@ describe("admin conversation takeover", () => {
   });
 
   it("releases a held conversation without sending a patient notification", async () => {
-    mockConversationLookup({ ...CONVERSATION, status: "assigned", ai_enabled: false });
+    mockConversationLookup(HELD_CONVERSATION);
     const res = await POST(...postReq({ action: "release" }));
     expect(res.status).toBe(200);
     expect(sendMock).not.toHaveBeenCalled();
@@ -134,10 +145,71 @@ describe("admin conversation takeover", () => {
     const res = await POST(...postReq({ action: "explode" }));
     expect(res.status).toBe(400);
   });
+
+  it("only ONE operator can take over: a second takeover on a held conversation loses", async () => {
+    // Simulate operator B racing: the CAS update matches zero rows.
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === "conversations") {
+        return {
+          select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data: HELD_CONVERSATION, error: null })) })) })) })),
+          update: () => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                select: vi.fn(() => ({
+                  maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+                })),
+              })),
+            })),
+          }),
+        };
+      }
+      if (table === "patients") {
+        return {
+          select: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { telegram_user_id: 777000 }, error: null })) })) })),
+        };
+      }
+      return {};
+    });
+
+    const res = await POST(...postReq({ action: "takeover" }));
+    expect(res.status).toBe(409);
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(appendMock).not.toHaveBeenCalled();
+  });
+
+  it("cannot release a conversation that is not held", async () => {
+    // CAS precondition fails: the conversation is open, the update matches 0 rows.
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === "conversations") {
+        return {
+          select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data: CONVERSATION, error: null })) })) })) })),
+          update: () => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                select: vi.fn(() => ({
+                  maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+                })),
+              })),
+            })),
+          }),
+        };
+      }
+      if (table === "patients") {
+        return {
+          select: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { telegram_user_id: 777000 }, error: null })) })) })),
+        };
+      }
+      return {};
+    });
+    const res = await POST(...postReq({ action: "release" }));
+    expect(res.status).toBe(409);
+    expect(sendMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("admin conversation reply", () => {
   it("stores the message and delivers it via the conversation's clinic bot", async () => {
+    mockConversationLookup(HELD_CONVERSATION);
     const res = await PUT(...putReq({ text: "Salom, qabulga keling" }));
     expect(res.status).toBe(200);
     expect(appendMock).toHaveBeenCalledWith(
@@ -153,7 +225,7 @@ describe("admin conversation reply", () => {
     supabaseMock.from.mockImplementation((table: string) => {
       if (table === "conversations") {
         return {
-          select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data: CONVERSATION, error: null })) })) })) })),
+          select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data: HELD_CONVERSATION, error: null })) })) })) })),
         };
       }
       if (table === "patients") {
@@ -166,6 +238,13 @@ describe("admin conversation reply", () => {
     const res = await PUT(...putReq({ text: "Qo‘ng‘iroq qilamiz" }));
     expect(res.status).toBe(200);
     expect(appendMock).toHaveBeenCalledTimes(1);
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a reply from a stale session after the takeover ended (not held)", async () => {
+    const res = await PUT(...putReq({ text: "Hali ham yozayapman" }));
+    expect(res.status).toBe(409);
+    expect(appendMock).not.toHaveBeenCalled();
     expect(sendMock).not.toHaveBeenCalled();
   });
 

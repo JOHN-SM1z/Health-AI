@@ -73,6 +73,16 @@ if (!isBuildTime && parsed.success && parsed.data.PAYMENT_PROVIDER !== "manual")
 // static generation can proceed; the runtime still validates strictly.
 export const env = parsed.success ? parsed.data : envSchema.parse({});
 
+// Production fails closed on a missing or known-default CRON_SECRET: the
+// default "change-me-in-production" is public knowledge, and an unguarded
+// cron endpoint would let anyone trigger notification processing.
+if (!isBuildTime && isProduction && parsed.success && parsed.data.CRON_SECRET === "change-me-in-production") {
+  logger.error("insecure cron secret", {});
+  throw new Error(
+    "CRON_SECRET must be set explicitly in production. The default value is rejected (fail closed).",
+  );
+}
+
 /** Telegram dev mode is allowed ONLY outside production and MUST be explicit. */
 export const telegramDevModeEnabled = () =>
   !isProduction && env.ENABLE_TELEGRAM_DEV_MODE === "true";

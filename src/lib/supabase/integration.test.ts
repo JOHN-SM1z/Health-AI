@@ -137,6 +137,30 @@ describeDb("local Supabase booking engine", () => {
     await admin.from("appointments").delete().eq("id", first.appointment_id!);
   });
 
+  it("exactly one of two concurrent RPC bookings wins the same slot (no race)", async () => {
+    const startAt = nextWeekdayAt10(3); // Wednesday
+    const params = {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: patientId,
+      p_doctor_id: doctorId,
+      p_service_id: serviceId,
+      p_start_at: startAt,
+      p_status: "pending",
+      p_source: "telegram_mini_app",
+      p_notes: null,
+      p_created_by: null,
+    };
+    const [a, b] = await Promise.all([admin.rpc("book_appointment", params), admin.rpc("book_appointment", params)]);
+    const ra = a.data as { appointment_id: string | null; error_code: string | null };
+    const rb = b.data as { appointment_id: string | null; error_code: string | null };
+    const winners = [ra, rb].filter((r) => r.error_code === null && r.appointment_id !== null).length;
+    expect(winners).toBe(1);
+    const loser = winners === 1 && ra.error_code !== null ? ra : rb;
+    expect(loser.error_code).toBe("slot_taken");
+    const winnerId = ra.error_code === null ? ra.appointment_id : rb.appointment_id;
+    await admin.from("appointments").delete().eq("id", winnerId!);
+  });
+
   it("rejects booking outside working hours (outside_working_hours)", async () => {
     const startAt = nextWeekdayAt10(1);
     const offHours = new Date(new Date(startAt).getTime() - 6 * 3600000).toISOString(); // 04:00 local

@@ -152,6 +152,9 @@ export async function handleTelegramMessage(opts: {
       await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "navigation_answer" });
       const reply = await suggestNavigation(clinic.id, text);
       await updateConversationState(conversation.id, { ...state, [NAVIGATION_STATE_KEY]: { step: 2 } });
+      // The admin may have taken over while we were thinking — never reply
+      // over a human. Re-check immediately before sending.
+      if (await conversationIsHeld(conversation.id)) return;
       await sendTelegramMessage({ chatId: opts.chatId, text: reply, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
       await appendMessage({
         conversationId: conversation.id,
@@ -164,6 +167,9 @@ export async function handleTelegramMessage(opts: {
     }
 
     const reply = await generateReceptionistReply({ clinicId: clinic.id, userText: text });
+    // The admin may have taken over while the AI was generating. One
+    // authoritative mode: never send an AI reply over a human operator.
+    if (await conversationIsHeld(conversation.id)) return;
     await sendTelegramMessage(
       {
         chatId: opts.chatId,
@@ -602,6 +608,7 @@ async function handleVoiceMessage(opts: {
 }
 
 export async function handleVoiceConsent(opts: {
+  clinicId: string;
   chatId: number;
   voiceMessageId: string;
   consent: boolean;
@@ -611,6 +618,7 @@ export async function handleVoiceConsent(opts: {
     .from("voice_messages")
     .select("*")
     .eq("id", opts.voiceMessageId)
+    .eq("clinic_id", opts.clinicId)
     .maybeSingle();
   if (!voiceRow) {
     await sendTelegramMessage({ chatId: opts.chatId, text: "Ovozli xabar topilmadi." });
@@ -707,12 +715,13 @@ export async function handleVoiceConsent(opts: {
 }
 
 /** Patient confirmed the transcription — route it through the AI. */
-export async function handleVoiceCorrect(opts: { chatId: number; voiceMessageId: string }) {
+export async function handleVoiceCorrect(opts: { clinicId: string; chatId: number; voiceMessageId: string }) {
   const supabase = createAdminClient();
   const { data: voiceRow } = await supabase
     .from("voice_messages")
     .select("clinic_id, conversation_id, transcription, transcription_status")
     .eq("id", opts.voiceMessageId)
+    .eq("clinic_id", opts.clinicId)
     .maybeSingle();
   if (!voiceRow || !voiceRow.transcription) return;
 
@@ -733,6 +742,9 @@ export async function handleVoiceCorrect(opts: { chatId: number; voiceMessageId:
     .maybeSingle();
 
   const reply = await generateReceptionistReply({ clinicId: clinic.id, userText: voiceRow.transcription });
+  // The admin may have taken over while transcribing/thinking — never reply
+  // over a human operator.
+  if (await conversationIsHeld(voiceRow.conversation_id)) return;
   await sendTelegramMessage({ chatId: opts.chatId, text: reply.text }, clinic.id);
   if (conv) {
     await appendMessage({
@@ -754,12 +766,13 @@ export async function handleVoiceCorrect(opts: { chatId: number; voiceMessageId:
 }
 
 /** Patient wants to correct the transcription — ask them to type it. */
-export async function handleVoiceWrong(opts: { chatId: number; voiceMessageId: string }) {
+export async function handleVoiceWrong(opts: { clinicId: string; chatId: number; voiceMessageId: string }) {
   const supabase = createAdminClient();
   const { data: voiceRow } = await supabase
     .from("voice_messages")
     .select("clinic_id")
     .eq("id", opts.voiceMessageId)
+    .eq("clinic_id", opts.clinicId)
     .maybeSingle();
   if (!voiceRow) return;
   await sendTelegramMessage(

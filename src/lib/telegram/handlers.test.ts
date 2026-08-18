@@ -53,15 +53,17 @@ beforeEach(() => {
       return {
         select: vi.fn(() => ({
           eq: vi.fn(() => ({
-            maybeSingle: vi.fn(async () => ({
-              data: {
-                id: "vm-1",
-                clinic_id: "clinic-1",
-                conversation_id: "conv-1",
-                transcription: "Boshim og'riyapti",
-                transcription_status: "transcribed",
-              },
-              error: null,
+            eq: vi.fn(() => ({
+              maybeSingle: vi.fn(async () => ({
+                data: {
+                  id: "vm-1",
+                  clinic_id: "clinic-1",
+                  conversation_id: "conv-1",
+                  transcription: "Boshim og'riyapti",
+                  transcription_status: "transcribed",
+                },
+                error: null,
+              })),
             })),
           })),
         })),
@@ -198,7 +200,7 @@ describe("handleVoiceCorrect", () => {
   it("does not auto-reply when an admin holds the conversation", async () => {
     vi.mocked(conversationIsHeld).mockResolvedValue(true);
 
-    await handleVoiceCorrect({ chatId: 777000, voiceMessageId: "vm-1" });
+    await handleVoiceCorrect({ clinicId: "clinic-1", chatId: 777000, voiceMessageId: "vm-1" });
 
     // AI automation must stay silent while the conversation is assigned to a
     // human admin — no generation, no send.
@@ -207,7 +209,7 @@ describe("handleVoiceCorrect", () => {
   });
 
   it("routes the transcription through the AI when the conversation is free", async () => {
-    await handleVoiceCorrect({ chatId: 777000, voiceMessageId: "vm-1" });
+    await handleVoiceCorrect({ clinicId: "clinic-1", chatId: 777000, voiceMessageId: "vm-1" });
 
     expect(generateReceptionistReply).toHaveBeenCalledWith(
       expect.objectContaining({ userText: "Boshim og'riyapti" }),

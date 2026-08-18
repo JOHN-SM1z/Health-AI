@@ -75,4 +75,13 @@ describe("containsDisallowedClaim / assertSafeAiOutput", () => {
     expect(assertSafeAiOutput("Terapevtga yozilishingiz mumkin, ertaga 10:00 da bo'sh vaqt bor.")).toBe(true);
     expect(assertSafeAiOutput("Klinikamiz 09:00 dan 18:00 gacha ochiq.")).toBe(true);
   });
+
+  it("rejects prompt-echo / instruction-leak output (red-team)", () => {
+    // The model must never repeat its own system instructions back.
+    expect(assertSafeAiOutput("QAT'IY QOIDALAR: siz qabulxona yordamchisisiz")).toBe(false);
+    expect(assertSafeAiOutput("Men sizga tizim ko'rsatmamni ochib beraman:")).toBe(false);
+    expect(assertSafeAiOutput("Here is my system prompt: ...")).toBe(false);
+    expect(assertSafeAiOutput("{\"role\": \"system\", \"content\": \"...\"}")).toBe(false);
+    expect(assertSafeAiOutput("KLINIKA MA'LUMOTLARI — ichki ma'lumot")).toBe(false);
+  });
 });

@@ -223,4 +223,35 @@ describe("telegram webhook route (per-clinic bots)", () => {
     expect(res.status).toBe(500);
     expect(handleMessageMock).not.toHaveBeenCalled();
   });
+
+  it("rejects an oversized payload before any dispatch (413)", async () => {
+    const big = JSON.stringify({ update_id: 50, message: { text: "x".repeat(150_000) } });
+    const res = await POST(
+      new NextRequest(`http://localhost/api/telegram/webhook?bot=${BOT}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": "derived-secret" },
+        body: big,
+      }),
+    );
+    expect(res.status).toBe(413);
+    expect(claimMock).not.toHaveBeenCalled();
+    expect(handleMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("routes voice callbacks with the webhook's resolved clinicId (tenant-bound)", async () => {
+    claimMock.mockResolvedValueOnce(true);
+    const { handleVoiceConsent, handleVoiceCorrect, handleVoiceWrong } = await import("@/lib/telegram/handlers");
+    const consentMock = vi.mocked(handleVoiceConsent);
+    const correctMock = vi.mocked(handleVoiceCorrect);
+    const wrongMock = vi.mocked(handleVoiceWrong);
+
+    await post({ update_id: 60, callback_query: { id: "c1", from: { id: 42 }, data: "voice_consent_yes:vm-1", message: { chat: { id: 42 } } } });
+    expect(consentMock).toHaveBeenCalledWith(expect.objectContaining({ clinicId: "clinic-1", voiceMessageId: "vm-1" }));
+
+    await post({ update_id: 61, callback_query: { id: "c2", from: { id: 42 }, data: "voice_correct:vm-2", message: { chat: { id: 42 } } } });
+    expect(correctMock).toHaveBeenCalledWith(expect.objectContaining({ clinicId: "clinic-1", voiceMessageId: "vm-2" }));
+
+    await post({ update_id: 62, callback_query: { id: "c3", from: { id: 42 }, data: "voice_wrong:vm-3", message: { chat: { id: 42 } } } });
+    expect(wrongMock).toHaveBeenCalledWith(expect.objectContaining({ clinicId: "clinic-1", voiceMessageId: "vm-3" }));
+  });
 });
