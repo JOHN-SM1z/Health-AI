@@ -596,6 +596,7 @@ export async function handleVoiceConsent(opts: {
   });
 
   try {
+    if (!voiceRow.telegram_file_id) throw new Error("telegram file id unavailable");
     const fileUrl = await getTelegramFileUrl(voiceRow.telegram_file_id);
     if (!fileUrl) throw new Error("telegram file url unavailable");
 

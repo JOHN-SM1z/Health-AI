@@ -268,6 +268,62 @@ export type Database = {
           },
         ]
       }
+      clinic_telegram_integrations: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          enabled: boolean
+          last_error: string | null
+          status: Database["public"]["Enums"]["telegram_bot_status"]
+          telegram_bot_id: number | null
+          telegram_bot_name: string | null
+          telegram_bot_token: string | null
+          telegram_username: string | null
+          updated_at: string
+          validated_at: string | null
+          webhook_error: string | null
+          webhook_status: string | null
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          enabled?: boolean
+          last_error?: string | null
+          status?: Database["public"]["Enums"]["telegram_bot_status"]
+          telegram_bot_id?: number | null
+          telegram_bot_name?: string | null
+          telegram_bot_token?: string | null
+          telegram_username?: string | null
+          updated_at?: string
+          validated_at?: string | null
+          webhook_error?: string | null
+          webhook_status?: string | null
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          enabled?: boolean
+          last_error?: string | null
+          status?: Database["public"]["Enums"]["telegram_bot_status"]
+          telegram_bot_id?: number | null
+          telegram_bot_name?: string | null
+          telegram_bot_token?: string | null
+          telegram_username?: string | null
+          updated_at?: string
+          validated_at?: string | null
+          webhook_error?: string | null
+          webhook_status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clinic_telegram_integrations_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: true
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clinics: {
         Row: {
           address: string | null
@@ -1123,7 +1179,7 @@ export type Database = {
           retention_days: number
           size_bytes: number | null
           storage_path: string | null
-          telegram_file_id: string
+          telegram_file_id: string | null
           telegram_file_unique_id: string | null
           transcription: string | null
           transcription_error: string | null
@@ -1144,7 +1200,7 @@ export type Database = {
           retention_days?: number
           size_bytes?: number | null
           storage_path?: string | null
-          telegram_file_id: string
+          telegram_file_id?: string | null
           telegram_file_unique_id?: string | null
           transcription?: string | null
           transcription_error?: string | null
@@ -1165,7 +1221,7 @@ export type Database = {
           retention_days?: number
           size_bytes?: number | null
           storage_path?: string | null
-          telegram_file_id?: string
+          telegram_file_id?: string | null
           telegram_file_unique_id?: string | null
           transcription?: string | null
           transcription_error?: string | null
@@ -1308,6 +1364,7 @@ export type Database = {
         | "refunded"
         | "manual_review"
       staff_role: "owner" | "admin" | "doctor"
+      telegram_bot_status: "disabled" | "active" | "error"
       time_block_reason: "break" | "absence" | "reservation" | "admin_hold"
       voice_status: "none" | "pending" | "transcribed" | "failed"
     }
@@ -1486,6 +1543,7 @@ export const Constants = {
         "manual_review",
       ],
       staff_role: ["owner", "admin", "doctor"],
+      telegram_bot_status: ["disabled", "active", "error"],
       time_block_reason: ["break", "absence", "reservation", "admin_hold"],
       voice_status: ["none", "pending", "transcribed", "failed"],
     },
