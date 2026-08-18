@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import { PageHeader, Card, AEmpty, AError, ASelect, StatCard, LoadingRow } from "@/components/admin/ui";
-import { BarChart3, Users, CalendarX2 } from "lucide-react";
+import { BarChart3, Users, CalendarX2, TrendingUp, Stethoscope, Scissors } from "lucide-react";
 import { adminApi, AdminApiError, SOURCE_LABELS } from "@/lib/admin/client";
 
 type AnalyticsRow = {
@@ -19,6 +19,9 @@ type AppointmentAnalytics = {
   by_source: [string, number][];
   by_status: [string, number][];
   cancel_reasons: { reason: string; count: number }[];
+  revenue_trend: { date: string; revenue: number }[];
+  top_services: { name: string; count: number; revenue: number }[];
+  top_doctors: { name: string; count: number; revenue: number }[];
 };
 
 const RANGES = [
@@ -72,6 +75,9 @@ export default function AnalyticsPage() {
   const maxCount = stats.sorted[0]?.[1] ?? 1;
   const maxSource = appointments?.by_source[0]?.[1] ?? 1;
   const maxReason = appointments?.cancel_reasons[0]?.count ?? 1;
+  const maxTrend = appointments?.revenue_trend[0]?.revenue ?? 1;
+  const maxService = appointments?.top_services[0]?.count ?? 1;
+  const maxDoctor = appointments?.top_doctors[0]?.count ?? 1;
 
   const bars = (entries: [string, number][], max: number) => (
     <div className="space-y-3.5">
@@ -112,6 +118,81 @@ export default function AnalyticsPage() {
       </div>
 
       <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card>
+          <div className="mb-4 flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-ink-muted" />
+            <p className="text-sm font-bold text-foreground">Kunlik tushum dinamikasi</p>
+          </div>
+          {appointments === null ? (
+            <LoadingRow />
+          ) : appointments.revenue_trend.length === 0 ? (
+            <AEmpty title="Ma'lumot yo‘q" subtitle="Bu davrda to‘langan qabullar yo‘q" icon={<TrendingUp className="h-5 w-5" />} />
+          ) : (
+            <div className="flex h-40 items-end gap-1.5">
+              {appointments.revenue_trend.map((d) => (
+                <div key={d.date} className="group flex flex-1 flex-col items-center gap-1">
+                  <span className="font-numeric text-[10px] text-ink-muted opacity-0 transition-opacity group-hover:opacity-100">
+                    {d.revenue.toLocaleString("uz-UZ")}
+                  </span>
+                  <div
+                    className="w-full rounded-t-md bg-gradient-to-t from-pine to-mint transition-[height] duration-500"
+                    style={{ height: `${Math.max((d.revenue / maxTrend) * 100, 6)}%` }}
+                    title={`${d.date}: ${d.revenue.toLocaleString("uz-UZ")} so‘m`}
+                  />
+                  <span className="font-numeric text-[10px] text-ink-muted">{d.date.slice(5)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <div className="mb-4 flex items-center gap-2">
+            <Stethoscope className="h-4 w-4 text-ink-muted" />
+            <p className="text-sm font-bold text-foreground">Eng ko‘p shifokorlar</p>
+          </div>
+          {appointments === null ? (
+            <LoadingRow />
+          ) : appointments.top_doctors.length === 0 ? (
+            <AEmpty title="Ma'lumot yo‘q" subtitle="Bu davrda qabullar yo‘q" icon={<Stethoscope className="h-5 w-5" />} />
+          ) : (
+            bars(appointments.top_doctors.map((d) => [`${d.name} (${d.count})`, d.count]), maxDoctor)
+          )}
+        </Card>
+      </div>
+
+      <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card>
+          <div className="mb-4 flex items-center gap-2">
+            <Scissors className="h-4 w-4 text-ink-muted" />
+            <p className="text-sm font-bold text-foreground">Eng ko‘p xizmatlar</p>
+          </div>
+          {appointments === null ? (
+            <LoadingRow />
+          ) : appointments.top_services.length === 0 ? (
+            <AEmpty title="Ma'lumot yo‘q" subtitle="Bu davrda qabullar yo‘q" icon={<Scissors className="h-5 w-5" />} />
+          ) : (
+            <div className="space-y-3.5">
+              {appointments.top_services.map((s) => (
+                <div key={s.name}>
+                  <div className="mb-1.5 flex justify-between text-sm">
+                    <span className="text-ink-muted">{s.name}</span>
+                    <span className="font-numeric font-medium text-foreground">
+                      {s.count.toLocaleString("uz-UZ")} · {s.revenue.toLocaleString("uz-UZ")} so‘m
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-sand">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-pine to-mint transition-[width] duration-500"
+                      style={{ width: `${Math.max((s.count / maxService) * 100, 4)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
         <Card>
           <div className="mb-4 flex items-center gap-2">
             <Users className="h-4 w-4 text-ink-muted" />
