@@ -23,6 +23,14 @@ export default function TodayPage() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [isManagement, setIsManagement] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    void fetch("/api/admin/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setIsManagement(!!j?.ok && ["owner", "admin", "manager"].some((r) => (j.roles ?? []).includes(r))))
+      .catch(() => setIsManagement(false));
+  }, []);
 
   const load = async () => {
     const supabase = createClient();
@@ -82,7 +90,7 @@ export default function TodayPage() {
         <StatCard label="Kutilmoqda" value={counts.pending} tone="clay" />
         <StatCard label="Tasdiqlangan" value={counts.confirmed} tone="info" />
         <StatCard label="Yakunlangan" value={counts.completed} tone="pine" />
-        <StatCard label="Tushum (to‘langan)" value={`${counts.revenue.toLocaleString("uz-UZ")} so‘m`} />
+        {isManagement && <StatCard label="Tushum (to‘langan)" value={`${counts.revenue.toLocaleString("uz-UZ")} so‘m`} />}
       </div>
 
       {rows === null ? (

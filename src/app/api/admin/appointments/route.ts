@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireStaff } from "@/lib/auth/guards";
+import { requireRoles } from "@/lib/auth/guards";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { phoneSchema, nameSchema, uuidSchema, parseBody } from "@/lib/api/validate";
 import { trackAnalytics } from "@/lib/analytics";
@@ -28,7 +28,7 @@ const createSchema = z.object({
  */
 export async function POST(request: NextRequest) {
   try {
-    const ctx = await requireStaff("admin");
+    const ctx = await requireRoles("owner", "admin", "manager", "receptionist");
     const body = await parseBody(request, createSchema);
     const supabase = createAdminClient();
 

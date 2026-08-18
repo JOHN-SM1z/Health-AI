@@ -977,6 +977,29 @@ export type Database = {
           },
         ]
       }
+      platform_admins: {
+        Row: {
+          created_at: string
+          profile_id: string
+        }
+        Insert: {
+          created_at?: string
+          profile_id: string
+        }
+        Update: {
+          created_at?: string
+          profile_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "platform_admins_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       processed_webhooks: {
         Row: {
           external_id: string
@@ -1309,6 +1332,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_platform_admin: { Args: never; Returns: boolean }
       release_webhook_update: {
         Args: { p_external_id: string; p_source: string }
         Returns: undefined
@@ -1363,7 +1387,7 @@ export type Database = {
         | "failed"
         | "refunded"
         | "manual_review"
-      staff_role: "owner" | "admin" | "doctor"
+      staff_role: "owner" | "manager" | "admin" | "receptionist" | "doctor"
       telegram_bot_status: "disabled" | "active" | "error"
       time_block_reason: "break" | "absence" | "reservation" | "admin_hold"
       voice_status: "none" | "pending" | "transcribed" | "failed"
@@ -1542,7 +1566,7 @@ export const Constants = {
         "refunded",
         "manual_review",
       ],
-      staff_role: ["owner", "admin", "doctor"],
+      staff_role: ["owner", "manager", "admin", "receptionist", "doctor"],
       telegram_bot_status: ["disabled", "active", "error"],
       time_block_reason: ["break", "absence", "reservation", "admin_hold"],
       voice_status: ["none", "pending", "transcribed", "failed"],

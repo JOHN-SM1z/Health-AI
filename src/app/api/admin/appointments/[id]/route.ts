@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireStaff } from "@/lib/auth/guards";
+import { requireRoles } from "@/lib/auth/guards";
 import { parseBody } from "@/lib/api/validate";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { enqueueCancellationNotification, enqueueRescheduleNotification } from "@/lib/notifications/jobs";
@@ -34,7 +34,7 @@ type RouteContext = { params: Promise<{ id: string }> };
  */
 export async function PATCH(request: NextRequest, ctx: RouteContext) {
   try {
-    const staff = await requireStaff("admin");
+    const staff = await requireRoles("owner", "admin", "manager", "receptionist");
     const { id } = await ctx.params;
     const body = await parseBody(request, schema);
     const supabase = createAdminClient();

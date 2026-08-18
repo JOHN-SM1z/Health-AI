@@ -10,20 +10,19 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const ctx = await getStaffContext();
   if (!ctx) redirect("/admin/login");
 
-  const isAdminLike = hasRole(ctx, "admin");
-  const isOwner = hasRole(ctx, "owner");
+  const isManagement = hasRole(ctx, "admin");
 
   const nav = [
     { href: "/admin", label: "Bugun", icon: <LayoutDashboard className="h-4 w-4" />, show: true },
-    { href: "/admin/appointments", label: "Qabullar", icon: <ClipboardList className="h-4 w-4" />, show: isAdminLike },
-    { href: "/admin/calendar", label: "Kalendar", icon: <CalendarDays className="h-4 w-4" />, show: isAdminLike },
-    { href: "/admin/conversations", label: "Suhbatlar", icon: <MessagesSquare className="h-4 w-4" />, show: isAdminLike },
-    { href: "/admin/doctors", label: "Shifokorlar", icon: <Stethoscope className="h-4 w-4" />, show: isAdminLike },
-    { href: "/admin/services", label: "Xizmatlar", icon: <Scissors className="h-4 w-4" />, show: isAdminLike },
-    { href: "/admin/specialties", label: "Yo‘nalishlar", icon: <Sparkles className="h-4 w-4" />, show: isAdminLike },
-    { href: "/admin/faqs", label: "Savol-javoblar", icon: <MessagesSquare className="h-4 w-4" />, show: isAdminLike },
-    { href: "/admin/analytics", label: "Tahlillar", icon: <BarChart3 className="h-4 w-4" />, show: isOwner },
-    { href: "/admin/settings", label: "Sozlamalar", icon: <Settings className="h-4 w-4" />, show: isOwner },
+    { href: "/admin/appointments", label: "Qabullar", icon: <ClipboardList className="h-4 w-4" />, show: true },
+    { href: "/admin/calendar", label: "Kalendar", icon: <CalendarDays className="h-4 w-4" />, show: true },
+    { href: "/admin/conversations", label: "Suhbatlar", icon: <MessagesSquare className="h-4 w-4" />, show: true },
+    { href: "/admin/doctors", label: "Shifokorlar", icon: <Stethoscope className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/services", label: "Xizmatlar", icon: <Scissors className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/specialties", label: "Yo‘nalishlar", icon: <Sparkles className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/faqs", label: "Savol-javoblar", icon: <MessagesSquare className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/analytics", label: "Tahlillar", icon: <BarChart3 className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/settings", label: "Sozlamalar", icon: <Settings className="h-4 w-4" />, show: isManagement },
   ].filter((n) => n.show !== false);
 
   return (

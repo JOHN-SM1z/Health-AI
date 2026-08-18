@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireStaff } from "@/lib/auth/guards";
+import { requireRoles } from "@/lib/auth/guards";
 import { parseBody } from "@/lib/api/validate";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { recordAudit } from "@/lib/audit";
@@ -23,7 +23,7 @@ type RouteContext = { params: Promise<{ id: string }> };
  */
 export async function POST(request: NextRequest, ctx: RouteContext) {
   try {
-    const staff = await requireStaff("admin");
+    const staff = await requireRoles("owner", "admin", "manager", "receptionist");
     const { id } = await ctx.params;
     const body = await parseBody(request, takeoverSchema);
     const supabase = createAdminClient();
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
 /** Admin reply inside a conversation — sent via Telegram when possible. */
 export async function PUT(request: NextRequest, ctx: RouteContext) {
   try {
-    const staff = await requireStaff("admin");
+    const staff = await requireRoles("owner", "admin", "manager", "receptionist");
     const { id } = await ctx.params;
     const body = await parseBody(request, messageSchema);
     const supabase = createAdminClient();
