@@ -8,7 +8,7 @@ export const metadata = { title: "Boshqaruv paneli" };
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const ctx = await getStaffContext();
-  if (!ctx) redirect("/admin/login");
+  if (!ctx) redirect("/login");
 
   const isManagement = hasRole(ctx, "admin");
 

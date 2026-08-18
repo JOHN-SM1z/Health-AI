@@ -20,6 +20,11 @@ async function request<T>(path: string, method: string, body?: unknown): Promise
   if (!res.ok) {
     throw new AdminApiError(res.status, data?.error ?? "Xatolik yuz berdi", data?.code);
   }
+  // Server responses are wrapped in { ok: true, data }; unwrap so callers
+  // receive the payload directly.
+  if (typeof data === "object" && data !== null && data.ok === true && "data" in data) {
+    return data.data as T;
+  }
   return data as T;
 }
 

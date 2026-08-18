@@ -8,7 +8,7 @@ export const metadata = { title: "Shifokor paneli" };
 
 export default async function DoctorLayout({ children }: { children: React.ReactNode }) {
   const ctx = await getStaffContext();
-  if (!ctx) redirect("/admin/login");
+  if (!ctx) redirect("/login");
   if (!hasRole(ctx, "doctor")) redirect("/admin");
 
   return (

@@ -1,6 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { validateTelegramInitDataAny, type VerifiedInitData } from "@/lib/telegram/init-data";
+import { validateTelegramInitDataForClinic, type VerifiedInitData } from "@/lib/telegram/init-data";
 import { env, isProduction, telegramDevModeEnabled } from "@/lib/env";
 import { logger } from "@/lib/logger";
 
@@ -130,7 +130,7 @@ export async function resolvePatientFromInitData(initData: string | null | undef
     }), dev: true };
   }
 
-  const verified: VerifiedInitData | null = await validateTelegramInitDataAny(initData);
+  const verified: VerifiedInitData | null = await validateTelegramInitDataForClinic(initData, clinicId);
   if (!verified) return null;
 
   const patient = await getOrCreatePatient({

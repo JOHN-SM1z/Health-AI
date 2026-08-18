@@ -1,7 +1,8 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "@/lib/env";
-import { getAllActiveBotTokens } from "@/lib/telegram/bots";
+import { getActiveBotTokensForClinic } from "@/lib/telegram/bots";
+import { getDefaultClinic } from "@/lib/clinics/context";
 
 export type VerifiedTelegramUser = {
   id: number;
@@ -72,15 +73,25 @@ export function validateTelegramInitData(initData: string, botToken = env.TELEGR
 }
 
 /**
- * Multi-tenant validation: the Mini App button can be issued by ANY clinic's
- * bot, so the initData signature is tried against every active bot token
- * (plus the legacy global bot). Returns null when no bot signed it.
+ * Clinic-bound validation: the initData signature must belong to THIS
+ * clinic's own bot (or, for the legacy pilot deployment, the global bot when
+ * this clinic is the default one). A signature issued by any OTHER clinic's
+ * bot is rejected — a patient who swapped `?clinic=` in the Mini App URL
+ * cannot act inside a clinic whose bot did not sign their session.
  */
-export async function validateTelegramInitDataAny(initData: string): Promise<VerifiedInitData | null> {
+export async function validateTelegramInitDataForClinic(
+  initData: string,
+  clinicId: string,
+): Promise<VerifiedInitData | null> {
   if (!initData) return null;
 
-  const candidates = await getAllActiveBotTokens();
-  if (env.TELEGRAM_BOT_TOKEN) candidates.push(env.TELEGRAM_BOT_TOKEN);
+  const candidates = await getActiveBotTokensForClinic(clinicId);
+  if (env.TELEGRAM_BOT_TOKEN) {
+    const defaultClinic = await getDefaultClinic().catch(() => null);
+    if (defaultClinic && defaultClinic.id === clinicId) {
+      candidates.push(env.TELEGRAM_BOT_TOKEN);
+    }
+  }
 
   for (const token of candidates) {
     const verified = validateTelegramInitData(initData, token);

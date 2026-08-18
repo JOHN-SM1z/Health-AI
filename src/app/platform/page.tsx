@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function PlatformPage() {
   const ctx = await getStaffContext();
-  if (!ctx?.platformAdmin) redirect("/admin/login");
+  if (!ctx?.platformAdmin) redirect("/login");
 
   const supabase = createAdminClient();
   const { data: clinics, error } = await supabase

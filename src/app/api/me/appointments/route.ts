@@ -9,7 +9,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export const dynamic = "force-dynamic";
 
 const schema = z.object({
-  initData: z.string().min(1),
+  initData: z.string().nullable().optional(),
 });
 
 /**

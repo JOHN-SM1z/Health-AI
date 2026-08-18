@@ -29,10 +29,10 @@ export async function GET() {
     const supabase = createAdminClient();
     const { data, error } = await supabase
       .from("doctors")
-      .select("id, name, title, specialty_id, active, sort_order")
+      .select("id, name, title, specialty_id, active, created_at")
       .eq("clinic_id", staff.clinicId)
       .eq("active", true)
-      .order("sort_order", { ascending: true });
+      .order("created_at", { ascending: true });
     if (error) throw error;
     return ok({ doctors: data ?? [] });
   } catch (e) {

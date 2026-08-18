@@ -3,7 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createHmac } from "node:crypto";
 import { localDbAvailable } from "@/test/local-db";
 import { resolveClinicByBotUsername, getClinicBotToken, botWebhookSecret } from "@/lib/telegram/bots";
-import { validateTelegramInitDataAny } from "@/lib/telegram/init-data";
+import { validateTelegramInitDataForClinic } from "@/lib/telegram/init-data";
 import { getOrCreatePatient } from "@/lib/patients/identity";
 
 /**
@@ -14,7 +14,9 @@ import { getOrCreatePatient } from "@/lib/patients/identity";
  *   Clinic B -> Bot B (webhook ?bot=bot_b resolves clinic B)
  *   Disabled bots resolve to nothing — Telegram gets 401, no dispatch.
  *   A patient talking to Bot A lands in Clinic A only; Bot B -> Clinic B only.
- *   Mini App initData signed by ANY active clinic bot validates.
+ *   Mini App initData is accepted ONLY by the clinic whose bot signed it
+ *   (red-team: a tampered ?clinic= parameter cannot move a patient between
+ *   tenants).
  *
  * Requires: `npm run db:reset-local` (migrations + seed) and a `.env` with
  * the real local keys. Skips cleanly when the stack is unavailable.
@@ -128,7 +130,7 @@ describeDb("per-clinic telegram bots (Phase 3)", () => {
     expect(patientB.clinic_id).toBe(clinicB);
   });
 
-  it("Mini App initData signed by Clinic B's bot token validates (multi-bot init data)", async () => {
+  it("Mini App initData validates ONLY for the clinic whose bot signed it (no cross-tenant)", async () => {
     // Build a legitimate initData payload signed with BOT_B_TOKEN — exactly
     // what Telegram would produce for Bot B's web_app button.
     const user = JSON.stringify({ id: 888_222, first_name: "Mini", username: "mini_user" });
@@ -147,7 +149,65 @@ describeDb("per-clinic telegram bots (Phase 3)", () => {
 
     const initData = `auth_date=${authDate}&query_id=${encodeURIComponent(fields.get("query_id")!)}&user=${encodeURIComponent(user)}&hash=${hash}`;
 
-    const verified = await validateTelegramInitDataAny(initData);
-    expect(verified?.user.id).toBe(888_222);
+    // Legitimate: Clinic B's bot signed it, so Clinic B accepts the patient.
+    const verifiedB = await validateTelegramInitDataForClinic(initData, clinicB);
+    expect(verifiedB?.user.id).toBe(888_222);
+
+    // Red-team: a patient swaps ?clinic= to Clinic A (or a clinic without a
+    // bot) — the signature must NOT validate, so no patient row or booking
+    // can be created in the foreign clinic.
+    expect(await validateTelegramInitDataForClinic(initData, clinicA)).toBeNull();
+    expect(await validateTelegramInitDataForClinic(initData, clinicWithoutBot)).toBeNull();
+  });
+
+  it("AI knowledge for a clinic never contains another clinic's doctors or prices", async () => {
+    const { loadClinicKnowledge, buildReceptionistSystemPrompt } = await import("@/lib/ai/knowledge");
+
+    const insertCatalog = async (clinicId: string, doctorName: string, serviceName: string, price: number) => {
+      const { data: spec } = await admin
+        .from("specialties")
+        .insert({ clinic_id: clinicId, name: `Spec ${suffix} ${doctorName}`, active: true, sort_order: 1 })
+        .select("id")
+        .single();
+      const { data: doc } = await admin
+        .from("doctors")
+        .insert({ clinic_id: clinicId, name: doctorName, active: true })
+        .select("id")
+        .single();
+      await admin.from("doctor_working_hours").insert({
+        clinic_id: clinicId,
+        doctor_id: doc!.id,
+        weekday: 1,
+        start_time: "09:00",
+        end_time: "18:00",
+      });
+      await admin.from("services").insert({
+        clinic_id: clinicId,
+        name: serviceName,
+        price,
+        duration_minutes: 30,
+        active: true,
+        specialty_id: spec!.id,
+        sort_order: 1,
+      });
+    };
+
+    await insertCatalog(clinicA, `Dr A ${suffix}`, `Xizmat A ${suffix}`, 100_000);
+    await insertCatalog(clinicB, `Dr B ${suffix}`, `Xizmat B ${suffix}`, 250_000);
+
+    const knowledgeA = await loadClinicKnowledge(clinicA);
+    const promptA = buildReceptionistSystemPrompt(knowledgeA);
+
+    // Clinic A's prompt lists A's own doctor + price...
+    expect(promptA).toContain(`Dr A ${suffix}`);
+    expect(promptA).toContain("100000 UZS");
+    // ...and NEVER Clinic B's doctor, service or price (no hallucination
+    // vector from cross-tenant data).
+    expect(promptA).not.toContain(`Dr B ${suffix}`);
+    expect(promptA).not.toContain(`Xizmat B ${suffix}`);
+    expect(promptA).not.toContain("250000");
+
+    const knowledgeB = await loadClinicKnowledge(clinicB);
+    expect(buildReceptionistSystemPrompt(knowledgeB)).not.toContain(`Dr A ${suffix}`);
   });
 });

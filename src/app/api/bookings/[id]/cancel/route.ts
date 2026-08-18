@@ -12,7 +12,7 @@ import { trackAnalytics } from "@/lib/analytics";
 export const dynamic = "force-dynamic";
 
 const cancelSchema = z.object({
-  initData: z.string().min(1),
+  initData: z.string().nullable().optional(),
   reason: z.string().max(300).optional(),
 });
 

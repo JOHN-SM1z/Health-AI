@@ -14,7 +14,7 @@ vi.mock("@/lib/clinics/context", () => ({
 const resolveMock = vi.fn();
 const getOrCreateMock = vi.fn();
 vi.mock("@/lib/patients/identity", () => ({
-  resolvePatientFromInitData: () => resolveMock(),
+  resolvePatientFromInitData: (...args: unknown[]) => resolveMock(...args),
   devIdentityAllowed: () => true,
   getOrCreatePatientByContact: () => getOrCreateMock(),
 }));
@@ -132,5 +132,59 @@ describe("POST /api/bookings", () => {
     );
     expect(res.status).toBe(400);
     expect(supabaseMock.rpc).not.toHaveBeenCalled();
+  });
+
+  it("scopes patient identity AND the booking to the URL clinic (?clinic= tamper cannot split them)", async () => {
+    // An attacker swaps ?clinic= to a foreign clinic: the route must resolve
+    // the patient for THAT clinic (never a different one) and book under it.
+    const foreign = { ...CLINIC, id: "22222222-2222-4222-8222-222222222222", name: "Clinic B" };
+    getClinicMock.mockResolvedValue(foreign);
+    resolveMock.mockResolvedValue({ patient: { id: "p-f", clinic_id: foreign.id }, identity: { telegramUserId: 999 } });
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === "patients") {
+        return {
+          update: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })),
+        };
+      }
+      return {
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            single: vi.fn(async () => ({
+              data: { id: "a-1", status: "pending", patients: { full_name: "Ali Valiyev" } },
+              error: null,
+            })),
+          })),
+        })),
+      };
+    });
+    supabaseMock.rpc.mockResolvedValue({
+      data: { appointment_id: "a-1", amount: 80000, error_code: null, error_message: null },
+      error: null,
+    });
+
+    const req = new NextRequest("http://localhost/api/bookings?clinic=22222222-2222-4222-8222-222222222222", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        doctorId: "11111111-1111-4111-8111-111111111111",
+        serviceId: "11111111-1111-4111-8111-111111111111",
+        startAt: "2030-01-07T05:00:00Z",
+        patientName: "Ali Valiyev",
+        phone: "+998901234567",
+        consent: true,
+        initData: "dev",
+      }),
+    });
+    const res = await POST(req);
+
+    expect(res.status).toBe(201);
+    // Identity resolution was requested FOR the URL clinic...
+    expect(resolveMock).toHaveBeenCalledWith("dev", foreign.id);
+    // ...and the booking itself lands in the same clinic.
+    const { p_clinic_id, p_patient_id } = supabaseMock.rpc.mock.calls[0][1] as { p_clinic_id: string; p_patient_id: string };
+    expect(p_clinic_id).toBe(foreign.id);
+    expect(p_patient_id).toBe("p-f");
+    // A valid signature for that clinic is enforced server-side (see
+    // bot-routing.test.ts): initData from any other bot is rejected.
   });
 });

@@ -8,7 +8,7 @@ import { rateLimit, keyFromIp } from "@/lib/rate-limit";
 export const dynamic = "force-dynamic";
 
 const schema = z.object({
-  initData: z.string().min(1),
+  initData: z.string().nullable().optional(),
 });
 
 /**

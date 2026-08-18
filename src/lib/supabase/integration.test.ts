@@ -161,6 +161,100 @@ describeDb("local Supabase booking engine", () => {
     await admin.from("appointments").delete().eq("id", winnerId!);
   });
 
+  it("cancel-after-book race: exactly one active appointment survives at the slot", async () => {
+    const startAt = nextWeekdayAt10(4); // Thursday
+    const params = {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: patientId,
+      p_doctor_id: doctorId,
+      p_service_id: serviceId,
+      p_start_at: startAt,
+      p_status: "pending",
+      p_source: "telegram_mini_app",
+      p_notes: null,
+      p_created_by: null,
+    };
+    const booked = (await admin.rpc("book_appointment", params)).data as {
+      appointment_id: string | null;
+      error_code: string | null;
+    };
+    expect(booked.error_code).toBeNull();
+
+    // Patient cancels while (another) booking attempt races for the same slot.
+    await Promise.all([
+      admin.from("appointments").update({ status: "cancelled" }).eq("id", booked.appointment_id!),
+      admin.rpc("book_appointment", params),
+    ]);
+
+    // The slot must NEVER hold two active appointments. Depending on which
+    // operation committed first: the rebook wins (1 pending + 1 cancelled)
+    // or it correctly failed with slot_taken while the cancel went through
+    // (0 pending + 1 cancelled).
+    const { data: all } = await admin
+      .from("appointments")
+      .select("id, status")
+      .eq("doctor_id", doctorId)
+      .eq("start_at", startAt);
+    const pending = (all ?? []).filter((a) => a.status === "pending");
+    const cancelled = (all ?? []).filter((a) => a.status === "cancelled");
+    expect(pending.length).toBeLessThanOrEqual(1);
+    const rebookWon = pending.length === 1 && cancelled.length === 1;
+    const cancelWon = pending.length === 0 && cancelled.length === 1 && (all ?? []).length === 1;
+    expect(rebookWon || cancelWon).toBe(true);
+    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", startAt);
+  });
+
+  it("reschedule-during-booking race: exactly one appointment lands on the target slot", async () => {
+    const slot1 = nextWeekdayAt10(5); // Friday
+    const slot2 = nextWeekdayAt10(1); // next Monday
+    const booked = (await admin.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: patientId,
+      p_doctor_id: doctorId,
+      p_service_id: serviceId,
+      p_start_at: slot1,
+      p_status: "pending",
+      p_source: "telegram_mini_app",
+      p_notes: null,
+      p_created_by: null,
+    })).data as { appointment_id: string | null; error_code: string | null };
+    expect(booked.error_code).toBeNull();
+
+    // A fresh patient tries to book slot2 while the first appointment is
+    // rescheduled onto slot2 — serialized by the per-doctor advisory lock.
+    await Promise.all([
+      admin.rpc("reschedule_appointment", {
+        p_appointment_id: booked.appointment_id!,
+        p_new_start_at: slot2,
+        p_actor: null,
+      }),
+      admin.rpc("book_appointment", {
+        p_clinic_id: CLINIC_ID,
+        p_patient_id: patientId,
+        p_doctor_id: doctorId,
+        p_service_id: serviceId,
+        p_start_at: slot2,
+        p_status: "pending",
+        p_source: "telegram_mini_app",
+        p_notes: null,
+        p_created_by: null,
+      }),
+    ]);
+
+    // Exactly one pending appointment may occupy slot2 (the rescheduled one
+    // or the new one — never both, never zero with two successes).
+    const { data: onSlot2 } = await admin
+      .from("appointments")
+      .select("id, status")
+      .eq("doctor_id", doctorId)
+      .eq("start_at", slot2)
+      .eq("status", "pending");
+    expect(onSlot2 ?? []).toHaveLength(1);
+
+    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", slot1);
+    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", slot2);
+  });
+
   it("rejects booking outside working hours (outside_working_hours)", async () => {
     const startAt = nextWeekdayAt10(1);
     const offHours = new Date(new Date(startAt).getTime() - 6 * 3600000).toISOString(); // 04:00 local

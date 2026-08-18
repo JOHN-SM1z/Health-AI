@@ -39,11 +39,16 @@ export default function TodayPage() {
   const [isManagement, setIsManagement] = useState<boolean | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [todayLabel, setTodayLabel] = useState("");
+
+  useEffect(() => {
+    setTodayLabel(new Date().toLocaleDateString("uz-UZ", { weekday: "long", day: "numeric", month: "long" }));
+  }, []);
 
   useEffect(() => {
     void fetch("/api/admin/me")
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => setIsManagement(!!j?.ok && ["owner", "admin", "manager"].some((r) => (j.roles ?? []).includes(r))))
+      .then((j) => setIsManagement(!!j?.ok && ["owner", "admin", "manager"].some((r) => (j?.data?.roles ?? []).includes(r))))
       .catch(() => setIsManagement(false));
   }, []);
 
@@ -110,7 +115,7 @@ export default function TodayPage() {
     <div>
       <PageHeader
         title="Bugungi qabullar"
-        subtitle={new Date().toLocaleDateString("uz-UZ", { weekday: "long", day: "numeric", month: "long" })}
+        subtitle={todayLabel}
         action={
           <AButton size="md" onClick={() => setModalOpen(true)}>
             <UserPlus className="mr-1.5 h-4 w-4" />

@@ -9,7 +9,7 @@ import { trackAnalytics } from "@/lib/analytics";
 export const dynamic = "force-dynamic";
 
 const schema = z.object({
-  initData: z.string().min(1),
+  initData: z.string().nullable().optional(),
   eventType: z.string().min(2).max(100),
   payload: z.record(z.string(), z.unknown()).optional(),
 });

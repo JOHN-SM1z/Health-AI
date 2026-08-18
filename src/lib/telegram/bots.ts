@@ -59,16 +59,18 @@ export async function getClinicBot(clinicId: string): Promise<Bot> {
   return bot;
 }
 
-/** Tokens of every enabled, active clinic bot (server-side only). */
-export async function getAllActiveBotTokens(): Promise<string[]> {
+/** Every enabled, active bot token owned by ONE clinic (server-side only).
+ * Used to bind Mini App initData to the clinic that issued the link. */
+export async function getActiveBotTokensForClinic(clinicId: string): Promise<string[]> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("clinic_telegram_integrations")
     .select("telegram_bot_token")
+    .eq("clinic_id", clinicId)
     .eq("enabled", true)
     .eq("status", "active");
   if (error) {
-    logger.error("active bot token list failed", { error: error.message });
+    logger.error("clinic bot token list failed", { clinicId, error: error.message });
     return [];
   }
   return (data ?? [])

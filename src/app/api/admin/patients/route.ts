@@ -38,22 +38,25 @@ export async function GET(request: NextRequest) {
       if (patientError) throw patientError;
       if (!patient) return ok({ patient: null, appointments: [], conversations: [] });
 
-      const [{ data: appointments }, { data: conversations }] = await Promise.all([
-        supabase
-          .from("appointments")
-          .select(
-            "id, start_at, status, source, services(name), doctors(name)",
-          )
-          .eq("patient_id", detailId)
-          .order("start_at", { ascending: false })
-          .limit(20),
-        supabase
-          .from("conversations")
-          .select("id, status, channel, updated_at")
-          .eq("patient_id", detailId)
-          .order("updated_at", { ascending: false })
-          .limit(10),
-      ]);
+      const [{ data: appointments, error: appointmentsError }, { data: conversations, error: conversationsError }] =
+        await Promise.all([
+          supabase
+            .from("appointments")
+            .select(
+              "id, start_at, status, source, services(name), doctors(name)",
+            )
+            .eq("patient_id", detailId)
+            .order("start_at", { ascending: false })
+            .limit(20),
+          supabase
+            .from("conversations")
+            .select("id, status, channel, updated_at")
+            .eq("patient_id", detailId)
+            .order("updated_at", { ascending: false })
+            .limit(10),
+        ]);
+      if (appointmentsError) throw appointmentsError;
+      if (conversationsError) throw conversationsError;
       return ok({ patient, appointments: appointments ?? [], conversations: conversations ?? [] });
     }
 

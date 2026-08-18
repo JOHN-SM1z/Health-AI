@@ -16,12 +16,18 @@ type Appointment = {
   services: { name: string } | null;
 };
 
+const WEEKDAY_LABELS = ["Dus", "Ses", "Chor", "Pay", "Jum", "Shan", "Yak"];
+
 export default function CalendarPage() {
-  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date(0), { weekStartsOn: 1 }));
   const [doctorFilter, setDoctorFilter] = useState("all");
   const [doctors, setDoctors] = useState<{ id: string; name: string }[]>([]);
   const [rows, setRows] = useState<Appointment[] | null>(null);
   const [error] = useState<string | null>(null);
+
+  useEffect(() => {
+    setWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }));
+  }, []);
 
   const load = async () => {
     const supabase = createClient();
@@ -80,7 +86,7 @@ export default function CalendarPage() {
             <Card key={day.toISOString()} className={`min-h-40 p-3 ${isToday ? "border-pine/40 bg-pine-tint/40" : ""}`}>
               <div className="mb-2 flex items-center justify-between">
                 <p className={`text-xs font-bold uppercase tracking-wide ${isToday ? "text-pine-deep" : "text-ink-muted"}`}>
-                  {day.toLocaleDateString("uz-UZ", { weekday: "short" })}
+                  {WEEKDAY_LABELS[(day.getDay() + 6) % 7]}
                 </p>
                 <p className={`font-numeric text-xs ${isToday ? "text-pine-deep" : "text-ink-muted/80"}`}>
                   {day.getDate()}

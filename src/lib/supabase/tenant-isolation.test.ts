@@ -49,7 +49,6 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
   let doctorB: string;
   let serviceB: string;
   let patientB: string;
-  let convB: string;
   let userAId: string;
   let userBId: string;
   let clientA: SupabaseClient;
@@ -142,12 +141,11 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
     );
     expect(whError).toBeNull();
 
-    const { data: conv } = await admin
+    await admin
       .from("conversations")
       .insert({ clinic_id: clinicB, patient_id: patientB, channel: "telegram", status: "open" })
       .select("id")
       .single();
-    convB = conv!.id;
 
     const { data: appt } = await admin.rpc("book_appointment", {
       p_clinic_id: clinicB,

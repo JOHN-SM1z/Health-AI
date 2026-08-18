@@ -254,4 +254,26 @@ describe("telegram webhook route (per-clinic bots)", () => {
     await post({ update_id: 62, callback_query: { id: "c3", from: { id: 42 }, data: "voice_wrong:vm-3", message: { chat: { id: 42 } } } });
     expect(wrongMock).toHaveBeenCalledWith(expect.objectContaining({ clinicId: "clinic-1", voiceMessageId: "vm-3" }));
   });
+
+  it("rejects malformed (non-JSON) payloads with 400 before any dispatch", async () => {
+    const res = await POST(
+      new NextRequest(`http://localhost/api/telegram/webhook?bot=${BOT}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": "derived-secret" },
+        body: "not-json-at-all{{{{",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(claimMock).not.toHaveBeenCalled();
+    expect(handleMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("rate-limits rapid message flooding with 429 and no dispatch", async () => {
+    const { rateLimit } = await import("@/lib/rate-limit");
+    vi.mocked(rateLimit).mockReturnValueOnce({ ok: false, retryAfterSeconds: 30 });
+    const res = await post(textUpdate(70));
+    expect(res.status).toBe(429);
+    expect(claimMock).not.toHaveBeenCalled();
+    expect(handleMessageMock).not.toHaveBeenCalled();
+  });
 });

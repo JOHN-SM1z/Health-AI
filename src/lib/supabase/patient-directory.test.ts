@@ -33,6 +33,7 @@ describeDb("admin patients directory (Phase 5)", () => {
   let clinicB: string;
   let patientAId: string;
   let patientBId: string;
+  let doctorId: string;
   const suffix = Date.now().toString(36);
 
   beforeAll(async () => {
@@ -83,12 +84,41 @@ describeDb("admin patients directory (Phase 5)", () => {
     patientBId = pb!.id;
 
     // One appointment for the seed clinic's patient so counts are visible.
-    const { data: doctor } = await admin.from("doctors").select("id").eq("name", "Karimov Alisher").single();
+    // The doctor is this suite's OWN fixture (with working hours) so that
+    // other suites' cleanup of shared seed-doctor rows can never interfere.
+    const { data: specialty } = await admin
+      .from("specialties")
+      .select("id")
+      .eq("clinic_id", SEED_CLINIC_ID)
+      .limit(1)
+      .single();
+    const { data: doctor } = await admin
+      .from("doctors")
+      .insert({
+        clinic_id: SEED_CLINIC_ID,
+        name: `Dir ${suffix}`,
+        title: "Test shifokor",
+        specialty_id: specialty!.id,
+        active: true,
+      })
+      .select("id")
+      .single();
+    doctorId = doctor!.id;
+    const { error: whError } = await admin.from("doctor_working_hours").insert(
+      [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({
+        clinic_id: SEED_CLINIC_ID,
+        doctor_id: doctorId,
+        weekday,
+        start_time: "09:00",
+        end_time: "18:00",
+      })),
+    );
+    expect(whError).toBeNull();
     const { data: service } = await admin.from("services").select("id").eq("name", "Terapevt qabuli").single();
     const { error: rpcError } = await admin.rpc("book_appointment", {
       p_clinic_id: SEED_CLINIC_ID,
       p_patient_id: patientAId,
-      p_doctor_id: doctor!.id,
+      p_doctor_id: doctorId,
       p_service_id: service!.id,
       p_start_at: "2030-01-07T05:00:00Z",
       p_status: "pending",
@@ -112,6 +142,15 @@ describeDb("admin patients directory (Phase 5)", () => {
         await admin.from("conversations").delete().eq("patient_id", id);
         await admin.from("appointments").delete().eq("patient_id", id);
         await admin.from("patients").delete().eq("id", id);
+      } catch {
+        // best effort cleanup
+      }
+    }
+    if (doctorId) {
+      try {
+        await admin.from("appointments").delete().eq("doctor_id", doctorId);
+        await admin.from("doctor_working_hours").delete().eq("doctor_id", doctorId);
+        await admin.from("doctors").delete().eq("id", doctorId);
       } catch {
         // best effort cleanup
       }

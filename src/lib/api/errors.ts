@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ZodError } from "zod";
 import { logger } from "@/lib/logger";
 
 export class ApiError extends Error {
@@ -27,6 +28,12 @@ export function fail(message: string, status = 400, code?: string): NextResponse
 export function handleApiError(e: unknown): NextResponse {
   if (e instanceof ApiError) {
     return fail(e.message, e.status, e.code);
+  }
+  if (e instanceof ZodError) {
+    // Never a 500: a malformed body is the caller's mistake. Pick the first
+    // issue and return a safe 400 (same shape as parseBody's ApiError).
+    const first = e.issues[0];
+    return fail(first?.message ?? "Noto‘g‘ri ma‘lumot", 400, "validation");
   }
   if (e instanceof SyntaxError) {
     return fail("Noto‘g‘ri so‘rov formati", 400, "bad_json");
