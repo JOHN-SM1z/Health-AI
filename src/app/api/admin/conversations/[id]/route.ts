@@ -13,7 +13,7 @@ import { logger } from "@/lib/logger";
 export const dynamic = "force-dynamic";
 
 const takeoverSchema = z.object({ action: z.enum(["takeover", "release"]) });
-const messageSchema = z.object({ text: z.string().min(1).max(3000) });
+const messageSchema = z.object({ text: z.string().trim().min(1).max(3000) });
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -57,7 +57,8 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
       actor: { actorId: staff.profileId, actorType: "staff" },
     });
 
-    // Acknowledge to the patient in Telegram.
+    // Acknowledge to the patient in Telegram — via the conversation's own
+    // clinic bot, never a shared global bot.
     if (isTakeover && conversation.patient_id) {
       const { data: patient } = await supabase
         .from("patients")
@@ -65,10 +66,13 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
         .eq("id", conversation.patient_id)
         .single();
       if (patient?.telegram_user_id) {
-        await sendTelegramMessage({
-          chatId: patient.telegram_user_id,
-          text: "Operatorlarimiz suhbatga ulandi. Endi operator javob beradi. 👨‍💼",
-        });
+        await sendTelegramMessage(
+          {
+            chatId: patient.telegram_user_id,
+            text: "Operatorlarimiz suhbatga ulandi. Endi operator javob beradi. 👨‍💼",
+          },
+          conversation.clinic_id,
+        );
         await appendMessage({
           conversationId: id,
           clinicId: staff.clinicId,
@@ -118,7 +122,10 @@ export async function PUT(request: NextRequest, ctx: RouteContext) {
 
     let telegramMessageId: number | null = null;
     if (patient?.telegram_user_id) {
-      telegramMessageId = await sendTelegramMessage({ chatId: patient.telegram_user_id, text: body.text });
+      telegramMessageId = await sendTelegramMessage(
+        { chatId: patient.telegram_user_id, text: body.text },
+        conversation.clinic_id,
+      );
     }
 
     logger.info("admin message stored", { conversationId: id, delivered: telegramMessageId !== null });
