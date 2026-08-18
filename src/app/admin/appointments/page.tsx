@@ -13,6 +13,7 @@ type Row = {
   start_at: string;
   status: Database["public"]["Enums"]["appointment_status"];
   source: Database["public"]["Enums"]["appointment_source"];
+  notes: string | null;
   patients: { full_name: string | null; phone: string | null } | null;
   doctors: { name: string } | null;
   services: { name: string; price: number } | null;
@@ -24,6 +25,7 @@ export default function AppointmentsPage() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [q, setQ] = useState("");
 
   const load = async () => {
@@ -31,12 +33,13 @@ export default function AppointmentsPage() {
     let query = supabase
       .from("appointments")
       .select(
-        "id, start_at, status, source, patients(full_name, phone), doctors(name), services(name, price), payments(status)",
+        "id, start_at, status, source, notes, patients(full_name, phone), doctors(name), services(name, price), payments(status)",
       )
       .gte("start_at", new Date(Date.now() - 30 * 86400000).toISOString())
       .order("start_at", { ascending: false })
       .limit(200);
     if (filter !== "all") query = query.eq("status", filter as Database["public"]["Enums"]["appointment_status"]);
+    if (sourceFilter !== "all") query = query.eq("source", sourceFilter as Database["public"]["Enums"]["appointment_source"]);
     const { data, error: err } = await query;
     if (err) {
       setError("Ma'lumotlarni yuklab bo‘lmadi");
@@ -49,7 +52,7 @@ export default function AppointmentsPage() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, searchParams]);
+  }, [filter, sourceFilter, searchParams]);
 
   const filtered = useMemo(() => {
     if (!q.trim()) return rows;
@@ -86,6 +89,19 @@ export default function AppointmentsPage() {
               { value: "completed", label: "Yakunlangan" },
               { value: "cancelled", label: "Bekor qilingan" },
               { value: "no_show", label: "Kelmagandi" },
+            ]}
+          />
+        </div>
+        <div className="w-44">
+          <ASelect
+            value={sourceFilter}
+            onChange={setSourceFilter}
+            options={[
+              { value: "all", label: "Barcha manbalar" },
+              { value: "telegram_mini_app", label: "Telegram ilova" },
+              { value: "telegram_bot", label: "Telegram bot" },
+              { value: "admin", label: "Admin" },
+              { value: "walk_in", label: "Qabulxonada" },
             ]}
           />
         </div>
@@ -137,6 +153,7 @@ function AppointmentRow({ row, onChanged, onError }: { row: Row; onChanged: () =
       <td className="px-4 py-3">
         <p className="text-foreground">{row.services?.name ?? "—"}</p>
         <p className="text-xs text-ink-muted">{formatPrice(row.services?.price)}</p>
+        {row.notes && <p className="mt-0.5 max-w-[220px] truncate text-xs text-ink-muted" title={row.notes}>“{row.notes}”</p>}
       </td>
       <td className="px-4 py-3 text-foreground">{row.doctors?.name ?? "—"}</td>
       <td className="px-4 py-3"><ABadge tone="gray">{SOURCE_LABELS[row.source] ?? row.source}</ABadge></td>

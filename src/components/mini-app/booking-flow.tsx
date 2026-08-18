@@ -73,6 +73,7 @@ export function BookingFlow() {
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [patientName, setPatientName] = useState("");
   const [phone, setPhone] = useState("");
+  const [notes, setNotes] = useState("");
   const [bookingResult, setBookingResult] = useState<{ ok: boolean; message: string; appointmentId?: string } | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -145,6 +146,7 @@ export function BookingFlow() {
         patientName,
         phone,
         consent: true,
+        notes: notes.trim() || undefined,
       },
       identity,
     );
@@ -439,6 +441,20 @@ export function BookingFlow() {
                 autoComplete="tel"
               />
             </div>
+            <div>
+              <label htmlFor="patient-notes" className="mb-1 block text-xs font-medium text-[var(--tg-hint,#8a9699)]">
+                Qabul sababi (ixtiyoriy)
+              </label>
+              <textarea
+                id="patient-notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value.slice(0, 300))}
+                placeholder="Masalan: bosh og‘rig‘i, ko‘rik..."
+                rows={3}
+                className="w-full resize-none rounded-xl border border-[var(--tg-hint,#cbd5e1)] bg-white p-3 text-sm outline-none focus:border-[var(--tg-button,var(--pine))]"
+              />
+              <p className="mt-1 text-right text-[11px] text-[var(--tg-hint,#8a9699)]">{notes.length}/300</p>
+            </div>
           </Card>
           <Button
             size="full"
@@ -462,6 +478,7 @@ export function BookingFlow() {
             <Row label="Telefon" value={phone} />
             <Row label="Narx" value={`${fmt(selectedService.price)} ${catalog.clinic.currency}`} />
             <Row label="To‘lov" value="Qabulxonada (naqd yoki karta)" />
+            {notes.trim() && <Row label="Sabab" value={notes.trim()} />}
           </Card>
           <NoticeBanner message="To‘lov klinikada qabul vaqtida amalga oshiriladi." />
           {error && <ErrorBanner message={error} />}

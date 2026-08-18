@@ -21,6 +21,7 @@ const createBookingSchema = z.object({
   patientName: nameSchema,
   phone: phoneSchema,
   consent: z.boolean().refine((v) => v === true, "Shaxsiy ma‘lumotlarga rozilik talab qilinadi"),
+  notes: z.string().trim().max(300).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
       p_start_at: body.startAt,
       p_status: "pending",
       p_source: source,
-      p_notes: undefined,
+      p_notes: body.notes || undefined,
       p_created_by: undefined,
     });
 
