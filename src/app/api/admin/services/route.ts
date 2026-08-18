@@ -1,7 +1,7 @@
-import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireStaff } from "@/lib/auth/guards";
+import type { NextRequest } from "next/server";
+import { requireStaff, requireRoles } from "@/lib/auth/guards";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { uuidSchema, parseBody } from "@/lib/api/validate";
 
@@ -20,6 +20,24 @@ const serviceSchema = z.object({
 });
 
 const serviceUpdateSchema = serviceSchema.partial();
+
+/** Services of the staff clinic, for quick booking and management screens. */
+export async function GET() {
+  try {
+    const staff = await requireRoles("owner", "admin", "manager", "receptionist");
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from("services")
+      .select("id, name, price, duration_minutes, active, sort_order, doctor_services(doctor_id)")
+      .eq("clinic_id", staff.clinicId)
+      .eq("active", true)
+      .order("sort_order", { ascending: true });
+    if (error) throw error;
+    return ok({ services: data ?? [] });
+  } catch (e) {
+    return handleApiError(e);
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
