@@ -39,13 +39,22 @@ async function apiFetch<T>(path: string, init: RequestInit): Promise<ApiResult<T
   try {
     const res = await fetch(url, {
       ...init,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
     });
-    const json = (await res.json()) as { ok?: boolean; data?: T; error?: string; code?: string };
-    if (res.ok && json.ok && json.data !== undefined) {
+
+    let json: { ok?: boolean; data?: T; error?: string; code?: string } | null = null;
+    try {
+      json = (await res.json()) as { ok?: boolean; data?: T; error?: string; code?: string };
+    } catch {
+      // Non-JSON response (e.g. 500/502 HTML error page)
+    }
+
+    if (res.ok && json?.ok && json?.data !== undefined) {
       return { ok: true, data: json.data };
     }
-    return { ok: false, error: json.error ?? "Xatolik yuz berdi", code: json.code, status: res.status };
+
+    const fallbackError = res.status >= 500 ? "Serverda xatolik yuz berdi" : "Xatolik yuz berdi";
+    return { ok: false, error: json?.error ?? fallbackError, code: json?.code, status: res.status };
   } catch {
     return { ok: false, error: "Tarmoq xatoligi", status: 0 };
   }

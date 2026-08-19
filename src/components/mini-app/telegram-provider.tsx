@@ -137,7 +137,7 @@ export function TelegramProvider({ children }: { children: ReactNode }) {
 
 /** Raw initData string for the current session. */
 export function useTelegramInitData(): string | null {
-  useSyncExternalStore(
+  return useSyncExternalStore(
     (onStoreChange) => {
       initDataListeners.add(onStoreChange);
       return () => initDataListeners.delete(onStoreChange);
@@ -145,5 +145,4 @@ export function useTelegramInitData(): string | null {
     () => rawInitData ?? getStoredInitData(),
     () => null,
   );
-  return rawInitData ?? getStoredInitData();
 }
