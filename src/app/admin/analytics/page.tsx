@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import { PageHeader, Card, AEmpty, AError, ASelect, StatCard, LoadingRow } from "@/components/admin/ui";
-import { BarChart3, Users, CalendarX2, TrendingUp, Stethoscope, Scissors } from "lucide-react";
-import { adminApi, AdminApiError, SOURCE_LABELS } from "@/lib/admin/client";
+import { BarChart3, Users, CalendarX2, TrendingUp, Stethoscope, Scissors, UserX } from "lucide-react";
+import { adminApi, AdminApiError, SOURCE_LABELS, STATUS_LABELS } from "@/lib/admin/client";
 
 type AnalyticsRow = {
   event_type: string;
@@ -16,10 +16,15 @@ type AppointmentAnalytics = {
   range: number;
   total: number;
   cancelled: number;
+  no_shows: number;
+  completed: number;
   by_source: [string, number][];
   by_status: [string, number][];
   cancel_reasons: { reason: string; count: number }[];
+  no_show_reasons: { reason: string; count: number }[];
   revenue_trend: { date: string; revenue: number }[];
+  revenue_by_week: { key: string; revenue: number }[];
+  revenue_by_month: { key: string; revenue: number }[];
   top_services: { name: string; count: number; revenue: number }[];
   top_doctors: { name: string; count: number; revenue: number }[];
 };
@@ -30,8 +35,15 @@ const RANGES = [
   { value: "90", label: "Oxirgi 90 kun" },
 ];
 
+const TREND_BUCKETS = [
+  { value: "day", label: "Kun" },
+  { value: "week", label: "Hafta" },
+  { value: "month", label: "Oy" },
+] as const;
+
 export default function AnalyticsPage() {
   const [range, setRange] = useState("30");
+  const [trendBucket, setTrendBucket] = useState<"day" | "week" | "month">("day");
   const [rows, setRows] = useState<AnalyticsRow[] | null>(null);
   const [appointments, setAppointments] = useState<AppointmentAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -75,9 +87,42 @@ export default function AnalyticsPage() {
   const maxCount = stats.sorted[0]?.[1] ?? 1;
   const maxSource = appointments?.by_source[0]?.[1] ?? 1;
   const maxReason = appointments?.cancel_reasons[0]?.count ?? 1;
-  const maxTrend = appointments?.revenue_trend[0]?.revenue ?? 1;
+  const maxNoShowReason = appointments?.no_show_reasons[0]?.count ?? 1;
+  const maxStatus = appointments?.by_status[0]?.[1] ?? 1;
+  const maxTrend = useMemo(() => {
+    const src =
+      trendBucket === "week"
+        ? appointments?.revenue_by_week
+        : trendBucket === "month"
+          ? appointments?.revenue_by_month
+          : appointments?.revenue_trend;
+    return src?.[0]?.revenue ?? 1;
+  }, [trendBucket, appointments]);
   const maxService = appointments?.top_services[0]?.count ?? 1;
   const maxDoctor = appointments?.top_doctors[0]?.count ?? 1;
+
+  const trendRows = useMemo(() => {
+    const src =
+      trendBucket === "week"
+        ? appointments?.revenue_by_week
+        : trendBucket === "month"
+          ? appointments?.revenue_by_month
+          : appointments?.revenue_trend;
+    return (src ?? []).map((d) => ({ date: "date" in d ? d.date : d.key, revenue: d.revenue }));
+  }, [trendBucket, appointments]);
+
+  const completionRate = appointments
+    ? appointments.total > 0
+      ? Math.round((appointments.completed / appointments.total) * 100)
+      : 0
+    : null;
+
+  const conversionRate = useMemo(() => {
+    const started = stats.byType.get("booking_started") ?? 0;
+    const succeeded = stats.byType.get("booking_success") ?? 0;
+    if (started === 0) return null;
+    return Math.round((succeeded / started) * 100);
+  }, [stats.byType]);
 
   const bars = (entries: [string, number][], max: number) => (
     <div className="space-y-3.5">
@@ -117,19 +162,45 @@ export default function AnalyticsPage() {
         <StatCard label="Turli hodisalar" value={stats.sorted.length.toLocaleString("uz-UZ")} tone="info" />
       </div>
 
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <StatCard
+          label="Bajarilish darajasi"
+          value={completionRate === null ? "—" : `${completionRate}%`}
+          tone="pine"
+        />
+        <StatCard
+          label="Bron → qabul konversiya"
+          value={conversionRate === null ? "—" : `${conversionRate}%`}
+          tone="info"
+        />
+        <StatCard
+          label="Yakunlangan qabullar"
+          value={(appointments?.completed ?? 0).toLocaleString("uz-UZ")}
+          tone="neutral"
+        />
+      </div>
+
       <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <div className="mb-4 flex items-center gap-2">
             <TrendingUp className="h-4 w-4 text-ink-muted" />
-            <p className="text-sm font-bold text-foreground">Kunlik tushum dinamikasi</p>
+            <p className="text-sm font-bold text-foreground">Tushum dinamikasi</p>
+            <div className="ml-auto w-36">
+              <ASelect
+                value={trendBucket}
+                onChange={(v) => setTrendBucket(v as "day" | "week" | "month")}
+                options={[...TREND_BUCKETS]}
+                aria-label="Guruhlash"
+              />
+            </div>
           </div>
           {appointments === null ? (
             <LoadingRow />
-          ) : appointments.revenue_trend.length === 0 ? (
+          ) : trendRows.length === 0 ? (
             <AEmpty title="Ma'lumot yo‘q" subtitle="Bu davrda to‘langan qabullar yo‘q" icon={<TrendingUp className="h-5 w-5" />} />
           ) : (
             <div className="flex h-40 items-end gap-1.5">
-              {appointments.revenue_trend.map((d) => (
+              {trendRows.map((d) => (
                 <div key={d.date} className="group flex flex-1 flex-col items-center gap-1">
                   <span className="font-numeric text-[10px] text-ink-muted opacity-0 transition-opacity group-hover:opacity-100">
                     {d.revenue.toLocaleString("uz-UZ")}
@@ -139,7 +210,7 @@ export default function AnalyticsPage() {
                     style={{ height: `${Math.max((d.revenue / maxTrend) * 100, 6)}%` }}
                     title={`${d.date}: ${d.revenue.toLocaleString("uz-UZ")} so‘m`}
                   />
-                  <span className="font-numeric text-[10px] text-ink-muted">{d.date.slice(5)}</span>
+                  <span className="font-numeric text-[10px] text-ink-muted">{d.date.slice(-5)}</span>
                 </div>
               ))}
             </div>
@@ -235,6 +306,45 @@ export default function AnalyticsPage() {
             />
           ) : (
             bars(appointments.cancel_reasons.map((r) => [r.reason, r.count]), maxReason)
+          )}
+        </Card>
+
+        <Card>
+          <div className="mb-4 flex items-center gap-2">
+            <UserX className="h-4 w-4 text-ink-muted" />
+            <p className="text-sm font-bold text-foreground">Kelmaslik sabablari</p>
+            {appointments !== null && (
+              <span className="ml-auto font-numeric text-xs text-ink-muted">
+                Kelmagandi: {appointments.no_shows.toLocaleString("uz-UZ")}
+              </span>
+            )}
+          </div>
+          {appointments === null ? (
+            <LoadingRow />
+          ) : appointments.no_show_reasons.length === 0 ? (
+            <AEmpty
+              title="Kelmasliklar yo‘q"
+              subtitle="Bu davrda kelmaslik sabablari qayd etilmagan"
+              icon={<UserX className="h-5 w-5" />}
+            />
+          ) : (
+            bars(appointments.no_show_reasons.map((r) => [r.reason, r.count]), maxNoShowReason)
+          )}
+        </Card>
+      </div>
+
+      <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card>
+          <div className="mb-4 flex items-center gap-2">
+            <BarChart3 className="h-4 w-4 text-ink-muted" />
+            <p className="text-sm font-bold text-foreground">Holatlar bo‘yicha qabullar</p>
+          </div>
+          {appointments === null ? (
+            <LoadingRow />
+          ) : appointments.by_status.length === 0 ? (
+            <AEmpty title="Ma'lumot yo‘q" subtitle="Bu davrda qabullar yo‘q" icon={<BarChart3 className="h-5 w-5" />} />
+          ) : (
+            bars(appointments.by_status.map(([s, c]) => [STATUS_LABELS[s] ?? s, c]), maxStatus)
           )}
         </Card>
       </div>

@@ -25,6 +25,8 @@ type Dashboard = {
   outstanding: number;
   new_patients_today: number;
   upcoming_reminders: number | null;
+  active_conversations: number;
+  attention_conversations: number;
 };
 
 type ServiceOption = { id: string; name: string; price: number; doctor_services: { doctor_id: string }[] | null };
@@ -135,6 +137,23 @@ export default function TodayPage() {
             <StatCard label="Eslatmalar (24 soat)" value={(dashboard?.upcoming_reminders ?? 0).toLocaleString("uz-UZ")} tone="neutral" />
           </>
         )}
+      </div>
+
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Link href="/admin/conversations">
+          <StatCard
+            label="Faol suhbatlar"
+            value={(dashboard?.active_conversations ?? 0).toLocaleString("uz-UZ")}
+            tone="info"
+          />
+        </Link>
+        <Link href="/admin/conversations">
+          <StatCard
+            label="Diqqat talab suhbatlar"
+            value={(dashboard?.attention_conversations ?? 0).toLocaleString("uz-UZ")}
+            tone="clay"
+          />
+        </Link>
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-7">

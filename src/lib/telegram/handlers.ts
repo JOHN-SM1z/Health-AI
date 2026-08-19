@@ -16,7 +16,10 @@ import { getTranscriptionProvider } from "@/lib/transcription/provider";
  * Booking link for a clinic, or null when NEXT_PUBLIC_APP_URL is unset or
  * not an absolute URL. Supports the t.me deep-link form — tapping it opens
  * the Mini App inside Telegram with valid initData. The clinic is embedded
- * so the Mini App opens the right tenant.
+ * so the Mini App opens the right tenant. The startapp=booking marker lets
+ * the booking page attribute the booking to the bot-chat deep link
+ * (appointment_source = telegram_chat) instead of the menu web_app button
+ * (telegram_mini_app).
  */
 const bookingLink = (clinicId: string): string | null => {
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
@@ -24,6 +27,7 @@ const bookingLink = (clinicId: string): string | null => {
   if (base === "https://t.me" || base.startsWith("https://t.me/")) return base;
   try {
     const url = new URL(`${base}/book?clinic=${encodeURIComponent(clinicId)}`);
+    url.searchParams.set("startapp", "booking");
     return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
   } catch {
     return null;

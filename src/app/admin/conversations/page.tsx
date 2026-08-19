@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, ATextArea, LoadingRow } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, ATextArea, AInput, ASelect, LoadingRow } from "@/components/admin/ui";
 import { MessagesSquare } from "lucide-react";
 import { adminApi, AdminApiError, formatDateTime } from "@/lib/admin/client";
 
@@ -15,6 +15,7 @@ type Conversation = {
   last_message_at: string | null;
   patient_id: string | null;
   taken_over_by: string | null;
+  admin_seen_at: string | null;
   patients: {
     full_name: string | null;
     phone: string | null;
@@ -34,15 +35,27 @@ type Message = {
 type MessagePreview = { role: string; content: string | null; created_at: string };
 
 const POLL_MS = 5000;
+const EPOCH = "1970-01-01T00:00:00.000Z";
+
+const STATUS_FILTERS = [
+  { value: "all", label: "Barcha suhbatlar" },
+  { value: "attention", label: "Diqqat talab" },
+  { value: "bot", label: "Botda" },
+  { value: "assigned", label: "Operatorda" },
+  { value: "closed", label: "Yopilgan" },
+] as const;
 
 export default function ConversationsPage() {
   const [list, setList] = useState<Conversation[] | null>(null);
+  const [unread, setUnread] = useState<Record<string, number>>({});
   const [previews, setPreviews] = useState<Record<string, MessagePreview>>({});
   const [open, setOpen] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [reply, setReply] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]["value"]>("all");
   const openIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
@@ -50,7 +63,7 @@ export default function ConversationsPage() {
     const { data, error: err } = await supabase
       .from("conversations")
       .select(
-        "id, status, ai_enabled, updated_at, last_message_at, patient_id, taken_over_by, patients(full_name, phone, telegram_username, telegram_first_name), profiles!conversations_taken_over_by_fkey(full_name)",
+        "id, status, ai_enabled, updated_at, last_message_at, patient_id, taken_over_by, admin_seen_at, patients(full_name, phone, telegram_username, telegram_first_name), profiles!conversations_taken_over_by_fkey(full_name)",
       )
       .order("updated_at", { ascending: false })
       .limit(100);
@@ -60,6 +73,23 @@ export default function ConversationsPage() {
     }
     const rows = data ?? [];
     setList(rows);
+
+    // Unread counts: patient messages newer than the operator's last view.
+    const counts: Record<string, number> = {};
+    for (const c of rows) {
+      if (c.status === "closed") continue;
+      const { count } = await supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", c.id)
+        .eq("role", "patient")
+        .gt("created_at", c.admin_seen_at ?? EPOCH);
+      if (count) counts[c.id] = count;
+    }
+    setUnread((prev) => {
+      if (JSON.stringify(prev) === JSON.stringify(counts)) return prev;
+      return counts;
+    });
 
     // Last-message previews: newest messages first, first hit per conversation.
     const { data: latest } = await supabase
@@ -119,6 +149,13 @@ export default function ConversationsPage() {
     openIdRef.current = c.id;
     setOpen(c);
     setMessages(null);
+    // Mark this conversation as seen by the current operator (server-verified).
+    try {
+      await adminApi.post(`/api/admin/conversations/${c.id}`, { action: "mark_seen" });
+      await load();
+    } catch {
+      // Read-tracking must never block opening the conversation.
+    }
     await loadMessages(c.id);
   };
 
@@ -152,32 +189,76 @@ export default function ConversationsPage() {
 
   const isAssigned = open?.status === "assigned";
 
+  const visible = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return (list ?? []).filter((c) => {
+      if (statusFilter === "attention" && !(c.status === "open" && !c.ai_enabled)) return false;
+      if (statusFilter === "bot" && !(c.ai_enabled && c.status !== "closed")) return false;
+      if (statusFilter === "assigned" && c.status !== "assigned") return false;
+      if (statusFilter === "closed" && c.status !== "closed") return false;
+      if (!needle) return true;
+      const preview = previews[c.id];
+      return (
+        (c.patients?.full_name ?? "").toLowerCase().includes(needle) ||
+        (c.patients?.phone ?? "").toLowerCase().includes(needle) ||
+        (c.patients?.telegram_username ?? "").toLowerCase().includes(needle) ||
+        (c.patients?.telegram_first_name ?? "").toLowerCase().includes(needle) ||
+        (preview?.content ?? "").toLowerCase().includes(needle)
+      );
+    });
+  }, [list, q, statusFilter, previews]);
+
   return (
     <div>
       <PageHeader title="Suhbatlar" subtitle="Telegram orqali bemorlar bilan bot/operator suhbatlari" />
       {error && <AError message={error} />}
 
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="w-56">
+          <AInput value={q} onChange={setQ} placeholder="Qidirish: bemor, telefon, xabar…" />
+        </div>
+        <div className="w-48">
+          <ASelect
+            value={statusFilter}
+            onChange={(v) => setStatusFilter(v as (typeof STATUS_FILTERS)[number]["value"])}
+            options={[...STATUS_FILTERS]}
+            aria-label="Holat filtri"
+          />
+        </div>
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-2">
         <div>
           {list === null ? (
             <Card><LoadingRow /></Card>
-          ) : list.length === 0 ? (
+          ) : visible.length === 0 ? (
             <Card>
               <AEmpty
-                title="Suhbatlar yo‘q"
-                subtitle="Bemorlar Telegram orqali yozganda bu yerda paydo bo‘ladi"
+                title={list.length === 0 ? "Suhbatlar yo‘q" : "Topilmadi"}
+                subtitle={
+                  list.length === 0
+                    ? "Bemorlar Telegram orqali yozganda bu yerda paydo bo‘ladi"
+                    : "Filtr yoki qidiruv so‘zini o‘zgartiring"
+                }
                 icon={<MessagesSquare className="h-6 w-6" />}
               />
             </Card>
           ) : (
             <ATable headers={["Bemor", "Holat", "Oxirgi xabar", ""]}>
-              {list.map((c) => {
+              {visible.map((c) => {
                 const preview = previews[c.id];
+                const unreadCount = unread[c.id] ?? 0;
+                const needsAttention = c.status === "open" && !c.ai_enabled;
                 return (
                   <tr key={c.id} className="cursor-pointer hover:bg-sand" onClick={() => void openConversation(c)}>
                     <td className="px-4 py-3">
-                      <p className="font-medium text-foreground">
+                      <p className="flex items-center gap-2 font-medium text-foreground">
                         {c.patients?.full_name ?? c.patients?.telegram_first_name ?? "Noma’lum"}
+                        {unreadCount > 0 && (
+                          <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-clay px-1.5 font-numeric text-[10px] font-bold text-white">
+                            {unreadCount}
+                          </span>
+                        )}
                       </p>
                       <p className="text-xs text-ink-muted">
                         {c.patients?.phone ?? (c.patients?.telegram_username ? `@${c.patients.telegram_username}` : "Telegram")}
@@ -186,6 +267,8 @@ export default function ConversationsPage() {
                     <td className="px-4 py-3">
                       {c.status === "assigned" ? (
                         <ABadge tone="purple">Operatorda{c.profiles?.full_name ? `: ${c.profiles.full_name}` : ""}</ABadge>
+                      ) : needsAttention ? (
+                        <ABadge tone="clay">Diqqat talab</ABadge>
                       ) : c.ai_enabled ? (
                         <ABadge tone="blue">Bot</ABadge>
                       ) : (
@@ -236,7 +319,7 @@ export default function ConversationsPage() {
                       ? `Operator qabul qilgan${open.profiles?.full_name ? `: ${open.profiles.full_name}` : ""}`
                       : open.ai_enabled
                         ? "Bot javob beradi"
-                        : "Bot to‘xtatilgan"}
+                        : "Diqqat talab — operator javobi kerak"}
                   </p>
                 </div>
                 <AButton

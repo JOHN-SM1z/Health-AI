@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect, LoadingRow } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect, AModal, ATextArea, LoadingRow } from "@/components/admin/ui";
 import { ClipboardList } from "lucide-react";
 import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatDateTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
 
@@ -27,6 +27,24 @@ export default function AppointmentsPage() {
   const [filter, setFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [q, setQ] = useState("");
+  const [noShowRow, setNoShowRow] = useState<Row | null>(null);
+  const [noShowReason, setNoShowReason] = useState("");
+
+  const markNoShow = async () => {
+    if (!noShowRow || !noShowReason.trim()) return;
+    try {
+      await adminApi.patch(`/api/admin/appointments/${noShowRow.id}`, {
+        action: "status",
+        status: "no_show",
+        noShowReason: noShowReason.trim(),
+      });
+      setNoShowRow(null);
+      setNoShowReason("");
+      await load();
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Xatolik yuz berdi");
+    }
+  };
 
   const load = async () => {
     const supabase = createClient();
@@ -99,7 +117,7 @@ export default function AppointmentsPage() {
             options={[
               { value: "all", label: "Barcha manbalar" },
               { value: "telegram_mini_app", label: "Telegram ilova" },
-              { value: "telegram_bot", label: "Telegram bot" },
+              { value: "telegram_chat", label: "Telegram chat" },
               { value: "admin", label: "Admin" },
               { value: "walk_in", label: "Qabulxonada" },
             ]}
@@ -120,15 +138,52 @@ export default function AppointmentsPage() {
       ) : (
         <ATable headers={["Sana", "Bemor", "Xizmat", "Shifokor", "Manba", "Holat", "To‘lov", "Boshqarish"]}>
           {filtered!.map((r) => (
-            <AppointmentRow key={r.id} row={r} onChanged={() => void load()} onError={setError} />
+            <AppointmentRow key={r.id} row={r} onChanged={() => void load()} onError={setError} onNoShow={setNoShowRow} />
           ))}
         </ATable>
+      )}
+
+      {noShowRow && (
+        <AModal
+          title="Kelmagandi — sabab"
+          onClose={() => setNoShowRow(null)}
+          footer={
+            <>
+              <AButton variant="ghost" size="md" onClick={() => setNoShowRow(null)}>
+                Bekor qilish
+              </AButton>
+              <AButton variant="danger" size="md" disabled={!noShowReason.trim()} onClick={() => void markNoShow()}>
+                Kelmagandi sifatida belgilash
+              </AButton>
+            </>
+          }
+        >
+          <p className="mb-3 text-sm text-ink-muted">
+            {noShowRow.patients?.full_name ?? "Bemor"} uchun kelmaslik sababini kiriting — bu tahlillar sahifasida qayd etiladi.
+          </p>
+          <ATextArea
+            value={noShowReason}
+            onChange={setNoShowReason}
+            placeholder="Masalan: bemor qo‘ng‘iroq qildi, kelolmaydi"
+            rows={3}
+          />
+        </AModal>
       )}
     </div>
   );
 }
 
-function AppointmentRow({ row, onChanged, onError }: { row: Row; onChanged: () => void; onError: (m: string) => void }) {
+function AppointmentRow({
+  row,
+  onChanged,
+  onError,
+  onNoShow,
+}: {
+  row: Row;
+  onChanged: () => void;
+  onError: (m: string) => void;
+  onNoShow: (row: Row) => void;
+}) {
   const [busy, setBusy] = useState<string | null>(null);
 
   const act = async (action: string, extra?: Record<string, unknown>) => {
@@ -168,6 +223,11 @@ function AppointmentRow({ row, onChanged, onError }: { row: Row; onChanged: () =
           {row.status === "pending" && (
             <AButton size="sm" variant="outline" loading={busy === "confirm"} onClick={() => void act("status", { status: "confirmed" })}>
               Tasdiqlash
+            </AButton>
+          )}
+          {!["cancelled", "no_show", "completed"].includes(row.status) && (
+            <AButton size="sm" variant="outline" loading={busy === "no_show"} onClick={() => onNoShow(row)}>
+              Kelmagandi
             </AButton>
           )}
           {!["cancelled", "no_show", "completed"].includes(row.status) && (

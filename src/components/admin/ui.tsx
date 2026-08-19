@@ -195,7 +195,7 @@ export function ABadge({
   tone = "neutral",
 }: {
   children: ReactNode;
-  tone?: "neutral" | "green" | "red" | "amber" | "blue" | "gray" | "purple" | "pine";
+  tone?: "neutral" | "green" | "red" | "amber" | "blue" | "gray" | "purple" | "pine" | "clay";
 }) {
   const tones: Record<string, string> = {
     neutral: "bg-ink-muted/10 text-ink-muted",
@@ -205,6 +205,7 @@ export function ABadge({
     blue: "bg-info-tint text-info",
     gray: "bg-ink-muted/5 text-ink-muted",
     purple: "bg-[#efe9f8] text-[#6d4aa8]",
+    clay: "bg-clay-tint text-clay-deep",
     pine: "bg-pine text-white",
   };
   return (

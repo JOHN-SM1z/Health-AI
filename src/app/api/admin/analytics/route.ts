@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
 
     const { data, error } = await supabase
       .from("appointments")
-      .select("source, status, cancelled_reason, start_at, services(name, price), doctors(name)")
+      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name)")
       .eq("clinic_id", ctx.clinicId)
       .gte("start_at", since);
     if (error) throw error;
@@ -36,10 +36,15 @@ export async function GET(request: NextRequest) {
       range,
       total: agg.total,
       cancelled: agg.cancelled,
+      no_shows: agg.noShows,
+      completed: agg.completed,
       by_source: agg.bySource,
       by_status: agg.byStatus,
       cancel_reasons: agg.cancelReasons,
+      no_show_reasons: agg.noShowReasons,
       revenue_trend: agg.revenueTrend,
+      revenue_by_week: agg.revenueByWeek,
+      revenue_by_month: agg.revenueByMonth,
       top_services: agg.topServices,
       top_doctors: agg.topDoctors,
     });

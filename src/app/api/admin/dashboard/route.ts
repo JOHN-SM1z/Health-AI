@@ -81,6 +81,24 @@ export async function GET() {
       upcomingReminders = reminders ?? 0;
     }
 
+    // Conversation oversight: how many chats are live right now, and how many
+    // need an operator (patient asked for one, AI is off, nobody claimed it).
+    const activeStatuses = ["open", "assigned", "released"] as const;
+    const { count: activeConversations, error: convError } = await supabase
+      .from("conversations")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", ctx.clinicId)
+      .in("status", [...activeStatuses]);
+    if (convError) throw convError;
+
+    const { count: attentionConversations, error: attentionError } = await supabase
+      .from("conversations")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", ctx.clinicId)
+      .eq("status", "open")
+      .eq("ai_enabled", false);
+    if (attentionError) throw attentionError;
+
     return ok({
       day: { start, end },
       counts,
@@ -88,6 +106,8 @@ export async function GET() {
       outstanding,
       new_patients_today: newPatients ?? 0,
       upcoming_reminders: upcomingReminders,
+      active_conversations: activeConversations ?? 0,
+      attention_conversations: attentionConversations ?? 0,
     });
   } catch (e) {
     return handleApiError(e);

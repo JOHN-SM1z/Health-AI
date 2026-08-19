@@ -7,6 +7,9 @@ import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, LoadingRow }
 import { ListOrdered } from "lucide-react";
 import { STATUS_LABELS, STATUS_TONES, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
 
+const WEEKDAYS = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
+const MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
+
 type Row = {
   id: string;
   start_at: string;
@@ -20,6 +23,13 @@ export default function DoctorQueuePage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [doctorName, setDoctorName] = useState<string | null>(null);
+  // Client-only: rendered from fixed arrays (NOT Intl) so server and client
+  // produce identical strings regardless of ICU/locale data — avoids React
+  // #418 hydration mismatch (Node and Chromium differ on uz-UZ).
+  const [todayLabel] = useState(() => {
+    const now = new Date();
+    return `${WEEKDAYS[now.getDay()]}, ${now.getDate()}-${MONTHS[now.getMonth()]}`;
+  });
 
   const load = async () => {
     const supabase = createClient();
@@ -93,7 +103,7 @@ export default function DoctorQueuePage() {
     <div>
       <PageHeader
         title="Bugungi navbat"
-        subtitle={doctorName ? `Shifokor: ${doctorName}` : new Date().toLocaleDateString("uz-UZ", { weekday: "long", day: "numeric", month: "long" })}
+        subtitle={doctorName ? `Shifokor: ${doctorName}` : todayLabel}
       />
 
       {error && <AError message={error} />}

@@ -22,6 +22,7 @@ const createBookingSchema = z.object({
   phone: phoneSchema,
   consent: z.boolean().refine((v) => v === true, "Shaxsiy ma‘lumotlarga rozilik talab qilinadi"),
   notes: z.string().trim().max(300).optional(),
+  source: z.enum(["telegram_mini_app", "telegram_chat"]).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -37,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     const clinic = await getClinicFromRequest(request);
     let patient;
-    let source: "telegram_mini_app" | "walk_in" = "telegram_mini_app";
+    let source: "telegram_mini_app" | "telegram_chat" | "walk_in" = "telegram_mini_app";
 
     if (body.initData) {
       const resolved = await resolvePatientFromInitData(body.initData, clinic.id);
@@ -45,6 +46,11 @@ export async function POST(request: NextRequest) {
         throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
       }
       patient = resolved.patient;
+      // Attribution only: the patient's identity is verified via initData
+      // above; the source merely records which entry point was used. A
+      // Telegram patient can never be mis-attributed as walk_in, and a
+      // non-Telegram booking can never claim a Telegram source.
+      source = body.source === "telegram_chat" ? "telegram_chat" : "telegram_mini_app";
     } else {
       // Direct Web Booking fallback
       patient = await getOrCreatePatientByContact({

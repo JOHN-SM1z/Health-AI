@@ -61,6 +61,17 @@ export function BookingFlow() {
 
   const identity = useMemo(() => initData ?? (devMode ? "dev" : null), [initData, devMode]);
 
+  // Attribution: Telegram marks a bot-chat deep link launch with
+  // tgWebAppStartParam (hash) / startapp (search). The bot menu web_app
+  // button has no such marker, so the two entry points are distinguishable
+  // here and the booking is attributed to telegram_chat vs telegram_mini_app.
+  const chatDeepLink = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const search = new URLSearchParams(window.location.search);
+    return Boolean(hash.get("tgWebAppStartParam")) || search.has("startapp");
+  }, []);
+
   const [step, setStep] = useState<Step>({ name: "consent" });
   const [consentChecked, setConsentChecked] = useState(false);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
@@ -147,6 +158,7 @@ export function BookingFlow() {
         phone,
         consent: true,
         notes: notes.trim() || undefined,
+        source: chatDeepLink ? "telegram_chat" : "telegram_mini_app",
       },
       identity,
     );

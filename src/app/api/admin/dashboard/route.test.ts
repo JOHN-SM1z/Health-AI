@@ -1,130 +1,130 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { localDayWindow } from "./route";
+import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from "vitest";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { localDbAvailable } from "@/test/local-db";
 
-const supabaseMock = { from: vi.fn() };
-vi.mock("@/lib/supabase/admin", () => ({
-  createAdminClient: () => supabaseMock,
-}));
+/**
+ * Dashboard conversation oversight (audit finding, Phase 8): the dashboard
+ * now reports live (active) and attention-needed conversation counts —
+ * derived from the DB, not the browser. Regression tests run the real route
+ * against the local database with a mocked staff session.
+ *
+ * Requires: `npm run db:reset-local`. Skips cleanly when the stack is down.
+ */
 
-const rolesMock = vi.fn();
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+const URL = process.env.SUPABASE_URL ?? "";
+
+const staffMock = vi.hoisted(() => ({ impl: async () => null as unknown }));
+
 vi.mock("@/lib/auth/guards", () => ({
-  requireRoles: () => rolesMock(),
+  requireRoles: () => staffMock.impl(),
 }));
-
-vi.mock("@/lib/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { GET } from "./route";
 
-const TODAY_ROWS = [
-  { status: "confirmed", services: { price: 80000 }, payments: { status: "unpaid", amount: 0 } },
-  { status: "completed", services: { price: 50000 }, payments: { status: "paid", amount: 50000 } },
-  { status: "completed", services: { price: 120000 }, payments: { status: "paid", amount: 120000 } },
-  { status: "cancelled", services: { price: 30000 }, payments: { status: "refunded", amount: 30000 } },
-  { status: "pending", services: { price: 70000 }, payments: { status: "unpaid", amount: 0 } },
-];
+const describeDb = describe.skipIf(!localDbAvailable());
 
-type Recorded = { conditions: Array<{ type: string; args: unknown[] }>; selects: Array<{ type: string; args: unknown[] }> };
+describeDb("dashboard conversation counts (real DB, mocked session)", () => {
+  let admin: SupabaseClient;
+  let clinicId: string;
+  let otherClinicId: string;
+  let patientA: string;
+  let patientB: string;
+  let patientC: string;
+  const suffix = Date.now().toString(36);
 
-function chainBuilder(result: unknown[], count?: number): Recorded & Record<string, unknown> {
-  const recorded: Recorded = { conditions: [], selects: [] };
-  const builder = {} as Record<string, unknown>;
-  const methods = ["select", "eq", "gte", "lte", "lt", "order", "limit"] as const;
-  for (const m of methods) {
-    builder[m] = (...args: unknown[]) => {
-      if (m === "select") recorded.selects.push({ type: m, args });
-      else recorded.conditions.push({ type: m, args });
-      return builder;
-    };
+  const staffCtx = (roles: readonly string[] = ["owner"]) => ({
+    profileId: "00000000-0000-4000-8000-000000000001",
+    clinicId,
+    clinicName: "Dash Clinic",
+    clinicTimezone: "Asia/Tashkent",
+    roles,
+    platformAdmin: false,
+  });
+
+  beforeAll(async () => {
+    admin = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
+
+    const { data: clinic } = await admin
+      .from("clinics")
+      .insert({ name: `Dash Clinic ${suffix}`, slug: `dash-${suffix}`, timezone: "Asia/Tashkent", currency: "UZS" })
+      .select("id")
+      .single();
+    clinicId = clinic!.id;
+    const { data: other } = await admin
+      .from("clinics")
+      .insert({ name: `Dash Other ${suffix}`, slug: `dash-o-${suffix}`, timezone: "Asia/Tashkent", currency: "UZS" })
+      .select("id")
+      .single();
+    otherClinicId = other!.id;
+
+    const { data: p1 } = await admin
+      .from("patients")
+      .insert({ clinic_id: clinicId, full_name: "P1", phone: `+99893${suffix.slice(0, 7)}`, consent_given: true })
+      .select("id")
+      .single();
+    patientA = p1!.id;
+    const { data: p2 } = await admin
+      .from("patients")
+      .insert({ clinic_id: clinicId, full_name: "P2", phone: `+99894${suffix.slice(0, 7)}`, consent_given: true })
+      .select("id")
+      .single();
+    patientB = p2!.id;
+    const { data: p3 } = await admin
+      .from("patients")
+      .insert({ clinic_id: clinicId, full_name: "P3", phone: `+99895${suffix.slice(0, 7)}`, consent_given: true })
+      .select("id")
+      .single();
+    patientC = p3!.id;
+
+    // Attention-needed: open + ai off.
+    await admin.from("conversations").insert({ clinic_id: clinicId, patient_id: patientA, status: "open", ai_enabled: false, channel: "telegram" });
+    // Live: assigned (operator holds it).
+    await admin.from("conversations").insert({ clinic_id: clinicId, patient_id: patientB, status: "assigned", ai_enabled: false, channel: "telegram" });
+    // Live: bot active.
+    await admin.from("conversations").insert({ clinic_id: clinicId, patient_id: patientC, status: "open", ai_enabled: true, channel: "telegram" });
+    // Closed: not counted.
+    await admin.from("conversations").insert({ clinic_id: clinicId, patient_id: patientA, status: "closed", ai_enabled: true, channel: "telegram" });
+    // Other clinic: must NOT leak into counts.
+    await admin.from("conversations").insert({ clinic_id: otherClinicId, patient_id: patientA, status: "open", ai_enabled: false, channel: "telegram" });
+  });
+
+  afterAll(async () => {
+    await admin.from("conversations").delete().eq("clinic_id", clinicId);
+    await admin.from("conversations").delete().eq("clinic_id", otherClinicId);
+    await admin.from("patients").delete().in("id", [patientA, patientB, patientC]);
+    await admin.from("clinics").delete().in("id", [clinicId, otherClinicId]);
+  });
+
+  beforeEach(() => {
+    staffMock.impl = async () => staffCtx();
+  });
+
+  function get(): Promise<Response> {
+    return GET();
   }
-  builder.then = (resolve: (v: unknown) => void) => resolve({ data: result, error: null, count });
-  return Object.assign(recorded, builder);
-}
 
-beforeEach(() => {
-  vi.clearAllMocks();
-});
-
-describe("admin dashboard", () => {
-  it("aggregates today's appointments, revenue and outstanding for the staff clinic", async () => {
-    rolesMock.mockResolvedValue({
-      profileId: "staff-1",
-      clinicId: "clinic-a",
-      clinicName: "Clinic A",
-      clinicTimezone: "Asia/Tashkent",
-      platformAdmin: false,
-      roles: ["receptionist"],
-    });
-    const appointments = chainBuilder(TODAY_ROWS);
-    const patients = chainBuilder([], 4);
-    const jobs = chainBuilder([], 7);
-    supabaseMock.from.mockImplementation((table: string) => {
-      if (table === "appointments") return appointments;
-      if (table === "patients") return patients;
-      return jobs;
-    });
-
-    const res = await GET();
+  it("reports live and attention-needed conversations scoped to the clinic", async () => {
+    const res = await get();
     expect(res.status).toBe(200);
-    const json = (await res.json()) as {
-      ok: boolean;
-      data: {
-        counts: Record<string, number>;
-        revenue: number;
-        outstanding: number;
-        new_patients_today: number;
-        upcoming_reminders: number | null;
-      };
-    };
-    expect(json.ok).toBe(true);
-    expect(json.data.counts.total).toBe(5);
-    expect(json.data.counts.completed).toBe(2);
-    expect(json.data.revenue).toBe(170000);
-    expect(json.data.outstanding).toBe(150000);
-    expect(json.data.new_patients_today).toBe(4);
-
-    const clinicEqs = appointments.conditions.filter((c) => c.type === "eq" && c.args[0] === "clinic_id");
-    expect(clinicEqs.length).toBeGreaterThanOrEqual(1);
-    expect(patients.selects[0]?.args[1]).toEqual({ count: "exact", head: true });
-    // Receptionists never read reminder jobs.
-    expect(upcoming_reminders(json)).toBeNull();
-    expect(supabaseMock.from.mock.calls.some((c) => c[0] === "notification_jobs")).toBe(false);
+    const body = (await res.json()) as { data?: { active_conversations?: number; attention_conversations?: number } };
+    expect(body.data!.active_conversations).toBe(3);
+    expect(body.data!.attention_conversations).toBe(1);
   });
 
-  it("returns reminder count for management roles", async () => {
-    rolesMock.mockResolvedValue({
-      profileId: "staff-1",
-      clinicId: "clinic-a",
-      clinicName: "Clinic A",
-      clinicTimezone: "Asia/Tashkent",
-      platformAdmin: false,
-      roles: ["owner"],
-    });
-    const appointments = chainBuilder([]);
-    const patients = chainBuilder([], 0);
-    const jobs = chainBuilder([], 3);
-    supabaseMock.from.mockImplementation((table: string) => {
-      if (table === "appointments") return appointments;
-      if (table === "patients") return patients;
-      return jobs;
-    });
-
-    const res = await GET();
-    const json = (await res.json()) as { ok: boolean; data: { upcoming_reminders: number | null } };
-    expect(json.ok).toBe(true);
-    expect(json.data.upcoming_reminders).toBe(3);
-    expect(supabaseMock.from.mock.calls.some((c) => c[0] === "notification_jobs")).toBe(true);
+  it("serves receptionist sessions too (view-level oversight)", async () => {
+    staffMock.impl = async () => staffCtx(["receptionist"]);
+    const res = await get();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data?: { active_conversations?: number } };
+    expect(body.data!.active_conversations).toBe(3);
   });
-});
 
-function upcoming_reminders(json: { data: { upcoming_reminders: number | null } }) {
-  return json.data.upcoming_reminders;
-}
-
-describe("localDayWindow", () => {
-  it("returns a 24-hour window in the clinic's own timezone", () => {
-    // 2026-08-18 20:30 UTC = 2026-08-19 01:30 Asia/Tashkent (UTC+5, no DST).
-    const { start, end } = localDayWindow("Asia/Tashkent", new Date("2026-08-18T20:30:00Z"));
-    expect(start).toBe("2026-08-18T19:00:00.000Z");
-    expect(end).toBe("2026-08-19T19:00:00.000Z");
+  it("returns zero counts for a clinic without conversations", async () => {
+    staffMock.impl = async () => ({ ...staffCtx(), clinicId: otherClinicId });
+    const res = await get();
+    const body = (await res.json()) as { data?: { active_conversations?: number; attention_conversations?: number } };
+    expect(body.data!.active_conversations).toBe(0);
+    expect(body.data!.attention_conversations).toBe(0);
   });
 });

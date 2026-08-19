@@ -15,10 +15,19 @@ const schema = z.discriminatedUnion("action", [
     action: z.literal("cancel"),
     reason: z.string().max(300).optional(),
   }),
-  z.object({
-    action: z.literal("status"),
-    status: z.enum(["pending", "confirmed", "checked_in", "in_progress", "completed", "cancelled", "no_show"]),
-  }),
+  z
+    .object({
+      action: z.literal("status"),
+      status: z.enum(["pending", "confirmed", "checked_in", "in_progress", "completed", "cancelled", "no_show"]),
+      noShowReason: z.string().trim().max(300).optional(),
+    })
+    .superRefine((v, ctx) => {
+      // No-show without a reason would silently vanish from analytics:
+      // the management spec requires a recorded reason.
+      if (v.status === "no_show" && !v.noShowReason) {
+        ctx.addIssue({ code: "custom", message: "Kelmaslik sababi talab qilinadi", path: ["noShowReason"] });
+      }
+    }),
   z.object({
     action: z.literal("reschedule"),
     newStartAt: z.string().datetime(),
@@ -83,6 +92,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
       // change must record who/when and notify the patient exactly like the
       // dedicated cancel action — otherwise the patient is never told.
       const isCancel = body.status === "cancelled";
+      const isNoShow = body.status === "no_show";
       const wasClosed = ["cancelled", "no_show", "completed"].includes(appointment.status);
       const { error } = await supabase
         .from("appointments")
@@ -95,6 +105,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
                 cancelled_by: appointment.cancelled_by ?? staff.profileId,
               }
             : {}),
+          ...(isNoShow ? { no_show_reason: body.noShowReason } : {}),
         })
         .eq("id", id);
       if (error) throw new ApiError(500, "Holatni yangilab bo‘lmadi");

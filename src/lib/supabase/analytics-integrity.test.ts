@@ -84,7 +84,7 @@ describeDb("analytics integrity (real DB totals)", () => {
     if (admin && clinicId) await admin.from("clinics").delete().eq("id", clinicId);
   });
 
-  const insertAppt = (startAt: Date, status: string, source: string, reason: string | null = null) =>
+  const insertAppt = (startAt: Date, status: string, source: string, reason: string | null = null, noShowReason: string | null = null) =>
     admin.from("appointments").insert({
       clinic_id: clinicId,
       patient_id: patientId,
@@ -95,6 +95,7 @@ describeDb("analytics integrity (real DB totals)", () => {
       status,
       source,
       cancelled_reason: reason,
+      no_show_reason: noShowReason,
     });
 
   /** Local calendar day in Asia/Tashkent for a UTC instant. */
@@ -115,12 +116,14 @@ describeDb("analytics integrity (real DB totals)", () => {
     await insertAppt(day1Late, "completed", "walk_in"); // revenue 50k, bucket Wed (00:30 local)
     await insertAppt(day2, "pending", "walk_in"); // no revenue
     await insertAppt(day2Noon, "cancelled", "telegram_mini_app", "Narxi qimmat"); // cancel reason
+    await insertAppt(day1Plus, "no_show", "telegram_chat", null, "Bemorga aloqa yo‘q"); // no-show reason
+    await insertAppt(day2Noon, "no_show", "telegram_chat", null, "Bemorga aloqa yo‘q"); // no-show reason
 
     // Fetch exactly what the endpoint queries (clinic-scoped, same columns).
     const since = new Date(Date.now() - 30 * 86400000).toISOString();
     const { data, error } = await admin
       .from("appointments")
-      .select("source, status, cancelled_reason, start_at, services(name, price), doctors(name)")
+      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name)")
       .eq("clinic_id", clinicId)
       .gte("start_at", since);
     expect(error).toBeNull();
@@ -128,17 +131,20 @@ describeDb("analytics integrity (real DB totals)", () => {
     const agg = aggregateAppointments((data ?? []) as unknown as AnalyticsRow[], TZ);
 
     // Totals.
-    expect(agg.total).toBe(5);
+    expect(agg.total).toBe(7);
     expect(agg.cancelled).toBe(1);
+    expect(agg.noShows).toBe(2);
+    expect(agg.completed).toBe(3);
 
     // By source / status.
     const bySource = Object.fromEntries(agg.bySource);
-    expect(bySource).toEqual({ telegram_mini_app: 2, walk_in: 3 });
+    expect(bySource).toEqual({ telegram_mini_app: 2, telegram_chat: 2, walk_in: 3 });
     const byStatus = Object.fromEntries(agg.byStatus);
-    expect(byStatus).toEqual({ completed: 3, pending: 1, cancelled: 1 });
+    expect(byStatus).toEqual({ completed: 3, pending: 1, cancelled: 1, no_show: 2 });
 
-    // Cancellation reasons.
+    // Cancellation and no-show reasons.
     expect(agg.cancelReasons).toEqual([{ reason: "Narxi qimmat", count: 1 }]);
+    expect(agg.noShowReasons).toEqual([{ reason: "Bemorga aloqa yo‘q", count: 2 }]);
 
     // Revenue trend bucketed by CLINIC-LOCAL day: the 19:30Z appointment
     // lands in the NEXT local day (Wednesday), not the UTC day.
@@ -149,21 +155,31 @@ describeDb("analytics integrity (real DB totals)", () => {
       { date: wed, revenue: 50_000 }, // 00:30 local Wednesday
     ]);
 
+    // Weekly and monthly buckets must equal the daily totals' sums.
+    const totalRevenue = agg.revenueTrend.reduce((s, d) => s + d.revenue, 0);
+    expect(agg.revenueByWeek.reduce((s, d) => s + d.revenue, 0)).toBe(totalRevenue);
+    expect(agg.revenueByMonth.reduce((s, d) => s + d.revenue, 0)).toBe(totalRevenue);
+    expect(agg.revenueByWeek).toEqual([{ key: "2026-W34", revenue: 150_000 }]);
+    expect(agg.revenueByMonth).toEqual([{ key: "2026-08", revenue: 150_000 }]);
+
     // Top service/doctor: counts + revenue only from completed rows.
-    expect(agg.topServices).toEqual([{ name: `Konsultatsiya ${suffix}`, count: 5, revenue: 150_000 }]);
-    expect(agg.topDoctors).toEqual([{ name: `Dr Analytics ${suffix}`, count: 5, revenue: 150_000 }]);
+    expect(agg.topServices).toEqual([{ name: `Konsultatsiya ${suffix}`, count: 7, revenue: 150_000 }]);
+    expect(agg.topDoctors).toEqual([{ name: `Dr Analytics ${suffix}`, count: 7, revenue: 150_000 }]);
   });
 
   it("partial days and empty ranges aggregate to zero without errors", async () => {
     const { data: none } = await admin
       .from("appointments")
-      .select("source, status, cancelled_reason, start_at, services(name, price), doctors(name)")
+      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name)")
       .eq("clinic_id", clinicId)
       .gte("start_at", new Date(Date.now() + 2 * 86400000).toISOString());
     const agg = aggregateAppointments((none ?? []) as unknown as AnalyticsRow[], TZ, 3);
     expect(agg.total).toBe(0);
     expect(agg.revenueTrend).toEqual([]);
+    expect(agg.revenueByWeek).toEqual([]);
+    expect(agg.revenueByMonth).toEqual([]);
     expect(agg.cancelReasons).toEqual([]);
+    expect(agg.noShowReasons).toEqual([]);
     expect(agg.topServices).toEqual([]);
   });
 });

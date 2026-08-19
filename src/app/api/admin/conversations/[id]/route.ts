@@ -12,7 +12,7 @@ import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 
-const takeoverSchema = z.object({ action: z.enum(["takeover", "release"]) });
+const takeoverSchema = z.object({ action: z.enum(["takeover", "release", "mark_seen"]) });
 const messageSchema = z.object({ text: z.string().trim().min(1).max(3000) });
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -35,6 +35,17 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
       .eq("clinic_id", staff.clinicId)
       .maybeSingle();
     if (fetchError || !conversation) throw new ApiError(404, "Suhbat topilmadi", "conversation_not_found");
+
+    // Read tracking: viewing a conversation marks every patient message up to
+    // now as read. No state change, so no CAS needed.
+    if (body.action === "mark_seen") {
+      const { error: seenError } = await supabase
+        .from("conversations")
+        .update({ admin_seen_at: new Date().toISOString() })
+        .eq("id", id);
+      if (seenError) throw new ApiError(500, "Ko‘rilgan belgisini yangilab bo‘lmadi");
+      return ok({ updated: true });
+    }
 
     const isTakeover = body.action === "takeover";
     // Compare-and-swap: a takeover only wins on an open (unheld) conversation,

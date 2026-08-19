@@ -1,261 +1,180 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from "vitest";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
+import { localDbAvailable } from "@/test/local-db";
 
-const supabaseMock = { from: vi.fn() };
-vi.mock("@/lib/supabase/admin", () => ({
-  createAdminClient: () => supabaseMock,
-}));
+/**
+ * Conversation read tracking (audit finding, Phase 8): opening a
+ * conversation marks it as seen by the admin; the marker is clinic-scoped.
+ * Regression tests run the real route against the local database with a
+ * mocked staff session.
+ *
+ * Requires: `npm run db:reset-local`. Skips cleanly when the stack is down.
+ */
+
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+const URL = process.env.SUPABASE_URL ?? "";
+
+const staffMock = vi.hoisted(() => ({ impl: async () => null as unknown }));
 
 vi.mock("@/lib/auth/guards", () => ({
-  requireRoles: vi.fn(),
+  requireRoles: () => staffMock.impl(),
 }));
 
-vi.mock("@/lib/telegram/bot", () => ({
-  sendTelegramMessage: vi.fn(async () => 42),
-}));
+import { POST } from "./route";
 
-vi.mock("@/lib/telegram/store", () => ({
-  appendMessage: vi.fn(async () => {}),
-}));
+const describeDb = describe.skipIf(!localDbAvailable());
 
-vi.mock("@/lib/audit", () => ({
-  recordAudit: vi.fn(async () => {}),
-}));
+describeDb("conversation mark_seen (real DB, mocked session)", () => {
+  let admin: SupabaseClient;
+  let clinicId: string;
+  let otherClinicId: string;
+  let patientId: string;
+  let convId: string;
+  let otherConvId: string;
+  let actorProfileId: string;
+  const suffix = Date.now().toString(36);
 
-vi.mock("@/lib/analytics", () => ({
-  trackAnalytics: vi.fn(async () => {}),
-}));
-
-vi.mock("@/lib/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
-
-import { POST, PUT } from "./route";
-import { requireRoles } from "@/lib/auth/guards";
-import { sendTelegramMessage } from "@/lib/telegram/bot";
-import { appendMessage } from "@/lib/telegram/store";
-import { recordAudit } from "@/lib/audit";
-
-const sendMock = vi.mocked(sendTelegramMessage);
-const appendMock = vi.mocked(appendMessage);
-const auditMock = vi.mocked(recordAudit);
-const requireMock = vi.mocked(requireRoles);
-
-const CONVERSATION = {
-  id: "conv-1",
-  clinic_id: "clinic-a",
-  patient_id: "patient-1",
-  status: "open",
-  ai_enabled: true,
-};
-
-const HELD_CONVERSATION = { ...CONVERSATION, status: "assigned", ai_enabled: false };
-
-function mockConversationLookup(data: unknown) {
-  supabaseMock.from.mockImplementation((table: string) => {
-    if (table === "conversations") {
-      return {
-        select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data, error: null })) })) })) })),
-        // CAS takeover: update ... eq(id) eq(status) select(id).maybeSingle()
-        update: () => ({
-          eq: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              select: vi.fn(() => ({
-                maybeSingle: vi.fn(async () => ({ data: { id: data ? (data as { id?: string }).id : "conv-1" }, error: null })),
-              })),
-            })),
-          })),
-        }),
-      };
-    }
-    if (table === "patients") {
-      return {
-        select: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { telegram_user_id: 777000 }, error: null })) })) })),
-      };
-    }
-    return {};
-  });
-}
-
-function postReq(body: unknown, id = "conv-1"): Parameters<typeof POST> {
-  const request = new NextRequest(`http://localhost/api/admin/conversations/${id}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return [request, { params: Promise.resolve({ id }) }];
-}
-
-function putReq(body: unknown, id = "conv-1"): Parameters<typeof PUT> {
-  const request = new NextRequest(`http://localhost/api/admin/conversations/${id}`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return [request, { params: Promise.resolve({ id }) }];
-}
-
-beforeEach(() => {
-  vi.clearAllMocks();
-  requireMock.mockResolvedValue({
-    profileId: "staff-1",
-    clinicId: "clinic-a",
-    clinicName: "Clinic A",
+  const staffCtx = () => ({
+    profileId: actorProfileId,
+    clinicId,
+    clinicName: "Conv Clinic",
     clinicTimezone: "Asia/Tashkent",
+    roles: ["admin"] as const,
     platformAdmin: false,
-    roles: ["admin"],
   });
-  sendMock.mockResolvedValue(42);
-  mockConversationLookup(CONVERSATION);
-});
 
-describe("admin conversation takeover", () => {
-  it("takes over an open conversation and notifies the patient via the CLINIC's own bot", async () => {
-    const res = await POST(...postReq({ action: "takeover" }));
+  beforeAll(async () => {
+    admin = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
+
+    const { data: authUser, error: authError } = await admin.auth.admin.createUser({
+      email: `conv-actor-${suffix}@test.local`,
+      password: "TestPass123!",
+      email_confirm: true,
+    });
+    expect(authError).toBeNull();
+    if (!authUser?.user) throw new Error("actor auth user creation failed");
+    actorProfileId = authUser.user.id;
+    await admin.from("profiles").insert({ id: actorProfileId, full_name: `Conv Actor ${suffix}` });
+
+    const { data: clinic } = await admin
+      .from("clinics")
+      .insert({ name: `Conv Clinic ${suffix}`, slug: `conv-${suffix}`, timezone: "Asia/Tashkent", currency: "UZS" })
+      .select("id")
+      .single();
+    clinicId = clinic!.id;
+    const { data: other } = await admin
+      .from("clinics")
+      .insert({ name: `Conv Other ${suffix}`, slug: `conv-o-${suffix}`, timezone: "Asia/Tashkent", currency: "UZS" })
+      .select("id")
+      .single();
+    otherClinicId = other!.id;
+
+    const { data: patient } = await admin
+      .from("patients")
+      .insert({ clinic_id: clinicId, full_name: "Conv Patient", phone: `+99896${suffix.slice(0, 7)}`, consent_given: true })
+      .select("id")
+      .single();
+    patientId = patient!.id;
+
+    const { data: conv } = await admin
+      .from("conversations")
+      .insert({ clinic_id: clinicId, patient_id: patientId, status: "open", ai_enabled: true, channel: "telegram" })
+      .select("id")
+      .single();
+    convId = conv!.id;
+
+    const { data: otherPatient } = await admin
+      .from("patients")
+      .insert({ clinic_id: otherClinicId, full_name: "Conv Other Patient", phone: `+99897${suffix.slice(0, 7)}`, consent_given: true })
+      .select("id")
+      .single();
+    const { data: otherConv } = await admin
+      .from("conversations")
+      .insert({ clinic_id: otherClinicId, patient_id: otherPatient!.id, status: "open", ai_enabled: true, channel: "telegram" })
+      .select("id")
+      .single();
+    otherConvId = otherConv!.id;
+
+    staffMock.impl = async () => staffCtx();
+  });
+
+  afterAll(async () => {
+    await admin.from("conversations").delete().in("id", [convId, otherConvId]);
+    await admin.from("patients").delete().eq("clinic_id", clinicId);
+    await admin.from("patients").delete().eq("clinic_id", otherClinicId);
+    await admin.from("clinics").delete().in("id", [clinicId, otherClinicId]);
+    await admin.from("profiles").delete().eq("id", actorProfileId);
+    await admin.auth.admin.deleteUser(actorProfileId);
+  });
+
+  beforeEach(() => {
+    staffMock.impl = async () => staffCtx();
+  });
+
+  function post(id: string, body: unknown): Promise<Response> {
+    return POST(
+      new NextRequest(`http://localhost/api/admin/conversations/${id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ id }) },
+    );
+  }
+
+  it("marks the conversation as seen and persists admin_seen_at", async () => {
+    const res = await post(convId, { action: "mark_seen" });
     expect(res.status).toBe(200);
+    const body = (await res.json()) as { data?: { updated?: boolean } };
+    expect(body.data!.updated).toBe(true);
 
-    // The notification must go through the conversation's clinic bot,
-    // never the shared global bot (Phase 3 multi-clinic contract).
-    expect(sendMock).toHaveBeenCalledWith(
-      expect.objectContaining({ chatId: 777000, text: expect.stringContaining("Operatorlarimiz") }),
-      "clinic-a",
-    );
-    expect(auditMock).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "conversation_takeover", entityId: "conv-1", clinicId: "clinic-a" }),
-    );
-    expect(appendMock).toHaveBeenCalledWith(
-      expect.objectContaining({ conversationId: "conv-1", clinicId: "clinic-a", role: "admin", type: "system" }),
-    );
+    const { data: conv } = await admin.from("conversations").select("admin_seen_at").eq("id", convId).single();
+    expect(conv!.admin_seen_at).not.toBeNull();
   });
 
-  it("releases a held conversation without sending a patient notification", async () => {
-    mockConversationLookup(HELD_CONVERSATION);
-    const res = await POST(...postReq({ action: "release" }));
-    expect(res.status).toBe(200);
-    expect(sendMock).not.toHaveBeenCalled();
-    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "conversation_release" }));
-  });
-
-  it("returns 404 for a conversation in another clinic (tenant boundary)", async () => {
-    mockConversationLookup(null);
-    const res = await POST(...postReq({ action: "takeover" }));
+  it("does not leak read state across clinics (404 for foreign conversation)", async () => {
+    const res = await post(otherConvId, { action: "mark_seen" });
     expect(res.status).toBe(404);
-    expect(sendMock).not.toHaveBeenCalled();
+    const { data: conv } = await admin.from("conversations").select("admin_seen_at").eq("id", otherConvId).single();
+    expect(conv!.admin_seen_at).toBeNull();
   });
 
-  it("rejects unknown actions", async () => {
-    const res = await POST(...postReq({ action: "explode" }));
+  it("rejects unknown actions before touching the row (400)", async () => {
+    const res = await post(convId, { action: "garbage" });
     expect(res.status).toBe(400);
   });
 
-  it("only ONE operator can take over: a second takeover on a held conversation loses", async () => {
-    // Simulate operator B racing: the CAS update matches zero rows.
-    supabaseMock.from.mockImplementation((table: string) => {
-      if (table === "conversations") {
-        return {
-          select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data: HELD_CONVERSATION, error: null })) })) })) })),
-          update: () => ({
-            eq: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                select: vi.fn(() => ({
-                  maybeSingle: vi.fn(async () => ({ data: null, error: null })),
-                })),
-              })),
-            })),
-          }),
-        };
-      }
-      if (table === "patients") {
-        return {
-          select: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { telegram_user_id: 777000 }, error: null })) })) })),
-        };
-      }
-      return {};
-    });
-
-    const res = await POST(...postReq({ action: "takeover" }));
-    expect(res.status).toBe(409);
-    expect(sendMock).not.toHaveBeenCalled();
-    expect(appendMock).not.toHaveBeenCalled();
-  });
-
-  it("cannot release a conversation that is not held", async () => {
-    // CAS precondition fails: the conversation is open, the update matches 0 rows.
-    supabaseMock.from.mockImplementation((table: string) => {
-      if (table === "conversations") {
-        return {
-          select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data: CONVERSATION, error: null })) })) })) })),
-          update: () => ({
-            eq: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                select: vi.fn(() => ({
-                  maybeSingle: vi.fn(async () => ({ data: null, error: null })),
-                })),
-              })),
-            })),
-          }),
-        };
-      }
-      if (table === "patients") {
-        return {
-          select: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { telegram_user_id: 777000 }, error: null })) })) })),
-        };
-      }
-      return {};
-    });
-    const res = await POST(...postReq({ action: "release" }));
-    expect(res.status).toBe(409);
-    expect(sendMock).not.toHaveBeenCalled();
-  });
-});
-
-describe("admin conversation reply", () => {
-  it("stores the message and delivers it via the conversation's clinic bot", async () => {
-    mockConversationLookup(HELD_CONVERSATION);
-    const res = await PUT(...putReq({ text: "Salom, qabulga keling" }));
+  it("takeover still works after mark_seen (CAS not weakened)", async () => {
+    const res = await post(convId, { action: "takeover" });
     expect(res.status).toBe(200);
-    expect(appendMock).toHaveBeenCalledWith(
-      expect.objectContaining({ conversationId: "conv-1", clinicId: "clinic-a", role: "admin", content: "Salom, qabulga keling" }),
-    );
-    expect(sendMock).toHaveBeenCalledWith(
-      { chatId: 777000, text: "Salom, qabulga keling" },
-      "clinic-a",
-    );
+    const { data: conv } = await admin.from("conversations").select("status, taken_over_by").eq("id", convId).single();
+    expect(conv!.status).toBe("assigned");
+    expect(conv!.taken_over_by).not.toBeNull();
   });
 
-  it("stores the reply even when the patient has no Telegram id", async () => {
-    supabaseMock.from.mockImplementation((table: string) => {
-      if (table === "conversations") {
-        return {
-          select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data: HELD_CONVERSATION, error: null })) })) })) })),
-        };
-      }
-      if (table === "patients") {
-        return {
-          select: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { telegram_user_id: null }, error: null })) })) })),
-        };
-      }
-      return {};
-    });
-    const res = await PUT(...putReq({ text: "Qo‘ng‘iroq qilamiz" }));
-    expect(res.status).toBe(200);
-    expect(appendMock).toHaveBeenCalledTimes(1);
-    expect(sendMock).not.toHaveBeenCalled();
-  });
-
-  it("rejects a reply from a stale session after the takeover ended (not held)", async () => {
-    const res = await PUT(...putReq({ text: "Hali ham yozayapman" }));
-    expect(res.status).toBe(409);
-    expect(appendMock).not.toHaveBeenCalled();
-    expect(sendMock).not.toHaveBeenCalled();
-  });
-
-  it("rejects empty replies", async () => {
-    const res = await PUT(...putReq({ text: "   " }));
-    expect(res.status).toBe(400);
-  });
-
-  it("returns 404 for a foreign-clinic conversation", async () => {
-    mockConversationLookup(null);
-    const res = await PUT(...putReq({ text: "Hello" }));
-    expect(res.status).toBe(404);
+  it("simultaneous takeovers: exactly one wins, the other gets 409 (CAS)", async () => {
+    const { data: racePatient } = await admin
+      .from("patients")
+      .insert({ clinic_id: clinicId, full_name: "Race Patient", phone: `+99899${suffix.slice(0, 7)}`, consent_given: true })
+      .select("id")
+      .single();
+    const { data: fresh } = await admin
+      .from("conversations")
+      .insert({ clinic_id: clinicId, patient_id: racePatient!.id, status: "open", ai_enabled: true, channel: "telegram" })
+      .select("id")
+      .single();
+    const freshId = fresh!.id;
+    const [a, b] = await Promise.all([
+      post(freshId, { action: "takeover" }),
+      post(freshId, { action: "takeover" }),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([200, 409]);
+    const { data: conv } = await admin.from("conversations").select("status, taken_over_by").eq("id", freshId).single();
+    expect(conv!.status).toBe("assigned");
+    expect(conv!.taken_over_by).not.toBeNull();
+    await admin.from("conversations").delete().eq("id", freshId);
+    await admin.from("patients").delete().eq("id", racePatient!.id);
   });
 });

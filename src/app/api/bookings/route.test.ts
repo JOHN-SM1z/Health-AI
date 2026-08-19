@@ -188,3 +188,101 @@ describe("POST /api/bookings", () => {
     // bot-routing.test.ts): initData from any other bot is rejected.
   });
 });
+describe("POST /api/bookings — appointment source attribution (audit finding)", () => {
+  it("records telegram_chat when the client reports a bot-chat deep link", async () => {
+    stubSuccess();
+    const res = await POST(
+      postReq({
+        doctorId: "11111111-1111-4111-8111-111111111111",
+        serviceId: "11111111-1111-4111-8111-111111111111",
+        startAt: "2030-01-07T05:00:00Z",
+        patientName: "Ali Valiyev",
+        phone: "+998901234567",
+        consent: true,
+        initData: "dev",
+        source: "telegram_chat",
+      }),
+    );
+    expect(res.status).toBe(201);
+    const { p_source } = supabaseMock.rpc.mock.calls[0][1] as { p_source?: string };
+    expect(p_source).toBe("telegram_chat");
+  });
+
+  it("defaults verified Telegram bookings to telegram_mini_app", async () => {
+    stubSuccess();
+    const res = await POST(
+      postReq({
+        doctorId: "11111111-1111-4111-8111-111111111111",
+        serviceId: "11111111-1111-4111-8111-111111111111",
+        startAt: "2030-01-07T05:00:00Z",
+        patientName: "Ali Valiyev",
+        phone: "+998901234567",
+        consent: true,
+        initData: "dev",
+      }),
+    );
+    expect(res.status).toBe(201);
+    const { p_source } = supabaseMock.rpc.mock.calls[0][1] as { p_source?: string };
+    expect(p_source).toBe("telegram_mini_app");
+  });
+
+  it("never lets a non-Telegram booking claim a Telegram source", async () => {
+    getClinicMock.mockResolvedValue(CLINIC);
+    getOrCreateMock.mockResolvedValue({ id: "p-walkin" });
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === "patients") {
+        return {
+          update: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })),
+        };
+      }
+      return {
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            single: vi.fn(async () => ({
+              data: { id: "a-1", status: "pending", patients: { full_name: "Ali Valiyev" } },
+              error: null,
+            })),
+          })),
+        })),
+      };
+    });
+    supabaseMock.rpc.mockResolvedValue({
+      data: { appointment_id: "a-1", amount: 80000, error_code: null, error_message: null },
+      error: null,
+    });
+
+    const res = await POST(
+      postReq({
+        doctorId: "11111111-1111-4111-8111-111111111111",
+        serviceId: "11111111-1111-4111-8111-111111111111",
+        startAt: "2030-01-07T05:00:00Z",
+        patientName: "Ali Valiyev",
+        phone: "+998901234567",
+        consent: true,
+        source: "telegram_chat",
+      }),
+    );
+    expect(res.status).toBe(201);
+    const { p_source, p_patient_id } = supabaseMock.rpc.mock.calls[0][1] as { p_source?: string; p_patient_id?: string };
+    expect(p_source).toBe("walk_in");
+    expect(p_patient_id).toBe("p-walkin");
+  });
+
+  it("rejects an unknown source value with 400", async () => {
+    stubSuccess();
+    const res = await POST(
+      postReq({
+        doctorId: "11111111-1111-4111-8111-111111111111",
+        serviceId: "11111111-1111-4111-8111-111111111111",
+        startAt: "2030-01-07T05:00:00Z",
+        patientName: "Ali Valiyev",
+        phone: "+998901234567",
+        consent: true,
+        initData: "dev",
+        source: "telegram_bot",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(supabaseMock.rpc).not.toHaveBeenCalled();
+  });
+});

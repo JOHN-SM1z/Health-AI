@@ -9,10 +9,14 @@ vi.mock("@/lib/supabase/admin", () => ({
 }));
 
 vi.mock("@/lib/telegram/store", () => ({
-  getOrCreateConversation: vi.fn(),
+  getOrCreateConversation: vi.fn(async () => ({ id: "conv-1" })),
   appendMessage: vi.fn(async () => {}),
   conversationIsHeld: vi.fn(async () => false),
   updateConversationState: vi.fn(),
+}));
+
+vi.mock("@/lib/patients/identity", () => ({
+  getOrCreatePatient: vi.fn(async () => ({ id: "p-1" })),
 }));
 
 vi.mock("@/lib/clinics/context", () => ({
@@ -39,7 +43,7 @@ vi.mock("@/lib/telegram/bot", () => ({
   sendTelegramMessage: vi.fn(async () => 1),
 }));
 
-import { handleVoiceCorrect, buildMainKeyboard, buildHeldKeyboard, exitOperatorChat } from "@/lib/telegram/handlers";
+import { handleVoiceCorrect, buildMainKeyboard, buildHeldKeyboard, exitOperatorChat, handleMenuButton } from "@/lib/telegram/handlers";
 import { conversationIsHeld } from "@/lib/telegram/store";
 import { generateReceptionistReply } from "@/lib/ai/receptionist";
 import { sendTelegramMessage } from "@/lib/telegram/bot";
@@ -109,6 +113,21 @@ describe("buildMainKeyboard", () => {
     process.env.NEXT_PUBLIC_APP_URL = "https://t.me/health_bot/book";
     const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
     expect(buttons[0]).not.toHaveProperty("web_app");
+  });
+});
+
+describe("handleMenuButton booking reply (source attribution)", () => {
+  it("marks the chat deep-link with startapp=booking (telegram_chat attribution)", async () => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://health.example.com";
+    await handleMenuButton({
+      clinicId: "clinic-1",
+      chatId: 111,
+      from: { id: 222, first_name: "Ali" },
+      button: "📅 Qabulga yozilish",
+    });
+    const payload = vi.mocked(sendTelegramMessage).mock.calls[0][0] as { replyMarkup?: { inline_keyboard: Array<Array<{ url?: string; web_app?: { url: string } }>> } };
+    const button = payload.replyMarkup?.inline_keyboard?.[0]?.[0];
+    expect(button?.web_app?.url ?? button?.url).toContain("startapp=booking");
   });
 });
 

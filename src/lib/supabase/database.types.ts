@@ -126,6 +126,7 @@ export type Database = {
           doctor_id: string
           end_at: string
           id: string
+          no_show_reason: string | null
           notes: string | null
           patient_id: string
           service_id: string
@@ -144,6 +145,7 @@ export type Database = {
           doctor_id: string
           end_at: string
           id?: string
+          no_show_reason?: string | null
           notes?: string | null
           patient_id: string
           service_id: string
@@ -162,6 +164,7 @@ export type Database = {
           doctor_id?: string
           end_at?: string
           id?: string
+          no_show_reason?: string | null
           notes?: string | null
           patient_id?: string
           service_id?: string
@@ -374,6 +377,7 @@ export type Database = {
       }
       conversations: {
         Row: {
+          admin_seen_at: string | null
           ai_enabled: boolean
           channel: Database["public"]["Enums"]["conversation_channel"]
           clinic_id: string
@@ -390,6 +394,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          admin_seen_at?: string | null
           ai_enabled?: boolean
           channel?: Database["public"]["Enums"]["conversation_channel"]
           clinic_id: string
@@ -406,6 +411,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          admin_seen_at?: string | null
           ai_enabled?: boolean
           channel?: Database["public"]["Enums"]["conversation_channel"]
           clinic_id?: string
