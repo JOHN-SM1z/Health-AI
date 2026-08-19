@@ -54,3 +54,9 @@ supabase/.status
 
 # local IDE / editor caches
 .freebuff/
+
+# submodule clone / nested project
+Health-AI/
+
+# env backups
+.env.local.bak
