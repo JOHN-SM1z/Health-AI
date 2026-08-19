@@ -37,9 +37,27 @@ async function apiFetch<T>(path: string, init: RequestInit): Promise<ApiResult<T
     ? `${path}${path.includes("?") ? "&" : "?"}clinic=${encodeURIComponent(clinicId)}`
     : path;
   try {
+    // Sanitize body: remove initData when it is null to avoid sending a null value
+    // that some server-side validators may treat as an unexpected type.
+    let body = init.body;
+    const headers = { "Content-Type": "application/json", ...(init.headers ?? {}) };
+
+    if (typeof body === "string") {
+      try {
+        const parsed = JSON.parse(body);
+        if (Object.prototype.hasOwnProperty.call(parsed, "initData") && parsed.initData == null) {
+          delete parsed.initData;
+        }
+        body = JSON.stringify(parsed);
+      } catch {
+        // leave as-is if not valid JSON
+      }
+    }
+
     const res = await fetch(url, {
       ...init,
-      headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+      body,
+      headers,
     });
 
     let json: { ok?: boolean; data?: T; error?: string; code?: string } | null = null;
