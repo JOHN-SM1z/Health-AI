@@ -55,10 +55,10 @@ async function main() {
 
   // 2. Services
   const servicesData = [
-    { clinic_id: clinicId, specialty_id: specMap.get("Terapiya"), name: "Terapevt qabuli", description: "Umumiy shifokor ko‘rigi", duration_minutes: 20, price: 150000, sort_order: 1 },
-    { clinic_id: clinicId, specialty_id: specMap.get("Kardiologiya"), name: "Kardiolog qabuli", description: "Kardiolog bilan konsultatsiya", duration_minutes: 30, price: 250000, preparation_text: "Qon bosimi o‘lchangan holda keling", sort_order: 2 },
-    { clinic_id: clinicId, specialty_id: specMap.get("Dermatologiya"), name: "Dermatolog qabuli", description: "Teri kasalliklari bo‘yicha konsultatsiya", duration_minutes: 30, price: 200000, sort_order: 3 },
-    { clinic_id: clinicId, specialty_id: specMap.get("Pediatriya"), name: "Pediatr qabuli", description: "Bola shifokori ko‘rigi", duration_minutes: 20, price: 180000, sort_order: 4 },
+    { clinic_id: clinicId, specialty_id: specMap.get("Terapiya") ?? null, name: "Terapevt qabuli", description: "Umumiy shifokor ko‘rigi", duration_minutes: 20, price: 150000, sort_order: 1 },
+    { clinic_id: clinicId, specialty_id: specMap.get("Kardiologiya") ?? null, name: "Kardiolog qabuli", description: "Kardiolog bilan konsultatsiya", duration_minutes: 30, price: 250000, sort_order: 2 },
+    { clinic_id: clinicId, specialty_id: specMap.get("Dermatologiya") ?? null, name: "Dermatolog qabuli", description: "Teri kasalliklari bo‘yicha konsultatsiya", duration_minutes: 30, price: 200000, sort_order: 3 },
+    { clinic_id: clinicId, specialty_id: specMap.get("Pediatriya") ?? null, name: "Pediatr qabuli", description: "Bola shifokori ko‘rigi", duration_minutes: 20, price: 180000, sort_order: 4 },
     { clinic_id: clinicId, specialty_id: null, name: "Umumiy konsultatsiya", description: "Yo‘nalish aniq bo‘lmaganda umumiy qabul", duration_minutes: 20, price: 120000, sort_order: 5 },
   ];
 

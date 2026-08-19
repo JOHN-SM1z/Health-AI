@@ -17,7 +17,7 @@ import { aggregateAppointments, type AnalyticsRow } from "@/lib/analytics/aggreg
  */
 
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const URL = process.env.SUPABASE_URL ?? "";
+const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const TZ = "Asia/Tashkent";
 
 const describeDb = describe.skipIf(!localDbAvailable());

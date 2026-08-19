@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
@@ -16,11 +16,11 @@ const SEED_CLINIC_ID = "11111111-1111-4111-8111-111111111111";
 
 export default async function globalSetup(): Promise<void> {
   const envFile = resolveEnvFile();
-  if (envFile) process.loadEnvFile(envFile);
+  if (envFile) applyEnvFile(envFile);
 
-  const url = process.env.SUPABASE_URL ?? "";
+  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-  const anonKey = process.env.SUPABASE_ANON_KEY ?? "";
+  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
   let available = false;
   let reason = "";
@@ -54,10 +54,24 @@ export default async function globalSetup(): Promise<void> {
 }
 
 function resolveEnvFile(): string | null {
-  const candidates = [".env", ".env.test.example"];
+  const candidates = [".env.local", ".env", ".env.test.example"];
   for (const name of candidates) {
     const path = join(process.cwd(), name);
     if (existsSync(path)) return path;
   }
   return null;
+}
+
+function applyEnvFile(filePath: string): void {
+  const lines = readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const equalsIndex = trimmed.indexOf("=");
+    if (equalsIndex === -1) continue;
+    const key = trimmed.slice(0, equalsIndex).trim();
+    const rawValue = trimmed.slice(equalsIndex + 1).trim();
+    const value = rawValue.replace(/^['"]|['"]$/g, "");
+    process.env[key] = value;
+  }
 }

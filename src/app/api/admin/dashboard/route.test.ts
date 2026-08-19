@@ -12,7 +12,7 @@ import { localDbAvailable } from "@/test/local-db";
  */
 
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const URL = process.env.SUPABASE_URL ?? "";
+const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
 const staffMock = vi.hoisted(() => ({ impl: async () => null as unknown }));
 

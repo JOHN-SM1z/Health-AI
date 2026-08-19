@@ -16,7 +16,7 @@ import { processDueNotificationJobs } from "@/lib/notifications/processor";
  * Prove that concurrent workers never send the same job twice.
  */
 
-const URL = process.env.SUPABASE_URL ?? "";
+const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const CLINIC_ID = "11111111-1111-4111-8111-111111111111";
 
