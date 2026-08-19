@@ -6,15 +6,23 @@ vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => supabaseMock,
 }));
 
-vi.mock("@/lib/auth/guards", () => ({
-  requireRoles: vi.fn(async () => ({
+const staffMock = vi.hoisted(() => ({
+  context: {
     profileId: "staff-1",
     clinicId: "clinic-a",
     clinicName: "Clinic A",
     clinicTimezone: "Asia/Tashkent",
     platformAdmin: false,
     roles: ["admin"],
-  })),
+  },
+}));
+
+vi.mock("@/lib/auth/guards", () => ({
+  requireRoles: vi.fn(async () => staffMock.context),
+}));
+
+vi.mock("@/lib/auth/staff", () => ({
+  canViewPaymentDynamics: (ctx: { roles: string[] }) => ctx.roles.includes("owner") || ctx.roles.includes("admin"),
 }));
 
 vi.mock("@/lib/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
@@ -52,6 +60,7 @@ function getReq(url: string): NextRequest {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  staffMock.context.roles = ["admin"];
 });
 
 describe("admin analytics", () => {
@@ -116,5 +125,29 @@ describe("admin analytics", () => {
 
     const gteArgs = appointments.conditions.filter((c) => c.type === "gte").map((c) => c.args[1]);
     expect(gteArgs.length).toBe(1);
+  });
+
+  it("does not return revenue dynamics to a manager", async () => {
+    staffMock.context.roles = ["manager"];
+    supabaseMock.from.mockReturnValue(chainBuilder(APPOINTMENT_ROWS));
+
+    const res = await GET(getReq("/api/admin/analytics?range=30"));
+    const json = (await res.json()) as {
+      data: {
+        can_view_payment_dynamics: boolean;
+        revenue_trend: unknown[];
+        revenue_by_week: unknown[];
+        revenue_by_month: unknown[];
+        top_services: { revenue: number | null }[];
+        top_doctors: { revenue: number | null }[];
+      };
+    };
+
+    expect(json.data.can_view_payment_dynamics).toBe(false);
+    expect(json.data.revenue_trend).toEqual([]);
+    expect(json.data.revenue_by_week).toEqual([]);
+    expect(json.data.revenue_by_month).toEqual([]);
+    expect(json.data.top_services.every((service) => service.revenue === null)).toBe(true);
+    expect(json.data.top_doctors.every((doctor) => doctor.revenue === null)).toBe(true);
   });
 });

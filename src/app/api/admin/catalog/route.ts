@@ -159,10 +159,10 @@ export async function DELETE(request: NextRequest) {
   }
 }
 
-// POST /api/admin/settings — owner-only clinic settings
+// POST /api/admin/settings — owner/admin/manager clinic settings
 export async function PUT(request: NextRequest) {
   try {
-    const staff = await requireStaff("owner");
+    const staff = await requireStaff("admin");
     const body = await parseBody(request, settingSchema);
     const supabase = createAdminClient();
     const { data, error } = await supabase

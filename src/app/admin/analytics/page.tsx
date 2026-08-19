@@ -22,11 +22,12 @@ type AppointmentAnalytics = {
   by_status: [string, number][];
   cancel_reasons: { reason: string; count: number }[];
   no_show_reasons: { reason: string; count: number }[];
+  can_view_payment_dynamics: boolean;
   revenue_trend: { date: string; revenue: number }[];
   revenue_by_week: { key: string; revenue: number }[];
   revenue_by_month: { key: string; revenue: number }[];
-  top_services: { name: string; count: number; revenue: number }[];
-  top_doctors: { name: string; count: number; revenue: number }[];
+  top_services: { name: string; count: number; revenue: number | null }[];
+  top_doctors: { name: string; count: number; revenue: number | null }[];
 };
 
 const RANGES = [
@@ -90,6 +91,7 @@ export default function AnalyticsPage() {
   const maxNoShowReason = appointments?.no_show_reasons[0]?.count ?? 1;
   const maxStatus = appointments?.by_status[0]?.[1] ?? 1;
   const maxTrend = useMemo(() => {
+    if (!appointments?.can_view_payment_dynamics) return 1;
     const src =
       trendBucket === "week"
         ? appointments?.revenue_by_week
@@ -102,6 +104,7 @@ export default function AnalyticsPage() {
   const maxDoctor = appointments?.top_doctors[0]?.count ?? 1;
 
   const trendRows = useMemo(() => {
+    if (!appointments?.can_view_payment_dynamics) return [];
     const src =
       trendBucket === "week"
         ? appointments?.revenue_by_week
@@ -180,8 +183,9 @@ export default function AnalyticsPage() {
         />
       </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
+      <div className={`mb-6 grid grid-cols-1 gap-4 ${appointments?.can_view_payment_dynamics ? "lg:grid-cols-2" : ""}`}>
+        {appointments?.can_view_payment_dynamics && (
+          <Card>
           <div className="mb-4 flex items-center gap-2">
             <TrendingUp className="h-4 w-4 text-ink-muted" />
             <p className="text-sm font-bold text-foreground">Tushum dinamikasi</p>
@@ -215,7 +219,8 @@ export default function AnalyticsPage() {
               ))}
             </div>
           )}
-        </Card>
+          </Card>
+        )}
 
         <Card>
           <div className="mb-4 flex items-center gap-2">
@@ -249,7 +254,10 @@ export default function AnalyticsPage() {
                   <div className="mb-1.5 flex justify-between text-sm">
                     <span className="text-ink-muted">{s.name}</span>
                     <span className="font-numeric font-medium text-foreground">
-                      {s.count.toLocaleString("uz-UZ")} · {s.revenue.toLocaleString("uz-UZ")} so‘m
+                      {s.count.toLocaleString("uz-UZ")}
+                      {appointments.can_view_payment_dynamics && s.revenue !== null
+                        ? ` · ${s.revenue.toLocaleString("uz-UZ")} so‘m`
+                        : ""}
                     </span>
                   </div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-sand">

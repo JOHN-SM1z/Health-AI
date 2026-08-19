@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { getStaffContext, hasRole } from "@/lib/auth/staff";
+import { getStaffContext, hasRole, isCallCenterStaff } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users } from "lucide-react";
 
@@ -11,6 +11,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (!ctx) redirect("/login");
 
   const isManagement = hasRole(ctx, "admin");
+  const callCenter = isCallCenterStaff(ctx);
 
   const nav = [
     { href: "/admin", label: "Bugun", icon: <LayoutDashboard className="h-4 w-4" />, show: true },
@@ -40,7 +41,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 text-sm">
           <p className="font-numeric px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.16em] text-ink-muted/80">
-            Boshqaruv
+            {callCenter ? "Call Center" : "Klinika boshqaruvi"}
           </p>
           {nav.map((n) => (
             <NavLink key={n.href} href={n.href} icon={n.icon}>

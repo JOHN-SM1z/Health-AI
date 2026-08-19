@@ -20,6 +20,10 @@ vi.mock("@/lib/auth/guards", () => ({
   requireRoles: () => staffMock.impl(),
 }));
 
+vi.mock("@/lib/auth/staff", () => ({
+  canViewPaymentDynamics: (ctx: { roles: string[] }) => ctx.roles.includes("owner") || ctx.roles.includes("admin"),
+}));
+
 import { GET } from "./route";
 
 const describeDb = describe.skipIf(!localDbAvailable());

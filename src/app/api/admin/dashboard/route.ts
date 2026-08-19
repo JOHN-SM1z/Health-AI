@@ -1,12 +1,11 @@
 import type { Database } from "@/lib/supabase/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRoles } from "@/lib/auth/guards";
+import { canViewPaymentDynamics } from "@/lib/auth/staff";
 import { handleApiError, ok } from "@/lib/api/errors";
 import { localDayWindow } from "@/lib/time/local";
 
 export const dynamic = "force-dynamic";
-
-export { localDayWindow };
 
 const MANAGEMENT = ["owner", "admin", "manager"] as const;
 
@@ -26,10 +25,11 @@ export async function GET() {
     const ctx = await requireRoles("owner", "admin", "manager", "receptionist");
     const supabase = createAdminClient();
     const { start, end } = localDayWindow(ctx.clinicTimezone);
+    const mayViewPaymentDynamics = canViewPaymentDynamics(ctx);
 
     const { data: today, error: todayError } = await supabase
       .from("appointments")
-      .select("status, services(name, price), payments(status, amount)")
+      .select(mayViewPaymentDynamics ? "status, services(name, price), payments(status, amount)" : "status")
       .eq("clinic_id", ctx.clinicId)
       .gte("start_at", start)
       .lt("start_at", end);
@@ -47,14 +47,16 @@ export async function GET() {
     };
     let revenue = 0;
     let outstanding = 0;
-    for (const row of (today ?? []) as TodayRow[]) {
+    for (const row of (today ?? []) as unknown as TodayRow[]) {
       counts[row.status] = (counts[row.status] ?? 0) + 1;
       counts.total += 1;
-      const amount = Number(row.services?.price ?? 0);
-      if (row.status === "completed" && row.payments?.status === "paid") {
-        revenue += amount;
-      } else if (row.payments?.status === "unpaid" || row.payments?.status === "pending") {
-        outstanding += amount;
+      if (mayViewPaymentDynamics) {
+        const amount = Number(row.services?.price ?? 0);
+        if (row.status === "completed" && row.payments?.status === "paid") {
+          revenue += amount;
+        } else if (row.payments?.status === "unpaid" || row.payments?.status === "pending") {
+          outstanding += amount;
+        }
       }
     }
 
@@ -102,8 +104,9 @@ export async function GET() {
     return ok({
       day: { start, end },
       counts,
-      revenue,
-      outstanding,
+      can_view_payment_dynamics: mayViewPaymentDynamics,
+      revenue: mayViewPaymentDynamics ? revenue : null,
+      outstanding: mayViewPaymentDynamics ? outstanding : null,
       new_patients_today: newPatients ?? 0,
       upcoming_reminders: upcomingReminders,
       active_conversations: activeConversations ?? 0,

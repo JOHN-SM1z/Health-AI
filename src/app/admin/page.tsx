@@ -21,8 +21,9 @@ type Row = {
 
 type Dashboard = {
   counts: Record<string, number>;
-  revenue: number;
-  outstanding: number;
+  can_view_payment_dynamics: boolean;
+  revenue: number | null;
+  outstanding: number | null;
   new_patients_today: number;
   upcoming_reminders: number | null;
   active_conversations: number;
@@ -38,7 +39,7 @@ export default function TodayPage() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [isManagement, setIsManagement] = useState<boolean | null>(null);
+  const [canViewPaymentDynamics, setCanViewPaymentDynamics] = useState<boolean | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [todayLabel, setTodayLabel] = useState("");
@@ -50,8 +51,8 @@ export default function TodayPage() {
   useEffect(() => {
     void fetch("/api/admin/me")
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => setIsManagement(!!j?.ok && ["owner", "admin", "manager"].some((r) => (j?.data?.roles ?? []).includes(r))))
-      .catch(() => setIsManagement(false));
+      .then((j) => setCanViewPaymentDynamics(j?.data?.canViewPaymentDynamics === true))
+      .catch(() => setCanViewPaymentDynamics(false));
   }, []);
 
   const loadDashboard = async () => {
@@ -96,7 +97,6 @@ export default function TodayPage() {
     for (const r of rows ?? []) {
       c.today += 1;
       c[r.status] = (c[r.status] ?? 0) + 1;
-      if (r.status === "completed" && r.payments?.status === "paid") c.revenue += r.services?.price ?? 0;
     }
     return c;
   }, [rows]);
@@ -130,11 +130,11 @@ export default function TodayPage() {
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatCard label="Yangi bemorlar" value={(dashboard?.new_patients_today ?? 0).toLocaleString("uz-UZ")} tone="info" />
-        {isManagement && (
+        <StatCard label="Eslatmalar (24 soat)" value={(dashboard?.upcoming_reminders ?? 0).toLocaleString("uz-UZ")} tone="neutral" />
+        {canViewPaymentDynamics && (
           <>
             <StatCard label="Tushum (bugun)" value={`${(dashboard?.revenue ?? 0).toLocaleString("uz-UZ")} so‘m`} tone="pine" />
             <StatCard label="Qarzdorlik" value={`${(dashboard?.outstanding ?? 0).toLocaleString("uz-UZ")} so‘m`} tone="clay" />
-            <StatCard label="Eslatmalar (24 soat)" value={(dashboard?.upcoming_reminders ?? 0).toLocaleString("uz-UZ")} tone="neutral" />
           </>
         )}
       </div>

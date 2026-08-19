@@ -16,7 +16,29 @@ type ThemeVars = {
   "--tg-destructive": string;
 };
 
-function cssVars(tp?: any): Partial<ThemeVars> {
+type ThemeParamGetter = () => string | null | undefined;
+
+type ThemeParamsApi = Partial<
+  Record<
+    "bgColor" | "secondaryBgColor" | "textColor" | "hintColor" | "buttonColor" | "buttonTextColor" | "linkColor" | "destructiveTextColor",
+    ThemeParamGetter
+  >
+> & {
+  mount?: () => void;
+};
+
+type TelegramSdk = {
+  init?: () => void;
+  initData?: {
+    restore?: () => void;
+    raw?: () => string | null | undefined;
+  };
+  miniApp?: { ready?: () => void };
+  viewport?: { expand?: () => void };
+  themeParams?: ThemeParamsApi;
+};
+
+function cssVars(tp?: ThemeParamsApi): Partial<ThemeVars> {
   const vars: Partial<ThemeVars> = {};
   if (tp?.bgColor && typeof tp.bgColor === "function" && tp.bgColor()) vars["--tg-bg"] = tp.bgColor() as string;
   if (tp?.secondaryBgColor && typeof tp.secondaryBgColor === "function" && tp.secondaryBgColor())
@@ -106,6 +128,21 @@ function extractInitData(): string | null {
 }
 
 /**
+ * The SDK throws a diagnostic when its launch parameters are absent. That is
+ * normal for a direct browser visit, so only initialize it when Telegram has
+ * actually supplied a launch context.
+ */
+function hasTelegramLaunchContext() {
+  if (extractInitData()) return true;
+  try {
+    const tg = (window as unknown as { Telegram?: { WebApp?: unknown } }).Telegram;
+    return Boolean(tg?.WebApp);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Boots the Telegram Mini App SDK once per page load:
  * load the SDK dynamically to avoid import-time environment checks that
  * would throw when opened outside Telegram, then try to initialize it.
@@ -115,12 +152,17 @@ export function TelegramProvider({ children }: { children: ReactNode }) {
     let mounted = true;
 
     (async () => {
-      let sdk: any = null;
+      if (!hasTelegramLaunchContext()) {
+        publishInitData(null);
+        return;
+      }
+
+      let sdk: TelegramSdk | null = null;
       try {
-        sdk = await import("@tma.js/sdk");
-      } catch (err) {
-        // SDK import failed (likely not running inside a browser or outside Telegram). We'll
-        // fall back to extracting initData from other sources below.
+        sdk = (await import("@tma.js/sdk")) as TelegramSdk;
+      } catch {
+        // If the SDK cannot be loaded, preserve the launch data extracted from
+        // the Telegram bridge/URL so navigation continues to work.
       }
 
       if (!mounted) return;

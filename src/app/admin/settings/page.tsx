@@ -56,7 +56,7 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <PageHeader title="Sozlamalar" subtitle="Klinika matn sozlamalari (owner)" />
+      <PageHeader title="Sozlamalar" subtitle="Klinika matn sozlamalari" />
       {error && <AError message={error} />}
       {settings === null ? (
         <Card><LoadingRow /></Card>

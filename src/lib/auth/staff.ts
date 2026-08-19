@@ -38,6 +38,20 @@ export function hasAnyRole(roles: StaffRole[], allowed: StaffRole[]): boolean {
 }
 
 /**
+ * Payment amounts, outstanding balances, and revenue trends are financial
+ * data. Managers retain the rest of the clinic workspace, but this view is
+ * reserved for the clinic owner and full administrator roles.
+ */
+export function canViewPaymentDynamics(ctx: StaffContext | null): boolean {
+  return !!ctx && hasAnyRole(ctx.roles, ["owner", "admin"]);
+}
+
+/** Manager and receptionist work from the shared operational workspace. */
+export function isCallCenterStaff(ctx: StaffContext | null): boolean {
+  return !!ctx && hasAnyRole(ctx.roles, ["manager", "receptionist"]);
+}
+
+/**
  * Resolves the staff member's clinic context from the session.
  * Returns null when not signed in or not attached to any clinic.
  * Platform admins get a context WITHOUT a clinic (clinicId null).

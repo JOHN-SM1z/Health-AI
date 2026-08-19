@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRoles } from "@/lib/auth/guards";
+import { canViewPaymentDynamics } from "@/lib/auth/staff";
 import { handleApiError, ok } from "@/lib/api/errors";
 import { aggregateAppointments, type AnalyticsRow } from "@/lib/analytics/aggregate";
 
@@ -19,6 +20,7 @@ const listSchema = z.object({
 export async function GET(request: NextRequest) {
   try {
     const ctx = await requireRoles("owner", "admin", "manager");
+    const mayViewPaymentDynamics = canViewPaymentDynamics(ctx);
     const { range } = listSchema.parse(Object.fromEntries(request.nextUrl.searchParams));
     const supabase = createAdminClient();
     const since = new Date(Date.now() - range * 86400000).toISOString();
@@ -42,11 +44,20 @@ export async function GET(request: NextRequest) {
       by_status: agg.byStatus,
       cancel_reasons: agg.cancelReasons,
       no_show_reasons: agg.noShowReasons,
-      revenue_trend: agg.revenueTrend,
-      revenue_by_week: agg.revenueByWeek,
-      revenue_by_month: agg.revenueByMonth,
-      top_services: agg.topServices,
-      top_doctors: agg.topDoctors,
+      can_view_payment_dynamics: mayViewPaymentDynamics,
+      revenue_trend: mayViewPaymentDynamics ? agg.revenueTrend : [],
+      revenue_by_week: mayViewPaymentDynamics ? agg.revenueByWeek : [],
+      revenue_by_month: mayViewPaymentDynamics ? agg.revenueByMonth : [],
+      top_services: agg.topServices.map(({ name, count, revenue }) => ({
+        name,
+        count,
+        revenue: mayViewPaymentDynamics ? revenue : null,
+      })),
+      top_doctors: agg.topDoctors.map(({ name, count, revenue }) => ({
+        name,
+        count,
+        revenue: mayViewPaymentDynamics ? revenue : null,
+      })),
     });
   } catch (e) {
     return handleApiError(e);

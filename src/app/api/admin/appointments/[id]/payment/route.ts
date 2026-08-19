@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
-import { requireStaff } from "@/lib/auth/guards";
+import { requireRoles } from "@/lib/auth/guards";
 import { parseBody } from "@/lib/api/validate";
 import { handleApiError, ok } from "@/lib/api/errors";
 import { transitionPaymentStatus } from "@/lib/payments/status";
@@ -22,7 +22,7 @@ type RouteContext = { params: Promise<{ id: string }> };
  */
 export async function POST(request: NextRequest, ctx: RouteContext) {
   try {
-    const staff = await requireStaff("admin");
+    const staff = await requireRoles("owner", "admin");
     const { id } = await ctx.params;
     const body = await parseBody(request, schema);
 
