@@ -87,6 +87,7 @@ export function Input({
   className,
   "aria-label": ariaLabel,
   id,
+  maxLength,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -98,6 +99,7 @@ export function Input({
   className?: string;
   "aria-label"?: string;
   id?: string;
+  maxLength?: number;
 }) {
   return (
     <input
@@ -109,6 +111,7 @@ export function Input({
       autoComplete={autoComplete}
       aria-label={ariaLabel}
       placeholder={placeholder}
+      maxLength={maxLength}
       onChange={(e) => onChange(e.target.value)}
       className={cn(
         "w-full rounded-xl border border-[var(--tg-secondary-bg,var(--hairline))] bg-[var(--tg-bg,var(--surface))] px-4 py-3 text-sm text-[var(--tg-text,var(--foreground))] transition-[border-color,box-shadow] duration-150 placeholder:text-[var(--tg-hint,#8a9699)] focus:border-[var(--tg-button,var(--pine))]",

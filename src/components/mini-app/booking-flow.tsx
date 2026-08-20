@@ -97,6 +97,16 @@ export function BookingFlow() {
   const [bookingResult, setBookingResult] = useState<{ ok: boolean; message: string; appointmentId?: string; paymentUrl?: string } | null>(null);
   const [creating, setCreating] = useState(false);
 
+  // Mirrors the server-side rules in src/lib/api/validate.ts (phoneSchema,
+  // nameSchema) so patients see the same errors before submitting.
+  const PHONE_RE = /^\+?[0-9 ()-]{7,20}$/;
+  const trimmedName = patientName.trim();
+  const nameValid = trimmedName.length >= 2 && trimmedName.length <= 120;
+  const phoneValid = PHONE_RE.test(phone.trim());
+  const detailsValid = nameValid && phoneValid;
+  const nameWarning = patientName && !nameValid ? "Ism kamida 2 ta belgidan iborat bo‘lishi kerak" : null;
+  const phoneWarning = phone && !phoneValid ? "Telefon raqam noto‘g‘ri formatda (masalan: +998 90 123 45 67)" : null;
+
   useEffect(() => {
     // Catalog is public read-only clinic data. Load it immediately so the user
     // can choose services and doctor whether opened inside or outside Telegram.
@@ -463,7 +473,9 @@ export function BookingFlow() {
                 onChange={setPatientName}
                 placeholder="Masalan: Karimov Ali"
                 autoComplete="name"
+                maxLength={120}
               />
+              {nameWarning && <p className="mt-1 text-[11px] text-[var(--clay,#d97706)]">{nameWarning}</p>}
             </div>
             <div>
               <label htmlFor="patient-phone" className="mb-1 block text-xs font-medium text-[var(--tg-hint,#8a9699)]">
@@ -477,7 +489,9 @@ export function BookingFlow() {
                 type="tel"
                 inputMode="tel"
                 autoComplete="tel"
+                maxLength={20}
               />
+              {phoneWarning && <p className="mt-1 text-[11px] text-[var(--clay,#d97706)]">{phoneWarning}</p>}
             </div>
             <div>
               <label htmlFor="patient-notes" className="mb-1 block text-xs font-medium text-[var(--tg-hint,#8a9699)]">
@@ -496,7 +510,7 @@ export function BookingFlow() {
           </Card>
           <Button
             size="full"
-            disabled={patientName.trim().length < 2 || phone.trim().length < 7}
+            disabled={!detailsValid}
             onClick={() => setStep({ name: "review" })}
           >
             Davom etish
