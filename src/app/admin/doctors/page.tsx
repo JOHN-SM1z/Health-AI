@@ -10,8 +10,11 @@ type Doctor = {
   name: string;
   title: string | null;
   active: boolean;
+  profile_id: string | null;
   specialties: { name: string } | null;
 };
+
+type DoctorStaff = { profileId: string; fullName: string; role: "doctor" };
 
 type WorkingHours = { weekday: number; start_time: string; end_time: string }[];
 
@@ -20,14 +23,16 @@ const WEEKDAYS = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Sh
 export default function DoctorsPage() {
   const [rows, setRows] = useState<Doctor[] | null>(null);
   const [specialties, setSpecialties] = useState<{ id: string; name: string }[]>([]);
+  const [doctorStaff, setDoctorStaff] = useState<DoctorStaff[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Doctor | null>(null);
 
   const load = async () => {
     const supabase = createClient();
-    const [{ data: docs, error }, { data: specs }] = await Promise.all([
-      supabase.from("doctors").select("id, name, title, active, specialties(name)").order("name"),
+    const [{ data: docs, error }, { data: specs }, staff] = await Promise.all([
+      supabase.from("doctors").select("id, name, title, active, profile_id, specialties(name)").order("name"),
       supabase.from("specialties").select("id, name").eq("active", true).order("name"),
+      adminApi.get<{ staff: DoctorStaff[] }>("/api/admin/staff?role=doctor").catch(() => ({ staff: [] })),
     ]);
     if (error) {
       setError("Shifokorlarni yuklab bo‘lmadi");
@@ -35,6 +40,7 @@ export default function DoctorsPage() {
     }
     setRows(docs ?? []);
     setSpecialties(specs ?? []);
+    setDoctorStaff(staff.staff);
   };
 
   useEffect(() => {
@@ -46,7 +52,7 @@ export default function DoctorsPage() {
       <PageHeader
         title="Shifokorlar"
         subtitle="Ro‘yxat va ish jadvallari"
-        action={<AButton onClick={() => setEditing({ id: "", name: "", title: "", active: true, specialties: null })}>+ Shifokor qo‘shish</AButton>}
+        action={<AButton onClick={() => setEditing({ id: "", name: "", title: "", active: true, profile_id: null, specialties: null })}>+ Shifokor qo‘shish</AButton>}
       />
       {error && <AError message={error} />}
 
@@ -74,6 +80,7 @@ export default function DoctorsPage() {
         <DoctorModal
           doctor={editing}
           specialties={specialties}
+          doctorStaff={doctorStaff}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -89,12 +96,14 @@ export default function DoctorsPage() {
 function DoctorModal({
   doctor,
   specialties,
+  doctorStaff,
   onClose,
   onSaved,
   onError,
 }: {
   doctor: Doctor;
   specialties: { id: string; name: string }[];
+  doctorStaff: DoctorStaff[];
   onClose: () => void;
   onSaved: () => void;
   onError: (m: string) => void;
@@ -102,6 +111,7 @@ function DoctorModal({
   const [name, setName] = useState(doctor.name);
   const [title, setTitle] = useState(doctor.title ?? "");
   const [active, setActive] = useState(doctor.active);
+  const [profileId, setProfileId] = useState(doctor.profile_id ?? "");
   const [specialtyId, setSpecialtyId] = useState(doctor.specialties ? "" : "");
   const [hours, setHours] = useState<WorkingHours>([]);
   const [saving, setSaving] = useState(false);
@@ -131,7 +141,7 @@ function DoctorModal({
     setSaving(true);
     try {
       if (isEdit) {
-        await adminApi.patch(`/api/admin/doctors?id=${doctor.id}`, { name, title: title || undefined, active });
+        await adminApi.patch(`/api/admin/doctors?id=${doctor.id}`, { name, title: title || undefined, active, profileId: profileId || null });
         const schedule = hours
           .filter((h) => h.start_time && h.end_time)
           .map((h) => ({ weekday: h.weekday, start: h.start_time, end: h.end_time }));
@@ -142,6 +152,7 @@ function DoctorModal({
           title: title || undefined,
           active,
           specialtyId: specialtyId || undefined,
+          profileId: profileId || null,
         });
       }
       onSaved();
@@ -174,6 +185,15 @@ function DoctorModal({
             aria-label="Yo‘nalish"
           />
         )}
+        <ASelect
+          value={profileId}
+          onChange={setProfileId}
+          options={[
+            { value: "", label: "Doctor employee accountini bog‘lamaslik" },
+            ...doctorStaff.map((member) => ({ value: member.profileId, label: member.fullName })),
+          ]}
+          aria-label="Doctor employee hisobi"
+        />
         <label className="flex items-center gap-2 text-sm text-ink-muted">
           <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="h-4 w-4 accent-pine" />
           Faol

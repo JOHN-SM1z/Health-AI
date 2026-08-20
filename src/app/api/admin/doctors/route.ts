@@ -17,7 +17,7 @@ const doctorSchema = z.object({
   specialtyId: uuidSchema.optional(),
   bio: z.string().max(1000).optional(),
   active: z.boolean().optional(),
-  profileId: uuidSchema.optional(),
+  profileId: uuidSchema.nullable().optional(),
 });
 
 const doctorUpdateSchema = doctorSchema.partial();
@@ -45,6 +45,7 @@ export async function POST(request: NextRequest) {
     const staff = await requireStaff("admin");
     const body = await parseBody(request, doctorSchema);
     const supabase = createAdminClient();
+    await assertDoctorProfileAvailable(supabase, staff.clinicId, body.profileId);
     const { data, error } = await supabase
       .from("doctors")
       .insert({
@@ -72,6 +73,7 @@ export async function PATCH(request: NextRequest) {
     const id = request.nextUrl.searchParams.get("id");
     if (!id) throw new ApiError(400, "id parametri kerak", "missing_id");
     const supabase = createAdminClient();
+    await assertDoctorProfileAvailable(supabase, staff.clinicId, body.profileId, id);
     const { data, error } = await supabase
       .from("doctors")
       .update({
@@ -90,5 +92,39 @@ export async function PATCH(request: NextRequest) {
     return ok({ doctor: data });
   } catch (e) {
     return handleApiError(e);
+  }
+}
+
+/** A doctor dashboard identity must be a doctor-role staff member and may be
+ * linked to only one doctor card in a clinic. */
+async function assertDoctorProfileAvailable(
+  supabase: ReturnType<typeof createAdminClient>,
+  clinicId: string,
+  profileId: string | null | undefined,
+  currentDoctorId?: string,
+) {
+  if (!profileId) return;
+
+  const { data: staffRole, error: staffRoleError } = await supabase
+    .from("staff_roles")
+    .select("profile_id")
+    .eq("clinic_id", clinicId)
+    .eq("profile_id", profileId)
+    .eq("role", "doctor")
+    .maybeSingle();
+  if (staffRoleError || !staffRole) {
+    throw new ApiError(400, "Faqat doctor rolidagi xodimni shifokorga bog‘lash mumkin", "invalid_doctor_profile");
+  }
+
+  let existingQuery = supabase
+    .from("doctors")
+    .select("id")
+    .eq("clinic_id", clinicId)
+    .eq("profile_id", profileId);
+  if (currentDoctorId) existingQuery = existingQuery.neq("id", currentDoctorId);
+  const { data: existing, error: existingError } = await existingQuery.maybeSingle();
+  if (existingError) throw existingError;
+  if (existing) {
+    throw new ApiError(409, "Bu doctor hisobi boshqa shifokorga allaqachon bog‘langan", "doctor_profile_already_linked");
   }
 }
