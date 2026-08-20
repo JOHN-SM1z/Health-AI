@@ -13,7 +13,7 @@ type MyAppointmentsResponse = {
     status: string;
     doctors: { name: string; title: string | null } | null;
     services: { name: string; price: number } | null;
-    payments: { status: string; amount: number; currency: string } | null;
+    payments: { status: string; amount: number; currency: string; payment_url?: string | null } | null;
   }>;
 };
 
@@ -34,6 +34,7 @@ function ConfirmationInner() {
   const initData = useTelegramInitData();
   const devMode = process.env.NEXT_PUBLIC_TELEGRAM_DEV_MODE === "true";
   const identity = useMemo(() => initData ?? (devMode ? "dev" : null), [initData, devMode]);
+  const paymentMode = process.env.NEXT_PUBLIC_PAYMENT_PROVIDER ?? "manual";
   const searchParams = useSearchParams();
   const appointmentId = searchParams.get("id");
 
@@ -41,8 +42,37 @@ function ConfirmationInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Without a Telegram identity (walk-in booking outside the Mini App) the
+  // appointment cannot be fetched from /api/me/appointments. The server
+  // already confirmed the booking and returned its summary at creation time;
+  // that payload is cached in this tab's sessionStorage and rendered here.
+  const cached = useMemo(() => {
+    if (!appointmentId || typeof window === "undefined") return null;
+    try {
+      const raw = sessionStorage.getItem(`booking:${appointmentId}`);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as {
+        appointment: MyAppointmentsResponse["appointments"][number];
+        paymentUrl?: string | null;
+      };
+      return parsed;
+    } catch {
+      return null;
+    }
+  }, [appointmentId]);
+
   const load = useCallback(async () => {
-    if (!identity || !appointmentId) {
+    if (!appointmentId) {
+      setError("Qabul identifikatori topilmadi");
+      setLoading(false);
+      return;
+    }
+    if (!identity) {
+      if (cached?.appointment) {
+        setAppointment(cached.appointment);
+        setLoading(false);
+        return;
+      }
       setError("Qabul identifikatori topilmadi");
       setLoading(false);
       return;
@@ -56,7 +86,7 @@ function ConfirmationInner() {
       setError(res.error);
     }
     setLoading(false);
-  }, [identity, appointmentId]);
+  }, [identity, appointmentId, cached]);
 
   useEffect(() => {
     void load();
@@ -67,6 +97,7 @@ function ConfirmationInner() {
   if (!appointment) return null;
 
   const start = new Date(appointment.start_at);
+  const paymentUrl = cached?.paymentUrl ?? appointment.payments?.payment_url ?? null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -74,7 +105,9 @@ function ConfirmationInner() {
         <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-pine-tint text-2xl">✅</div>
         <p className="font-medium text-[var(--tg-text,var(--foreground))]">Qabul tasdiqlandi!</p>
         <p className="mt-1 text-xs text-[var(--tg-hint,#8a9699)]">
-          Sizga Telegram bot orqali tasdiq va eslatmalar keladi.
+          {identity
+            ? "Sizga Telegram bot orqali tasdiq va eslatmalar keladi."
+            : "Tasdiqlangan qabul: " + appointmentId}
         </p>
       </Card>
 
@@ -94,11 +127,23 @@ function ConfirmationInner() {
         </div>
         <div className="flex items-center justify-between">
           <span className="text-[var(--tg-hint,#8a9699)]">To‘lov</span>
-          <Badge tone={appointment.payments?.status === "paid" ? "green" : "amber"}>
-            {appointment.payments?.status === "paid" ? "To‘langan" : "Qabulxonada to‘lanadi"}
+          <Badge tone={appointment.payments?.status === "paid" ? "green" : appointment.payments?.status === "pending" ? "amber" : "amber"}>
+            {appointment.payments?.status === "paid"
+              ? "To‘langan"
+              : appointment.payments?.status === "pending"
+                ? "To‘lov kutilmoqda"
+                : paymentMode === "manual"
+                  ? "Qabulxonada to‘lanadi"
+                  : "To‘lov amalga oshirilmagan"}
           </Badge>
         </div>
       </Card>
+
+      {appointment.payments && appointment.payments.status !== "paid" && paymentUrl && (
+        <a href={paymentUrl} target="_blank" rel="noopener noreferrer" className="block w-full">
+          <Button size="full">To‘lov qilish (Click)</Button>
+        </a>
+      )}
 
       <a href="/my-appointments">
         <Button size="full" variant="outline">

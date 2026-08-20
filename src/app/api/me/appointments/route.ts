@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     const supabase = createAdminClient();
     const { data: appointments, error } = await supabase
       .from("appointments")
-      .select("*, doctors(name, title), services(name, price, duration_minutes), payments(status, amount, currency)")
+      .select("*, doctors(name, title), services(name, price, duration_minutes), payments(status, amount, currency, payment_url)")
       .eq("patient_id", resolved.patient.id)
       .eq("clinic_id", clinic.id)
       .order("start_at", { ascending: false });

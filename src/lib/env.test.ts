@@ -36,4 +36,33 @@ describe("env fail-closed guards", () => {
     const mod = await import("@/lib/env");
     expect(mod.env.CRON_SECRET).toBe("change-me-in-production");
   });
+
+  it("fails closed when PAYMENT_PROVIDER=click without merchant credentials", async () => {
+    vi.stubEnv("PAYMENT_PROVIDER", "click");
+    vi.stubEnv("CLICK_MERCHANT_ID", undefined);
+    await expect(import("@/lib/env")).rejects.toThrow(/CLICK_MERCHANT_ID/);
+  });
+
+  it("fails closed when PAYMENT_PROVIDER=click with partial credentials", async () => {
+    vi.stubEnv("PAYMENT_PROVIDER", "click");
+    vi.stubEnv("CLICK_MERCHANT_ID", "12345");
+    vi.stubEnv("CLICK_SERVICE_ID", undefined);
+    await expect(import("@/lib/env")).rejects.toThrow(/CLICK_MERCHANT_ID/);
+  });
+
+  it("loads when PAYMENT_PROVIDER=click with full credentials", async () => {
+    vi.stubEnv("PAYMENT_PROVIDER", "click");
+    vi.stubEnv("CLICK_MERCHANT_ID", "12345");
+    vi.stubEnv("CLICK_SERVICE_ID", "123");
+    vi.stubEnv("CLICK_SECRET_KEY", "secret-key");
+    vi.stubEnv("CRON_SECRET", "0123456789abcdef0123456789abcdef");
+    const mod = await import("@/lib/env");
+    expect(mod.env.PAYMENT_PROVIDER).toBe("click");
+    expect(mod.env.CLICK_SECRET_KEY).toBe("secret-key");
+  });
+
+  it("fails closed for unimplemented providers (payme/uzum)", async () => {
+    vi.stubEnv("PAYMENT_PROVIDER", "payme");
+    await expect(import("@/lib/env")).rejects.toThrow(/not implemented/);
+  });
 });

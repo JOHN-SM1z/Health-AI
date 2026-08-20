@@ -9,6 +9,8 @@ import { phoneSchema, nameSchema, uuidSchema } from "@/lib/api/validate";
 import { rateLimit, keyFromIp } from "@/lib/rate-limit";
 import { trackAnalytics } from "@/lib/analytics";
 import { enqueueBookingNotifications } from "@/lib/notifications/jobs";
+import { getPaymentProvider } from "@/lib/payments/provider";
+import { transitionPaymentStatus } from "@/lib/payments/status";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -122,6 +124,61 @@ export async function POST(request: NextRequest) {
       .eq("id", result.appointment_id)
       .single();
 
+    // Payment initiation. The RPC created the payment row (unpaid/manual).
+    // A configured provider (Click) creates the invoice server-side; the
+    // patient is only sent to the payment URL after the server holds it.
+    let paymentStatus: string = "unpaid";
+    let paymentUrl: string | null = null;
+    let manualConfirmationRequired = true;
+    let providerName = "manual";
+    const { data: paymentRow } = await supabase
+      .from("payments")
+      .select("id, status, provider")
+      .eq("appointment_id", result.appointment_id)
+      .maybeSingle();
+
+    const paymentProvider = getPaymentProvider();
+    if (paymentRow && paymentProvider.name !== "manual") {
+      try {
+        const init = await paymentProvider.createPayment({
+          appointmentId: result.appointment_id,
+          patientId: patient.id,
+          clinicId: clinic.id,
+          amount: result.amount ?? 0,
+          currency: clinic.currency,
+        });
+        await supabase
+          .from("payments")
+          .update({
+            provider: paymentProvider.name,
+            payment_url: init.paymentUrl ?? null,
+            provider_reference: init.providerReference ?? null,
+          })
+          .eq("id", paymentRow.id);
+        if (init.status === "pending") {
+          await transitionPaymentStatus({
+            paymentId: paymentRow.id,
+            clinicId: clinic.id,
+            to: "pending",
+            actorType: "system",
+            providerReference: init.providerReference,
+            metadata: { initiated_at: new Date().toISOString() },
+          });
+        }
+        paymentStatus = init.status;
+        paymentUrl = init.paymentUrl ?? null;
+        manualConfirmationRequired = init.manualConfirmationRequired;
+        providerName = paymentProvider.name;
+      } catch (e) {
+        // The booking stands; the payment stays unpaid (desk collection).
+        // Never claim a payment was initiated when the provider rejected it.
+        logger.warn("payment initiation failed, keeping payment unpaid", {
+          error: e instanceof Error ? e.message : String(e),
+          appointmentId: result.appointment_id,
+        });
+      }
+    }
+
     // Notifications: confirmation + reminders (idempotent job enqueue).
     if (patient.telegram_user_id) {
       await enqueueBookingNotifications({
@@ -143,9 +200,12 @@ export async function POST(request: NextRequest) {
       {
         appointment,
         payment: {
-          status: "unpaid",
+          status: paymentStatus,
           amount: result.amount ?? 0,
           currency: clinic.currency,
+          provider: providerName,
+          paymentUrl,
+          manualConfirmationRequired,
         },
       },
       { status: 201 },

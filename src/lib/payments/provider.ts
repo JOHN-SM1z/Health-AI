@@ -1,5 +1,6 @@
 import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
+import { createClickInvoice, clickWebhookSignatureValid } from "@/lib/payments/click";
 
 export type PaymentInitResult = {
   status: "unpaid" | "pending" | "paid" | "failed" | "manual_review";
@@ -53,22 +54,64 @@ export class ManualPaymentProvider implements PaymentProvider {
 }
 
 /**
- * Adapter skeletons for real Uzbekistan providers.
- * They are intentionally NOT implemented: activating real payment processing
- * requires explicit merchant configuration. When the clinic provides
- * credentials, implement createPayment/verifyWebhook per the provider's API
- * and enable the provider via PAYMENT_PROVIDER.
+ * Click (click.uz) adapter. Activation is explicit: PAYMENT_PROVIDER=click
+ * with CLICK_MERCHANT_ID/SERVICE_ID/SECRET_KEY (validated in env.ts, which
+ * fails closed otherwise). Invoice creation calls the Click merchant API;
+ * payment completion arrives via signature-verified webhooks
+ * (/api/payments/click/prepare|complete) that transition the payment row.
  */
 export class ClickPaymentProvider implements PaymentProvider {
   readonly name = "click" as const;
-  async createPayment(): Promise<PaymentInitResult> {
-    throw new Error("Click provider is not configured — implement with merchant credentials");
+
+  async createPayment(opts: {
+    appointmentId: string;
+    patientId: string;
+    clinicId: string;
+    amount: number;
+    currency: string;
+  }): Promise<PaymentInitResult> {
+    const invoice = await createClickInvoice({
+      merchantTransId: opts.appointmentId,
+      amount: opts.amount,
+      currency: opts.currency,
+      returnUrl: env.CLICK_RETURN_URL,
+    });
+    return {
+      status: "pending",
+      providerReference: invoice.invoiceId,
+      paymentUrl: invoice.paymentUrl,
+      manualConfirmationRequired: false,
+    };
   }
+
   getPaymentUrl(): string | null {
+    // The payment URL is returned at invoice creation and stored on the
+    // payment row (payments.payment_url); the webhook route re-serves it.
     return null;
   }
-  verifyWebhook(): boolean {
-    return false;
+
+  verifyWebhook(payload: string, signature: string): boolean {
+    if (!payload || !signature) return false;
+    try {
+      const params = new URLSearchParams(payload);
+      const required = ["click_trans_id", "service_id", "merchant_trans_id", "amount", "error", "click_paydoc_id", "sign_time"];
+      for (const key of required) {
+        if (!params.get(key)) return false;
+      }
+      return clickWebhookSignatureValid({
+        clickTransId: params.get("click_trans_id")!,
+        serviceId: params.get("service_id")!,
+        secretKey: env.CLICK_SECRET_KEY ?? "",
+        merchantTransId: params.get("merchant_trans_id")!,
+        amount: params.get("amount")!,
+        error: params.get("error") ?? "0",
+        clickPaydocId: params.get("click_paydoc_id")!,
+        signTime: params.get("sign_time")!,
+        signString: signature,
+      });
+    } catch {
+      return false;
+    }
   }
 }
 

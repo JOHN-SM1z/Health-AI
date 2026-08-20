@@ -33,7 +33,14 @@ const envSchema = z.object({
   TRANSCRIPTION_MODEL: z.string().default("whisper-1"),
   ENABLE_TRANSCRIPTION: z.enum(["true", "false"]).default("false"),
 
-  PAYMENT_PROVIDER: z.enum(["manual", "click", "payme"]).default("manual"),
+  PAYMENT_PROVIDER: z.enum(["manual", "click", "payme", "uzum"]).default("manual"),
+  NEXT_PUBLIC_PAYMENT_PROVIDER: z.enum(["manual", "click", "payme", "uzum"]).default("manual"),
+
+  CLICK_MERCHANT_ID: z.string().optional(),
+  CLICK_SERVICE_ID: z.string().optional(),
+  CLICK_SECRET_KEY: z.string().optional(),
+  CLICK_API_BASE_URL: optionalUrl(),
+  CLICK_RETURN_URL: optionalUrl(),
 
   CRON_SECRET: z.string().default("change-me-in-production"),
 
@@ -61,12 +68,25 @@ export const isProduction = process.env.NODE_ENV === "production";
 // provider must fail at configuration/startup time — never silently, and
 // never only when a patient tries to pay.
 if (!isBuildTime && parsed.success && parsed.data.PAYMENT_PROVIDER !== "manual") {
-  logger.error("unsupported payment provider", { provider: parsed.data.PAYMENT_PROVIDER });
-  throw new Error(
-    `PAYMENT_PROVIDER=${parsed.data.PAYMENT_PROVIDER} is not implemented. ` +
-      `Click/PayMe require merchant credentials and a verified adapter (payment-provider.md). ` +
-      `Keep PAYMENT_PROVIDER=manual until then.`,
-  );
+  const provider = parsed.data.PAYMENT_PROVIDER;
+  if (provider === "click") {
+    const hasCredentials =
+      !!parsed.data.CLICK_MERCHANT_ID && !!parsed.data.CLICK_SERVICE_ID && !!parsed.data.CLICK_SECRET_KEY;
+    if (!hasCredentials) {
+      logger.error("click provider missing merchant credentials", {});
+      throw new Error(
+        `PAYMENT_PROVIDER=click requires CLICK_MERCHANT_ID, CLICK_SERVICE_ID and CLICK_SECRET_KEY. ` +
+          `Set the credentials or keep PAYMENT_PROVIDER=manual.`,
+      );
+    }
+  } else {
+    logger.error("unsupported payment provider", { provider });
+    throw new Error(
+      `PAYMENT_PROVIDER=${provider} is not implemented. ` +
+        `Click requires merchant credentials and a verified adapter (payment-provider.md). ` +
+        `Keep PAYMENT_PROVIDER=manual until then.`,
+    );
+  }
 }
 
 // At build time (or when env is incomplete) fall back to pure defaults so

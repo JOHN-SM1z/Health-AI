@@ -41,7 +41,14 @@ type AppointmentResponse = {
     doctors: { name: string } | null;
     services: { name: string; price: number } | null;
   } | null;
-  payment: { status: string; amount: number; currency: string };
+  payment: {
+    status: string;
+    amount: number;
+    currency: string;
+    provider: string;
+    paymentUrl: string | null;
+    manualConfirmationRequired: boolean;
+  };
 };
 
 type Step =
@@ -72,6 +79,8 @@ export function BookingFlow() {
     return Boolean(hash.get("tgWebAppStartParam")) || search.has("startapp");
   }, []);
 
+  const paymentMode = process.env.NEXT_PUBLIC_PAYMENT_PROVIDER ?? "manual";
+
   const [step, setStep] = useState<Step>({ name: "consent" });
   const [consentChecked, setConsentChecked] = useState(false);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
@@ -85,7 +94,7 @@ export function BookingFlow() {
   const [patientName, setPatientName] = useState("");
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
-  const [bookingResult, setBookingResult] = useState<{ ok: boolean; message: string; appointmentId?: string } | null>(null);
+  const [bookingResult, setBookingResult] = useState<{ ok: boolean; message: string; appointmentId?: string; paymentUrl?: string } | null>(null);
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
@@ -165,10 +174,26 @@ export function BookingFlow() {
 
     if (res.ok) {
       trackEvent("booking_success");
+      const id = res.data.appointment?.id;
+      const paymentUrl = res.data.payment?.paymentUrl ?? undefined;
+      // Persist the server-confirmed appointment in this tab so the
+      // confirmation page can render it even without a Telegram identity
+      // (walk-in bookings outside the Mini App have no initData to verify).
+      if (id && typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem(
+            `booking:${id}`,
+            JSON.stringify({ appointment: res.data.appointment, paymentUrl }),
+          );
+        } catch {
+          // sessionStorage unavailable — confirmation falls back to a message.
+        }
+      }
       setBookingResult({
         ok: true,
         message: "Qabul muvaffaqiyatli yaratildi!",
-        appointmentId: res.data.appointment?.id,
+        appointmentId: id,
+        paymentUrl,
       });
       setStep({ name: "result" });
     } else if (res.code === "slot_taken") {
@@ -184,6 +209,7 @@ export function BookingFlow() {
   };
 
   const trackEvent = (eventType: string) => {
+    if (!identity) return; // no verified Telegram identity — the server would reject anyway
     void fetch("/api/track", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -489,10 +515,10 @@ export function BookingFlow() {
             <Row label="Bemor" value={patientName} />
             <Row label="Telefon" value={phone} />
             <Row label="Narx" value={`${fmt(selectedService.price)} ${catalog.clinic.currency}`} />
-            <Row label="To‘lov" value="Qabulxonada (naqd yoki karta)" />
+            <Row label="To‘lov" value={paymentMode === "manual" ? "Qabulxonada (naqd yoki karta)" : "Online to‘lov (Click / Payme / Uzum)"} />
             {notes.trim() && <Row label="Sabab" value={notes.trim()} />}
           </Card>
-          <NoticeBanner message="To‘lov klinikada qabul vaqtida amalga oshiriladi." />
+          <NoticeBanner message={paymentMode === "manual" ? "To‘lov klinikada qabul vaqtida amalga oshiriladi." : "To‘lov onlayn amalga oshiriladi — to‘lov sahifasi qabul tasdiqlangach ochiladi."} />
           {error && <ErrorBanner message={error} />}
           <Button size="full" loading={creating} onClick={confirmBooking}>
             Tasdiqlash va yozilish
@@ -508,6 +534,7 @@ export function BookingFlow() {
           ok={bookingResult?.ok ?? false}
           message={bookingResult?.message ?? ""}
           appointmentId={bookingResult?.appointmentId}
+          paymentUrl={bookingResult?.paymentUrl}
           onRetry={bookingResult?.ok ? undefined : () => setStep({ name: "slot" })}
           onDone={() => {
             if (bookingResult?.appointmentId) {
@@ -549,12 +576,14 @@ function ResultView({
   ok,
   message,
   appointmentId,
+  paymentUrl,
   onRetry,
   onDone,
 }: {
   ok: boolean;
   message: string;
   appointmentId?: string;
+  paymentUrl?: string;
   onRetry?: () => void;
   onDone: () => void;
 }) {
@@ -573,6 +602,11 @@ function ResultView({
         <Button size="full" onClick={onRetry}>
           Boshqa vaqtni tanlash
         </Button>
+      )}
+      {ok && paymentUrl && (
+        <a href={paymentUrl} target="_blank" rel="noopener noreferrer" className="block w-full">
+          <Button size="full">To‘lov qilish (Click)</Button>
+        </a>
       )}
       <Button variant={ok ? "primary" : "outline"} size="full" onClick={onDone}>
         {ok ? "Tasdiqlash sahifasi" : "Bosh sahifa"}

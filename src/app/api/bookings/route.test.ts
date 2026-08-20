@@ -63,6 +63,10 @@ function stubSuccess() {
             data: { id: "a-1", status: "pending", patients: { full_name: "Ali Valiyev" } },
             error: null,
           })),
+          maybeSingle: vi.fn(async () => ({
+            data: table === "payments" ? { id: "pay-1", status: "unpaid", provider: "manual" } : null,
+            error: null,
+          })),
         })),
       })),
     };
@@ -153,6 +157,10 @@ describe("POST /api/bookings", () => {
               data: { id: "a-1", status: "pending", patients: { full_name: "Ali Valiyev" } },
               error: null,
             })),
+            maybeSingle: vi.fn(async () => ({
+              data: table === "payments" ? { id: "pay-1", status: "unpaid", provider: "manual" } : null,
+              error: null,
+            })),
           })),
         })),
       };
@@ -240,6 +248,10 @@ describe("POST /api/bookings — appointment source attribution (audit finding)"
           eq: vi.fn(() => ({
             single: vi.fn(async () => ({
               data: { id: "a-1", status: "pending", patients: { full_name: "Ali Valiyev" } },
+              error: null,
+            })),
+            maybeSingle: vi.fn(async () => ({
+              data: table === "payments" ? { id: "pay-1", status: "unpaid", provider: "manual" } : null,
               error: null,
             })),
           })),
