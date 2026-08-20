@@ -29,7 +29,11 @@ async function checkDatabase(): Promise<boolean> {
 
   try {
     const res = await fetch(`${url}/rest/v1/`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      // New Supabase publishable keys (`sb_publishable_…`) are API keys, not
+      // JWTs. Sending one as a Bearer token makes the gateway reject an
+      // otherwise valid key as an invalid JWT. The apikey header works for
+      // both legacy anon and new publishable key formats.
+      headers: { apikey: key },
       signal: AbortSignal.timeout(4000),
     });
     return res.ok;
