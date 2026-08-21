@@ -1368,7 +1368,7 @@ export type Database = {
         | "cancelled"
         | "no_show"
       conversation_channel: "telegram" | "mini_app"
-      conversation_status: "open" | "assigned" | "released" | "closed"
+      conversation_status: "open" | "assigned" | "closed"
       message_role: "patient" | "bot" | "ai" | "admin" | "system"
       message_type: "text" | "voice" | "button" | "callback" | "system"
       notification_job_status:
@@ -1544,7 +1544,7 @@ export const Constants = {
         "no_show",
       ],
       conversation_channel: ["telegram", "mini_app"],
-      conversation_status: ["open", "assigned", "released", "closed"],
+      conversation_status: ["open", "assigned", "closed"],
       message_role: ["patient", "bot", "ai", "admin", "system"],
       message_type: ["text", "voice", "button", "callback", "system"],
       notification_job_status: [

@@ -85,7 +85,7 @@ export async function GET() {
 
     // Conversation oversight: how many chats are live right now, and how many
     // need an operator (patient asked for one, AI is off, nobody claimed it).
-    const activeStatuses = ["open", "assigned", "released"] as const;
+    const activeStatuses = ["open", "assigned"] as const;
     const { count: activeConversations, error: convError } = await supabase
       .from("conversations")
       .select("id", { count: "exact", head: true })
