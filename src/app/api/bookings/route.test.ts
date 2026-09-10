@@ -276,7 +276,10 @@ describe("POST /api/bookings — appointment source attribution (audit finding)"
     );
     expect(res.status).toBe(201);
     const { p_source, p_patient_id } = supabaseMock.rpc.mock.calls[0][1] as { p_source?: string; p_patient_id?: string };
-    expect(p_source).toBe("walk_in");
+    // No initData was sent, so this is a genuine web booking regardless of
+    // the (ignored) client-supplied "telegram_chat" source claim above —
+    // not 'walk_in', which is reserved for a reception-entered walk-in.
+    expect(p_source).toBe("web");
     expect(p_patient_id).toBe("p-walkin");
   });
 

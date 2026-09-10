@@ -118,6 +118,7 @@ export default function AppointmentsPage() {
               { value: "all", label: "Barcha manbalar" },
               { value: "telegram_mini_app", label: "Telegram ilova" },
               { value: "telegram_chat", label: "Telegram chat" },
+              { value: "web", label: "Veb-sayt" },
               { value: "admin", label: "Admin" },
               { value: "walk_in", label: "Qabulxonada" },
             ]}

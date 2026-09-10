@@ -1357,6 +1357,7 @@ export type Database = {
       appointment_source:
         | "telegram_mini_app"
         | "telegram_chat"
+        | "web"
         | "admin"
         | "walk_in"
       appointment_status:
@@ -1531,6 +1532,7 @@ export const Constants = {
       appointment_source: [
         "telegram_mini_app",
         "telegram_chat",
+        "web",
         "admin",
         "walk_in",
       ],

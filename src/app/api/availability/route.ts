@@ -69,12 +69,41 @@ export async function GET(request: NextRequest) {
       doctorIds = (doctors ?? []).map((d) => d.id);
     }
 
+    // Per-doctor service eligibility + duration override — must match
+    // book_appointment()'s own semantics exactly (same opt-in rule: a
+    // doctor with ANY doctor_services rows is restricted to that explicit
+    // list, with its own duration_override_minutes when set; a doctor with
+    // none offers every service at the base duration). Computed once here
+    // rather than duplicated per-doctor inside the loop below.
+    const doctorServiceById = new Map<string, { duration_override_minutes: number | null }>();
+    const restrictedDoctorIds = new Set<string>();
+    if (serviceId && doctorIds.length > 0) {
+      const { data: doctorServices } = await supabase
+        .from("doctor_services")
+        .select("doctor_id, service_id, duration_override_minutes")
+        .in("doctor_id", doctorIds);
+      for (const ds of doctorServices ?? []) {
+        restrictedDoctorIds.add(ds.doctor_id);
+        if (ds.service_id === serviceId) {
+          doctorServiceById.set(ds.doctor_id, { duration_override_minutes: ds.duration_override_minutes });
+        }
+      }
+    }
+
     const todayLocal = new Date();
     const dayStart = fromClinicTime(`${clinicDayLabel(todayLocal, timezone)}T00:00:00`, timezone);
 
     const slotsByDoctor: Record<string, Array<{ start: string; end: string; startLocal: string; dayLocal: string; doctorId: string; doctorName: string }>> = {};
 
     for (const id of doctorIds) {
+      // This doctor has an explicit service list that doesn't include the
+      // requested service — book_appointment would reject it outright
+      // (service_not_offered), so no slot shown here could ever be booked.
+      if (serviceId && restrictedDoctorIds.has(id) && !doctorServiceById.has(id)) {
+        slotsByDoctor[id] = [];
+        continue;
+      }
+
       const [workingHours, timeBlocks, appointments] = await Promise.all([
         supabase.from("doctor_working_hours").select("weekday, start_time, end_time").eq("doctor_id", id),
         supabase
@@ -89,12 +118,14 @@ export async function GET(request: NextRequest) {
           .gte("end_at", dayStart.toISOString()),
       ]);
 
+      const effectiveDuration = doctorServiceById.get(id)?.duration_override_minutes ?? durationMinutes ?? 20;
+
       const slots = generateSlots({
         timezone,
         workingHours: workingHours.data ?? [],
         timeBlocks: timeBlocks.data ?? [],
         existingAppointments: appointments.data ?? [],
-        serviceDurationMinutes: durationMinutes ?? 20,
+        serviceDurationMinutes: effectiveDuration,
         dayStart,
         dayCount: days,
       });

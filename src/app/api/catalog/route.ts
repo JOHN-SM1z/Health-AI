@@ -50,6 +50,14 @@ export async function GET(request: NextRequest) {
         (doctors.data ?? []).map((d) => d.id),
       );
 
+    // Mirrors book_appointment()'s own per-doctor opt-in semantics exactly:
+    // a doctor with ANY doctor_services rows is restricted to that explicit
+    // list; a doctor with NONE offers every service. This must be checked
+    // per doctor, not once for the whole clinic — otherwise a single
+    // restricted doctor anywhere makes every other, unrestricted doctor
+    // vanish from every service's doctor list here.
+    const restrictedDoctorIds = new Set((doctorServices ?? []).map((ds) => ds.doctor_id));
+
     return ok({
       clinic: {
         id: clinic.id,
@@ -66,8 +74,8 @@ export async function GET(request: NextRequest) {
         doctors: (doctors.data ?? [])
           .filter(
             (d) =>
-              !doctorServices?.length ||
-              doctorServices.some((ds) => ds.service_id === s.id && ds.doctor_id === d.id),
+              !restrictedDoctorIds.has(d.id) ||
+              doctorServices!.some((ds) => ds.service_id === s.id && ds.doctor_id === d.id),
           )
           .map((d) => d.id),
       })),

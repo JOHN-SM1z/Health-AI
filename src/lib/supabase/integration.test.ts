@@ -335,6 +335,167 @@ describeDb("local Supabase booking engine", () => {
 
     await admin.from("appointments").delete().eq("id", first.data!.id);
   });
+
+  it("rejects a non-existent clinic (clinic_not_found)", async () => {
+    const { data } = await admin.rpc("book_appointment", {
+      p_clinic_id: "00000000-0000-4000-8000-000000000000",
+      p_patient_id: patientId,
+      p_doctor_id: doctorId,
+      p_service_id: serviceId,
+      p_start_at: nextWeekdayAt10(1),
+      p_status: "pending",
+      p_source: "admin",
+      p_notes: null,
+      p_created_by: null,
+    });
+    expect((data as { error_code: string | null }).error_code).toBe("clinic_not_found");
+  });
+
+  it("rejects a doctor from a different clinic (doctor_not_found — no cross-clinic booking via a substituted id)", async () => {
+    const { data: otherClinic } = await admin
+      .from("clinics")
+      .insert({ name: "Foreign Booking Clinic", slug: `foreign-booking-${Date.now()}`, timezone: TZ, currency: "UZS" })
+      .select("id")
+      .single();
+    const { data: otherDoctor } = await admin
+      .from("doctors")
+      .insert({ clinic_id: otherClinic!.id, name: "Dr. Foreign", active: true })
+      .select("id")
+      .single();
+
+    const { data } = await admin.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: patientId,
+      p_doctor_id: otherDoctor!.id,
+      p_service_id: serviceId,
+      p_start_at: nextWeekdayAt10(1),
+      p_status: "pending",
+      p_source: "admin",
+      p_notes: null,
+      p_created_by: null,
+    });
+    expect((data as { error_code: string | null }).error_code).toBe("doctor_not_found");
+
+    await admin.from("doctors").delete().eq("id", otherDoctor!.id);
+    await admin.from("clinics").delete().eq("id", otherClinic!.id);
+  });
+
+  it("rejects a patient from a different clinic (patient_not_found)", async () => {
+    const { data: otherClinic } = await admin
+      .from("clinics")
+      .insert({ name: "Foreign Patient Clinic", slug: `foreign-patient-${Date.now()}`, timezone: TZ, currency: "UZS" })
+      .select("id")
+      .single();
+    const { data: otherPatient } = await admin
+      .from("patients")
+      .insert({ clinic_id: otherClinic!.id, full_name: "Foreign Patient", telegram_user_id: 999_555_111 })
+      .select("id")
+      .single();
+
+    const { data } = await admin.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: otherPatient!.id,
+      p_doctor_id: doctorId,
+      p_service_id: serviceId,
+      p_start_at: nextWeekdayAt10(1),
+      p_status: "pending",
+      p_source: "admin",
+      p_notes: null,
+      p_created_by: null,
+    });
+    expect((data as { error_code: string | null }).error_code).toBe("patient_not_found");
+
+    await admin.from("patients").delete().eq("id", otherPatient!.id);
+    await admin.from("clinics").delete().eq("id", otherClinic!.id);
+  });
+
+  it("rejects a doctor+service combination the doctor does not offer (service_not_offered)", async () => {
+    // A restricted doctor (has doctor_services rows) may only be booked for
+    // a service on that explicit list — this is the exact rule
+    // api/catalog/route.ts's per-doctor doctor list must also honor.
+    const { data: restrictedDoctor } = await admin
+      .from("doctors")
+      .insert({ clinic_id: CLINIC_ID, name: "Dr. Restricted", active: true })
+      .select("id")
+      .single();
+    const { data: otherService } = await admin
+      .from("services")
+      .insert({ clinic_id: CLINIC_ID, name: `Boshqa xizmat ${Date.now()}`, price: 50000, duration_minutes: 20, active: true })
+      .select("id")
+      .single();
+    await admin.from("doctor_services").insert({ doctor_id: restrictedDoctor!.id, service_id: otherService!.id });
+    for (let weekday = 1; weekday <= 5; weekday++) {
+      await admin
+        .from("doctor_working_hours")
+        .insert({ clinic_id: CLINIC_ID, doctor_id: restrictedDoctor!.id, weekday, start_time: "09:00", end_time: "18:00" });
+    }
+
+    // Booking the SEED service (not on this doctor's list) must fail...
+    const rejected = await admin.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: patientId,
+      p_doctor_id: restrictedDoctor!.id,
+      p_service_id: serviceId,
+      p_start_at: nextWeekdayAt10(2),
+      p_status: "pending",
+      p_source: "admin",
+      p_notes: null,
+      p_created_by: null,
+    });
+    expect((rejected.data as { error_code: string | null }).error_code).toBe("service_not_offered");
+
+    // ...while the doctor's OWN listed service still books normally.
+    const accepted = await admin.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: patientId,
+      p_doctor_id: restrictedDoctor!.id,
+      p_service_id: otherService!.id,
+      p_start_at: nextWeekdayAt10(2),
+      p_status: "pending",
+      p_source: "admin",
+      p_notes: null,
+      p_created_by: null,
+    });
+    const acceptedResult = accepted.data as { appointment_id: string | null; error_code: string | null };
+    expect(acceptedResult.error_code).toBeNull();
+
+    await admin.from("appointments").delete().eq("id", acceptedResult.appointment_id!);
+    await admin.from("doctor_working_hours").delete().eq("doctor_id", restrictedDoctor!.id);
+    await admin.from("doctor_services").delete().eq("doctor_id", restrictedDoctor!.id);
+    await admin.from("services").delete().eq("id", otherService!.id);
+    await admin.from("doctors").delete().eq("id", restrictedDoctor!.id);
+  });
+
+  it("rejects a slot inside a doctor time block (time_blocked)", async () => {
+    const startAt = new Date(nextWeekdayAt10(5)); // Friday
+    const blockEnd = new Date(startAt.getTime() + 60 * 60000).toISOString();
+    const { data: block } = await admin
+      .from("doctor_time_blocks")
+      .insert({
+        clinic_id: CLINIC_ID,
+        doctor_id: doctorId,
+        starts_at: startAt.toISOString(),
+        ends_at: blockEnd,
+        reason: "break",
+      })
+      .select("id")
+      .single();
+
+    const { data } = await admin.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: patientId,
+      p_doctor_id: doctorId,
+      p_service_id: serviceId,
+      p_start_at: startAt.toISOString(),
+      p_status: "pending",
+      p_source: "admin",
+      p_notes: null,
+      p_created_by: null,
+    });
+    expect((data as { error_code: string | null }).error_code).toBe("time_blocked");
+
+    await admin.from("doctor_time_blocks").delete().eq("id", block!.id);
+  });
 });
 
 describeDb("local Supabase security posture", () => {

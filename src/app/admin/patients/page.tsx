@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, LoadingRow } from "@/components/admin/ui";
 import { Users } from "lucide-react";
-import { adminApi, AdminApiError, formatDateTime, STATUS_LABELS, STATUS_TONES, SOURCE_LABELS } from "@/lib/admin/client";
+import { adminApi, AdminApiError, formatDateTime, STATUS_LABELS, STATUS_TONES, CHANNEL_LABELS } from "@/lib/admin/client";
 
 type PatientRow = {
   id: string;
@@ -270,7 +270,7 @@ export default function PatientsPage() {
                     {detail.conversations.map((c) => (
                       <div key={c.id} className="flex items-center justify-between rounded-xl border border-hairline px-3 py-2">
                         <div>
-                          <p className="text-sm font-medium text-foreground">{SOURCE_LABELS[c.channel] ?? c.channel}</p>
+                          <p className="text-sm font-medium text-foreground">{CHANNEL_LABELS[c.channel] ?? c.channel}</p>
                           <p className="text-xs text-ink-muted">{formatDateTime(c.updated_at)}</p>
                         </div>
                         <ABadge tone={c.status === "assigned" ? "purple" : c.status === "open" ? "blue" : "neutral"}>

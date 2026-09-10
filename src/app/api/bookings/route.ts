@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
 
     const clinic = await getClinicFromRequest(request);
     let patient;
-    let source: "telegram_mini_app" | "telegram_chat" | "walk_in" = "telegram_mini_app";
+    let source: "telegram_mini_app" | "telegram_chat" | "web" = "telegram_mini_app";
 
     if (body.initData) {
       const resolved = await resolvePatientFromInitData(body.initData, clinic.id);
@@ -50,17 +50,19 @@ export async function POST(request: NextRequest) {
       patient = resolved.patient;
       // Attribution only: the patient's identity is verified via initData
       // above; the source merely records which entry point was used. A
-      // Telegram patient can never be mis-attributed as walk_in, and a
+      // Telegram patient can never be mis-attributed as web, and a
       // non-Telegram booking can never claim a Telegram source.
       source = body.source === "telegram_chat" ? "telegram_chat" : "telegram_mini_app";
     } else {
-      // Direct Web Booking fallback
+      // Direct website booking — a genuine self-service booking with no
+      // staff involved, distinct from a reception-entered 'walk_in'
+      // (api/admin/appointments) even though both have no Telegram identity.
       patient = await getOrCreatePatientByContact({
         clinicId: clinic.id,
         phone: body.phone,
         fullName: body.patientName,
       });
-      source = "walk_in";
+      source = "web";
     }
 
     const supabase = createAdminClient();

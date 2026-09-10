@@ -23,12 +23,29 @@ const mockServices = [
     preparation_text: null,
     specialty_id: "spec-1",
   },
+  {
+    id: "service-2",
+    name: "EKG",
+    description: null,
+    price: 80000,
+    duration_minutes: 20,
+    preparation_text: null,
+    specialty_id: "spec-1",
+  },
 ];
 
 const mockDoctors = [
   {
     id: "doc-1",
     name: "Dr. Aliyev",
+    title: "Kardiolog",
+    specialty_id: "spec-1",
+  },
+  // No doctor_services row anywhere below — an unrestricted doctor who,
+  // per book_appointment()'s own opt-in rule, offers every service.
+  {
+    id: "doc-2",
+    name: "Dr. Karimov",
     title: "Kardiolog",
     specialty_id: "spec-1",
   },
@@ -108,9 +125,30 @@ describe("Catalog Route (GET & POST)", () => {
     const json = await res.json();
     expect(json.ok).toBe(true);
     expect(json.data.clinic.id).toBe("clinic-uuid-1");
-    expect(json.data.services).toHaveLength(1);
-    expect(json.data.doctors).toHaveLength(1);
+    expect(json.data.services).toHaveLength(2);
+    expect(json.data.doctors).toHaveLength(2);
     expect(json.data.specialties).toHaveLength(1);
+  });
+
+  it("an unrestricted doctor (no doctor_services rows) offers every service, even when another doctor is restricted", async () => {
+    // Regression test: this used to check doctor_services.length across the
+    // WHOLE clinic instead of per doctor — once doc-1's restriction row
+    // existed at all, doc-2 (who has none) vanished from every service's
+    // doctor list instead of offering all of them.
+    const req = new NextRequest("http://localhost:3000/api/catalog");
+    const res = await GET(req);
+    const json = await res.json();
+
+    const service1 = json.data.services.find((s: { id: string }) => s.id === "service-1");
+    const service2 = json.data.services.find((s: { id: string }) => s.id === "service-2");
+
+    // doc-1 is restricted to service-1 only.
+    expect(service1.doctors).toEqual(expect.arrayContaining(["doc-1", "doc-2"]));
+    expect(service2.doctors).not.toContain("doc-1");
+
+    // doc-2 has no doctor_services rows at all — offers everything.
+    expect(service1.doctors).toContain("doc-2");
+    expect(service2.doctors).toContain("doc-2");
   });
 
   it("POST returns the identical catalog payload for client SDK compatibility", async () => {

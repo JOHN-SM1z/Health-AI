@@ -58,9 +58,19 @@ export const STATUS_TONES: Record<string, "amber" | "blue" | "green" | "purple" 
 
 export const SOURCE_LABELS: Record<string, string> = {
   telegram_mini_app: "Mini App",
-  telegram_bot: "Telegram bot",
+  telegram_chat: "Telegram bot",
+  web: "Veb-sayt",
   admin: "Admin",
   walk_in: "Navbatda",
+};
+
+// A conversation's `channel` (conversation_channel: 'telegram' | 'mini_app')
+// is a different domain than an appointment's `source` above — distinct
+// enum, distinct values — kept in its own map rather than folded into
+// SOURCE_LABELS so a lookup miss here can't be mistaken for one there.
+export const CHANNEL_LABELS: Record<string, string> = {
+  telegram: "Telegram",
+  mini_app: "Mini App",
 };
 
 export function formatDateTime(iso: string | null | undefined, withSeconds = false): string {
