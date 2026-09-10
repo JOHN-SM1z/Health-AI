@@ -63,8 +63,13 @@ export default function DoctorSchedulePage() {
   };
 
   const deleteBlock = async (id: string) => {
-    await adminApi.del(`/api/admin/doctors/${id}`).catch(() => undefined);
-    void load();
+    try {
+      await adminApi.del(`/api/doctor/appointments?blockId=${id}`);
+      setError(null);
+      void load();
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "O‘chirishda xatolik");
+    }
   };
 
   return (

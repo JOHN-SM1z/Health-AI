@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
-import { PageHeader, Card, ABadge, AError, AButton, ASelect } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, AError, AButton, ASelect, LoadingRow } from "@/components/admin/ui";
 import { STATUS_LABELS, STATUS_TONES, formatTime } from "@/lib/admin/client";
 import { addDays, startOfWeek, addWeeks, subWeeks, isSameDay } from "date-fns";
 
@@ -23,7 +23,7 @@ export default function CalendarPage() {
   const [doctorFilter, setDoctorFilter] = useState("all");
   const [doctors, setDoctors] = useState<{ id: string; name: string }[]>([]);
   const [rows, setRows] = useState<Appointment[] | null>(null);
-  const [error] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }));
@@ -31,16 +31,29 @@ export default function CalendarPage() {
 
   const load = async () => {
     const supabase = createClient();
-    const { data: d } = await supabase.from("doctors").select("id, name").eq("active", true).order("name");
+    const { data: d, error: doctorsError } = await supabase
+      .from("doctors")
+      .select("id, name")
+      .eq("active", true)
+      .order("name");
+    if (doctorsError) {
+      setError("Shifokorlarni yuklab bo‘lmadi");
+      return;
+    }
     setDoctors(d ?? []);
-    const { data } = await supabase
+    const { data, error: appointmentsError } = await supabase
       .from("appointments")
       .select("id, start_at, status, doctor_id, patients(full_name), services(name)")
       .gte("start_at", weekStart.toISOString())
       .lt("start_at", addDays(weekStart, 7).toISOString())
       .not("status", "in", '("cancelled","no_show")')
       .order("start_at");
+    if (appointmentsError) {
+      setError("Qabullarni yuklab bo‘lmadi");
+      return;
+    }
     setRows((data ?? []) as Appointment[]);
+    setError(null);
   };
 
   useEffect(() => {
@@ -78,6 +91,9 @@ export default function CalendarPage() {
         />
       </div>
 
+      {rows === null ? (
+        <Card><LoadingRow /></Card>
+      ) : (
       <div className="grid grid-cols-1 gap-3 md:grid-cols-4 xl:grid-cols-7">
         {days.map((day) => {
           const isToday = isSameDay(day, new Date());
@@ -107,6 +123,7 @@ export default function CalendarPage() {
           );
         })}
       </div>
+      )}
     </div>
   );
 }

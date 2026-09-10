@@ -67,7 +67,8 @@ export async function getStaffContext(): Promise<StaffContext | null> {
     supabase
       .from("staff_roles")
       .select("clinic_id, role, clinics!inner(id, name, timezone)")
-      .eq("profile_id", user.id),
+      .eq("profile_id", user.id)
+      .order("created_at", { ascending: true }),
     supabase.from("platform_admins").select("profile_id").eq("profile_id", user.id).maybeSingle(),
   ]);
 
@@ -86,13 +87,20 @@ export async function getStaffContext(): Promise<StaffContext | null> {
 
   if (errorOrEmpty(roles)) return null;
 
+  // A profile may hold staff_roles rows at more than one clinic (the schema
+  // allows it: unique(clinic_id, profile_id), not unique(profile_id)). The
+  // session is scoped to a single clinic — the earliest membership, for
+  // determinism — so roles from a DIFFERENT clinic must never leak in here.
+  // Merging roles across clinics would let e.g. a receptionist at Clinic A
+  // who is also owner at Clinic B act with owner privileges inside Clinic A.
   const first = roles![0];
+  const sameClinicRoles = roles!.filter((r) => r.clinic_id === first.clinic_id).map((r) => r.role);
   return {
     profileId: user.id,
     clinicId: first.clinic_id,
     clinicName: first.clinics?.name ?? "",
     clinicTimezone: first.clinics?.timezone ?? "Asia/Tashkent",
-    roles: roles!.map((r) => r.role),
+    roles: sameClinicRoles,
     platformAdmin,
   };
 }

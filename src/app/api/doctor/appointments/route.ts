@@ -56,3 +56,35 @@ export async function POST(request: NextRequest) {
     return handleApiError(e);
   }
 }
+
+/** Doctor removes their OWN time block (break/absence). */
+export async function DELETE(request: NextRequest) {
+  try {
+    const staff = await requireStaff("doctor");
+    const blockId = request.nextUrl.searchParams.get("blockId");
+    if (!blockId) throw new ApiError(400, "blockId parametri kerak", "missing_id");
+    const supabase = createAdminClient();
+
+    const { data: doctor } = await supabase
+      .from("doctors")
+      .select("id")
+      .eq("profile_id", staff.profileId)
+      .eq("clinic_id", staff.clinicId)
+      .eq("active", true)
+      .maybeSingle();
+    if (!doctor) throw new ApiError(403, "Sizning shifokor hisobingiz topilmadi", "doctor_not_linked");
+
+    // Scoped to the caller's own doctor_id: a doctor can never delete
+    // another doctor's time block, even by guessing its id.
+    const { error } = await supabase
+      .from("doctor_time_blocks")
+      .delete()
+      .eq("id", blockId)
+      .eq("doctor_id", doctor.id)
+      .eq("clinic_id", staff.clinicId);
+    if (error) throw new ApiError(500, "Blokni o‘chirib bo‘lmadi");
+    return ok({ deleted: true });
+  } catch (e) {
+    return handleApiError(e);
+  }
+}

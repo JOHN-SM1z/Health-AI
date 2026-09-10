@@ -13,6 +13,23 @@ export function register() {
 
   const missing: string[] = [];
 
+  // Every admin/doctor page and API route resolves its session through
+  // these — without them getStaffContext() throws on first use and the
+  // dashboard never renders. Fail at startup instead of on first request.
+  // Mirrors the NEXT_PUBLIC_*/legacy-name fallback used by the actual
+  // Supabase client constructors (server.ts, admin.ts).
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+  if (!supabaseUrl) {
+    missing.push("NEXT_PUBLIC_SUPABASE_URL (or SUPABASE_URL) — required for every staff session lookup");
+  }
+  if (!supabaseAnonKey) {
+    missing.push("NEXT_PUBLIC_SUPABASE_ANON_KEY (or SUPABASE_ANON_KEY) — required for every staff session lookup");
+  }
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    missing.push("SUPABASE_SERVICE_ROLE_KEY — required by every privileged server-side data query");
+  }
+
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || cronSecret === "change-me-in-production") {
     missing.push("CRON_SECRET (must be set and must not be the known default 'change-me-in-production')");

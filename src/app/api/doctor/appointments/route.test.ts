@@ -22,7 +22,7 @@ vi.mock("@/lib/auth/guards", () => ({
   requireStaff: () => staffMock.impl(),
 }));
 
-import { POST } from "./route";
+import { POST, DELETE } from "./route";
 import { PATCH } from "./[id]/route";
 
 const describeDb = describe.skipIf(!localDbAvailable());
@@ -301,6 +301,54 @@ describeDb("doctor appointments routes (real DB, mocked session)", () => {
       expect(res.status).toBe(403);
       const body = (await res.json()) as { code?: string };
       expect(body.code).toBe("doctor_not_linked");
+    });
+  });
+
+  describe("DELETE /api/doctor/appointments (own time blocks — audit finding F-17)", () => {
+    function del(blockId: string): Promise<Response> {
+      return DELETE(
+        new NextRequest(`http://localhost/api/doctor/appointments?blockId=${blockId}`, { method: "DELETE" }),
+      );
+    }
+
+    async function insertBlock(forDoctorId: string) {
+      const start = new Date(Date.now() + 20 * 86400000 + seq++ * 3600000).toISOString();
+      const { data, error } = await admin
+        .from("doctor_time_blocks")
+        .insert({
+          clinic_id: clinicId,
+          doctor_id: forDoctorId,
+          starts_at: start,
+          ends_at: new Date(new Date(start).getTime() + 3600000).toISOString(),
+          reason: "break",
+        })
+        .select("id")
+        .single();
+      expect(error).toBeNull();
+      return data!.id as string;
+    }
+
+    it("deletes the caller's own time block", async () => {
+      const blockId = await insertBlock(doctorId);
+      const res = await del(blockId);
+      expect(res.status).toBe(200);
+      const { data } = await admin.from("doctor_time_blocks").select("id").eq("id", blockId).maybeSingle();
+      expect(data).toBeNull();
+    });
+
+    it("never deletes another doctor's time block, even when its id is guessed", async () => {
+      const otherBlockId = await insertBlock(otherDoctorId);
+      await del(otherBlockId);
+      // The security property under test: regardless of the HTTP response,
+      // a block scoped to a doctor_id that isn't the caller's own must
+      // survive untouched.
+      const { data } = await admin.from("doctor_time_blocks").select("id").eq("id", otherBlockId).maybeSingle();
+      expect(data).not.toBeNull();
+    });
+
+    it("returns 400 when blockId is missing", async () => {
+      const res = await DELETE(new NextRequest("http://localhost/api/doctor/appointments", { method: "DELETE" }));
+      expect(res.status).toBe(400);
     });
   });
 });
