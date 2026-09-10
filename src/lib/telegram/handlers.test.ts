@@ -43,7 +43,7 @@ vi.mock("@/lib/telegram/bot", () => ({
   sendTelegramMessage: vi.fn(async () => 1),
 }));
 
-import { handleVoiceCorrect, buildMainKeyboard, buildHeldKeyboard, exitOperatorChat, handleMenuButton } from "@/lib/telegram/handlers";
+import { handleVoiceCorrect, handleVoiceConsent, buildMainKeyboard, buildHeldKeyboard, exitOperatorChat, handleMenuButton } from "@/lib/telegram/handlers";
 import { conversationIsHeld } from "@/lib/telegram/store";
 import { generateReceptionistReply } from "@/lib/ai/receptionist";
 import { sendTelegramMessage } from "@/lib/telegram/bot";
@@ -235,6 +235,36 @@ describe("handleVoiceCorrect", () => {
     );
     expect(sendTelegramMessage).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: 777000 }),
+      "clinic-1",
+    );
+  });
+});
+
+describe("handleVoiceConsent", () => {
+  it("sends the not-found reply through the patient's own clinic bot", async () => {
+    // Regression test: this reply used to omit clinicId, which falls back
+    // to the legacy global admin bot instead of the clinic's own bot —
+    // that bot has no chat with this patient and the send would fail (or
+    // silently no-op when the legacy bot is unconfigured).
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === "voice_messages") {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+              })),
+            })),
+          })),
+        };
+      }
+      return {};
+    });
+
+    await handleVoiceConsent({ clinicId: "clinic-1", chatId: 777000, voiceMessageId: "missing-vm", consent: true });
+
+    expect(sendTelegramMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 777000, text: expect.stringContaining("topilmadi") }),
       "clinic-1",
     );
   });

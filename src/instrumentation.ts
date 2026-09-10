@@ -35,8 +35,18 @@ export function register() {
     missing.push("CRON_SECRET (must be set and must not be the known default 'change-me-in-production')");
   }
 
-  if (process.env.TELEGRAM_BOT_TOKEN && !process.env.TELEGRAM_WEBHOOK_SECRET) {
-    missing.push("TELEGRAM_WEBHOOK_SECRET (Telegram is enabled via TELEGRAM_BOT_TOKEN, so the webhook secret is required)");
+  // TELEGRAM_WEBHOOK_SECRET seeds the per-bot HMAC secret every clinic's
+  // webhook is validated against (botWebhookSecret() in
+  // src/lib/telegram/bots.ts). Per-clinic bots are activated by clinic
+  // admins from their own dashboard at any time after deploy — this is NOT
+  // gated by the legacy, optional TELEGRAM_BOT_TOKEN (used only for
+  // platform admin notifications, never for patient-facing bots). Gating
+  // this check on TELEGRAM_BOT_TOKEN let production start successfully
+  // with zero working Telegram webhooks for every clinic whenever the
+  // legacy var was left unset, which is the common case. Required
+  // unconditionally, exactly like CRON_SECRET.
+  if (!process.env.TELEGRAM_WEBHOOK_SECRET) {
+    missing.push("TELEGRAM_WEBHOOK_SECRET (required to validate every clinic's Telegram webhook — any clinic admin can activate a bot at any time)");
   }
 
   if (process.env.ENABLE_TELEGRAM_DEV_MODE === "true") {

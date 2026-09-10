@@ -594,4 +594,34 @@ describeDb("webhook idempotency atomic claim", () => {
       .single();
     expect(data!.status).toBe("processed");
   });
+
+  it("a recent (non-stale) processing claim is never reclaimed as a duplicate", async () => {
+    // A genuinely in-flight concurrent/retried delivery must still be
+    // rejected — the 5-minute reclaim window must not weaken the base
+    // dedup guarantee for anything still plausibly running.
+    const externalId = "dup-fresh";
+    const first = await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    expect(first.data).toBe(true);
+    const second = await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    expect(second.data).toBe(false);
+    await admin.rpc("release_webhook_update", { p_source: source, p_external_id: externalId });
+  });
+
+  it("a stale processing claim (crashed/killed handler) can be reclaimed", async () => {
+    // Regression test for the orphaned-claim fix: simulate a handler that
+    // claimed the update and then never released or finished it (killed
+    // mid-request) by backdating processed_at past the 5-minute window.
+    const externalId = "dup-stale";
+    const first = await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    expect(first.data).toBe(true);
+    await admin
+      .from("processed_webhooks")
+      .update({ processed_at: new Date(Date.now() - 6 * 60_000).toISOString() })
+      .eq("source", source)
+      .eq("external_id", externalId);
+
+    const reclaimed = await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    expect(reclaimed.data).toBe(true);
+    await admin.rpc("finish_webhook_update", { p_source: source, p_external_id: externalId });
+  });
 });

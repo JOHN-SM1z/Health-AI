@@ -40,6 +40,13 @@ steps:
   #    so they are NOT wired at runtime.
   #    Note: there is no `WEBHOOK_SECRET` — the webhook secret is
   #    TELEGRAM_WEBHOOK_SECRET (validated at startup).
+  #    Timeout is 120s, not the 60s default: the Telegram voice-message
+  #    pipeline awaits a 30s file download plus a 60s transcription call
+  #    in one request (handleVoiceConsent in src/lib/telegram/handlers.ts).
+  #    At 60s the service could be killed before either of those internal
+  #    timeouts has a chance to fire on its own, at the cost of that one
+  #    message (the webhook claim itself recovers automatically after 5
+  #    minutes either way — see the webhook_claim_recovery migration).
   - name: "gcr.io/cloud-builders/gcloud"
     entrypoint: "bash"
     args:
@@ -54,7 +61,7 @@ steps:
           --cpu=${_CPU} \
           --min-instances=${_MIN_INSTANCES} \
           --max-instances=${_MAX_INSTANCES} \
-          --timeout=60 \
+          --timeout=120 \
           --port=8080 \
           --set-env-vars="NODE_ENV=production" \
           --set-secrets="SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest,TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest,TELEGRAM_WEBHOOK_SECRET=TELEGRAM_WEBHOOK_SECRET:latest,AI_BASE_URL=AI_BASE_URL:latest,AI_API_KEY=AI_API_KEY:latest,AI_MODEL=AI_MODEL:latest,CRON_SECRET=CRON_SECRET:latest" \

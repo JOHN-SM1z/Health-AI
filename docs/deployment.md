@@ -39,8 +39,8 @@ Configure these environment variables in your hosting provider's dashboard:
 | `NEXT_PUBLIC_SUPABASE_URL` | **Yes** | Supabase project endpoint | `https://xyzcompany.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | **Yes** | Supabase public anon key | `eyJhbGciOi...` |
 | `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Supabase privileged service-role key (server-only) | `eyJhbGciOi...` |
-| `TELEGRAM_BOT_TOKEN` | **Yes** | Bot token from @BotFather | `123456789:ABCdefGHIjkl...` |
-| `TELEGRAM_WEBHOOK_SECRET` | **Yes** | Random 32+ character string for webhook verification | `health_ai_sec_9876543210abcdef123` |
+| `TELEGRAM_BOT_TOKEN` | Optional | Legacy platform admin-notification bot only (@BotFather) — NOT any clinic's patient-facing bot, which clinic admins activate from their own dashboard instead (see telegram-setup.md) | `123456789:ABCdefGHIjkl...` |
+| `TELEGRAM_WEBHOOK_SECRET` | **Yes** | Random 32+ character string; seeds the per-bot HMAC secret every clinic's webhook is validated against — required even if `TELEGRAM_BOT_TOKEN` is unset (see telegram-setup.md §2) | `health_ai_sec_9876543210abcdef123` |
 | `CRON_SECRET` | **Yes** | Random 32+ character string for background notification scheduler | `health_ai_cron_1234567890abcdef12` |
 | `PAYMENT_PROVIDER` | **Yes** | Payment mode (`manual` for pilot) | `manual` |
 | `ENABLE_AI` | Optional | Enable OpenAI-compatible bot intelligence | `false` |

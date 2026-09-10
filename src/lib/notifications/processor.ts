@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logger } from "@/lib/logger";
-import { sendTelegramMessage, telegramConfigured } from "@/lib/telegram/bot";
+import { sendTelegramMessage } from "@/lib/telegram/bot";
 import { formatInClinicTz } from "@/lib/timezone";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -83,10 +83,16 @@ async function loadAppointmentContext(supabase: ReturnType<typeof createAdminCli
  */
 export async function processDueNotificationJobs(limit = 50): Promise<{ processed: number; sent: number; failed: number }> {
   const supabase = createAdminClient();
-  if (!telegramConfigured()) {
-    logger.warn("notification processor: telegram not configured, skipping");
-    return { processed: 0, sent: 0, failed: 0 };
-  }
+  // No global gate here: bots are per-clinic (clinic_telegram_integrations),
+  // not a single shared credential, so "Telegram" can never be globally
+  // on/off. sendTelegramMessage() already resolves the bot for each job's
+  // own clinic_id and returns null gracefully when THAT clinic has none
+  // configured — which the loop below already treats as a retryable send
+  // failure. A prior version gated the whole function behind the legacy
+  // global TELEGRAM_BOT_TOKEN (telegramConfigured()), which silently
+  // skipped every reminder/confirmation for every clinic whenever that
+  // unrelated legacy var was unset — including clinics with a fully active
+  // bot of their own.
 
   const { data: jobs, error: claimError } = await supabase.rpc("claim_due_notification_jobs", {
     p_limit: limit,
