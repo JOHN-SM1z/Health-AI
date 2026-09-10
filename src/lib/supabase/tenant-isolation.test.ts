@@ -49,17 +49,31 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
   let doctorB: string;
   let serviceB: string;
   let patientB: string;
+  let appointmentB: string;
+  let conversationB: string;
+  let paymentB: string;
   let userAId: string;
   let userBId: string;
+  let receptionistAId: string;
+  let doctorAId: string;
   let clientA: SupabaseClient;
   let clientB: SupabaseClient;
+  let receptionistA: SupabaseClient;
+  let doctorA: SupabaseClient;
+  let serviceA: string;
 
   const suffix = Date.now().toString(36);
   const emailA = `staff-a-${suffix}@test.local`;
   const emailB = `staff-b-${suffix}@test.local`;
+  const emailReceptionistA = `staff-a-recep-${suffix}@test.local`;
+  const emailDoctorA = `staff-a-doctor-${suffix}@test.local`;
   const password = "TestPassword123!";
 
-  async function makeStaff(email: string, clinicId: string, role: "owner" | "admin"): Promise<SupabaseClient> {
+  async function makeStaff(
+    email: string,
+    clinicId: string,
+    role: "owner" | "admin" | "manager" | "receptionist" | "doctor",
+  ): Promise<SupabaseClient> {
     // Dedicated client so auth ops never attach a staff JWT to the shared
     // service-role client used for fixture writes.
     const authClient = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
@@ -141,11 +155,12 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
     );
     expect(whError).toBeNull();
 
-    await admin
+    const { data: conv } = await admin
       .from("conversations")
       .insert({ clinic_id: clinicB, patient_id: patientB, channel: "telegram", status: "open" })
       .select("id")
       .single();
+    conversationB = conv!.id;
 
     const { data: appt } = await admin.rpc("book_appointment", {
       p_clinic_id: clinicB,
@@ -159,6 +174,14 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
       p_created_by: null,
     });
     expect((appt as { error_code: string | null }).error_code).toBeNull();
+    appointmentB = (appt as { appointment_id: string }).appointment_id;
+
+    const { data: payment } = await admin
+      .from("payments")
+      .select("id")
+      .eq("appointment_id", appointmentB)
+      .single();
+    paymentB = payment!.id;
 
     // ---- Clinic B bot integration row (server-side only) ----
     const { error: integError } = await admin.from("clinic_telegram_integrations").insert({
@@ -171,18 +194,38 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
     });
     expect(integError).toBeNull();
 
+    // ---- Clinic A fixture needed only for the doctor_services trigger test ----
+    const { data: svcA } = await admin
+      .from("services")
+      .insert({ clinic_id: CLINIC_A, name: `Service A ${suffix}`, duration_minutes: 20, price: 40000, active: true })
+      .select("id")
+      .single();
+    serviceA = svcA!.id;
+
     // ---- Staff users ----
     clientA = await makeStaff(emailA, CLINIC_A, "owner");
     clientB = await makeStaff(emailB, clinicB, "owner");
+    receptionistA = await makeStaff(emailReceptionistA, CLINIC_A, "receptionist");
+    doctorA = await makeStaff(emailDoctorA, CLINIC_A, "doctor");
     const { data: userA } = await admin.auth.admin.listUsers();
     userAId = userA!.users.find((u) => u.email === emailA)!.id;
     userBId = userA!.users.find((u) => u.email === emailB)!.id;
+    receptionistAId = userA!.users.find((u) => u.email === emailReceptionistA)!.id;
+    doctorAId = userA!.users.find((u) => u.email === emailDoctorA)!.id;
   });
 
   afterAll(async () => {
     if (admin) {
-      if (userAId) await admin.auth.admin.deleteUser(userAId).catch(() => {});
-      if (userBId) await admin.auth.admin.deleteUser(userBId).catch(() => {});
+      for (const uid of [userAId, userBId, receptionistAId, doctorAId]) {
+        if (uid) await admin.auth.admin.deleteUser(uid).catch(() => {});
+      }
+      if (serviceA) {
+        try {
+          await admin.from("services").delete().eq("id", serviceA);
+        } catch {
+          // already gone
+        }
+      }
       if (clinicB) {
         try {
           await admin.from("clinics").delete().eq("id", clinicB);
@@ -307,5 +350,90 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
       .single();
     expect(error).toBeNull();
     expect(data!.telegram_bot_token).toBe("123456789:SECRET_BOT_TOKEN_B");
+  });
+
+  // ---------- ID substitution (Phase 2 audit, section 7) ----------
+  // Each case below queries Clinic B's SPECIFIC row by its real id, with
+  // NO clinic_id filter at all — the direct simulation of an attacker who
+  // has learned/guessed one id (e.g. from a URL) and substitutes it into
+  // an otherwise-legitimate request. Distinct from the clinic_id-filter
+  // tests above, which prove listing is scoped; these prove a known id
+  // grants nothing extra.
+
+  it("ID substitution: Clinic A owner cannot fetch Clinic B's patient/appointment/doctor/conversation/payment by direct id", async () => {
+    const checks: Array<[string, string]> = [
+      ["patients", patientB],
+      ["appointments", appointmentB],
+      ["doctors", doctorB],
+      ["conversations", conversationB],
+      ["payments", paymentB],
+    ];
+    for (const [table, id] of checks) {
+      const { data, error } = await clientA.from(table).select("id").eq("id", id);
+      expect(error).toBeNull();
+      expect(data ?? []).toHaveLength(0);
+    }
+  });
+
+  it("ID substitution: Clinic A owner cannot read Clinic B's own clinic row by id", async () => {
+    const { data, error } = await clientA.from("clinics").select("id, name").eq("id", clinicB);
+    expect(error).toBeNull();
+    expect(data ?? []).toHaveLength(0);
+  });
+
+  it("ID substitution: Clinic A doctor cannot read Clinic B's appointment/patient/conversation by direct id", async () => {
+    const checks: Array<[string, string]> = [
+      ["appointments", appointmentB],
+      ["patients", patientB],
+      ["conversations", conversationB],
+    ];
+    for (const [table, id] of checks) {
+      const { data, error } = await doctorA.from(table).select("id").eq("id", id);
+      expect(error).toBeNull();
+      expect(data ?? []).toHaveLength(0);
+    }
+  });
+
+  it("ID substitution: Clinic A receptionist cannot read Clinic B's appointment/patient/conversation by direct id", async () => {
+    const checks: Array<[string, string]> = [
+      ["appointments", appointmentB],
+      ["patients", patientB],
+      ["conversations", conversationB],
+    ];
+    for (const [table, id] of checks) {
+      const { data, error } = await receptionistA.from(table).select("id").eq("id", id);
+      expect(error).toBeNull();
+      expect(data ?? []).toHaveLength(0);
+    }
+  });
+
+  // ---------- Cross-tenant mutation: update and delete, not just read ----------
+
+  it("Clinic A owner cannot delete Clinic B's patient", async () => {
+    const { error } = await clientA.from("patients").delete().eq("id", patientB);
+    expect(error).toBeNull(); // RLS hides the row: 0 rows match, no error
+    const { data } = await admin.from("patients").select("id").eq("id", patientB).maybeSingle();
+    expect(data).not.toBeNull(); // still exists — the delete affected nothing
+  });
+
+  it("Clinic A owner cannot update Clinic B's appointment status", async () => {
+    const before = await admin.from("appointments").select("status").eq("id", appointmentB).single();
+    const { error } = await clientA.from("appointments").update({ status: "cancelled" }).eq("id", appointmentB);
+    expect(error).toBeNull(); // RLS hides the row: 0 rows match, no error
+    const after = await admin.from("appointments").select("status").eq("id", appointmentB).single();
+    expect(after.data!.status).toBe(before.data!.status);
+  });
+
+  // ---------- doctor_services: DB-level cross-tenant consistency trigger ----------
+
+  it("doctor_services rejects a cross-clinic doctor/service pairing (DB trigger, Phase 2)", async () => {
+    const { error } = await admin.from("doctor_services").insert({ doctor_id: doctorB, service_id: serviceA });
+    expect(error).not.toBeNull();
+    expect(error!.message).toMatch(/same clinic/i);
+  });
+
+  it("doctor_services accepts a same-clinic pairing (trigger does not over-block)", async () => {
+    const { error } = await admin.from("doctor_services").insert({ doctor_id: doctorB, service_id: serviceB });
+    expect(error).toBeNull();
   });
 });
