@@ -30,6 +30,7 @@ type Message = {
   role: string;
   content: string | null;
   created_at: string;
+  metadata: { telegram_delivery_failed?: boolean } | null;
 };
 
 type MessagePreview = { role: string; content: string | null; created_at: string };
@@ -121,11 +122,11 @@ export default function ConversationsPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from("messages")
-      .select("id, role, content, created_at")
+      .select("id, role, content, created_at, metadata")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true })
       .limit(200);
-    setMessages(data ?? []);
+    setMessages((data ?? []) as Message[]);
   }, []);
 
   useEffect(() => {
@@ -177,9 +178,19 @@ export default function ConversationsPage() {
     if (!open || !reply.trim()) return;
     setBusy("reply");
     try {
-      await adminApi.put(`/api/admin/conversations/${open.id}`, { text: reply.trim() });
+      const res = await adminApi.put<{ sent: boolean; delivered: boolean; telegramMessageId: number | null }>(
+        `/api/admin/conversations/${open.id}`,
+        { text: reply.trim() },
+      );
       setReply("");
       await Promise.all([load(), loadMessages(open.id)]);
+      // The message is always saved so it stays visible in the thread, but a
+      // failed Telegram delivery must never look identical to a successful
+      // one — the message bubble itself also carries this (metadata), this
+      // is the immediate signal so the operator notices right away.
+      if (!res.delivered) {
+        setError("Xabar saqlandi, lekin Telegram orqali bemorga yetkazilmadi. Qayta urinib ko‘ring yoki boshqa yo‘l bilan bog‘laning.");
+      }
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Yuborib bo‘lmadi");
     } finally {
@@ -353,6 +364,11 @@ export default function ConversationsPage() {
                       <p className={`mt-1 text-[10px] ${m.role === "patient" ? "text-pine-tint" : "text-ink-muted"}`}>
                         {formatDateTime(m.created_at)}
                       </p>
+                      {m.metadata?.telegram_delivery_failed && (
+                        <p className="mt-1 text-[10px] font-medium text-danger">
+                          ⚠️ Telegram orqali yetkazilmadi
+                        </p>
+                      )}
                     </div>
                   ))
                 )}
