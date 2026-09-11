@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clinicDateKey, localDayWindow, tzOffsetMinutes } from "@/lib/time/local";
+import { clinicDateKey, localDayWindow, localDayWindowForDate, tzOffsetMinutes } from "@/lib/time/local";
 
 describe("tzOffsetMinutes", () => {
   it("returns +300 for Asia/Tashkent (UTC+5, no DST)", () => {
@@ -48,5 +48,20 @@ describe("localDayWindow", () => {
   it("produces an exactly-24-hour window", () => {
     const { start, end } = localDayWindow("Asia/Tashkent", new Date("2026-09-10T20:00:00Z"));
     expect(new Date(end).getTime() - new Date(start).getTime()).toBe(86400000);
+  });
+});
+
+describe("localDayWindowForDate", () => {
+  it("agrees with localDayWindow for the equivalent derived date (used by the analytics custom date-range filter)", () => {
+    const now = new Date("2026-09-10T20:00:00Z");
+    const viaNow = localDayWindow("Asia/Tashkent", now);
+    const viaDate = localDayWindowForDate("Asia/Tashkent", clinicDateKey("Asia/Tashkent", now));
+    expect(viaDate).toEqual(viaNow);
+  });
+
+  it("computes the window for an arbitrary given calendar date, unrelated to the current moment", () => {
+    const { start, end } = localDayWindowForDate("Asia/Tashkent", "2026-08-01");
+    expect(start).toBe("2026-07-31T19:00:00.000Z");
+    expect(end).toBe("2026-08-01T19:00:00.000Z");
   });
 });
