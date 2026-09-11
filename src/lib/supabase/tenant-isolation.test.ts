@@ -303,6 +303,37 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
     expect(audit ?? []).toHaveLength(0);
   });
 
+  it("Clinic A owner cannot grant themselves (or anyone) a role in Clinic B by changing clinic_id (security phase red-team)", async () => {
+    // "staff_roles manage for owner" is `with check
+    // (is_clinic_staff(clinic_id, ['owner']))` — evaluated against the ROW'S
+    // OWN clinic_id, not the caller's. An owner of Clinic A is not an owner
+    // of Clinic B, so this must fail regardless of which profile_id/role is
+    // being inserted, including the caller's own profile self-escalating
+    // into a clinic they have no membership in at all.
+    const { data: session } = await clientA.auth.getUser();
+    const { error: selfEscalation } = await clientA.from("staff_roles").insert({
+      clinic_id: clinicB,
+      profile_id: session!.user!.id,
+      role: "owner",
+    });
+    expect(selfEscalation).not.toBeNull();
+
+    const { error: thirdParty } = await clientA.from("staff_roles").insert({
+      clinic_id: clinicB,
+      profile_id: "00000000-0000-0000-0000-000000000000",
+      role: "admin",
+    });
+    expect(thirdParty).not.toBeNull();
+
+    // Confirm nothing landed either way.
+    const { data: afterAttempt } = await admin
+      .from("staff_roles")
+      .select("id")
+      .eq("clinic_id", clinicB)
+      .eq("profile_id", session!.user!.id);
+    expect(afterAttempt ?? []).toHaveLength(0);
+  });
+
   it("bot tokens are never readable by ANY authenticated SQL client (no RLS policies)", async () => {
     // Even the Clinic B owner cannot read their own integration row via SQL:
     // the table has no policies, so only the service role can access it.

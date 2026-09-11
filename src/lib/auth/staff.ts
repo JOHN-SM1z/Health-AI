@@ -109,9 +109,18 @@ function errorOrEmpty(roles: Array<{ clinic_id: string; role: StaffRole }> | nul
   return !roles || roles.length === 0;
 }
 
-/** Convenience: true when the context has at least the given role. */
+/**
+ * Convenience: true when the context has at least the given clinic staff
+ * role. Platform admins hold no clinic staff role at all (by design — see
+ * the "platform admin has zero clinic powers" tests in
+ * role-authorization.test.ts) and must never satisfy this, even implicitly:
+ * a caller checking "is this at least an admin" is asking about clinic
+ * authority specifically, and a platform-admin identity answering that
+ * unconditionally true would contradict every other authorization check in
+ * this codebase (requireStaff/requireRoles reject platformAdmin outright
+ * before ever reaching a role-weight check).
+ */
 export function hasRole(ctx: StaffContext | null, min: StaffRole): boolean {
   if (!ctx) return false;
-  if (ctx.platformAdmin) return true;
   return roleAtLeast(ctx.roles, min);
 }
