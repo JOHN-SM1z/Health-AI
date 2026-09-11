@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireStaff } from "@/lib/auth/guards";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseBody } from "@/lib/api/validate";
-import { handleApiError, ok } from "@/lib/api/errors";
+import { ApiError, handleApiError, ok } from "@/lib/api/errors";
 import { activateClinicBot, deactivateClinicBot } from "@/lib/telegram/bot-admin";
 
 export const dynamic = "force-dynamic";
@@ -31,10 +31,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (!body.telegramBotToken) {
-      throw new Error("telegramBotToken required for activation");
+      throw new ApiError(400, "Bot token kiritilmadi");
     }
     const result = await activateClinicBot(staff.clinicId, body.telegramBotToken);
-    if (!result.ok) throw new Error(result.error ?? "activation failed");
+    if (!result.ok) throw new ApiError(400, result.error ?? "Faollashtirishda xatolik");
     return ok({
       ok: true,
       username: result.username,
