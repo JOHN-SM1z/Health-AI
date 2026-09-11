@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getClinicFromRequest } from "@/lib/clinics/context";
-import { generateSlots } from "@/lib/booking/slots";
+import { generateSlots, type WorkingHoursRow, type TimeBlock, type ExistingAppointment } from "@/lib/booking/slots";
 import { handleApiError, fail, ok } from "@/lib/api/errors";
 import { rateLimit, keyFromIp } from "@/lib/rate-limit";
 import { fromClinicTime, clinicDayLabel } from "@/lib/timezone";
@@ -95,6 +95,46 @@ export async function GET(request: NextRequest) {
 
     const slotsByDoctor: Record<string, Array<{ start: string; end: string; startLocal: string; dayLocal: string; doctorId: string; doctorName: string }>> = {};
 
+    // Batched once for every doctor instead of once per doctor: with no
+    // doctorId filter this endpoint fans out to every active doctor in the
+    // clinic, so a per-doctor round trip here is an N+1 pattern on a public,
+    // unauthenticated, high-traffic booking-page path. Grouped by doctor_id
+    // in memory below, same as the doctor_services batching above.
+    const workingHoursByDoctor = new Map<string, WorkingHoursRow[]>();
+    const timeBlocksByDoctor = new Map<string, TimeBlock[]>();
+    const appointmentsByDoctor = new Map<string, ExistingAppointment[]>();
+
+    if (doctorIds.length > 0) {
+      const [workingHoursRes, timeBlocksRes, appointmentsRes] = await Promise.all([
+        supabase.from("doctor_working_hours").select("doctor_id, weekday, start_time, end_time").in("doctor_id", doctorIds),
+        supabase
+          .from("doctor_time_blocks")
+          .select("doctor_id, starts_at, ends_at")
+          .in("doctor_id", doctorIds)
+          .gte("ends_at", dayStart.toISOString()),
+        supabase
+          .from("appointments")
+          .select("doctor_id, start_at, end_at, status")
+          .in("doctor_id", doctorIds)
+          .gte("end_at", dayStart.toISOString()),
+      ]);
+      for (const row of workingHoursRes.data ?? []) {
+        const list = workingHoursByDoctor.get(row.doctor_id) ?? [];
+        list.push(row);
+        workingHoursByDoctor.set(row.doctor_id, list);
+      }
+      for (const row of timeBlocksRes.data ?? []) {
+        const list = timeBlocksByDoctor.get(row.doctor_id) ?? [];
+        list.push(row);
+        timeBlocksByDoctor.set(row.doctor_id, list);
+      }
+      for (const row of appointmentsRes.data ?? []) {
+        const list = appointmentsByDoctor.get(row.doctor_id) ?? [];
+        list.push(row);
+        appointmentsByDoctor.set(row.doctor_id, list);
+      }
+    }
+
     for (const id of doctorIds) {
       // This doctor has an explicit service list that doesn't include the
       // requested service — book_appointment would reject it outright
@@ -104,27 +144,13 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      const [workingHours, timeBlocks, appointments] = await Promise.all([
-        supabase.from("doctor_working_hours").select("weekday, start_time, end_time").eq("doctor_id", id),
-        supabase
-          .from("doctor_time_blocks")
-          .select("starts_at, ends_at")
-          .eq("doctor_id", id)
-          .gte("ends_at", dayStart.toISOString()),
-        supabase
-          .from("appointments")
-          .select("start_at, end_at, status")
-          .eq("doctor_id", id)
-          .gte("end_at", dayStart.toISOString()),
-      ]);
-
       const effectiveDuration = doctorServiceById.get(id)?.duration_override_minutes ?? durationMinutes ?? 20;
 
       const slots = generateSlots({
         timezone,
-        workingHours: workingHours.data ?? [],
-        timeBlocks: timeBlocks.data ?? [],
-        existingAppointments: appointments.data ?? [],
+        workingHours: workingHoursByDoctor.get(id) ?? [],
+        timeBlocks: timeBlocksByDoctor.get(id) ?? [],
+        existingAppointments: appointmentsByDoctor.get(id) ?? [],
         serviceDurationMinutes: effectiveDuration,
         dayStart,
         dayCount: days,

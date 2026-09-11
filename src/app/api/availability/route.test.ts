@@ -26,11 +26,17 @@ const SERVICE_ROW = { duration_minutes: 30, clinic_id: mockClinic.id };
 const DOCTOR_SERVICES = [
   { doctor_id: DOCTOR_RESTRICTED, service_id: SERVICE_OTHER, duration_override_minutes: 60 },
 ];
-const WORKING_HOURS = Array.from({ length: 7 }, (_, i) => ({
+const WORKING_HOURS_TEMPLATE = Array.from({ length: 7 }, (_, i) => ({
   weekday: i + 1,
   start_time: "09:00",
   end_time: "18:00",
 }));
+// The route now fetches working hours for every doctor in one batched
+// query (`.in("doctor_id", doctorIds)`), so the fixture must be tagged
+// per doctor and grouped client-side the same way the route does.
+const WORKING_HOURS_ALL = [DOCTOR_RESTRICTED, DOCTOR_OPEN].flatMap((doctorId) =>
+  WORKING_HOURS_TEMPLATE.map((row) => ({ ...row, doctor_id: doctorId })),
+);
 
 function buildSupabaseMock() {
   return {
@@ -67,13 +73,13 @@ function buildSupabaseMock() {
         return { select: () => ({ in: async () => ({ data: DOCTOR_SERVICES, error: null }) }) };
       }
       if (table === "doctor_working_hours") {
-        return { select: () => ({ eq: async () => ({ data: WORKING_HOURS, error: null }) }) };
+        return { select: () => ({ in: async () => ({ data: WORKING_HOURS_ALL, error: null }) }) };
       }
       if (table === "doctor_time_blocks") {
-        return { select: () => ({ eq: () => ({ gte: async () => ({ data: [], error: null }) }) }) };
+        return { select: () => ({ in: () => ({ gte: async () => ({ data: [], error: null }) }) }) };
       }
       if (table === "appointments") {
-        return { select: () => ({ eq: () => ({ gte: async () => ({ data: [], error: null }) }) }) };
+        return { select: () => ({ in: () => ({ gte: async () => ({ data: [], error: null }) }) }) };
       }
       return {};
     }),
@@ -131,5 +137,19 @@ describe("availability route — per-doctor service gate and duration override",
     const first = json.data.slots[0];
     const durationMinutes = (new Date(first.end).getTime() - new Date(first.start).getTime()) / 60_000;
     expect(durationMinutes).toBe(30);
+  });
+
+  it("fetches working hours, time blocks, and appointments once in total, not once per doctor (no N+1 on this public, unauthenticated path)", async () => {
+    const req = new NextRequest(`http://localhost/api/availability?days=3`); // no doctorId -> fans out to both seeded doctors
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    const doctorIds = new Set(json.data.slots.map((s: { doctorId: string }) => s.doctorId));
+    expect(doctorIds.has(DOCTOR_OPEN)).toBe(true); // sanity: both doctors really were resolved
+
+    const callsFor = (table: string) => supabaseMock.from.mock.calls.filter(([t]) => t === table).length;
+    expect(callsFor("doctor_working_hours")).toBe(1);
+    expect(callsFor("doctor_time_blocks")).toBe(1);
+    expect(callsFor("appointments")).toBe(1);
   });
 });
