@@ -374,9 +374,25 @@ export default function ConversationsPage() {
                 )}
               </div>
 
-              <div className="mt-3 flex gap-2 border-t border-hairline pt-3">
-                <ATextArea value={reply} onChange={setReply} placeholder="Javob yozing…" rows={2} className="flex-1" />
-                <AButton loading={busy === "reply"} onClick={() => void sendReply()}>Yuborish</AButton>
+              <div className="mt-3 border-t border-hairline pt-3">
+                {!isAssigned && (
+                  <p className="mb-2 text-xs text-ink-muted">
+                    Javob yuborish uchun avval suhbatni qabul qiling — hozir bot yoki hech kim javob bermayapti.
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <ATextArea
+                    value={reply}
+                    onChange={setReply}
+                    placeholder="Javob yozing…"
+                    rows={2}
+                    className="flex-1"
+                    disabled={!isAssigned}
+                  />
+                  <AButton loading={busy === "reply"} disabled={!isAssigned} onClick={() => void sendReply()}>
+                    Yuborish
+                  </AButton>
+                </div>
               </div>
             </Card>
           )}

@@ -20,6 +20,7 @@ type Row = {
 };
 
 type Dashboard = {
+  day: { start: string; end: string };
   counts: Record<string, number>;
   can_view_payment_dynamics: boolean;
   revenue: number | null;
@@ -55,24 +56,35 @@ export default function TodayPage() {
       .catch(() => setCanViewPaymentDynamics(false));
   }, []);
 
-  const loadDashboard = async () => {
+  const loadDashboard = async (): Promise<Dashboard | null> => {
     try {
       const d = await adminApi.get<Dashboard>("/api/admin/dashboard");
       setDashboard(d);
+      return d;
     } catch {
       setDashboard(null);
+      return null;
     }
   };
 
-  const load = async () => {
+  // "Today" must use the clinic's own timezone, never the browser's (see
+  // src/lib/time/local.ts) — the dashboard endpoint already computes that
+  // window server-side, so reuse it instead of recomputing local midnight
+  // here, which would silently disagree with the stat cards above whenever
+  // staff open this page from a device in a different timezone.
+  const load = async (day: { start: string; end: string } | null) => {
+    if (!day) {
+      setError("Ma'lumotlarni yuklab bo‘lmadi");
+      return;
+    }
     const supabase = createClient();
     const { data, error: err } = await supabase
       .from("appointments")
       .select(
         "id, start_at, status, source, patients(full_name, phone), doctors(name), services(name, price), payments(status)",
       )
-      .gte("start_at", new Date(new Date().setHours(0, 0, 0, 0)).toISOString())
-      .lt("start_at", new Date(new Date().setHours(24, 0, 0, 0)).toISOString())
+      .gte("start_at", day.start)
+      .lt("start_at", day.end)
       .order("start_at", { ascending: true });
     if (err) {
       setError("Ma'lumotlarni yuklab bo‘lmadi");
@@ -82,13 +94,13 @@ export default function TodayPage() {
     setError(null);
   };
 
-  const refreshAll = () => {
-    void load();
-    void loadDashboard();
+  const refreshAll = async () => {
+    const d = await loadDashboard();
+    await load(d?.day ?? null);
   };
 
   useEffect(() => {
-    refreshAll();
+    void refreshAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -105,7 +117,7 @@ export default function TodayPage() {
     setBusyId(id);
     try {
       await adminApi.patch(`/api/admin/appointments/${id}`, { action: "status", status });
-      await load();
+      await load(dashboard?.day ?? null);
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Xatolik yuz berdi");
     } finally {
@@ -229,7 +241,7 @@ export default function TodayPage() {
           onClose={() => setModalOpen(false)}
           onCreated={() => {
             setModalOpen(false);
-            refreshAll();
+            void refreshAll();
           }}
           onError={setError}
         />

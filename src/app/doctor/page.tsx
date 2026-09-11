@@ -6,6 +6,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, LoadingRow } from "@/components/admin/ui";
 import { ListOrdered } from "lucide-react";
 import { STATUS_LABELS, STATUS_TONES, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
+import { localDayWindow } from "@/lib/time/local";
 
 const WEEKDAYS = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
 const MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
@@ -49,12 +50,24 @@ export default function DoctorQueuePage() {
     }
     setDoctorName(doctor.name);
 
+    // "Today" must use the clinic's own timezone, never the browser's (see
+    // src/lib/time/local.ts) — a doctor's device may not be set to the
+    // clinic's local time.
+    let day = { start: new Date(new Date().setHours(0, 0, 0, 0)).toISOString(), end: new Date(new Date().setHours(24, 0, 0, 0)).toISOString() };
+    try {
+      const me = await adminApi.get<{ clinicTimezone: string }>("/api/admin/me");
+      day = localDayWindow(me.clinicTimezone);
+    } catch {
+      // Fall back to browser-local "today" rather than blocking the queue
+      // entirely — best-effort only when the identity call itself fails.
+    }
+
     const { data, error: err } = await supabase
       .from("appointments")
       .select("id, start_at, status, doctors!inner(profile_id), patients(full_name, phone), services(name, price)")
       .eq("doctors.profile_id", uid ?? "")
-      .gte("start_at", new Date(new Date().setHours(0, 0, 0, 0)).toISOString())
-      .lt("start_at", new Date(new Date().setHours(24, 0, 0, 0)).toISOString())
+      .gte("start_at", day.start)
+      .lt("start_at", day.end)
       .not("status", "in", '("cancelled","no_show")')
       .order("start_at", { ascending: true });
     if (err) {

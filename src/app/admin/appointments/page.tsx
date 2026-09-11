@@ -22,6 +22,7 @@ type Row = {
 
 export default function AppointmentsPage() {
   const searchParams = useSearchParams();
+  const highlightId = searchParams.get("id");
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
@@ -29,6 +30,9 @@ export default function AppointmentsPage() {
   const [q, setQ] = useState("");
   const [noShowRow, setNoShowRow] = useState<Row | null>(null);
   const [noShowReason, setNoShowReason] = useState("");
+  const [cancelRow, setCancelRow] = useState<Row | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
 
   const markNoShow = async () => {
     if (!noShowRow || !noShowReason.trim()) return;
@@ -43,6 +47,24 @@ export default function AppointmentsPage() {
       await load();
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Xatolik yuz berdi");
+    }
+  };
+
+  const confirmCancel = async () => {
+    if (!cancelRow) return;
+    setCancelBusy(true);
+    try {
+      await adminApi.patch(`/api/admin/appointments/${cancelRow.id}`, {
+        action: "cancel",
+        reason: cancelReason.trim() || undefined,
+      });
+      setCancelRow(null);
+      setCancelReason("");
+      await load();
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Xatolik yuz berdi");
+    } finally {
+      setCancelBusy(false);
     }
   };
 
@@ -71,6 +93,14 @@ export default function AppointmentsPage() {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, sourceFilter, searchParams]);
+
+  // Deep link from the Overview page's "Boshqarish" button (?id=<appointment
+  // id>): scroll the target row into view once it has loaded, since it may
+  // be anywhere in a 200-row, 30-day list.
+  useEffect(() => {
+    if (!highlightId || !rows) return;
+    document.getElementById(`appt-${highlightId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlightId, rows]);
 
   const filtered = useMemo(() => {
     if (!q.trim()) return rows;
@@ -139,9 +169,45 @@ export default function AppointmentsPage() {
       ) : (
         <ATable headers={["Sana", "Bemor", "Xizmat", "Shifokor", "Manba", "Holat", "To‘lov", "Boshqarish"]}>
           {filtered!.map((r) => (
-            <AppointmentRow key={r.id} row={r} onChanged={() => void load()} onError={setError} onNoShow={setNoShowRow} />
+            <AppointmentRow
+              key={r.id}
+              row={r}
+              highlighted={r.id === highlightId}
+              onChanged={() => void load()}
+              onError={setError}
+              onNoShow={setNoShowRow}
+              onCancel={setCancelRow}
+            />
           ))}
         </ATable>
+      )}
+
+      {cancelRow && (
+        <AModal
+          title="Qabulni bekor qilish"
+          onClose={() => setCancelRow(null)}
+          footer={
+            <>
+              <AButton variant="ghost" size="md" onClick={() => setCancelRow(null)} disabled={cancelBusy}>
+                Yopish
+              </AButton>
+              <AButton variant="danger" size="md" loading={cancelBusy} onClick={() => void confirmCancel()}>
+                Ha, bekor qilish
+              </AButton>
+            </>
+          }
+        >
+          <p className="mb-3 text-sm text-ink-muted">
+            {cancelRow.patients?.full_name ?? "Bemor"} uchun {formatDateTime(cancelRow.start_at)} dagi qabulni bekor
+            qilmoqchimisiz? Bemorga xabar yuboriladi va bu amalni ortga qaytarib bo‘lmaydi.
+          </p>
+          <ATextArea
+            value={cancelReason}
+            onChange={setCancelReason}
+            placeholder="Sabab (ixtiyoriy) — masalan: bemor so‘rovi bilan"
+            rows={3}
+          />
+        </AModal>
       )}
 
       {noShowRow && (
@@ -176,14 +242,18 @@ export default function AppointmentsPage() {
 
 function AppointmentRow({
   row,
+  highlighted,
   onChanged,
   onError,
   onNoShow,
+  onCancel,
 }: {
   row: Row;
+  highlighted: boolean;
   onChanged: () => void;
   onError: (m: string) => void;
   onNoShow: (row: Row) => void;
+  onCancel: (row: Row) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -200,7 +270,7 @@ function AppointmentRow({
   };
 
   return (
-    <tr className="hover:bg-sand">
+    <tr id={`appt-${row.id}`} className={highlighted ? "bg-pine-tint/60" : "hover:bg-sand"}>
       <td className="px-4 py-3 font-semibold text-foreground">{formatDateTime(row.start_at)}</td>
       <td className="px-4 py-3">
         <p className="font-medium text-foreground">{row.patients?.full_name ?? "—"}</p>
@@ -232,7 +302,7 @@ function AppointmentRow({
             </AButton>
           )}
           {!["cancelled", "no_show", "completed"].includes(row.status) && (
-            <AButton size="sm" variant="danger" loading={busy === "cancel"} onClick={() => void act("cancel")}>
+            <AButton size="sm" variant="danger" onClick={() => onCancel(row)}>
               Bekor qilish
             </AButton>
           )}

@@ -51,6 +51,26 @@ export function isCallCenterStaff(ctx: StaffContext | null): boolean {
   return !!ctx && hasAnyRole(ctx.roles, ["manager", "receptionist"]);
 }
 
+const ADMIN_WORKSPACE_ROLES: StaffRole[] = ["owner", "admin", "manager", "receptionist"];
+
+/**
+ * Where a signed-in staff session belongs when it lands on the clinic
+ * admin workspace (/admin/*): null means "this is the right place, stay
+ * here"; otherwise the path the caller should redirect to instead.
+ *
+ * Every /api/admin/* route requires one of ADMIN_WORKSPACE_ROLES (see the
+ * requireRoles/requireStaff call sites throughout src/app/api/admin) — a
+ * platform admin (no clinic roles at all) or a pure doctor (no management/
+ * reception role) would see every nav link on this workspace fail. Route
+ * them to their own working portal instead, mirroring the equivalent
+ * doctor-only guard in doctor/layout.tsx.
+ */
+export function adminWorkspaceRedirect(ctx: StaffContext): "/platform" | "/doctor" | null {
+  if (ctx.platformAdmin) return "/platform";
+  if (!hasAnyRole(ctx.roles, ADMIN_WORKSPACE_ROLES)) return "/doctor";
+  return null;
+}
+
 /**
  * Resolves the staff member's clinic context from the session.
  * Returns null when not signed in or not attached to any clinic.

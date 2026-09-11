@@ -13,6 +13,7 @@ export async function GET() {
       profileId: ctx.profileId,
       clinicId: ctx.clinicId,
       clinicName: ctx.clinicName,
+      clinicTimezone: ctx.clinicTimezone,
       roles: ctx.roles,
       platformAdmin: ctx.platformAdmin,
       canViewPaymentDynamics: canViewPaymentDynamics(ctx),

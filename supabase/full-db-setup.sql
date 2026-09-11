@@ -2759,3 +2759,19 @@ comment on function public.claim_webhook_update(text, text) is
 -- attributed to reception-entered walk-ins).
 
 alter type public.appointment_source add value if not exists 'web' after 'telegram_chat';
+
+-- =====================================================================
+-- FILE: 20260911000001_patient_operational_notes.sql
+-- =====================================================================
+-- Operational (front-desk) notes about a patient: logistics only — e.g.
+-- "prefers morning slots", "needs a translator", "hard to reach by phone".
+-- Never a clinical/diagnostic record. Editable by clinic operational staff
+-- (owner/admin/manager/receptionist) via the service-role API route only;
+-- no new RLS policy is needed since it is a column on an already row-level
+-- clinic/role-scoped table.
+alter table public.patients
+  add column operational_notes text;
+
+alter table public.patients
+  add constraint patients_operational_notes_length
+  check (operational_notes is null or char_length(operational_notes) <= 1000);

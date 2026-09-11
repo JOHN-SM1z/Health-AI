@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { hasRole, type StaffContext } from "@/lib/auth/staff";
+import { adminWorkspaceRedirect, hasRole, type StaffContext } from "@/lib/auth/staff";
 
 /**
  * Security-phase regression: hasRole() used to return true unconditionally
@@ -53,5 +53,36 @@ describe("hasRole", () => {
     expect(hasRole(ctx({ roles: ["manager"] }), "admin")).toBe(true); // admin == manager weight
     expect(hasRole(ctx({ roles: ["receptionist"] }), "admin")).toBe(false);
     expect(hasRole(ctx({ roles: ["doctor"] }), "receptionist")).toBe(true); // doctor outweighs receptionist
+  });
+});
+
+/**
+ * Dashboard-completion phase finding: admin/layout.tsx had no role-based
+ * redirect at all, unlike the symmetric guard already in doctor/layout.tsx
+ * (`if (!hasRole(ctx, "doctor")) redirect("/admin")`). A platform admin or
+ * a pure doctor navigating to /admin would see the sidebar render normally
+ * but every underlying /api/admin/* call reject them (requireRoles/
+ * requireStaff never admit platformAdmin, and never admit a role outside
+ * owner/admin/manager/receptionist) — a broken workspace for the wrong
+ * persona instead of a redirect to the one that actually works for them.
+ */
+describe("adminWorkspaceRedirect", () => {
+  it("sends a platform admin to /platform, even if they also hold a clinic role", () => {
+    expect(adminWorkspaceRedirect(ctx({ platformAdmin: true, clinicId: null, roles: [] }))).toBe("/platform");
+    expect(adminWorkspaceRedirect(ctx({ platformAdmin: true, roles: ["owner"] }))).toBe("/platform");
+  });
+
+  it("sends a pure doctor (no management/reception role) to /doctor", () => {
+    expect(adminWorkspaceRedirect(ctx({ roles: ["doctor"] }))).toBe("/doctor");
+  });
+
+  it("keeps every admin-workspace role on /admin (no redirect)", () => {
+    for (const role of ["owner", "admin", "manager", "receptionist"] as const) {
+      expect(adminWorkspaceRedirect(ctx({ roles: [role] }))).toBeNull();
+    }
+  });
+
+  it("keeps a hybrid doctor+receptionist on /admin (they legitimately work the front desk too)", () => {
+    expect(adminWorkspaceRedirect(ctx({ roles: ["doctor", "receptionist"] }))).toBeNull();
   });
 });

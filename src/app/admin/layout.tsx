@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { getStaffContext, hasRole, isCallCenterStaff } from "@/lib/auth/staff";
+import { adminWorkspaceRedirect, getStaffContext, hasRole, isCallCenterStaff } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users } from "lucide-react";
 
@@ -9,6 +9,8 @@ export const metadata = { title: "Boshqaruv paneli" };
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const ctx = await getStaffContext();
   if (!ctx) redirect("/login");
+  const workspaceRedirect = adminWorkspaceRedirect(ctx);
+  if (workspaceRedirect) redirect(workspaceRedirect);
 
   const isManagement = hasRole(ctx, "admin");
   const callCenter = isCallCenterStaff(ctx);

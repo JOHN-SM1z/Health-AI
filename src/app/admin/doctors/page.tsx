@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect, AModal } from "@/components/admin/ui";
-import { adminApi, AdminApiError } from "@/lib/admin/client";
+import { adminApi, AdminApiError, formatDateTime } from "@/lib/admin/client";
 
 type Doctor = {
   id: string;
@@ -17,8 +17,15 @@ type Doctor = {
 type DoctorStaff = { profileId: string; fullName: string; role: "doctor" };
 
 type WorkingHours = { weekday: number; start_time: string; end_time: string }[];
+type TimeBlock = { id: string; starts_at: string; ends_at: string; reason: string; note: string | null };
 
 const WEEKDAYS = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"];
+const BLOCK_REASON_LABELS: Record<string, string> = {
+  break: "Tanaffus",
+  absence: "Ishda yo‘q",
+  reservation: "Band qilingan",
+  admin_hold: "Admin tomonidan yopilgan",
+};
 
 export default function DoctorsPage() {
   const [rows, setRows] = useState<Doctor[] | null>(null);
@@ -117,6 +124,25 @@ function DoctorModal({
   const [saving, setSaving] = useState(false);
   const isEdit = Boolean(doctor.id);
 
+  const [blocks, setBlocks] = useState<TimeBlock[] | null>(null);
+  const [blockStart, setBlockStart] = useState("");
+  const [blockEnd, setBlockEnd] = useState("");
+  const [blockReason, setBlockReason] = useState("absence");
+  const [blockNote, setBlockNote] = useState("");
+  const [blockSaving, setBlockSaving] = useState(false);
+
+  const loadBlocks = () => {
+    if (!doctor.id) return;
+    const supabase = createClient();
+    void supabase
+      .from("doctor_time_blocks")
+      .select("id, starts_at, ends_at, reason, note")
+      .eq("doctor_id", doctor.id)
+      .gte("ends_at", new Date().toISOString())
+      .order("starts_at")
+      .then(({ data }) => setBlocks((data ?? []) as TimeBlock[]));
+  };
+
   useEffect(() => {
     if (!doctor.id) return;
     const supabase = createClient();
@@ -125,7 +151,40 @@ function DoctorModal({
       .select("weekday, start_time, end_time")
       .eq("doctor_id", doctor.id)
       .then(({ data }) => setHours(data ?? []));
+    loadBlocks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doctor.id]);
+
+  const addBlock = async () => {
+    if (!doctor.id || !blockStart || !blockEnd) return;
+    setBlockSaving(true);
+    try {
+      await adminApi.put(`/api/admin/doctors/${doctor.id}`, {
+        startsAt: new Date(blockStart).toISOString(),
+        endsAt: new Date(blockEnd).toISOString(),
+        reason: blockReason,
+        note: blockNote.trim() || undefined,
+      });
+      setBlockStart("");
+      setBlockEnd("");
+      setBlockNote("");
+      loadBlocks();
+    } catch (e) {
+      onError(e instanceof AdminApiError ? e.message : "Vaqt blokini qo‘shib bo‘lmadi");
+    } finally {
+      setBlockSaving(false);
+    }
+  };
+
+  const deleteBlock = async (blockId: string) => {
+    if (!doctor.id) return;
+    try {
+      await adminApi.del(`/api/admin/doctors/${doctor.id}?blockId=${blockId}`);
+      loadBlocks();
+    } catch (e) {
+      onError(e instanceof AdminApiError ? e.message : "Blokni o‘chirib bo‘lmadi");
+    }
+  };
 
   const updateSlot = (weekday: number, patch: { start_time: string; end_time: string }): WorkingHours => {
     const exists = hours.some((h) => h.weekday === weekday);
@@ -237,6 +296,60 @@ function DoctorModal({
               onClick={() => setHours((prev) => [...prev, { weekday: (prev.length % 7) + 1, start_time: "09:00", end_time: "18:00" }])}
             >
               + Kun qo‘shish
+            </AButton>
+          </div>
+        )}
+        {isEdit && (
+          <div className="rounded-lg border border-hairline bg-surface-2 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+              Band vaqtlar (tanaffus, ta‘til, band qilish)
+            </p>
+            <div className="mb-2 space-y-1.5">
+              {blocks === null ? (
+                <p className="text-xs text-ink-muted">Yuklanmoqda…</p>
+              ) : blocks.length === 0 ? (
+                <p className="text-xs text-ink-muted">Rejalashtirilgan band vaqtlar yo‘q</p>
+              ) : (
+                blocks.map((b) => (
+                  <div key={b.id} className="flex items-center justify-between gap-2 rounded-lg border border-hairline bg-surface px-2.5 py-1.5 text-xs">
+                    <div>
+                      <p className="font-medium text-foreground">
+                        {formatDateTime(b.starts_at)} — {formatDateTime(b.ends_at)}
+                      </p>
+                      <p className="text-ink-muted">
+                        {BLOCK_REASON_LABELS[b.reason] ?? b.reason}
+                        {b.note ? ` · ${b.note}` : ""}
+                      </p>
+                    </div>
+                    <AButton size="sm" variant="ghost" onClick={() => void deleteBlock(b.id)}>
+                      O‘chirish
+                    </AButton>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <AInput value={blockStart} onChange={setBlockStart} type="datetime-local" aria-label="Boshlanishi" />
+              <AInput value={blockEnd} onChange={setBlockEnd} type="datetime-local" aria-label="Tugashi" />
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <ASelect
+                value={blockReason}
+                onChange={setBlockReason}
+                options={Object.entries(BLOCK_REASON_LABELS).map(([value, label]) => ({ value, label }))}
+                aria-label="Sabab"
+              />
+              <AInput value={blockNote} onChange={setBlockNote} placeholder="Izoh (ixtiyoriy)" aria-label="Izoh" />
+            </div>
+            <AButton
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              loading={blockSaving}
+              disabled={!blockStart || !blockEnd}
+              onClick={() => void addBlock()}
+            >
+              + Band vaqt qo‘shish
             </AButton>
           </div>
         )}
