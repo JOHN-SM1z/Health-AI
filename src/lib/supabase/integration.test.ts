@@ -33,6 +33,8 @@ const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? 
 
 const CLINIC_ID = "11111111-1111-4111-8111-111111111111";
 const TZ = "Asia/Tashkent"; // UTC+5
+/** Throwaway processed_webhooks key used by the server-only RPC grant tests. */
+const RPC_GRANT_PROBE = `rpc-grant-probe-${Date.now()}`;
 
 let admin: SupabaseClient;
 let anon: SupabaseClient;
@@ -556,6 +558,7 @@ describeDb("RPC authorization + tenant isolation", () => {
   });
 
   afterAll(async () => {
+    await admin.from("processed_webhooks").delete().eq("source", RPC_GRANT_PROBE);
     if (userId) {
       await admin.auth.admin.deleteUser(userId);
     }
@@ -625,6 +628,53 @@ describeDb("RPC authorization + tenant isolation", () => {
     if (data?.appointment_id) {
       await admin.from("appointments").delete().eq("id", data.appointment_id);
     }
+  });
+
+  // Server-only job/idempotency primitives. They are SECURITY DEFINER and the
+  // only callers in the codebase go through the service-role client, but
+  // PostgreSQL's default PUBLIC EXECUTE plus Supabase's blanket
+  // anon/authenticated grants left them callable over PostgREST with nothing
+  // but the publishable anon key. That was enough for an anonymous caller to
+  // read pending reminder payloads and flip them to 'in_progress' so patients
+  // never got reminded, or to pre-claim Telegram update ids so genuine
+  // deliveries were discarded as duplicates and the bot went silent.
+  const SERVER_ONLY_RPCS: Array<[string, Record<string, unknown>]> = [
+    ["claim_due_notification_jobs", { p_limit: 1 }],
+    ["claim_webhook_update", { p_source: RPC_GRANT_PROBE, p_external_id: RPC_GRANT_PROBE }],
+    ["finish_webhook_update", { p_source: RPC_GRANT_PROBE, p_external_id: RPC_GRANT_PROBE }],
+    ["release_webhook_update", { p_source: RPC_GRANT_PROBE, p_external_id: RPC_GRANT_PROBE }],
+  ];
+
+  it.each(SERVER_ONLY_RPCS)("denies %s to an anonymous caller", async (fn, args) => {
+    const { data, error } = await anon.rpc(fn, args);
+    expect(error).not.toBeNull();
+    expect(data).toBeNull();
+  });
+
+  it.each(SERVER_ONLY_RPCS)("denies %s to an authenticated non-staff user", async (fn, args) => {
+    const { data, error } = await userClient.rpc(fn, args);
+    expect(error).not.toBeNull();
+    expect(data).toBeNull();
+  });
+
+  // Positive control: the same arguments succeed for service_role, so the
+  // denials above are genuinely about the EXECUTE grant and not about a
+  // malformed call that would "pass" the test for the wrong reason.
+  it("still allows the server's own service-role client through", async () => {
+    const claimed = await admin.rpc("claim_webhook_update", {
+      p_source: RPC_GRANT_PROBE,
+      p_external_id: RPC_GRANT_PROBE,
+    });
+    expect(claimed.error).toBeNull();
+    expect(claimed.data).toBe(true);
+
+    const finished = await admin.rpc("finish_webhook_update", {
+      p_source: RPC_GRANT_PROBE,
+      p_external_id: RPC_GRANT_PROBE,
+    });
+    expect(finished.error).toBeNull();
+
+    await admin.from("processed_webhooks").delete().eq("source", RPC_GRANT_PROBE);
   });
 });
 

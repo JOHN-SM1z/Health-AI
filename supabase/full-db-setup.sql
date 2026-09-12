@@ -1329,6 +1329,12 @@ begin
 end;
 $$;
 
+-- Server-only: granting service_role is not enough on its own. PostgreSQL
+-- gives every new function EXECUTE to PUBLIC, and Supabase additionally grants
+-- anon/authenticated on public functions, so without these revokes a fresh
+-- install is reachable unauthenticated at /rest/v1/rpc/ with the publishable
+-- anon key (see 20260912000001_server_only_rpc_grants.sql).
+revoke execute on function public.claim_due_notification_jobs(int) from public, anon, authenticated;
 grant execute on function public.claim_due_notification_jobs(int) to service_role;
 
 -- ---------- 4. Atomic webhook claim ----------
@@ -1377,6 +1383,11 @@ as $$
   where source = p_source and external_id = p_external_id and status = 'processing';
 $$;
 
+-- Server-only: see the note on claim_due_notification_jobs above — the revokes
+-- are what actually keep these off the public PostgREST surface.
+revoke execute on function public.claim_webhook_update(text, text) from public, anon, authenticated;
+revoke execute on function public.finish_webhook_update(text, text) from public, anon, authenticated;
+revoke execute on function public.release_webhook_update(text, text) from public, anon, authenticated;
 grant execute on function public.claim_webhook_update(text, text) to service_role;
 grant execute on function public.finish_webhook_update(text, text) to service_role;
 grant execute on function public.release_webhook_update(text, text) to service_role;
