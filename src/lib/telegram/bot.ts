@@ -32,10 +32,14 @@ export function telegramConfigured(): boolean {
 }
 
 /**
- * Returns a NEW keyboard with web_app buttons removed (or, on reply
- * keyboards, downgraded to plain text buttons so they still route to the
- * text handler). Inline-keyboard buttons with no action are invalid, so
- * those are dropped entirely. Returns the original object when unchanged.
+ * Returns a NEW keyboard with web_app buttons downgraded (or removed).
+ * Reply keyboards downgrade to a plain text button so they still route to
+ * the text handler. Inline keyboards downgrade to a plain `url` link button
+ * using the same address — Telegram opens that in an external browser
+ * instead of embedding the Mini App, but it is never a dead end. A button
+ * with no fallback URL to offer (defensive only; every web_app button we
+ * build carries one) is dropped outright, since an inline button with no
+ * action at all is invalid. Returns the original object when unchanged.
  */
 function stripWebAppButtons(markup: unknown): unknown {
   if (typeof markup !== "object" || markup === null) return markup;
@@ -55,13 +59,21 @@ function stripWebAppButtons(markup: unknown): unknown {
             const b = btn as Record<string, unknown>;
             if (!("web_app" in b)) return btn;
             changed = true;
+            const rest = { ...b };
+            const webApp = rest.web_app as { url?: unknown } | undefined;
+            delete rest.web_app;
             if (key === "keyboard") {
               // Reply keyboards: keep it as a plain text button.
-              const rest = { ...b };
-              delete rest.web_app;
               return rest;
             }
-            // Inline keyboards: a button without an action is invalid.
+            // Inline keyboards: fall back to a plain link button so a
+            // single-button row (e.g. the booking button) never collapses
+            // to an empty, filtered-out row — a message telling the patient
+            // to "tap the button below" must never leave them with no
+            // button there. Only drop it if there is truly no URL to offer.
+            const url = typeof webApp?.url === "string" ? webApp.url : undefined;
+            if (!url) return null;
+            return { ...rest, url };
             return null;
           })
           .filter((btn) => btn !== null);
