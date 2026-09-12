@@ -8,6 +8,16 @@ vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => supabaseMock,
 }));
 
+// handlers.ts reads NEXT_PUBLIC_APP_URL through the validated `env` singleton
+// (shared with bots.ts's appUrlCandidates/resolveHttpsAppUrl), not raw
+// process.env, so tests mutate this hoisted mock instead — matching the
+// pattern already established in bots.test.ts for the exact same reason.
+const envMock = vi.hoisted(() => ({
+  NEXT_PUBLIC_APP_URL: undefined as string | undefined,
+  TELEGRAM_WEBHOOK_SECRET: "deployment-secret",
+}));
+vi.mock("@/lib/env", () => ({ env: envMock, adminChatIds: () => [] }));
+
 vi.mock("@/lib/telegram/store", () => ({
   getOrCreateConversation: vi.fn(async () => ({ id: "conv-1" })),
   appendMessage: vi.fn(async () => {}),
@@ -51,6 +61,9 @@ import { sendTelegramMessage } from "@/lib/telegram/bot";
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(conversationIsHeld).mockResolvedValue(false);
+  envMock.NEXT_PUBLIC_APP_URL = undefined;
+  delete process.env.VERCEL_URL;
+  delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
 
   supabaseMock.from.mockImplementation((table: string) => {
     if (table === "voice_messages") {
@@ -87,8 +100,7 @@ beforeEach(() => {
 });
 
 describe("buildMainKeyboard", () => {
-  it("keeps a plain text booking button when no app URL is configured", () => {
-    delete process.env.NEXT_PUBLIC_APP_URL;
+  it("keeps a plain text booking button when no app URL is configured at all", () => {
     const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
     expect(buttons.length).toBeGreaterThan(0);
     for (const b of buttons) {
@@ -97,7 +109,7 @@ describe("buildMainKeyboard", () => {
   });
 
   it("attaches a web_app booking button with the clinic tenant when an HTTPS app URL is configured", () => {
-    process.env.NEXT_PUBLIC_APP_URL = "https://health.example.com";
+    envMock.NEXT_PUBLIC_APP_URL = "https://health.example.com";
     const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
     expect(buttons[0]).toEqual({
       text: "📅 Qabulga yozilish",
@@ -110,15 +122,51 @@ describe("buildMainKeyboard", () => {
   });
 
   it("never attaches web_app for a t.me deep-link base", () => {
-    process.env.NEXT_PUBLIC_APP_URL = "https://t.me/health_bot/book";
+    envMock.NEXT_PUBLIC_APP_URL = "https://t.me/health_bot/book";
     const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
     expect(buttons[0]).not.toHaveProperty("web_app");
+  });
+
+  // Real production incident (2026-09-12): NEXT_PUBLIC_APP_URL was set in
+  // the Vercel dashboard but never actually took effect in the running
+  // deployment (wrong environment, or saved without a new build — NEXT_
+  // PUBLIC_* values are inlined at build time), so the booking button kept
+  // silently degrading to plain text run after run. Vercel sets its own
+  // platform env vars with zero configuration, so falling back to those
+  // closes this failure mode without depending on the operator getting a
+  // manual dashboard step exactly right.
+  it("attaches a web_app booking button from VERCEL_PROJECT_PRODUCTION_URL when NEXT_PUBLIC_APP_URL is unset", () => {
+    process.env.VERCEL_PROJECT_PRODUCTION_URL = "health-ai-w1vc.vercel.app";
+    const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
+    expect(buttons[0]).toEqual({
+      text: "📅 Qabulga yozilish",
+      web_app: { url: "https://health-ai-w1vc.vercel.app/book?clinic=clinic-1" },
+    });
+  });
+
+  it("falls back to VERCEL_URL when neither NEXT_PUBLIC_APP_URL nor the production alias is set", () => {
+    process.env.VERCEL_URL = "health-ai-git-feature-abc123.vercel.app";
+    const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
+    expect(buttons[0]).toEqual({
+      text: "📅 Qabulga yozilish",
+      web_app: { url: "https://health-ai-git-feature-abc123.vercel.app/book?clinic=clinic-1" },
+    });
+  });
+
+  it("still prefers an explicitly configured NEXT_PUBLIC_APP_URL over the Vercel platform vars", () => {
+    envMock.NEXT_PUBLIC_APP_URL = "https://custom-domain.uz";
+    process.env.VERCEL_PROJECT_PRODUCTION_URL = "health-ai-w1vc.vercel.app";
+    const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
+    expect(buttons[0]).toEqual({
+      text: "📅 Qabulga yozilish",
+      web_app: { url: "https://custom-domain.uz/book?clinic=clinic-1" },
+    });
   });
 });
 
 describe("handleMenuButton booking reply (source attribution)", () => {
   it("marks the chat deep-link with startapp=booking (telegram_chat attribution)", async () => {
-    process.env.NEXT_PUBLIC_APP_URL = "https://health.example.com";
+    envMock.NEXT_PUBLIC_APP_URL = "https://health.example.com";
     await handleMenuButton({
       clinicId: "clinic-1",
       chatId: 111,
