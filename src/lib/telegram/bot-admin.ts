@@ -24,7 +24,11 @@ export type ActivationResult = {
   webhookError?: string;
 };
 
-export async function activateClinicBot(clinicId: string, telegramBotToken: string): Promise<ActivationResult> {
+export async function activateClinicBot(
+  clinicId: string,
+  telegramBotToken: string,
+  requestOrigin?: string | null,
+): Promise<ActivationResult> {
   const token = telegramBotToken.trim();
   if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(token)) {
     return { ok: false, error: "Bot token formati noto‘g‘ri" };
@@ -84,7 +88,7 @@ export async function activateClinicBot(clinicId: string, telegramBotToken: stri
       }
     }
 
-    const webhook = await registerBotWebhook(bot, me.username);
+    const webhook = await registerBotWebhook(bot, me.username, requestOrigin);
     await supabase
       .from("clinic_telegram_integrations")
       .update({

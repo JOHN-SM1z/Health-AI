@@ -33,7 +33,13 @@ export async function POST(request: NextRequest) {
     if (!body.telegramBotToken) {
       throw new ApiError(400, "Bot token kiritilmadi");
     }
-    const result = await activateClinicBot(staff.clinicId, body.telegramBotToken);
+    // Where this deployment is actually reachable, straight from the request
+    // that got here — used only if NEXT_PUBLIC_APP_URL can't supply a usable
+    // HTTPS address, so a stale env var can't block bot activation.
+    const forwardedProto = request.headers.get("x-forwarded-proto") ?? "https";
+    const forwardedHost = request.headers.get("host");
+    const requestOrigin = forwardedHost ? `${forwardedProto}://${forwardedHost}` : null;
+    const result = await activateClinicBot(staff.clinicId, body.telegramBotToken, requestOrigin);
     if (!result.ok) throw new ApiError(400, result.error ?? "Faollashtirishda xatolik");
     return ok({
       ok: true,

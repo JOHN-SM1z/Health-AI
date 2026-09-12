@@ -117,22 +117,47 @@ export function timingSafeCheck(a: string | null | undefined, b: string | null |
   return timingSafeEqual(bufA, bufB);
 }
 
-/** Webhook URL a clinic's bot must be registered with. */
-export function botWebhookUrl(username: string): string | null {
-  const base = env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
-  if (!base) return null;
+function httpsWebhookUrl(base: string, username: string): string | null {
+  const trimmed = base.trim();
+  if (!trimmed) return null;
   try {
-    const url = new URL(`/api/telegram/webhook?bot=${encodeURIComponent(username)}`, base);
+    const url = new URL(`/api/telegram/webhook?bot=${encodeURIComponent(username)}`, trimmed);
     return url.protocol === "https:" ? url.toString() : null;
   } catch {
     return null;
   }
 }
 
+/**
+ * Webhook URL a clinic's bot must be registered with.
+ *
+ * NEXT_PUBLIC_APP_URL wins when it is a usable HTTPS URL — it is the
+ * deployment's canonical address, which may be a custom domain rather than
+ * whichever host an operator happens to be browsing. `requestOrigin` (the
+ * public origin of the activation request itself) is only a fallback, for
+ * when that variable is unset, still http://localhost from initial setup,
+ * or otherwise unusable: the server demonstrably knows where it is serving
+ * from, so an operator should not be locked out of activating their bot by
+ * a stale env var. Still HTTPS-only either way — Telegram rejects anything
+ * else, so a local http:// origin correctly yields null here.
+ */
+export function botWebhookUrl(username: string, requestOrigin?: string | null): string | null {
+  return (
+    httpsWebhookUrl(env.NEXT_PUBLIC_APP_URL ?? "", username) ??
+    httpsWebhookUrl(requestOrigin ?? "", username)
+  );
+}
+
 /** Registers/refreshes the webhook for a bot. Idempotent. */
-export async function registerBotWebhook(bot: Bot, username: string): Promise<{ ok: boolean; error?: string }> {
-  const url = botWebhookUrl(username);
-  if (!url) return { ok: false, error: "NEXT_PUBLIC_APP_URL is not an HTTPS URL" };
+export async function registerBotWebhook(
+  bot: Bot,
+  username: string,
+  requestOrigin?: string | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const url = botWebhookUrl(username, requestOrigin);
+  if (!url) {
+    return { ok: false, error: "Webhook manzilini aniqlab bo‘lmadi: NEXT_PUBLIC_APP_URL HTTPS manzil emas" };
+  }
   try {
     await bot.api.setWebhook(url, { secret_token: botWebhookSecret(bot.token), drop_pending_updates: false });
     return { ok: true };
