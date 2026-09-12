@@ -172,12 +172,14 @@ export function ATextArea({
   placeholder,
   rows = 3,
   className,
+  disabled,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   rows?: number;
   className?: string;
+  disabled?: boolean;
 }) {
   return (
     <textarea
@@ -185,7 +187,8 @@ export function ATextArea({
       rows={rows}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
-      className={cn(fieldBase, className)}
+      disabled={disabled}
+      className={cn(fieldBase, "disabled:cursor-not-allowed disabled:opacity-60", className)}
     />
   );
 }

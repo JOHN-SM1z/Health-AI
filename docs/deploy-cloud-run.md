@@ -102,9 +102,13 @@ webhook and Mini App should be pointed at the LB URL before going live.
 Set `NEXT_PUBLIC_APP_URL=https://health.example.com` (a substitution
 `_PUBLIC_URL`) and redeploy.
 
-## 4. Register the Telegram webhook
+## 4. Telegram webhook secret
 
-After DNS works and HTTPS is live (see telegram-setup.md §3).
+Once DNS works and HTTPS is live, ensure `TELEGRAM_WEBHOOK_SECRET` is set (see
+telegram-setup.md §2) — production fails closed at startup without it. There is no
+separate manual webhook-registration step: each clinic's webhook is registered
+automatically by the app when that clinic's admin activates their bot from the
+dashboard (telegram-setup.md §1).
 
 ## 5. Cloud Scheduler (reminders)
 

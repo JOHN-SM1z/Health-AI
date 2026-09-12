@@ -43,8 +43,8 @@ vi.mock("@/lib/telegram/bot", () => ({
   sendTelegramMessage: vi.fn(async () => 1),
 }));
 
-import { handleVoiceCorrect, buildMainKeyboard, buildHeldKeyboard, exitOperatorChat, handleMenuButton } from "@/lib/telegram/handlers";
-import { conversationIsHeld } from "@/lib/telegram/store";
+import { handleVoiceCorrect, handleVoiceConsent, handleTelegramMessage, buildMainKeyboard, buildHeldKeyboard, exitOperatorChat, handleMenuButton } from "@/lib/telegram/handlers";
+import { conversationIsHeld, appendMessage } from "@/lib/telegram/store";
 import { generateReceptionistReply } from "@/lib/ai/receptionist";
 import { sendTelegramMessage } from "@/lib/telegram/bot";
 
@@ -237,5 +237,74 @@ describe("handleVoiceCorrect", () => {
       expect.objectContaining({ chatId: 777000 }),
       "clinic-1",
     );
+  });
+});
+
+describe("handleVoiceConsent", () => {
+  it("sends the not-found reply through the patient's own clinic bot", async () => {
+    // Regression test: this reply used to omit clinicId, which falls back
+    // to the legacy global admin bot instead of the clinic's own bot —
+    // that bot has no chat with this patient and the send would fail (or
+    // silently no-op when the legacy bot is unconfigured).
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === "voice_messages") {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+              })),
+            })),
+          })),
+        };
+      }
+      return {};
+    });
+
+    await handleVoiceConsent({ clinicId: "clinic-1", chatId: 777000, voiceMessageId: "missing-vm", consent: true });
+
+    expect(sendTelegramMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 777000, text: expect.stringContaining("topilmadi") }),
+      "clinic-1",
+    );
+  });
+});
+
+describe("handleTelegramMessage — takeover race (section 6: AI starts while operator takes over)", () => {
+  it("suppresses the AI reply when the conversation becomes held while generateReceptionistReply is in flight", async () => {
+    // Not held when the message first arrives (AI is allowed to start
+    // generating a reply)...
+    // ...but held by the time generation finishes — an operator took over
+    // in between. This is the exact re-check handleTelegramMessage performs
+    // immediately before sending; it must win the race every time, since
+    // sending here would be an automated reply over a live human takeover.
+    vi.mocked(conversationIsHeld).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+    await handleTelegramMessage({
+      clinicId: "clinic-1",
+      chatId: 777000,
+      from: { id: 42, first_name: "Ali" },
+      text: "Salom, qabulga yozilmoqchiman",
+      updateId: 1,
+    });
+
+    expect(generateReceptionistReply).toHaveBeenCalledTimes(1);
+    expect(sendTelegramMessage).not.toHaveBeenCalled();
+    // Only the patient's own inbound message was recorded — no ai/bot reply.
+    expect(vi.mocked(appendMessage)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(appendMessage)).toHaveBeenCalledWith(expect.objectContaining({ role: "patient" }));
+  });
+
+  it("sends normally when the conversation is never held", async () => {
+    await handleTelegramMessage({
+      clinicId: "clinic-1",
+      chatId: 777000,
+      from: { id: 42, first_name: "Ali" },
+      text: "Salom, qabulga yozilmoqchiman",
+      updateId: 2,
+    });
+
+    expect(sendTelegramMessage).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(appendMessage)).toHaveBeenCalledTimes(2); // patient message + ai reply
   });
 });

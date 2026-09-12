@@ -51,6 +51,26 @@ export function isCallCenterStaff(ctx: StaffContext | null): boolean {
   return !!ctx && hasAnyRole(ctx.roles, ["manager", "receptionist"]);
 }
 
+const ADMIN_WORKSPACE_ROLES: StaffRole[] = ["owner", "admin", "manager", "receptionist"];
+
+/**
+ * Where a signed-in staff session belongs when it lands on the clinic
+ * admin workspace (/admin/*): null means "this is the right place, stay
+ * here"; otherwise the path the caller should redirect to instead.
+ *
+ * Every /api/admin/* route requires one of ADMIN_WORKSPACE_ROLES (see the
+ * requireRoles/requireStaff call sites throughout src/app/api/admin) — a
+ * platform admin (no clinic roles at all) or a pure doctor (no management/
+ * reception role) would see every nav link on this workspace fail. Route
+ * them to their own working portal instead, mirroring the equivalent
+ * doctor-only guard in doctor/layout.tsx.
+ */
+export function adminWorkspaceRedirect(ctx: StaffContext): "/platform" | "/doctor" | null {
+  if (ctx.platformAdmin) return "/platform";
+  if (!hasAnyRole(ctx.roles, ADMIN_WORKSPACE_ROLES)) return "/doctor";
+  return null;
+}
+
 /**
  * Resolves the staff member's clinic context from the session.
  * Returns null when not signed in or not attached to any clinic.
@@ -67,7 +87,8 @@ export async function getStaffContext(): Promise<StaffContext | null> {
     supabase
       .from("staff_roles")
       .select("clinic_id, role, clinics!inner(id, name, timezone)")
-      .eq("profile_id", user.id),
+      .eq("profile_id", user.id)
+      .order("created_at", { ascending: true }),
     supabase.from("platform_admins").select("profile_id").eq("profile_id", user.id).maybeSingle(),
   ]);
 
@@ -86,13 +107,20 @@ export async function getStaffContext(): Promise<StaffContext | null> {
 
   if (errorOrEmpty(roles)) return null;
 
+  // A profile may hold staff_roles rows at more than one clinic (the schema
+  // allows it: unique(clinic_id, profile_id), not unique(profile_id)). The
+  // session is scoped to a single clinic — the earliest membership, for
+  // determinism — so roles from a DIFFERENT clinic must never leak in here.
+  // Merging roles across clinics would let e.g. a receptionist at Clinic A
+  // who is also owner at Clinic B act with owner privileges inside Clinic A.
   const first = roles![0];
+  const sameClinicRoles = roles!.filter((r) => r.clinic_id === first.clinic_id).map((r) => r.role);
   return {
     profileId: user.id,
     clinicId: first.clinic_id,
     clinicName: first.clinics?.name ?? "",
     clinicTimezone: first.clinics?.timezone ?? "Asia/Tashkent",
-    roles: roles!.map((r) => r.role),
+    roles: sameClinicRoles,
     platformAdmin,
   };
 }
@@ -101,9 +129,18 @@ function errorOrEmpty(roles: Array<{ clinic_id: string; role: StaffRole }> | nul
   return !roles || roles.length === 0;
 }
 
-/** Convenience: true when the context has at least the given role. */
+/**
+ * Convenience: true when the context has at least the given clinic staff
+ * role. Platform admins hold no clinic staff role at all (by design — see
+ * the "platform admin has zero clinic powers" tests in
+ * role-authorization.test.ts) and must never satisfy this, even implicitly:
+ * a caller checking "is this at least an admin" is asking about clinic
+ * authority specifically, and a platform-admin identity answering that
+ * unconditionally true would contradict every other authorization check in
+ * this codebase (requireStaff/requireRoles reject platformAdmin outright
+ * before ever reaching a role-weight check).
+ */
 export function hasRole(ctx: StaffContext | null, min: StaffRole): boolean {
   if (!ctx) return false;
-  if (ctx.platformAdmin) return true;
   return roleAtLeast(ctx.roles, min);
 }

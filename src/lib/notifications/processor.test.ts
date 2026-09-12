@@ -8,7 +8,7 @@ vi.mock("@/lib/telegram/bot", () => ({
   telegramConfigured: vi.fn(() => true),
 }));
 
-import { sendTelegramMessage } from "@/lib/telegram/bot";
+import { sendTelegramMessage, telegramConfigured } from "@/lib/telegram/bot";
 import { processDueNotificationJobs } from "@/lib/notifications/processor";
 
 /**
@@ -172,5 +172,40 @@ describeDb("notification processor — atomic claims", () => {
     const { data } = await admin.rpc("claim_due_notification_jobs", { p_limit: 50 });
     const claimedIds = (data ?? []).map((j: { id: string }) => j.id);
     expect(claimedIds).not.toContain(jobId);
+  });
+
+  it("processes and sends a job even when the legacy global bot is unconfigured", async () => {
+    // Regression test: processDueNotificationJobs() used to gate its entire
+    // run behind telegramConfigured() — the legacy global TELEGRAM_BOT_TOKEN
+    // check. That silently stopped ALL clinics' reminders/confirmations
+    // whenever that one unrelated env var was unset, even for a clinic with
+    // a fully working per-clinic bot (clinic_telegram_integrations).
+    // sendTelegramMessage() resolves each job's bot from its own clinic_id
+    // and never depends on the legacy global token, so the processor must
+    // not consult telegramConfigured() at all.
+    const configuredMock = vi.mocked(telegramConfigured);
+    const sendMock = vi.mocked(sendTelegramMessage);
+    configuredMock.mockReturnValue(false);
+    sendMock.mockClear();
+    const key = `no-legacy-token-${Date.now()}`;
+    const jobId = await insertJob(key);
+
+    try {
+      const result = await processDueNotificationJobs(50);
+      expect(result.processed).toBe(1);
+      expect(result.sent).toBe(1);
+      expect(sendMock).toHaveBeenCalledTimes(1);
+      expect(configuredMock).not.toHaveBeenCalled();
+
+      const { data: job } = await admin
+        .from("notification_jobs")
+        .select("status, telegram_message_id")
+        .eq("id", jobId)
+        .single();
+      expect(job!.status).toBe("sent");
+      expect(job!.telegram_message_id).toBe(12345);
+    } finally {
+      configuredMock.mockReturnValue(true);
+    }
   });
 });

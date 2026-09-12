@@ -850,6 +850,7 @@ export type Database = {
           full_name: string | null
           id: string
           last_seen_at: string | null
+          operational_notes: string | null
           phone: string | null
           preferred_language: string
           telegram_first_name: string | null
@@ -866,6 +867,7 @@ export type Database = {
           full_name?: string | null
           id?: string
           last_seen_at?: string | null
+          operational_notes?: string | null
           phone?: string | null
           preferred_language?: string
           telegram_first_name?: string | null
@@ -882,6 +884,7 @@ export type Database = {
           full_name?: string | null
           id?: string
           last_seen_at?: string | null
+          operational_notes?: string | null
           phone?: string | null
           preferred_language?: string
           telegram_first_name?: string | null
@@ -1357,6 +1360,7 @@ export type Database = {
       appointment_source:
         | "telegram_mini_app"
         | "telegram_chat"
+        | "web"
         | "admin"
         | "walk_in"
       appointment_status:
@@ -1531,6 +1535,7 @@ export const Constants = {
       appointment_source: [
         "telegram_mini_app",
         "telegram_chat",
+        "web",
         "admin",
         "walk_in",
       ],

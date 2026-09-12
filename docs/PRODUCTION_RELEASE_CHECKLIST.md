@@ -8,8 +8,8 @@ This operational checklist governs the deployment, verification, and rollback pr
 
 ### A. Environment Variables & Production Secrets
 - [ ] Generate a cryptographically random string (32+ bytes) for `CRON_SECRET` (`openssl rand -hex 32`).
-- [ ] Generate a cryptographically random string (32+ bytes) for `TELEGRAM_WEBHOOK_SECRET` (`openssl rand -hex 32`).
-- [ ] Obtain production Telegram Bot token from @BotFather (`TELEGRAM_BOT_TOKEN`).
+- [ ] Generate a cryptographically random string (32+ bytes) for `TELEGRAM_WEBHOOK_SECRET` (`openssl rand -hex 32`). Required unconditionally — production fails closed at startup without it, and any clinic admin can activate a patient-facing bot at any time (see telegram-setup.md §2).
+- [ ] (Optional) Obtain a Telegram Bot token from @BotFather for the platform admin-notification bot (`TELEGRAM_BOT_TOKEN`) — this is unrelated to any clinic's patient-facing bot. Each clinic's own bot token is activated from that clinic's admin dashboard, not set as an env var (see telegram-setup.md §1).
 - [ ] Obtain production Supabase Project URL (`NEXT_PUBLIC_SUPABASE_URL`), Anon Key (`NEXT_PUBLIC_SUPABASE_ANON_KEY`), and Service Role Key (`SUPABASE_SERVICE_ROLE_KEY`).
 - [ ] Configure `PAYMENT_PROVIDER=manual` (Pilot release requirement).
 - [ ] Ensure `ENABLE_TELEGRAM_DEV_MODE` is explicitly set to `"false"`.

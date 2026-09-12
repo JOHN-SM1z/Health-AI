@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
+function patchReq(url: string, body: unknown): NextRequest {
+  return new NextRequest(`http://localhost${url}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 const supabaseMock = { from: vi.fn() };
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => supabaseMock,
@@ -19,7 +27,7 @@ vi.mock("@/lib/auth/guards", () => ({
 
 vi.mock("@/lib/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
-import { GET } from "./route";
+import { GET, PATCH } from "./route";
 
 const PATIENT_ROW = {
   id: "p-1",
@@ -36,16 +44,21 @@ const PATIENT_ROW = {
   conversations_count: 2,
 };
 
-type Recorded = { conditions: Array<{ type: string; args: unknown[] }>; rangeWindow: [number, number] | null };
+type Recorded = {
+  conditions: Array<{ type: string; args: unknown[] }>;
+  rangeWindow: [number, number] | null;
+  updatePayload: unknown;
+};
 
 function chainBuilder(result: unknown, count?: number): Recorded & Record<string, unknown> {
-  const recorded: Recorded = { conditions: [], rangeWindow: null };
+  const recorded: Recorded = { conditions: [], rangeWindow: null, updatePayload: undefined };
   const builder = {} as Record<string, unknown>;
-  const methods = ["select", "eq", "not", "or", "order", "range", "limit"] as const;
+  const methods = ["select", "eq", "not", "or", "order", "range", "limit", "update"] as const;
   for (const m of methods) {
     builder[m] = (...args: unknown[]) => {
       if (m === "eq" || m === "not" || m === "or") recorded.conditions.push({ type: m, args });
       if (m === "range") recorded.rangeWindow = [args[0] as number, args[1] as number];
+      if (m === "update") recorded.updatePayload = args[0];
       return builder;
     };
   }
@@ -154,5 +167,60 @@ describe("admin patient detail", () => {
     const json = (await res.json()) as { ok: boolean; data: { patient: null } };
     expect(json.ok).toBe(true);
     expect(json.data.patient).toBeNull();
+  });
+});
+
+describe("admin patient operational notes (dashboard-completion phase)", () => {
+  const PATIENT_ID = "11111111-1111-4111-8111-111111111111";
+
+  it("updates the operational note for a patient in the staff's own clinic", async () => {
+    const patients = chainBuilder({ id: PATIENT_ID, operational_notes: "Ertalab qulay" });
+    supabaseMock.from.mockReturnValue(patients);
+
+    const res = await PATCH(
+      patchReq("/api/admin/patients", { patientId: PATIENT_ID, operationalNotes: "Ertalab qulay" }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean; data: { patient: { operational_notes: string } } };
+    expect(json.ok).toBe(true);
+    expect(json.data.patient.operational_notes).toBe("Ertalab qulay");
+    expect(patients.updatePayload).toEqual({ operational_notes: "Ertalab qulay" });
+    expect(patients.conditions).toContainEqual(
+      expect.objectContaining({ type: "eq", args: ["clinic_id", "clinic-a"] }),
+    );
+    expect(patients.conditions).toContainEqual(expect.objectContaining({ type: "eq", args: ["id", PATIENT_ID] }));
+  });
+
+  it("clears the note (stores null) when an empty string is sent", async () => {
+    const patients = chainBuilder({ id: PATIENT_ID, operational_notes: null });
+    supabaseMock.from.mockReturnValue(patients);
+
+    const res = await PATCH(patchReq("/api/admin/patients", { patientId: PATIENT_ID, operationalNotes: "" }));
+    expect(res.status).toBe(200);
+    expect(patients.updatePayload).toEqual({ operational_notes: null });
+  });
+
+  it("404s when the patient belongs to another clinic — clinic_id is scoped server-side, not just checked in the UI", async () => {
+    const patients = chainBuilder(null);
+    supabaseMock.from.mockReturnValue(patients);
+
+    const res = await PATCH(patchReq("/api/admin/patients", { patientId: PATIENT_ID, operationalNotes: "x" }));
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a note longer than 1000 characters without writing anything", async () => {
+    const patients = chainBuilder({ id: PATIENT_ID });
+    supabaseMock.from.mockReturnValue(patients);
+
+    const res = await PATCH(
+      patchReq("/api/admin/patients", { patientId: PATIENT_ID, operationalNotes: "x".repeat(1001) }),
+    );
+    expect(res.status).toBe(400);
+    expect(patients.updatePayload).toBeUndefined();
+  });
+
+  it("rejects a malformed patientId", async () => {
+    const res = await PATCH(patchReq("/api/admin/patients", { patientId: "not-a-uuid", operationalNotes: "x" }));
+    expect(res.status).toBe(400);
   });
 });

@@ -15,7 +15,13 @@ import {
 } from "@/lib/telegram/handlers";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// 120s, not the 60s default: the voice-message pipeline (handleVoiceConsent)
+// awaits a 30s file-download timeout plus a 60s transcription-provider
+// timeout in one request. At 60s this route could be killed before either
+// of those internal timeouts gets a chance to fire on its own, at the cost
+// of that one message. Must stay >= Cloud Run's own --timeout in
+// cloudbuild.yaml, which is set to the same 120s for the same reason.
+export const maxDuration = 120;
 
 type TelegramUpdate = {
   update_id?: number;

@@ -33,6 +33,8 @@ const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? 
 
 const CLINIC_ID = "11111111-1111-4111-8111-111111111111";
 const TZ = "Asia/Tashkent"; // UTC+5
+/** Throwaway processed_webhooks key used by the server-only RPC grant tests. */
+const RPC_GRANT_PROBE = `rpc-grant-probe-${Date.now()}`;
 
 let admin: SupabaseClient;
 let anon: SupabaseClient;
@@ -335,6 +337,167 @@ describeDb("local Supabase booking engine", () => {
 
     await admin.from("appointments").delete().eq("id", first.data!.id);
   });
+
+  it("rejects a non-existent clinic (clinic_not_found)", async () => {
+    const { data } = await admin.rpc("book_appointment", {
+      p_clinic_id: "00000000-0000-4000-8000-000000000000",
+      p_patient_id: patientId,
+      p_doctor_id: doctorId,
+      p_service_id: serviceId,
+      p_start_at: nextWeekdayAt10(1),
+      p_status: "pending",
+      p_source: "admin",
+      p_notes: null,
+      p_created_by: null,
+    });
+    expect((data as { error_code: string | null }).error_code).toBe("clinic_not_found");
+  });
+
+  it("rejects a doctor from a different clinic (doctor_not_found — no cross-clinic booking via a substituted id)", async () => {
+    const { data: otherClinic } = await admin
+      .from("clinics")
+      .insert({ name: "Foreign Booking Clinic", slug: `foreign-booking-${Date.now()}`, timezone: TZ, currency: "UZS" })
+      .select("id")
+      .single();
+    const { data: otherDoctor } = await admin
+      .from("doctors")
+      .insert({ clinic_id: otherClinic!.id, name: "Dr. Foreign", active: true })
+      .select("id")
+      .single();
+
+    const { data } = await admin.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: patientId,
+      p_doctor_id: otherDoctor!.id,
+      p_service_id: serviceId,
+      p_start_at: nextWeekdayAt10(1),
+      p_status: "pending",
+      p_source: "admin",
+      p_notes: null,
+      p_created_by: null,
+    });
+    expect((data as { error_code: string | null }).error_code).toBe("doctor_not_found");
+
+    await admin.from("doctors").delete().eq("id", otherDoctor!.id);
+    await admin.from("clinics").delete().eq("id", otherClinic!.id);
+  });
+
+  it("rejects a patient from a different clinic (patient_not_found)", async () => {
+    const { data: otherClinic } = await admin
+      .from("clinics")
+      .insert({ name: "Foreign Patient Clinic", slug: `foreign-patient-${Date.now()}`, timezone: TZ, currency: "UZS" })
+      .select("id")
+      .single();
+    const { data: otherPatient } = await admin
+      .from("patients")
+      .insert({ clinic_id: otherClinic!.id, full_name: "Foreign Patient", telegram_user_id: 999_555_111 })
+      .select("id")
+      .single();
+
+    const { data } = await admin.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: otherPatient!.id,
+      p_doctor_id: doctorId,
+      p_service_id: serviceId,
+      p_start_at: nextWeekdayAt10(1),
+      p_status: "pending",
+      p_source: "admin",
+      p_notes: null,
+      p_created_by: null,
+    });
+    expect((data as { error_code: string | null }).error_code).toBe("patient_not_found");
+
+    await admin.from("patients").delete().eq("id", otherPatient!.id);
+    await admin.from("clinics").delete().eq("id", otherClinic!.id);
+  });
+
+  it("rejects a doctor+service combination the doctor does not offer (service_not_offered)", async () => {
+    // A restricted doctor (has doctor_services rows) may only be booked for
+    // a service on that explicit list — this is the exact rule
+    // api/catalog/route.ts's per-doctor doctor list must also honor.
+    const { data: restrictedDoctor } = await admin
+      .from("doctors")
+      .insert({ clinic_id: CLINIC_ID, name: "Dr. Restricted", active: true })
+      .select("id")
+      .single();
+    const { data: otherService } = await admin
+      .from("services")
+      .insert({ clinic_id: CLINIC_ID, name: `Boshqa xizmat ${Date.now()}`, price: 50000, duration_minutes: 20, active: true })
+      .select("id")
+      .single();
+    await admin.from("doctor_services").insert({ doctor_id: restrictedDoctor!.id, service_id: otherService!.id });
+    for (let weekday = 1; weekday <= 5; weekday++) {
+      await admin
+        .from("doctor_working_hours")
+        .insert({ clinic_id: CLINIC_ID, doctor_id: restrictedDoctor!.id, weekday, start_time: "09:00", end_time: "18:00" });
+    }
+
+    // Booking the SEED service (not on this doctor's list) must fail...
+    const rejected = await admin.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: patientId,
+      p_doctor_id: restrictedDoctor!.id,
+      p_service_id: serviceId,
+      p_start_at: nextWeekdayAt10(2),
+      p_status: "pending",
+      p_source: "admin",
+      p_notes: null,
+      p_created_by: null,
+    });
+    expect((rejected.data as { error_code: string | null }).error_code).toBe("service_not_offered");
+
+    // ...while the doctor's OWN listed service still books normally.
+    const accepted = await admin.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: patientId,
+      p_doctor_id: restrictedDoctor!.id,
+      p_service_id: otherService!.id,
+      p_start_at: nextWeekdayAt10(2),
+      p_status: "pending",
+      p_source: "admin",
+      p_notes: null,
+      p_created_by: null,
+    });
+    const acceptedResult = accepted.data as { appointment_id: string | null; error_code: string | null };
+    expect(acceptedResult.error_code).toBeNull();
+
+    await admin.from("appointments").delete().eq("id", acceptedResult.appointment_id!);
+    await admin.from("doctor_working_hours").delete().eq("doctor_id", restrictedDoctor!.id);
+    await admin.from("doctor_services").delete().eq("doctor_id", restrictedDoctor!.id);
+    await admin.from("services").delete().eq("id", otherService!.id);
+    await admin.from("doctors").delete().eq("id", restrictedDoctor!.id);
+  });
+
+  it("rejects a slot inside a doctor time block (time_blocked)", async () => {
+    const startAt = new Date(nextWeekdayAt10(5)); // Friday
+    const blockEnd = new Date(startAt.getTime() + 60 * 60000).toISOString();
+    const { data: block } = await admin
+      .from("doctor_time_blocks")
+      .insert({
+        clinic_id: CLINIC_ID,
+        doctor_id: doctorId,
+        starts_at: startAt.toISOString(),
+        ends_at: blockEnd,
+        reason: "break",
+      })
+      .select("id")
+      .single();
+
+    const { data } = await admin.rpc("book_appointment", {
+      p_clinic_id: CLINIC_ID,
+      p_patient_id: patientId,
+      p_doctor_id: doctorId,
+      p_service_id: serviceId,
+      p_start_at: startAt.toISOString(),
+      p_status: "pending",
+      p_source: "admin",
+      p_notes: null,
+      p_created_by: null,
+    });
+    expect((data as { error_code: string | null }).error_code).toBe("time_blocked");
+
+    await admin.from("doctor_time_blocks").delete().eq("id", block!.id);
+  });
 });
 
 describeDb("local Supabase security posture", () => {
@@ -395,6 +558,7 @@ describeDb("RPC authorization + tenant isolation", () => {
   });
 
   afterAll(async () => {
+    await admin.from("processed_webhooks").delete().eq("source", RPC_GRANT_PROBE);
     if (userId) {
       await admin.auth.admin.deleteUser(userId);
     }
@@ -464,6 +628,53 @@ describeDb("RPC authorization + tenant isolation", () => {
     if (data?.appointment_id) {
       await admin.from("appointments").delete().eq("id", data.appointment_id);
     }
+  });
+
+  // Server-only job/idempotency primitives. They are SECURITY DEFINER and the
+  // only callers in the codebase go through the service-role client, but
+  // PostgreSQL's default PUBLIC EXECUTE plus Supabase's blanket
+  // anon/authenticated grants left them callable over PostgREST with nothing
+  // but the publishable anon key. That was enough for an anonymous caller to
+  // read pending reminder payloads and flip them to 'in_progress' so patients
+  // never got reminded, or to pre-claim Telegram update ids so genuine
+  // deliveries were discarded as duplicates and the bot went silent.
+  const SERVER_ONLY_RPCS: Array<[string, Record<string, unknown>]> = [
+    ["claim_due_notification_jobs", { p_limit: 1 }],
+    ["claim_webhook_update", { p_source: RPC_GRANT_PROBE, p_external_id: RPC_GRANT_PROBE }],
+    ["finish_webhook_update", { p_source: RPC_GRANT_PROBE, p_external_id: RPC_GRANT_PROBE }],
+    ["release_webhook_update", { p_source: RPC_GRANT_PROBE, p_external_id: RPC_GRANT_PROBE }],
+  ];
+
+  it.each(SERVER_ONLY_RPCS)("denies %s to an anonymous caller", async (fn, args) => {
+    const { data, error } = await anon.rpc(fn, args);
+    expect(error).not.toBeNull();
+    expect(data).toBeNull();
+  });
+
+  it.each(SERVER_ONLY_RPCS)("denies %s to an authenticated non-staff user", async (fn, args) => {
+    const { data, error } = await userClient.rpc(fn, args);
+    expect(error).not.toBeNull();
+    expect(data).toBeNull();
+  });
+
+  // Positive control: the same arguments succeed for service_role, so the
+  // denials above are genuinely about the EXECUTE grant and not about a
+  // malformed call that would "pass" the test for the wrong reason.
+  it("still allows the server's own service-role client through", async () => {
+    const claimed = await admin.rpc("claim_webhook_update", {
+      p_source: RPC_GRANT_PROBE,
+      p_external_id: RPC_GRANT_PROBE,
+    });
+    expect(claimed.error).toBeNull();
+    expect(claimed.data).toBe(true);
+
+    const finished = await admin.rpc("finish_webhook_update", {
+      p_source: RPC_GRANT_PROBE,
+      p_external_id: RPC_GRANT_PROBE,
+    });
+    expect(finished.error).toBeNull();
+
+    await admin.from("processed_webhooks").delete().eq("source", RPC_GRANT_PROBE);
   });
 });
 
@@ -593,5 +804,35 @@ describeDb("webhook idempotency atomic claim", () => {
       .eq("external_id", externalId)
       .single();
     expect(data!.status).toBe("processed");
+  });
+
+  it("a recent (non-stale) processing claim is never reclaimed as a duplicate", async () => {
+    // A genuinely in-flight concurrent/retried delivery must still be
+    // rejected — the 5-minute reclaim window must not weaken the base
+    // dedup guarantee for anything still plausibly running.
+    const externalId = "dup-fresh";
+    const first = await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    expect(first.data).toBe(true);
+    const second = await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    expect(second.data).toBe(false);
+    await admin.rpc("release_webhook_update", { p_source: source, p_external_id: externalId });
+  });
+
+  it("a stale processing claim (crashed/killed handler) can be reclaimed", async () => {
+    // Regression test for the orphaned-claim fix: simulate a handler that
+    // claimed the update and then never released or finished it (killed
+    // mid-request) by backdating processed_at past the 5-minute window.
+    const externalId = "dup-stale";
+    const first = await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    expect(first.data).toBe(true);
+    await admin
+      .from("processed_webhooks")
+      .update({ processed_at: new Date(Date.now() - 6 * 60_000).toISOString() })
+      .eq("source", source)
+      .eq("external_id", externalId);
+
+    const reclaimed = await admin.rpc("claim_webhook_update", { p_source: source, p_external_id: externalId });
+    expect(reclaimed.data).toBe(true);
+    await admin.rpc("finish_webhook_update", { p_source: source, p_external_id: externalId });
   });
 });

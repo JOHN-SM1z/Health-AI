@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -7,13 +7,12 @@ vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => supabaseMock,
 }));
 
-vi.mock("@/lib/env", () => ({
-  env: {
-    TELEGRAM_WEBHOOK_SECRET: "deployment-secret",
-    NEXT_PUBLIC_APP_URL: "https://health.example.com",
-    TELEGRAM_BOT_TOKEN: "",
-  },
+const envMock = vi.hoisted(() => ({
+  TELEGRAM_WEBHOOK_SECRET: "deployment-secret",
+  NEXT_PUBLIC_APP_URL: "https://health.example.com" as string | undefined,
+  TELEGRAM_BOT_TOKEN: "",
 }));
+vi.mock("@/lib/env", () => ({ env: envMock }));
 
 vi.mock("@/lib/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
@@ -126,5 +125,43 @@ describe("botWebhookUrl / registerBotWebhook", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error).toContain("wrong url");
+  });
+});
+
+describe("botWebhookUrl fallback to the request's own origin", () => {
+  // Real production incident: NEXT_PUBLIC_APP_URL was left at the initial
+  // http://localhost:3000, so activation stored the bot but could never
+  // register its webhook — Telegram only accepts HTTPS. The server plainly
+  // knows the HTTPS host it was just reached on, so a stale env var must
+  // not be able to lock an operator out of activating their bot.
+  const original = envMock.NEXT_PUBLIC_APP_URL;
+  afterEach(() => {
+    envMock.NEXT_PUBLIC_APP_URL = original;
+  });
+
+  it("uses the request origin when NEXT_PUBLIC_APP_URL is still http://localhost", () => {
+    envMock.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
+    expect(botWebhookUrl("clinic_a_bot", "https://health-ai-w1vc.vercel.app")).toBe(
+      "https://health-ai-w1vc.vercel.app/api/telegram/webhook?bot=clinic_a_bot",
+    );
+  });
+
+  it("uses the request origin when NEXT_PUBLIC_APP_URL is unset", () => {
+    envMock.NEXT_PUBLIC_APP_URL = undefined;
+    expect(botWebhookUrl("clinic_a_bot", "https://health-ai-w1vc.vercel.app")).toBe(
+      "https://health-ai-w1vc.vercel.app/api/telegram/webhook?bot=clinic_a_bot",
+    );
+  });
+
+  it("still prefers a valid NEXT_PUBLIC_APP_URL over the request origin (custom domains win)", () => {
+    expect(botWebhookUrl("clinic_a_bot", "https://some-preview-deploy.vercel.app")).toBe(
+      "https://health.example.com/api/telegram/webhook?bot=clinic_a_bot",
+    );
+  });
+
+  it("returns null when neither source is HTTPS (local dev stays correctly unregisterable)", () => {
+    envMock.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
+    expect(botWebhookUrl("clinic_a_bot", "http://localhost:3000")).toBeNull();
+    expect(botWebhookUrl("clinic_a_bot", null)).toBeNull();
   });
 });

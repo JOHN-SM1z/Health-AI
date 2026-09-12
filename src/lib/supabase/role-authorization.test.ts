@@ -329,17 +329,25 @@ describeDb("role-based authorization (Phase 2)", () => {
     expect(analytics!.length).toBeGreaterThan(0);
   });
 
-  it("manager updates payments and creates walk-in patients", async () => {
+  it("manager creates walk-in patients", async () => {
     const c = clients.get("manager")!;
-    const { error: payError } = await c.from("payments").update({ status: "paid" }).eq("id", paymentId);
-    expect(payError).toBeNull();
-
     const { error: patError } = await c.from("patients").insert({
       clinic_id: CLINIC,
       full_name: `Manager walk-in ${suffix}`,
       phone: `+9989${suffix.slice(0, 5)}77`,
     });
     expect(patError).toBeNull();
+  });
+
+  it("manager CANNOT update payments directly — server-managed (audit finding, closed by payments_block_direct_write)", async () => {
+    const c = clients.get("manager")!;
+    const before = await admin.from("payments").select("status").eq("id", paymentId).single();
+    const { error: payError } = await c.from("payments").update({ status: "paid" }).eq("id", paymentId);
+    // Unlike a plain RLS-hidden row (error: null, 0 rows affected), the
+    // block is a trigger RAISE EXCEPTION — a real, non-null error.
+    expect(payError).not.toBeNull();
+    const after = await admin.from("payments").select("status").eq("id", paymentId).single();
+    expect(after.data!.status).toBe(before.data!.status);
   });
 
   it("manager CANNOT update the clinic itself (owner-only)", async () => {
@@ -440,6 +448,21 @@ describeDb("role-based authorization (Phase 2)", () => {
     const c = clients.get("owner")!;
     const { data } = await c.from("platform_admins").select("*");
     expect(data ?? []).toHaveLength(0);
+  });
+
+  it("manager cannot read platform_admins or grant themselves platform access (Phase 2, section 3: manager attempting platform admin operation)", async () => {
+    const c = clients.get("manager")!;
+    const { data, error: readError } = await c.from("platform_admins").select("*");
+    expect(readError).toBeNull();
+    expect(data ?? []).toHaveLength(0);
+
+    // Escalation attempt: platform_admins has zero INSERT policy for
+    // `authenticated` (service-role only) — this must fail regardless of
+    // which profile_id is targeted.
+    const { error: insertError } = await c
+      .from("platform_admins")
+      .insert({ profile_id: "00000000-0000-0000-0000-000000000000" });
+    expect(insertError).not.toBeNull();
   });
 
   // ---------- Manager/receptionist/doctor matrix sanity: no cross-clinic ----------

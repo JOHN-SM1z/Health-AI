@@ -85,7 +85,7 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
         .eq("id", conversation.patient_id)
         .single();
       if (patient?.telegram_user_id) {
-        await sendTelegramMessage(
+        const ackMessageId = await sendTelegramMessage(
           {
             chatId: patient.telegram_user_id,
             text: "Operatorlarimiz suhbatga ulandi. Endi operator javob beradi. 👨‍💼",
@@ -98,6 +98,8 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
           role: "admin",
           type: "system",
           content: "Operator suhbatni qabul qildi",
+          telegramMessageId: ackMessageId,
+          metadata: ackMessageId === null ? { telegram_delivery_failed: true } : undefined,
         });
         await trackAnalytics({ clinicId: staff.clinicId, patientId: conversation.patient_id, eventType: "human_takeover" });
       }
@@ -132,20 +134,16 @@ export async function PUT(request: NextRequest, ctx: RouteContext) {
       throw new ApiError(409, "Suhbat endi operator qo‘lida emas", "conversation_not_held");
     }
 
-    await appendMessage({
-      conversationId: id,
-      clinicId: staff.clinicId,
-      role: "admin",
-      type: "text",
-      content: body.text,
-    });
-
     const { data: patient } = await supabase
       .from("patients")
       .select("telegram_user_id")
       .eq("id", conversation.patient_id)
       .single();
 
+    // Send BEFORE persisting: the stored row must reflect the real outcome
+    // (telegram_message_id + a visible failure marker), never a message that
+    // looks identical to a successfully delivered one when Telegram actually
+    // rejected it or the patient has no reachable Telegram identity.
     let telegramMessageId: number | null = null;
     if (patient?.telegram_user_id) {
       telegramMessageId = await sendTelegramMessage(
@@ -153,9 +151,20 @@ export async function PUT(request: NextRequest, ctx: RouteContext) {
         conversation.clinic_id,
       );
     }
+    const delivered = telegramMessageId !== null;
 
-    logger.info("admin message stored", { conversationId: id, delivered: telegramMessageId !== null });
-    return ok({ sent: true, telegramMessageId });
+    await appendMessage({
+      conversationId: id,
+      clinicId: staff.clinicId,
+      role: "admin",
+      type: "text",
+      content: body.text,
+      telegramMessageId,
+      metadata: delivered ? undefined : { telegram_delivery_failed: true },
+    });
+
+    logger.info("admin message stored", { conversationId: id, delivered });
+    return ok({ sent: true, delivered, telegramMessageId });
   } catch (e) {
     return handleApiError(e);
   }

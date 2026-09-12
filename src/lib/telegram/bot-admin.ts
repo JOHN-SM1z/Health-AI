@@ -24,7 +24,11 @@ export type ActivationResult = {
   webhookError?: string;
 };
 
-export async function activateClinicBot(clinicId: string, telegramBotToken: string): Promise<ActivationResult> {
+export async function activateClinicBot(
+  clinicId: string,
+  telegramBotToken: string,
+  requestOrigin?: string | null,
+): Promise<ActivationResult> {
   const token = telegramBotToken.trim();
   if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(token)) {
     return { ok: false, error: "Bot token formati noto‘g‘ri" };
@@ -37,29 +41,54 @@ export async function activateClinicBot(clinicId: string, telegramBotToken: stri
     if (!me.username) return { ok: false, error: "Telegram botda username topilmadi" };
 
     const supabase = createAdminClient();
-    const { error: upsertError } = await supabase
+    const integrationRow = {
+      clinic_id: clinicId,
+      telegram_bot_token: token,
+      telegram_bot_id: me.id,
+      telegram_username: me.username,
+      telegram_bot_name: me.first_name ?? null,
+      status: "active" as const,
+      enabled: true,
+      validated_at: new Date().toISOString(),
+      last_error: null,
+      webhook_error: null,
+    };
+
+    // A plain upsert on (clinic_id) alone doesn't work here: the table also
+    // has UNIQUE constraints on telegram_username and telegram_bot_id (added
+    // to stop two clinics ever sharing a bot identity). Postgres's
+    // ON CONFLICT (clinic_id) DO UPDATE only resolves a conflict on THAT
+    // constraint — if the insert attempt collides with one of the OTHER
+    // unique indexes too, which re-activating the SAME bot always does
+    // (this clinic's own row already holds this exact username/bot_id),
+    // Postgres raises a raw constraint violation (409) instead of falling
+    // through to the update. Doing an explicit UPDATE first sidesteps this
+    // entirely: updating an existing row to the values it already holds
+    // never conflicts with a unique index, since it isn't an insert.
+    const { data: updatedRows, error: updateError } = await supabase
       .from("clinic_telegram_integrations")
-      .upsert(
-        {
-          clinic_id: clinicId,
-          telegram_bot_token: token,
-          telegram_bot_id: me.id,
-          telegram_username: me.username,
-          telegram_bot_name: me.first_name ?? null,
-          status: "active",
-          enabled: true,
-          validated_at: new Date().toISOString(),
-          last_error: null,
-          webhook_error: null,
-        },
-        { onConflict: "clinic_id" },
-      );
-    if (upsertError) {
-      logger.error("bot activation: integration upsert failed", { clinicId, error: upsertError.message });
+      .update(integrationRow)
+      .eq("clinic_id", clinicId)
+      .select("clinic_id");
+    if (updateError) {
+      logger.error("bot activation: integration update failed", { clinicId, error: updateError.message });
       return { ok: false, error: "Bazaga saqlashda xatolik" };
     }
+    if (!updatedRows || updatedRows.length === 0) {
+      const { error: insertError } = await supabase.from("clinic_telegram_integrations").insert(integrationRow);
+      if (insertError) {
+        logger.error("bot activation: integration insert failed", { clinicId, error: insertError.message });
+        return {
+          ok: false,
+          error:
+            insertError.code === "23505"
+              ? "Bu bot boshqa klinikada allaqachon ulangan"
+              : "Bazaga saqlashda xatolik",
+        };
+      }
+    }
 
-    const webhook = await registerBotWebhook(bot, me.username);
+    const webhook = await registerBotWebhook(bot, me.username, requestOrigin);
     await supabase
       .from("clinic_telegram_integrations")
       .update({

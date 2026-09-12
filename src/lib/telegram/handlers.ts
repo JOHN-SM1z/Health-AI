@@ -625,7 +625,11 @@ export async function handleVoiceConsent(opts: {
     .eq("clinic_id", opts.clinicId)
     .maybeSingle();
   if (!voiceRow) {
-    await sendTelegramMessage({ chatId: opts.chatId, text: "Ovozli xabar topilmadi." });
+    // Must go through the patient's own clinic bot like every other reply
+    // in this handler — omitting clinicId here would fall back to the
+    // legacy global admin bot, which has no chat with this patient and
+    // would fail to deliver (or silently no-op when unconfigured).
+    await sendTelegramMessage({ chatId: opts.chatId, text: "Ovozli xabar topilmadi." }, opts.clinicId);
     return;
   }
 

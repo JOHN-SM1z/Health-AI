@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, LoadingRow } from "@/components/admin/ui";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ATextArea, LoadingRow } from "@/components/admin/ui";
 import { Users } from "lucide-react";
-import { adminApi, AdminApiError, formatDateTime, STATUS_LABELS, STATUS_TONES, SOURCE_LABELS } from "@/lib/admin/client";
+import { adminApi, AdminApiError, formatDateTime, STATUS_LABELS, STATUS_TONES, CHANNEL_LABELS } from "@/lib/admin/client";
 
 type PatientRow = {
   id: string;
@@ -31,6 +31,7 @@ type PatientDetail = {
   consent_given_at: string | null;
   last_seen_at: string | null;
   created_at: string;
+  operational_notes: string | null;
 };
 
 type AppointmentLite = {
@@ -74,6 +75,9 @@ export default function PatientsPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
 
   const load = useCallback(async (pageNum: number, term: string, tg: boolean, nc: boolean) => {
     const params = new URLSearchParams({ page: String(pageNum) });
@@ -107,9 +111,11 @@ export default function PatientsPage() {
     setDetailId(id);
     setDetail(null);
     setBusy(true);
+    setNotesSaved(false);
     try {
       const res = await adminApi.get<DetailResponse>(`/api/admin/patients?id=${id}`);
       setDetail(res);
+      setNotesDraft(res.patient?.operational_notes ?? "");
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Bemor ma'lumotlarini yuklab bo‘lmadi");
     } finally {
@@ -117,8 +123,29 @@ export default function PatientsPage() {
     }
   };
 
+  const saveNotes = async () => {
+    if (!detailId) return;
+    setNotesSaving(true);
+    setNotesSaved(false);
+    try {
+      await adminApi.patch(`/api/admin/patients`, { patientId: detailId, operationalNotes: notesDraft });
+      setDetail((prev) => (prev?.patient ? { ...prev, patient: { ...prev.patient, operational_notes: notesDraft.trim() || null } } : prev));
+      setNotesSaved(true);
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Izohni saqlab bo‘lmadi");
+    } finally {
+      setNotesSaving(false);
+    }
+  };
+
   const pageCount = Math.max(1, Math.ceil(total / 25));
   const selected = detail?.patient ?? null;
+  const notesDirty = notesDraft.trim() !== (selected?.operational_notes ?? "").trim();
+
+  const visitStats = useMemo(() => {
+    const completed = (detail?.appointments ?? []).filter((a) => a.status === "completed");
+    return { count: completed.length, lastVisit: completed[0]?.start_at ?? null };
+  }, [detail]);
 
   return (
     <div>
@@ -238,6 +265,33 @@ export default function PatientsPage() {
               <div className="space-y-1 text-sm text-ink-muted">
                 <p>Qo‘shilgan: {formatDateTime(selected.created_at)}</p>
                 {selected.last_seen_at && <p>Oxirgi faollik: {formatDateTime(selected.last_seen_at)}</p>}
+                <p>
+                  Oxirgi tashrif: {visitStats.lastVisit ? formatDateTime(visitStats.lastVisit) : "Hali bo‘lmagan"}
+                  {" · "}
+                  Yakunlangan tashriflar: {visitStats.count}
+                </p>
+              </div>
+
+              <div>
+                <p className="mb-2 font-display text-sm font-bold text-foreground">Operatsion izoh</p>
+                <p className="mb-2 text-xs text-ink-muted">
+                  Faqat xizmat ko‘rsatish uchun — masalan, qulay vaqt yoki aloqa bo‘yicha eslatma. Tibbiy ma‘lumot emas.
+                </p>
+                <ATextArea
+                  value={notesDraft}
+                  onChange={(v) => {
+                    setNotesDraft(v);
+                    setNotesSaved(false);
+                  }}
+                  placeholder="Masalan: ertalabki vaqtlarni afzal ko‘radi"
+                  rows={3}
+                />
+                <div className="mt-2 flex items-center gap-2">
+                  <AButton size="sm" loading={notesSaving} disabled={!notesDirty} onClick={() => void saveNotes()}>
+                    Izohni saqlash
+                  </AButton>
+                  {notesSaved && !notesDirty && <span className="text-xs text-pine-deep">Saqlandi ✓</span>}
+                </div>
               </div>
 
               <div>
@@ -270,7 +324,7 @@ export default function PatientsPage() {
                     {detail.conversations.map((c) => (
                       <div key={c.id} className="flex items-center justify-between rounded-xl border border-hairline px-3 py-2">
                         <div>
-                          <p className="text-sm font-medium text-foreground">{SOURCE_LABELS[c.channel] ?? c.channel}</p>
+                          <p className="text-sm font-medium text-foreground">{CHANNEL_LABELS[c.channel] ?? c.channel}</p>
                           <p className="text-xs text-ink-muted">{formatDateTime(c.updated_at)}</p>
                         </div>
                         <ABadge tone={c.status === "assigned" ? "purple" : c.status === "open" ? "blue" : "neutral"}>

@@ -9,6 +9,7 @@ export type AnalyticsRow = {
   start_at: string;
   services: { name: string; price: number } | null;
   doctors: { name: string } | null;
+  payments: { status: Database["public"]["Enums"]["payment_status"]; amount: number } | null;
 };
 
 export type AppointmentsAggregate = {
@@ -16,15 +17,19 @@ export type AppointmentsAggregate = {
   cancelled: number;
   noShows: number;
   completed: number;
+  cancellationRate: number;
+  noShowRate: number;
   bySource: Array<[string, number]>;
   byStatus: Array<[string, number]>;
+  byPaymentStatus: Array<[string, number]>;
   cancelReasons: Array<{ reason: string; count: number }>;
   noShowReasons: Array<{ reason: string; count: number }>;
+  totalRevenue: number;
   revenueTrend: Array<{ date: string; revenue: number }>;
   revenueByWeek: Array<{ key: string; revenue: number }>;
   revenueByMonth: Array<{ key: string; revenue: number }>;
-  topServices: Array<{ name: string; count: number; revenue: number }>;
-  topDoctors: Array<{ name: string; count: number; revenue: number }>;
+  topServices: Array<{ name: string; count: number; completedCount: number; revenue: number }>;
+  topDoctors: Array<{ name: string; count: number; completedCount: number; revenue: number; completionRate: number }>;
 };
 
 /**
@@ -49,12 +54,30 @@ export function monthKeyFromDayKey(dayKey: string): string {
   return dayKey.slice(0, 7);
 }
 
+/** Percentage of `part` over `whole`, rounded to one decimal. 0 when `whole` is 0 (never NaN/Infinity). */
+function percent(part: number, whole: number): number {
+  if (whole <= 0) return 0;
+  return Math.round((part / whole) * 1000) / 10;
+}
+
 /**
  * Pure aggregation over appointment rows — the single source of truth for
- * the management analytics endpoint. Revenue counts ONLY completed
- * appointments; cancellation/no-show reasons are grouped by (trimmed)
- * reason; the revenue trend buckets by clinic-local calendar day, ISO week,
- * and calendar month.
+ * the management analytics endpoint.
+ *
+ * Revenue is recognized ONLY when a service was actually delivered
+ * (appointment status "completed") AND actually paid for (payment status
+ * "paid") — an appointment's own status is never, by itself, treated as a
+ * financial fact, and a service's catalog list price is never used as the
+ * charged amount (a doctor can have a `doctor_services.price_override` for
+ * a service, which is what `payments.amount` already correctly reflects
+ * from booking time — see book_appointment()). A later refund moves
+ * payments.status away from "paid" and so automatically and correctly
+ * drops that appointment back out of every revenue figure, with no special
+ * case needed here.
+ *
+ * Cancellation/no-show reasons are grouped by (trimmed) reason; the
+ * revenue trend buckets by clinic-local calendar day, ISO week, and
+ * calendar month.
  */
 export function aggregateAppointments(
   rows: AnalyticsRow[],
@@ -63,21 +86,27 @@ export function aggregateAppointments(
 ): AppointmentsAggregate {
   const bySource = new Map<string, number>();
   const byStatus = new Map<string, number>();
+  const byPaymentStatus = new Map<string, number>();
   const cancelReasons = new Map<string, number>();
   const noShowReasons = new Map<string, number>();
   const trend = new Map<string, number>();
   const weekTrend = new Map<string, number>();
   const monthTrend = new Map<string, number>();
-  const services = new Map<string, { count: number; revenue: number }>();
-  const doctors = new Map<string, { count: number; revenue: number }>();
+  const services = new Map<string, { count: number; completedCount: number; revenue: number }>();
+  const doctors = new Map<string, { count: number; completedCount: number; revenue: number }>();
   let cancelled = 0;
   let noShows = 0;
   let completed = 0;
   let total = 0;
+  let totalRevenue = 0;
+
   for (const a of rows) {
     total += 1;
     bySource.set(a.source, (bySource.get(a.source) ?? 0) + 1);
     byStatus.set(a.status, (byStatus.get(a.status) ?? 0) + 1);
+    if (a.payments?.status) {
+      byPaymentStatus.set(a.payments.status, (byPaymentStatus.get(a.payments.status) ?? 0) + 1);
+    }
     if (a.status === "cancelled") {
       cancelled += 1;
       const reason = (a.cancelled_reason ?? "Sabab ko‘rsatilmagan").trim();
@@ -89,27 +118,33 @@ export function aggregateAppointments(
       noShowReasons.set(reason, (noShowReasons.get(reason) ?? 0) + 1);
     }
 
-    const price = Number(a.services?.price ?? 0);
-    const paid = a.status === "completed";
-    if (paid) {
-      completed += 1;
+    const isCompleted = a.status === "completed";
+    if (isCompleted) completed += 1;
+
+    const isRevenue = isCompleted && a.payments?.status === "paid";
+    const amount = isRevenue ? Number(a.payments?.amount ?? 0) : 0;
+    if (isRevenue) {
+      totalRevenue += amount;
       const day = clinicDateKey(clinicTimezone, new Date(a.start_at));
-      trend.set(day, (trend.get(day) ?? 0) + price);
+      trend.set(day, (trend.get(day) ?? 0) + amount);
       const week = weekKeyFromDayKey(day);
-      weekTrend.set(week, (weekTrend.get(week) ?? 0) + price);
+      weekTrend.set(week, (weekTrend.get(week) ?? 0) + amount);
       const month = monthKeyFromDayKey(day);
-      monthTrend.set(month, (monthTrend.get(month) ?? 0) + price);
+      monthTrend.set(month, (monthTrend.get(month) ?? 0) + amount);
     }
+
     const svcName = a.services?.name ?? "Noma’lum xizmat";
-    const svc = services.get(svcName) ?? { count: 0, revenue: 0 };
+    const svc = services.get(svcName) ?? { count: 0, completedCount: 0, revenue: 0 };
     svc.count += 1;
-    if (paid) svc.revenue += price;
+    if (isCompleted) svc.completedCount += 1;
+    if (isRevenue) svc.revenue += amount;
     services.set(svcName, svc);
 
     const docName = a.doctors?.name ?? "Noma’lum shifokor";
-    const doc = doctors.get(docName) ?? { count: 0, revenue: 0 };
+    const doc = doctors.get(docName) ?? { count: 0, completedCount: 0, revenue: 0 };
     doc.count += 1;
-    if (paid) doc.revenue += price;
+    if (isCompleted) doc.completedCount += 1;
+    if (isRevenue) doc.revenue += amount;
     doctors.set(docName, doc);
   }
 
@@ -118,8 +153,11 @@ export function aggregateAppointments(
     cancelled,
     noShows,
     completed,
+    cancellationRate: percent(cancelled, total),
+    noShowRate: percent(noShows, total),
     bySource: [...bySource.entries()].sort((a, b) => b[1] - a[1]),
     byStatus: [...byStatus.entries()].sort((a, b) => b[1] - a[1]),
+    byPaymentStatus: [...byPaymentStatus.entries()].sort((a, b) => b[1] - a[1]),
     cancelReasons: [...cancelReasons.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, topN)
@@ -128,6 +166,7 @@ export function aggregateAppointments(
       .sort((a, b) => b[1] - a[1])
       .slice(0, topN)
       .map(([reason, count]) => ({ reason, count })),
+    totalRevenue,
     revenueTrend: [...trend.entries()]
       .sort((a, b) => (a[0] < b[0] ? -1 : 1))
       .map(([date, revenue]) => ({ date, revenue })),
@@ -140,10 +179,16 @@ export function aggregateAppointments(
     topServices: [...services.entries()]
       .sort((a, b) => b[1].count - a[1].count)
       .slice(0, topN)
-      .map(([name, v]) => ({ name, count: v.count, revenue: v.revenue })),
+      .map(([name, v]) => ({ name, count: v.count, completedCount: v.completedCount, revenue: v.revenue })),
     topDoctors: [...doctors.entries()]
       .sort((a, b) => b[1].count - a[1].count)
       .slice(0, topN)
-      .map(([name, v]) => ({ name, count: v.count, revenue: v.revenue })),
+      .map(([name, v]) => ({
+        name,
+        count: v.count,
+        completedCount: v.completedCount,
+        revenue: v.revenue,
+        completionRate: percent(v.completedCount, v.count),
+      })),
   };
 }

@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
-import { PageHeader, Card, AEmpty, AError, ASelect, StatCard, LoadingRow } from "@/components/admin/ui";
-import { BarChart3, Users, CalendarX2, TrendingUp, Stethoscope, Scissors, UserX } from "lucide-react";
-import { adminApi, AdminApiError, SOURCE_LABELS, STATUS_LABELS } from "@/lib/admin/client";
+import { PageHeader, Card, AEmpty, AError, AInput, ASelect, StatCard, LoadingRow } from "@/components/admin/ui";
+import { BarChart3, Users, CalendarX2, TrendingUp, Stethoscope, Scissors, UserX, Wallet } from "lucide-react";
+import { adminApi, AdminApiError, SOURCE_LABELS, STATUS_LABELS, formatPrice } from "@/lib/admin/client";
+import { localDayWindowForDate } from "@/lib/time/local";
 
 type AnalyticsRow = {
   event_type: string;
@@ -12,28 +13,44 @@ type AnalyticsRow = {
   patient_id: string | null;
 };
 
+const PAYMENT_STATUS_LABELS: Record<string, string> = {
+  paid: "To‘langan",
+  unpaid: "To‘lanmagan",
+  pending: "Kutilmoqda",
+  refunded: "Qaytarilgan",
+  failed: "Muvaffaqiyatsiz",
+  manual_review: "Tekshiruvda",
+};
+
 type AppointmentAnalytics = {
   range: number;
+  from: string | null;
+  to: string | null;
   total: number;
   cancelled: number;
   no_shows: number;
   completed: number;
+  cancellation_rate: number;
+  no_show_rate: number;
   by_source: [string, number][];
   by_status: [string, number][];
   cancel_reasons: { reason: string; count: number }[];
   no_show_reasons: { reason: string; count: number }[];
   can_view_payment_dynamics: boolean;
+  total_revenue: number | null;
+  by_payment_status: [string, number][];
   revenue_trend: { date: string; revenue: number }[];
   revenue_by_week: { key: string; revenue: number }[];
   revenue_by_month: { key: string; revenue: number }[];
-  top_services: { name: string; count: number; revenue: number | null }[];
-  top_doctors: { name: string; count: number; revenue: number | null }[];
+  top_services: { name: string; count: number; completed_count: number; revenue: number | null }[];
+  top_doctors: { name: string; count: number; completed_count: number; completion_rate: number; revenue: number | null }[];
 };
 
 const RANGES = [
   { value: "7", label: "Oxirgi 7 kun" },
   { value: "30", label: "Oxirgi 30 kun" },
   { value: "90", label: "Oxirgi 90 kun" },
+  { value: "custom", label: "Boshqa davr…" },
 ];
 
 const TREND_BUCKETS = [
@@ -44,31 +61,54 @@ const TREND_BUCKETS = [
 
 export default function AnalyticsPage() {
   const [range, setRange] = useState("30");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [clinicTimezone, setClinicTimezone] = useState("Asia/Tashkent");
   const [trendBucket, setTrendBucket] = useState<"day" | "week" | "month">("day");
   const [rows, setRows] = useState<AnalyticsRow[] | null>(null);
   const [appointments, setAppointments] = useState<AppointmentAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const supabase = createClient();
-    const since = new Date(Date.now() - Number(range) * 86400000).toISOString();
-    void supabase
-      .from("analytics_events")
-      .select("event_type, created_at, patient_id")
-      .gte("created_at", since)
-      .then(({ data, error: err }) => {
-        if (err) {
-          setError("Tahlil ma'lumotlarini yuklab bo‘lmadi");
-          return;
-        }
-        setRows(data ?? []);
-      });
+  const isCustomRange = range === "custom";
+  const customRangeReady = isCustomRange && Boolean(fromDate) && Boolean(toDate) && fromDate <= toDate;
+  const customRangeInvalid = isCustomRange && Boolean(fromDate) && Boolean(toDate) && fromDate > toDate;
 
+  useEffect(() => {
+    void adminApi
+      .get<{ clinicTimezone: string }>("/api/admin/me")
+      .then((me) => setClinicTimezone(me.clinicTimezone))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // A custom range with an incomplete or invalid date pair simply waits —
+    // it must never silently fall back to querying an unintended window.
+    if (isCustomRange && !customRangeReady) return;
+
+    const supabase = createClient();
+    const since = isCustomRange
+      ? localDayWindowForDate(clinicTimezone, fromDate).start
+      : new Date(Date.now() - Number(range) * 86400000).toISOString();
+    const until = isCustomRange ? localDayWindowForDate(clinicTimezone, toDate).end : null;
+
+    let eventsQuery = supabase.from("analytics_events").select("event_type, created_at, patient_id").gte("created_at", since);
+    if (until) eventsQuery = eventsQuery.lt("created_at", until);
+    void eventsQuery.then(({ data, error: err }) => {
+      if (err) {
+        setError("Tahlil ma'lumotlarini yuklab bo‘lmadi");
+        return;
+      }
+      setRows(data ?? []);
+    });
+
+    const params = isCustomRange
+      ? new URLSearchParams({ from: fromDate, to: toDate })
+      : new URLSearchParams({ range });
     adminApi
-      .get<AppointmentAnalytics>(`/api/admin/analytics?range=${range}`)
+      .get<AppointmentAnalytics>(`/api/admin/analytics?${params.toString()}`)
       .then((d) => setAppointments(d))
       .catch((e) => setError(e instanceof AdminApiError ? e.message : "Tahlil ma'lumotlarini yuklab bo‘lmadi"));
-  }, [range]);
+  }, [range, isCustomRange, customRangeReady, fromDate, toDate, clinicTimezone]);
 
   const stats = useMemo(() => {
     const s = {
@@ -90,6 +130,7 @@ export default function AnalyticsPage() {
   const maxReason = appointments?.cancel_reasons[0]?.count ?? 1;
   const maxNoShowReason = appointments?.no_show_reasons[0]?.count ?? 1;
   const maxStatus = appointments?.by_status[0]?.[1] ?? 1;
+  const maxPaymentStatus = appointments?.by_payment_status[0]?.[1] ?? 1;
   const maxTrend = useMemo(() => {
     if (!appointments?.can_view_payment_dynamics) return 1;
     const src =
@@ -152,12 +193,22 @@ export default function AnalyticsPage() {
         title="Tahlillar"
         subtitle="Qabul manbalari, bekor qilish sabablari va hodisalar"
         action={
-          <div className="w-44">
-            <ASelect value={range} onChange={setRange} options={RANGES} aria-label="Davr" />
+          <div className="flex flex-wrap items-center gap-2">
+            {isCustomRange && (
+              <>
+                <AInput value={fromDate} onChange={setFromDate} type="date" className="w-40" aria-label="Boshlanish sanasi" />
+                <span className="text-ink-muted">—</span>
+                <AInput value={toDate} onChange={setToDate} type="date" className="w-40" aria-label="Tugash sanasi" />
+              </>
+            )}
+            <div className="w-44">
+              <ASelect value={range} onChange={setRange} options={RANGES} aria-label="Davr" />
+            </div>
           </div>
         }
       />
       {error && <AError message={error} />}
+      {customRangeInvalid && <AError message="Boshlanish sanasi tugash sanasidan keyin bo‘lishi mumkin emas" />}
 
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatCard label="Jami hodisalar" value={stats.total.toLocaleString("uz-UZ")} tone="neutral" />
@@ -180,6 +231,26 @@ export default function AnalyticsPage() {
           label="Yakunlangan qabullar"
           value={(appointments?.completed ?? 0).toLocaleString("uz-UZ")}
           tone="neutral"
+        />
+      </div>
+
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {appointments?.can_view_payment_dynamics && (
+          <StatCard
+            label="Jami tushum"
+            value={appointments.total_revenue === null ? "—" : formatPrice(appointments.total_revenue)}
+            tone="pine"
+          />
+        )}
+        <StatCard
+          label="Bekor qilish darajasi"
+          value={appointments ? `${appointments.cancellation_rate}% (${appointments.cancelled.toLocaleString("uz-UZ")})` : "—"}
+          tone="clay"
+        />
+        <StatCard
+          label="Kelmaslik darajasi"
+          value={appointments ? `${appointments.no_show_rate}% (${appointments.no_shows.toLocaleString("uz-UZ")})` : "—"}
+          tone="clay"
         />
       </div>
 
@@ -227,12 +298,30 @@ export default function AnalyticsPage() {
             <Stethoscope className="h-4 w-4 text-ink-muted" />
             <p className="text-sm font-bold text-foreground">Eng ko‘p shifokorlar</p>
           </div>
+          <p className="mb-3 text-xs text-ink-muted">Son — bron qilingan qabullar (barcha holatlar); % — yakunlanish darajasi</p>
           {appointments === null ? (
             <LoadingRow />
           ) : appointments.top_doctors.length === 0 ? (
             <AEmpty title="Ma'lumot yo‘q" subtitle="Bu davrda qabullar yo‘q" icon={<Stethoscope className="h-5 w-5" />} />
           ) : (
-            bars(appointments.top_doctors.map((d) => [`${d.name} (${d.count})`, d.count]), maxDoctor)
+            <div className="space-y-3.5">
+              {appointments.top_doctors.map((d) => (
+                <div key={d.name}>
+                  <div className="mb-1.5 flex justify-between text-sm">
+                    <span className="text-ink-muted">{d.name}</span>
+                    <span className="font-numeric font-medium text-foreground">
+                      {d.count.toLocaleString("uz-UZ")} bron · {d.completion_rate}% yakunlangan
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-sand">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-pine to-mint transition-[width] duration-500"
+                      style={{ width: `${Math.max((d.count / maxDoctor) * 100, 4)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </Card>
       </div>
@@ -243,6 +332,7 @@ export default function AnalyticsPage() {
             <Scissors className="h-4 w-4 text-ink-muted" />
             <p className="text-sm font-bold text-foreground">Eng ko‘p xizmatlar</p>
           </div>
+          <p className="mb-3 text-xs text-ink-muted">Son — bron qilingan qabullar (barcha holatlar), qavsda yakunlangan soni</p>
           {appointments === null ? (
             <LoadingRow />
           ) : appointments.top_services.length === 0 ? (
@@ -254,7 +344,7 @@ export default function AnalyticsPage() {
                   <div className="mb-1.5 flex justify-between text-sm">
                     <span className="text-ink-muted">{s.name}</span>
                     <span className="font-numeric font-medium text-foreground">
-                      {s.count.toLocaleString("uz-UZ")}
+                      {s.count.toLocaleString("uz-UZ")} ({s.completed_count.toLocaleString("uz-UZ")} yakunlangan)
                       {appointments.can_view_payment_dynamics && s.revenue !== null
                         ? ` · ${s.revenue.toLocaleString("uz-UZ")} so‘m`
                         : ""}
@@ -300,7 +390,7 @@ export default function AnalyticsPage() {
             <p className="text-sm font-bold text-foreground">Bekor qilish sabablari</p>
             {appointments !== null && (
               <span className="ml-auto font-numeric text-xs text-ink-muted">
-                Bekor: {appointments.cancelled.toLocaleString("uz-UZ")}
+                Bekor: {appointments.cancelled.toLocaleString("uz-UZ")} ({appointments.cancellation_rate}%)
               </span>
             )}
           </div>
@@ -323,7 +413,7 @@ export default function AnalyticsPage() {
             <p className="text-sm font-bold text-foreground">Kelmaslik sabablari</p>
             {appointments !== null && (
               <span className="ml-auto font-numeric text-xs text-ink-muted">
-                Kelmagandi: {appointments.no_shows.toLocaleString("uz-UZ")}
+                Kelmagandi: {appointments.no_shows.toLocaleString("uz-UZ")} ({appointments.no_show_rate}%)
               </span>
             )}
           </div>
@@ -341,7 +431,7 @@ export default function AnalyticsPage() {
         </Card>
       </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className={`mb-6 grid grid-cols-1 gap-4 ${appointments?.can_view_payment_dynamics ? "lg:grid-cols-2" : ""}`}>
         <Card>
           <div className="mb-4 flex items-center gap-2">
             <BarChart3 className="h-4 w-4 text-ink-muted" />
@@ -355,6 +445,23 @@ export default function AnalyticsPage() {
             bars(appointments.by_status.map(([s, c]) => [STATUS_LABELS[s] ?? s, c]), maxStatus)
           )}
         </Card>
+
+        {appointments?.can_view_payment_dynamics && (
+          <Card>
+            <div className="mb-4 flex items-center gap-2">
+              <Wallet className="h-4 w-4 text-ink-muted" />
+              <p className="text-sm font-bold text-foreground">To‘lov holati</p>
+            </div>
+            {appointments.by_payment_status.length === 0 ? (
+              <AEmpty title="Ma'lumot yo‘q" subtitle="Bu davrda to‘lovlar yo‘q" icon={<Wallet className="h-5 w-5" />} />
+            ) : (
+              bars(
+                appointments.by_payment_status.map(([s, c]) => [PAYMENT_STATUS_LABELS[s] ?? s, c]),
+                maxPaymentStatus,
+              )
+            )}
+          </Card>
+        )}
       </div>
 
       {rows === null ? (

@@ -1,11 +1,18 @@
 import type { NextRequest } from "next/server";
+import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRoles } from "@/lib/auth/guards";
-import { handleApiError, ok } from "@/lib/api/errors";
+import { handleApiError, ApiError, ok } from "@/lib/api/errors";
+import { parseBody, uuidSchema } from "@/lib/api/validate";
 
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 25;
+
+const notesSchema = z.object({
+  patientId: uuidSchema,
+  operationalNotes: z.string().max(1000).trim(),
+});
 
 /**
  * Patient directory for one clinic (management/operational staff).
@@ -30,7 +37,7 @@ export async function GET(request: NextRequest) {
       const { data: patient, error: patientError } = await supabase
         .from("patients")
         .select(
-          "id, full_name, phone, telegram_username, telegram_first_name, telegram_last_name, consent_given, consent_given_at, last_seen_at, created_at",
+          "id, full_name, phone, telegram_username, telegram_first_name, telegram_last_name, consent_given, consent_given_at, last_seen_at, created_at, operational_notes",
         )
         .eq("id", detailId)
         .eq("clinic_id", staff.clinicId)
@@ -90,6 +97,34 @@ export async function GET(request: NextRequest) {
     }));
 
     return ok({ patients, total: count ?? 0, page, pageSize: PAGE_SIZE });
+  } catch (e) {
+    return handleApiError(e);
+  }
+}
+
+/**
+ * Updates a patient's operational note — front-desk logistics only (e.g.
+ * preferred appointment times, communication constraints), never a
+ * clinical/diagnostic record. Same operational-staff roles as the list/
+ * detail GET above.
+ */
+export async function PATCH(request: NextRequest) {
+  try {
+    const staff = await requireRoles("owner", "admin", "manager", "receptionist");
+    const body = await parseBody(request, notesSchema);
+    const supabase = createAdminClient();
+
+    const { data, error } = await supabase
+      .from("patients")
+      .update({ operational_notes: body.operationalNotes || null })
+      .eq("id", body.patientId)
+      .eq("clinic_id", staff.clinicId)
+      .select("id, operational_notes")
+      .maybeSingle();
+    if (error) throw new ApiError(500, "Izohni saqlab bo‘lmadi");
+    if (!data) throw new ApiError(404, "Bemor topilmadi", "patient_not_found");
+
+    return ok({ patient: data });
   } catch (e) {
     return handleApiError(e);
   }

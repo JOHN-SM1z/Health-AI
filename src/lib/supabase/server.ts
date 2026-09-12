@@ -1,6 +1,7 @@
 import "server-only";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { ApiError } from "@/lib/api/errors";
 import type { Database } from "./database.types";
 
 /**
@@ -15,7 +16,7 @@ export async function createStaffClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
   if (!url || !anonKey) {
-    throw new Error("Supabase server client requires NEXT_PUBLIC_SUPABASE_URL (or SUPABASE_URL) and NEXT_PUBLIC_SUPABASE_ANON_KEY (or SUPABASE_ANON_KEY)");
+    throw new ApiError(500, "Server konfiguratsiyasi to‘liq emas: Supabase URL yoki kalit topilmadi", "config_missing");
   }
 
   return createServerClient<Database>(url, anonKey, {

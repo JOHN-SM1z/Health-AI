@@ -7,6 +7,14 @@ const nextConfig: NextConfig = {
   // emits. Vercel uses its own serverless pipeline, so disable it there.
   output: process.env.VERCEL ? undefined : "standalone",
   poweredByHeader: false,
+  async redirects() {
+    return [
+      // Onboarding docs and the owner-bootstrap script point staff at
+      // /admin/login (a conventional admin-panel URL); the real page lives
+      // at /login. Alias it here instead of rewriting every doc.
+      { source: "/admin/login", destination: "/login", permanent: false },
+    ];
+  },
   async headers() {
     const telegramCsp = "frame-ancestors 'self' https://t.me https://telegram.me https://web.telegram.org https://*.telegram.org";
     return [

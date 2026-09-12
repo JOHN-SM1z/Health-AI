@@ -1329,6 +1329,12 @@ begin
 end;
 $$;
 
+-- Server-only: granting service_role is not enough on its own. PostgreSQL
+-- gives every new function EXECUTE to PUBLIC, and Supabase additionally grants
+-- anon/authenticated on public functions, so without these revokes a fresh
+-- install is reachable unauthenticated at /rest/v1/rpc/ with the publishable
+-- anon key (see 20260912000001_server_only_rpc_grants.sql).
+revoke execute on function public.claim_due_notification_jobs(int) from public, anon, authenticated;
 grant execute on function public.claim_due_notification_jobs(int) to service_role;
 
 -- ---------- 4. Atomic webhook claim ----------
@@ -1377,6 +1383,11 @@ as $$
   where source = p_source and external_id = p_external_id and status = 'processing';
 $$;
 
+-- Server-only: see the note on claim_due_notification_jobs above — the revokes
+-- are what actually keep these off the public PostgREST surface.
+revoke execute on function public.claim_webhook_update(text, text) from public, anon, authenticated;
+revoke execute on function public.finish_webhook_update(text, text) from public, anon, authenticated;
+revoke execute on function public.release_webhook_update(text, text) from public, anon, authenticated;
 grant execute on function public.claim_webhook_update(text, text) to service_role;
 grant execute on function public.finish_webhook_update(text, text) to service_role;
 grant execute on function public.release_webhook_update(text, text) to service_role;
@@ -1890,6 +1901,516 @@ create index notification_jobs_appointment_pending_idx
   where status = 'pending';
 
 -- =====================================================================
+-- FILE: 20260818000022_clinic_telegram_integrations_tenancy.sql
+-- =====================================================================
+-- 0022: Per-clinic Telegram bot integrations + tenancy/analytics indexes.
+--
+-- Multi-tenancy foundation for clinic-specific Telegram bots:
+--   * clinic_telegram_integrations — one row per clinic holding the clinic's
+--     own bot token (server-side only). RLS is enabled with NO policies, so
+--     only the service role (server-side code) can read or write it. Tokens
+--     are NEVER exposed to browser code through SQL.
+--   * Supplementary indexes for conversation center, appointment
+--     filtering/source analytics, revenue aggregation, patient identity
+--     matching, and schedule lookups.
+
+create type public.telegram_bot_status as enum ('disabled', 'active', 'error');
+
+create table public.clinic_telegram_integrations (
+  clinic_id uuid primary key references public.clinics(id) on delete cascade,
+  -- Bot credentials, server-side only. Never returned to browser code.
+  telegram_bot_token text,
+  -- Bot identity resolved via Telegram getMe at activation time.
+  telegram_bot_id bigint,
+  telegram_username text,
+  telegram_bot_name text,
+  status public.telegram_bot_status not null default 'disabled',
+  -- Telegram webhook state for this clinic's bot.
+  webhook_status text,
+  webhook_error text,
+  last_error text,
+  validated_at timestamptz,
+  enabled boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.clinic_telegram_integrations enable row level security;
+
+-- No RLS policies: the table is intentionally service-role-only. The owner
+-- dashboard writes and reads it through server API routes that authorize the
+-- caller first (requireStaff owner/manager) and never pass the raw token to
+-- the browser.
+
+-- ---------- Tenancy / analytics / identity indexes ----------
+
+-- Conversation center: clinic-scoped lists sorted by last activity.
+create index conversations_clinic_last_message_idx
+  on public.conversations (clinic_id, last_message_at desc)
+  where last_message_at is not null;
+
+-- Appointment filtering and analytics (status lists, source analysis).
+create index appointments_clinic_status_start_idx
+  on public.appointments (clinic_id, status, start_at);
+
+create index appointments_clinic_source_start_idx
+  on public.appointments (clinic_id, source, start_at);
+
+-- Revenue aggregation: paid payments per clinic.
+create index payments_clinic_paid_at_idx
+  on public.payments (clinic_id, paid_at)
+  where status = 'paid';
+
+-- Patient identity matching (phone fallback for web/manual bookings).
+create index patients_clinic_phone_idx
+  on public.patients (clinic_id, phone)
+  where phone is not null;
+
+-- Schedule lookups by clinic (availability computation across doctors).
+create index doctor_working_hours_clinic_idx
+  on public.doctor_working_hours (clinic_id, doctor_id, weekday);
+
+-- Bot dispatch: which bot token serves a clinic (Phase 3 lookup path).
+create index clinic_telegram_integrations_enabled_idx
+  on public.clinic_telegram_integrations (enabled)
+  where enabled;
+-- =====================================================================
+-- FILE: 20260818000023_role_based_authorization.sql
+-- =====================================================================
+-- 0023: Role-based authorization — roles and platform-admin schema.
+--
+-- The original role model had only owner/admin/doctor. This migration adds:
+--   * manager      — same clinic operations as admin (analytics, catalog,
+--                    conversations, bot monitoring)
+--   * receptionist — appointments, patients, conversations and takeover;
+--                    NEVER revenue analytics, catalog or bot configuration
+--   * platform_admin (separate table — has no clinic, so it cannot live in
+--     staff_roles which requires clinic_id) — platform-level clinic
+--     administration; never clinic data through the browser client
+--
+-- NOTE: PostgreSQL forbids *using* a new enum value in the same migration
+-- that adds it, so all RLS policy rewrites referencing 'manager'/'receptionist'
+-- live in the follow-up migration 0024.
+
+-- ---------- 1. staff_role extensions ----------
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_enum e
+    join pg_type t on t.oid = e.enumtypid
+    where t.typname = 'staff_role' and e.enumlabel = 'manager'
+  ) then
+    alter type public.staff_role add value 'manager' before 'admin';
+  end if;
+  if not exists (
+    select 1 from pg_enum e
+    join pg_type t on t.oid = e.enumtypid
+    where t.typname = 'staff_role' and e.enumlabel = 'receptionist'
+  ) then
+    alter type public.staff_role add value 'receptionist' before 'doctor';
+  end if;
+end $$;
+
+-- ---------- 2. Platform administrators ----------
+-- No clinic_id: platform staff are not clinic staff and never see clinic
+-- data through the browser client (all platform access is server-side).
+
+create table public.platform_admins (
+  profile_id uuid primary key references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+alter table public.platform_admins enable row level security;
+
+-- The row only proves platform-admin membership to the user themselves;
+-- management (insert/delete) is service-role-only (platform routes).
+create policy "platform_admins read own"
+  on public.platform_admins for select
+  to authenticated
+  using (profile_id = auth.uid());
+
+-- No other policies: platform access is service-role-only.
+
+create or replace function public.is_platform_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (select 1 from public.platform_admins where profile_id = auth.uid());
+$$;
+
+-- =====================================================================
+-- FILE: 20260818000024_role_based_rls.sql
+-- =====================================================================
+-- 0024: Role-based RLS policy rewrites (manager, receptionist, operator).
+--
+-- Follows 0023 (roles + platform_admins). PostgreSQL forbids referencing a
+-- new enum value in the migration that adds it, so every policy that names
+-- 'manager' or 'receptionist' is created here.
+--
+-- Access matrix (spec Phase 2):
+--   Action            Owner Manager Operator Doctor
+--   View appointments  ✅     ✅      ✅      own
+--   Manual booking     ✅     ✅      ✅      ❌
+--   Conversations      ✅     ✅      ✅      ❌
+--   Takeover           ✅     ✅      ✅      ❌
+--   Revenue analytics  ✅     ✅      ❌      ❌
+--   Manage doctors     ✅     ✅      ❌      ❌
+--   Manage Telegram    ✅     ✅      ❌      ❌
+--   Platform clinics   ❌     ❌      ❌      ❌
+
+-- ---------- 3. RLS policy generalization ----------
+-- Owner/admin/manager manage the catalog and clinic settings; receptionist
+-- gets operational powers (appointments, patients, conversations) only.
+
+-- specialties
+drop policy if exists "specialties write for admin owner" on public.specialties;
+create policy "specialties write for management"
+  on public.specialties for all
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+-- services
+drop policy if exists "services write for admin owner" on public.services;
+create policy "services write for management"
+  on public.services for all
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+-- doctors
+drop policy if exists "doctors write for admin owner" on public.doctors;
+create policy "doctors write for management"
+  on public.doctors for all
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+-- doctor_services
+drop policy if exists "doctor_services write for admin owner" on public.doctor_services;
+create policy "doctor_services write for management"
+  on public.doctor_services for all
+  to authenticated
+  using (public.is_clinic_staff((
+    select d.clinic_id from public.doctors d where d.id = doctor_services.doctor_id
+  ), array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]))
+  with check (public.is_clinic_staff((
+    select d.clinic_id from public.doctors d where d.id = doctor_services.doctor_id
+  ), array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+-- working hours
+drop policy if exists "working_hours write for admin owner" on public.doctor_working_hours;
+create policy "working_hours write for management"
+  on public.doctor_working_hours for all
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+-- time blocks (doctor self-service already handled by the API + status-only trigger)
+drop policy if exists "time_blocks write for admin owner" on public.doctor_time_blocks;
+create policy "time_blocks write for management"
+  on public.doctor_time_blocks for all
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+-- faqs
+drop policy if exists "faqs write for admin owner" on public.faq_entries;
+create policy "faqs write for management"
+  on public.faq_entries for all
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+-- app_settings
+drop policy if exists "settings write for admin owner" on public.app_settings;
+create policy "settings write for management"
+  on public.app_settings for all
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+-- ---------- 4. Operational roles (receptionist) ----------
+
+-- appointments: receptionists read, create (manual booking) and update
+-- (status actions) appointments; doctors keep own-appointment read + status-only update.
+drop policy if exists "appointments read for admin owner" on public.appointments;
+create policy "appointments read for staff"
+  on public.appointments for select
+  to authenticated
+  using (
+    public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role])
+    or exists (
+      select 1 from public.staff_roles sr
+      join public.doctors d on d.profile_id = sr.profile_id
+      where sr.profile_id = auth.uid()
+        and sr.role = 'doctor'::public.staff_role
+        and sr.clinic_id = appointments.clinic_id
+        and d.id = appointments.doctor_id
+    )
+  );
+
+drop policy if exists "appointments write for admin owner" on public.appointments;
+create policy "appointments insert for operational staff"
+  on public.appointments for insert
+  to authenticated
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role]));
+
+drop policy if exists "appointments update for admin owner" on public.appointments;
+create policy "appointments update for operational staff"
+  on public.appointments for update
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role]));
+
+-- patients: receptionists manage walk-in patients (read/insert/update).
+drop policy if exists "patients read for admin owner" on public.patients;
+create policy "patients read for operational staff"
+  on public.patients for select
+  to authenticated
+  using (
+    public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role])
+    or exists (
+      select 1 from public.staff_roles sr
+      join public.doctors d on d.profile_id = sr.profile_id
+      join public.appointments a on a.doctor_id = d.id and a.patient_id = patients.id
+      where sr.profile_id = auth.uid()
+        and sr.role = 'doctor'::public.staff_role
+        and sr.clinic_id = patients.clinic_id
+    )
+  );
+
+drop policy if exists "patients update for admin owner" on public.patients;
+create policy "patients update for operational staff"
+  on public.patients for update
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role]));
+
+drop policy if exists "patients insert for admin owner" on public.patients;
+create policy "patients insert for operational staff"
+  on public.patients for insert
+  to authenticated
+  with check (
+    public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role])
+    and telegram_user_id is null
+  );
+
+-- conversations: operational staff read and update (takeover); messages reply.
+drop policy if exists "conversations read for staff" on public.conversations;
+create policy "conversations read for operational staff"
+  on public.conversations for select
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role]));
+
+drop policy if exists "conversations update for admin owner" on public.conversations;
+create policy "conversations update for operational staff"
+  on public.conversations for update
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role]));
+
+drop policy if exists "conversations insert for admin owner" on public.conversations;
+create policy "conversations insert for operational staff"
+  on public.conversations for insert
+  to authenticated
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role]));
+
+drop policy if exists "messages read for staff" on public.messages;
+create policy "messages read for operational staff"
+  on public.messages for select
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role]));
+
+drop policy if exists "messages insert for admin owner" on public.messages;
+create policy "messages insert for operational staff"
+  on public.messages for insert
+  to authenticated
+  with check (
+    public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role])
+    and role = 'admin'::public.message_role
+    and exists (
+      select 1 from public.conversations c
+      where c.id = conversation_id and c.clinic_id = clinic_id
+    )
+  );
+
+-- voice messages: read + reply inserts for operational staff.
+drop policy if exists "voice_messages read for staff" on public.voice_messages;
+create policy "voice_messages read for operational staff"
+  on public.voice_messages for select
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role]));
+
+drop policy if exists "voice_messages insert for admin owner" on public.voice_messages;
+create policy "voice_messages insert for operational staff"
+  on public.voice_messages for insert
+  to authenticated
+  with check (
+    public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role])
+    and exists (
+      select 1 from public.conversations c
+      where c.id = conversation_id and c.clinic_id = clinic_id
+    )
+  );
+
+drop policy if exists "voice_messages update for admin owner" on public.voice_messages;
+create policy "voice_messages update for management"
+  on public.voice_messages for update
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+-- payments: operational staff see payment STATUS (desk check-in); only
+-- management can update payments. Aggregated revenue analytics are
+-- additionally restricted at the API layer (owner/manager only).
+drop policy if exists "payments read for staff" on public.payments;
+create policy "payments read for operational staff"
+  on public.payments for select
+  to authenticated
+  using (
+    public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role, 'receptionist'::public.staff_role])
+    or exists (
+      select 1 from public.staff_roles sr
+      join public.doctors d on d.profile_id = sr.profile_id
+      join public.appointments a on a.id = payments.appointment_id and a.doctor_id = d.id
+      where sr.profile_id = auth.uid()
+        and sr.role = 'doctor'::public.staff_role
+        and sr.clinic_id = payments.clinic_id
+    )
+  );
+
+drop policy if exists "payments update for admin owner" on public.payments;
+create policy "payments update for management"
+  on public.payments for update
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+drop policy if exists "payments insert for admin owner" on public.payments;
+create policy "payments insert for management"
+  on public.payments for insert
+  to authenticated
+  with check (
+    public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role])
+    and exists (
+      select 1 from public.appointments a
+      where a.id = appointment_id and a.clinic_id = clinic_id
+    )
+  );
+
+-- ---------- 5. Analytics / audit / notifications: management only ----------
+
+drop policy if exists "analytics read for admin owner" on public.analytics_events;
+create policy "analytics read for management"
+  on public.analytics_events for select
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+drop policy if exists "audit read for admin owner" on public.audit_events;
+create policy "audit read for management"
+  on public.audit_events for select
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+drop policy if exists "notification_jobs read for admin owner" on public.notification_jobs;
+create policy "notification_jobs read for management"
+  on public.notification_jobs for select
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+drop policy if exists "notification_jobs update for admin owner" on public.notification_jobs;
+create policy "notification_jobs update for management"
+  on public.notification_jobs for update
+  to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]))
+  with check (public.is_clinic_staff(clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role]));
+
+-- ---------- 6. Owner-only stays owner-only ----------
+-- clinics update, staff_roles management, storage uploads, storage reads.
+
+drop policy if exists "voice-messages staff upload" on storage.objects;
+create policy "voice-messages staff upload"
+  on storage.objects
+  for insert
+  to authenticated
+  with check (
+    bucket_id = 'voice-messages'
+    and exists (
+      select 1 from public.staff_roles sr
+      where sr.profile_id = auth.uid()
+        and sr.clinic_id::text = (storage.foldername(name))[1]
+        and sr.role = any (array['owner'::public.staff_role, 'admin'::public.staff_role, 'manager'::public.staff_role])
+    )
+  );
+
+-- =====================================================================
+-- FILE: 20260818000025_no_show_reasons_and_read_tracking.sql
+-- =====================================================================
+-- Audit remediation: no-show reasons + conversation read tracking.
+-- 1) appointments.no_show_reason — staff record why a patient missed the
+--    appointment; surfaced in management analytics like cancellation reasons.
+alter table public.appointments
+  add column no_show_reason text;
+
+comment on column public.appointments.no_show_reason is
+  'Reason recorded by staff when an appointment is marked as a no-show';
+
+-- 2) conversations.admin_seen_at — last time an operator viewed the
+--    conversation; patient messages after this timestamp are unread and
+--    drive unread badges in the admin conversation center.
+alter table public.conversations
+  add column admin_seen_at timestamptz;
+
+comment on column public.conversations.admin_seen_at is
+  'Last time an operator viewed this conversation; patient messages after this are unread';
+
+-- 3) Doctors may only update the status column of their own appointments.
+--    no_show_reason is a staff-managed field, so it must NOT be settable by a
+--    doctor session (their own route only ever touches status).
+create or replace function public.appointments_doctor_status_only()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- Server-side code (service role, no JWT) and owner/admin sessions are
+  -- unrestricted. coalesce() matters: without JWT claims auth.role() is NULL
+  -- and `NULL <> 'authenticated'` is NULL (false), which would wrongly apply
+  -- the doctor restriction to server-side calls.
+  if coalesce(auth.role(), '') <> 'authenticated'
+     or public.is_clinic_staff(new.clinic_id, array['owner'::public.staff_role, 'admin'::public.staff_role]) then
+    return new;
+  end if;
+
+  -- Doctor session: only the status column may change. Raise when any
+  -- non-status column changes (status itself is allowed to change).
+  -- updated_at is excluded because the set_updated_at trigger manages it.
+  if new.clinic_id is distinct from old.clinic_id
+     or new.patient_id is distinct from old.patient_id
+     or new.doctor_id is distinct from old.doctor_id
+     or new.service_id is distinct from old.service_id
+     or new.start_at is distinct from old.start_at
+     or new.end_at is distinct from old.end_at
+     or new.source is distinct from old.source
+     or new.notes is distinct from old.notes
+     or new.cancelled_at is distinct from old.cancelled_at
+     or new.cancelled_reason is distinct from old.cancelled_reason
+     or new.cancelled_by is distinct from old.cancelled_by
+     or new.no_show_reason is distinct from old.no_show_reason
+     or new.created_by is distinct from old.created_by then
+    raise exception 'Doctors may only update the status of their own appointments';
+  end if;
+
+  return new;
+end;
+$$;
+-- =====================================================================
 -- FILE: 20260821000001_telegram_integration_constraint_and_seed_resilience.sql
 -- =====================================================================
 -- 0026: Constraint + seed resilience fixes.
@@ -1904,6 +2425,7 @@ create index notification_jobs_appointment_pending_idx
 
 -- ---------- 1. Telegram integration constraint ----------
 
+-- Guard: only fire when enabled is being set to true.
 create or replace function public.clinic_telegram_integrations_check_token()
 returns trigger
 language plpgsql
@@ -1923,8 +2445,12 @@ create trigger clinic_telegram_integrations_check_token
   before insert or update on public.clinic_telegram_integrations
   for each row execute function public.clinic_telegram_integrations_check_token();
 
+comment on function public.clinic_telegram_integrations_check_token() is
+  'Ensures a Telegram integration cannot be enabled without a bot token';
+
 -- ---------- 2. Remove unused conversation_status.released ----------
 
+-- Step 1: Create new enum without 'released'
 do $$
 begin
   if not exists (
@@ -1937,8 +2463,15 @@ begin
   end if;
 end $$;
 
+-- Step 2: Drop default, migrate column type, re-add default
+-- The DEFAULT is typed to the old enum; PostgreSQL can't auto-cast it.
 ALTER TABLE public.conversations ALTER COLUMN status DROP DEFAULT;
 
+-- Drop objects that reference the old enum type before altering.
+DROP TRIGGER IF EXISTS conversations_set_updated_at ON public.conversations;
+DROP INDEX IF EXISTS public.conversations_active_one_per_patient;
+
+-- Two-step: first to text, then to new enum type.
 ALTER TABLE public.conversations
   ALTER COLUMN status TYPE text
   USING (status::text);
@@ -1954,11 +2487,302 @@ ALTER TABLE public.conversations
 
 ALTER TABLE public.conversations ALTER COLUMN status SET DEFAULT 'open'::public.conversation_status_v2;
 
+-- Re-create the updated_at trigger.
+CREATE TRIGGER conversations_set_updated_at
+  BEFORE UPDATE ON public.conversations
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Step 3: Drop old type and rename new
 ALTER TYPE public.conversation_status RENAME TO conversation_status_old;
 ALTER TYPE public.conversation_status_v2 RENAME TO conversation_status;
 DROP TYPE public.conversation_status_old;
 
+-- Step 4: Update the partial unique index (was based on the old type)
 DROP INDEX IF EXISTS public.conversations_active_one_per_patient;
 CREATE UNIQUE INDEX conversations_active_one_per_patient
   ON public.conversations (patient_id, channel)
   WHERE status IN ('open', 'assigned');
+
+-- =====================================================================
+-- FILE: 20260822000001_payments_server_managed.sql
+-- =====================================================================
+-- 0027: Payments become fully server-managed (audit finding, Phase 2).
+--
+-- Problem: the "payments update for management" RLS policy (0024) only
+-- checks clinic membership + role (owner/admin/manager) — it places no
+-- constraint on which columns or values can be written. Any management
+-- role's authenticated (browser) session can therefore issue a raw
+-- `supabase.from("payments").update({ status: "paid" })` and it succeeds,
+-- completely bypassing transitionPaymentStatus() (src/lib/payments/status.ts)
+-- — its legal-transition check, audit trail, and paid_at/paid_by bookkeeping.
+-- This directly contradicts AGENTS.md: "Payment status is server-controlled.
+-- A browser request can never mark payment as paid." It was previously
+-- provable via the codebase's own test suite (role-authorization.test.ts,
+-- "manager updates payments" asserted this write as *passing*).
+--
+-- A repo-wide grep confirms zero legitimate call sites update `payments`
+-- via anything but the service-role client (every real mutation flows
+-- through transitionPaymentStatus()). So rather than allow-listing "safe"
+-- columns (the appointments_doctor_status_only pattern, needed there
+-- because doctors legitimately change one column), this blocks direct
+-- authenticated writes to `payments` outright — service-role (no JWT) is
+-- untouched, exactly like the existing appointments_doctor_status_only
+-- trigger's server-side bypass.
+--
+-- Reversible: `drop trigger payments_block_direct_write on public.payments;
+-- drop function public.payments_block_direct_write();` in a follow-up
+-- migration. Safe for existing records: only fires on UPDATE, never
+-- touches existing rows, and never affects service-role (server API)
+-- writes — the only path that has ever legitimately written this table.
+
+create or replace function public.payments_block_direct_write()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- Server-side code (service role, no JWT) is unrestricted — this is the
+  -- ONLY legitimate path for a payment write. coalesce() matters: without
+  -- JWT claims auth.role() is NULL, and `NULL <> 'authenticated'` is NULL
+  -- (false), which would wrongly apply this restriction to server-side
+  -- calls (mirrors appointments_doctor_status_only's guard, 20260818000025).
+  if coalesce(auth.role(), '') <> 'authenticated' then
+    return new;
+  end if;
+
+  -- No authenticated staff session — owner, admin, or manager — has any
+  -- legitimate reason to update a payment row directly; every real
+  -- mutation goes through the server-side payment API
+  -- (transitionPaymentStatus()), which applies the legal-transition check,
+  -- audit trail and idempotency this trigger cannot recreate. Block
+  -- outright rather than allow-listing columns.
+  raise exception 'Payments are server-managed; use the payment API';
+end;
+$$;
+
+drop trigger if exists payments_block_direct_write on public.payments;
+create trigger payments_block_direct_write
+  before update on public.payments
+  for each row execute function public.payments_block_direct_write();
+
+comment on function public.payments_block_direct_write() is
+  'Blocks any authenticated-session UPDATE on payments; only the service-role payment API (transitionPaymentStatus) may write this table.';
+
+-- =====================================================================
+-- FILE: 20260822000002_tenancy_hardening.sql
+-- =====================================================================
+-- 0028: Multi-tenancy hardening pass (audit findings, Phase 2).
+--
+-- Bundles four independent, additive fixes from the DB/RLS audit:
+--   1. doctor_services cross-tenant consistency trigger
+--   2. drop redundant duplicate RLS policies (dead since 0024)
+--   3. missing index on staff_roles(profile_id) — hot path, every
+--      authenticated request resolves its session through this table
+--   4. UNIQUE constraint on clinic_telegram_integrations bot identity
+--      columns, added defensively (skips + warns instead of failing the
+--      migration if pre-existing duplicate data is ever found)
+--
+-- All four are safe for existing records: (1) only validates future
+-- inserts/updates, never scans existing rows; (2) removes policies whose
+-- access is already fully subsumed by 0024's combined policies (RLS
+-- SELECT policies are OR-combined, so this changes zero effective access);
+-- (3) a plain additive index; (4) explicitly guarded against failing on
+-- existing duplicates. Reversible via a follow-up migration dropping the
+-- trigger/function, indexes, and re-creating the two policies from
+-- 20260813000010_rls.sql if ever needed.
+
+-- ---------- 1. doctor_services: doctor and service must share a clinic ----------
+--
+-- doctor_services has no clinic_id of its own (junction table on
+-- doctor_id/service_id); nothing at the database layer previously stopped
+-- a row from pairing a Clinic A doctor with a Clinic B service — only one
+-- application-layer check (src/app/api/admin/services/route.ts,
+-- assertDoctorsInClinic) prevented it, and only on that one write path.
+
+create or replace function public.doctor_services_check_same_clinic()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_doctor_clinic uuid;
+  v_service_clinic uuid;
+begin
+  select clinic_id into v_doctor_clinic from public.doctors where id = new.doctor_id;
+  select clinic_id into v_service_clinic from public.services where id = new.service_id;
+  if v_doctor_clinic is null or v_service_clinic is null or v_doctor_clinic <> v_service_clinic then
+    raise exception 'doctor_services: doctor and service must belong to the same clinic';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists doctor_services_check_same_clinic on public.doctor_services;
+create trigger doctor_services_check_same_clinic
+  before insert or update on public.doctor_services
+  for each row execute function public.doctor_services_check_same_clinic();
+
+comment on function public.doctor_services_check_same_clinic() is
+  'Rejects any doctor_services row whose doctor_id and service_id resolve to different clinics — closes the one DB-layer gap in an otherwise clinic_id-scoped schema.';
+
+-- ---------- 2. Drop redundant duplicate RLS policies (dead since 0024) ----------
+--
+-- 20260818000024_role_based_rls.sql widened the admin/owner SELECT
+-- policies on patients and appointments to include manager/receptionist,
+-- and re-implemented the "own doctor" clause inline as an OR — but never
+-- dropped the original standalone policies below, leaving two policies
+-- granting the identical doctor-scope permission. Dropping the dead one
+-- changes zero effective access (RLS SELECT policies are OR-combined).
+
+drop policy if exists "patients read for own doctor" on public.patients;
+drop policy if exists "appointments read for own doctor" on public.appointments;
+
+-- ---------- 3. Missing index: staff_roles(profile_id) ----------
+--
+-- getStaffContext() (src/lib/auth/staff.ts) — resolved on every
+-- authenticated admin/doctor/platform request via requireStaff/
+-- requireRoles/requirePlatformAdmin — filters staff_roles by profile_id
+-- alone. The only existing index is the composite unique(clinic_id,
+-- profile_id), whose leading column is clinic_id, so it cannot serve a
+-- profile_id-only lookup efficiently.
+
+create index if not exists staff_roles_profile_id_idx on public.staff_roles (profile_id);
+
+-- ---------- 4. clinic_telegram_integrations bot-identity uniqueness ----------
+--
+-- resolveClinicByBotUsername() (src/lib/telegram/bots.ts), called on
+-- every incoming Telegram webhook, does .eq("telegram_username",
+-- normalized).maybeSingle() — which requires at most one matching row.
+-- No constraint previously enforced that. If two clinics ever shared a
+-- telegram_username/telegram_bot_id (e.g. an operator reusing a bot
+-- token), PostgREST's singular-row requirement would be violated and
+-- webhook routing would silently break for both affected clinics with no
+-- visible dashboard error. Guarded with a duplicate check first so this
+-- migration cannot fail outright on unexpected existing data — it skips
+-- and logs a notice instead, leaving the constraint to be added once any
+-- conflict is resolved.
+
+do $$
+declare
+  v_dup_count int;
+begin
+  select count(*) into v_dup_count from (
+    select telegram_username from public.clinic_telegram_integrations
+    where telegram_username is not null
+    group by telegram_username having count(*) > 1
+  ) d;
+  if v_dup_count > 0 then
+    raise notice 'Skipping UNIQUE(telegram_username) on clinic_telegram_integrations: % duplicate value(s) exist — resolve manually, then add the constraint in a follow-up migration', v_dup_count;
+  elsif not exists (select 1 from pg_indexes where indexname = 'clinic_telegram_integrations_username_key') then
+    create unique index clinic_telegram_integrations_username_key
+      on public.clinic_telegram_integrations (telegram_username)
+      where telegram_username is not null;
+  end if;
+end $$;
+
+do $$
+declare
+  v_dup_count int;
+begin
+  select count(*) into v_dup_count from (
+    select telegram_bot_id from public.clinic_telegram_integrations
+    where telegram_bot_id is not null
+    group by telegram_bot_id having count(*) > 1
+  ) d;
+  if v_dup_count > 0 then
+    raise notice 'Skipping UNIQUE(telegram_bot_id) on clinic_telegram_integrations: % duplicate value(s) exist — resolve manually, then add the constraint in a follow-up migration', v_dup_count;
+  elsif not exists (select 1 from pg_indexes where indexname = 'clinic_telegram_integrations_bot_id_key') then
+    create unique index clinic_telegram_integrations_bot_id_key
+      on public.clinic_telegram_integrations (telegram_bot_id)
+      where telegram_bot_id is not null;
+  end if;
+end $$;
+
+-- =====================================================================
+-- FILE: 20260910000001_webhook_claim_recovery.sql
+-- =====================================================================
+-- 0030: Recover orphaned Telegram webhook idempotency claims (Phase 3
+-- Telegram audit).
+--
+-- claim_webhook_update() inserts a 'processing' row and nothing revisits it
+-- unless the SAME request's own try/catch later calls
+-- release_webhook_update() (on a thrown error) or finish_webhook_update()
+-- (on success) — see src/app/api/telegram/webhook/route.ts. If the
+-- serverless function is killed mid-request before either runs (the route's
+-- own maxDuration=60 timeout, an OOM, a mid-deploy restart, a hung outbound
+-- fetch with no client-side timeout), the row is stuck at
+-- status='processing' forever: Telegram's automatic retry of that
+-- update_id then finds claim_webhook_update() returning false (ON CONFLICT
+-- DO NOTHING sees the existing row) and the webhook route reports it as an
+-- already-handled duplicate. The update is never actually processed and
+-- the patient's message is silently dropped, with no further retry from
+-- either side.
+--
+-- Fix: a claim still 'processing' after 5 minutes is treated as abandoned
+-- and becomes reclaimable. Real handlers complete in low single-digit
+-- seconds; 5 minutes is comfortably past the route's own 60s hard cutoff
+-- (so it never reclaims a request that could still legitimately be
+-- running) while short enough that a genuinely stuck message recovers on
+-- Telegram's own webhook retry instead of being lost forever. Purely
+-- additive to the existing INSERT .. ON CONFLICT DO NOTHING claim: the
+-- concurrent-delivery race (exactly one winner) and the
+-- already-finished-never-reprocessed guarantee are both unchanged for any
+-- claim inside the 5-minute window. Reversible by restoring the prior
+-- DO NOTHING body from 20260813000014_release_blockers.sql.
+
+create or replace function public.claim_webhook_update(p_source text, p_external_id text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.processed_webhooks (source, external_id, status)
+  values (p_source, p_external_id, 'processing')
+  on conflict (source, external_id) do update
+    set status = 'processing', processed_at = now()
+  where
+    public.processed_webhooks.status = 'processing'
+    and public.processed_webhooks.processed_at < now() - interval '5 minutes';
+  return found;
+end;
+$$;
+
+comment on function public.claim_webhook_update(text, text) is
+  'Atomically claims a webhook update for processing (INSERT .. ON CONFLICT DO NOTHING semantics for a fresh or truly-concurrent id). Also reclaims a prior claim stuck in processing for over 5 minutes — an orphaned claim left by a killed/crashed request — so that update is not silently lost forever.';
+
+-- =====================================================================
+-- FILE: 20260910000002_appointment_source_web.sql
+-- =====================================================================
+-- 0031: Distinguish genuine self-service website bookings from reception
+-- walk-ins (Phase 5 booking-workflow audit).
+--
+-- api/bookings/route.ts's non-Telegram fallback (a patient booking directly
+-- through the website, with no Telegram identity at all) was tagging its
+-- appointment_source as 'walk_in' — the SAME value api/admin/appointments
+-- uses for a real front-desk walk-in a staff member enters on a patient's
+-- behalf. Analytics could not distinguish "patient booked themselves
+-- online" from "reception typed this in at the desk," even though they are
+-- different channels with different operational meaning. Adds 'web' as its
+-- own value; existing 'walk_in' rows are untouched (they remain correctly
+-- attributed to reception-entered walk-ins).
+
+alter type public.appointment_source add value if not exists 'web' after 'telegram_chat';
+
+-- =====================================================================
+-- FILE: 20260911000001_patient_operational_notes.sql
+-- =====================================================================
+-- Operational (front-desk) notes about a patient: logistics only — e.g.
+-- "prefers morning slots", "needs a translator", "hard to reach by phone".
+-- Never a clinical/diagnostic record. Editable by clinic operational staff
+-- (owner/admin/manager/receptionist) via the service-role API route only;
+-- no new RLS policy is needed since it is a column on an already row-level
+-- clinic/role-scoped table.
+alter table public.patients
+  add column operational_notes text;
+
+alter table public.patients
+  add constraint patients_operational_notes_length
+  check (operational_notes is null or char_length(operational_notes) <= 1000);

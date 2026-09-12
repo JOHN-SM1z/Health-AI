@@ -39,10 +39,14 @@ export function clinicDateKey(tz: string, at: Date): string {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-/** Clinic-local day window for `tz`, e.g. 00:00–24:00 in Asia/Tashkent. */
-export function localDayWindow(tz: string, now = new Date()): { start: string; end: string } {
-  const ymd = clinicDateKey(tz, now);
+/** Clinic-local day window for the given "YYYY-MM-DD" calendar date in `tz`. */
+export function localDayWindowForDate(tz: string, ymd: string): { start: string; end: string } {
   const nominalStart = Date.parse(`${ymd}T00:00:00Z`);
   const start = new Date(nominalStart - tzOffsetMinutes(tz, new Date(nominalStart)) * 60000);
   return { start: start.toISOString(), end: new Date(start.getTime() + 86400000).toISOString() };
+}
+
+/** Clinic-local day window for `tz`, e.g. 00:00–24:00 in Asia/Tashkent. */
+export function localDayWindow(tz: string, now = new Date()): { start: string; end: string } {
+  return localDayWindowForDate(tz, clinicDateKey(tz, now));
 }
