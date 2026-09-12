@@ -1,10 +1,11 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { adminChatIds } from "@/lib/env";
+import { adminChatIds, env } from "@/lib/env";
 import { getClinicById } from "@/lib/clinics/context";
 import { getOrCreatePatient } from "@/lib/patients/identity";
 import { getOrCreateConversation, appendMessage, conversationIsHeld, updateConversationState } from "@/lib/telegram/store";
 import { sendTelegramMessage, getTelegramFileUrl } from "@/lib/telegram/bot";
+import { appUrlCandidates, resolveHttpsAppUrl } from "@/lib/telegram/bots";
 import { generateReceptionistReply } from "@/lib/ai/receptionist";
 import { startNavigation, suggestNavigation, NAVIGATION_STATE_KEY } from "@/lib/ai/navigation";
 import { trackAnalytics } from "@/lib/analytics";
@@ -13,25 +14,33 @@ import { logger } from "@/lib/logger";
 import { getTranscriptionProvider } from "@/lib/transcription/provider";
 
 /**
- * Booking link for a clinic, or null when NEXT_PUBLIC_APP_URL is unset or
- * not an absolute URL. Supports the t.me deep-link form — tapping it opens
- * the Mini App inside Telegram with valid initData. The clinic is embedded
- * so the Mini App opens the right tenant. The startapp=booking marker lets
- * the booking page attribute the booking to the bot-chat deep link
- * (appointment_source = telegram_chat) instead of the menu web_app button
- * (telegram_mini_app).
+ * Booking link for a clinic, or null when no usable app address is
+ * configured (see appUrlCandidates in bots.ts — NEXT_PUBLIC_APP_URL, then
+ * Vercel's own platform-provided deployment URL, in that order). Supports
+ * the t.me deep-link form — tapping it opens the Mini App inside Telegram
+ * with valid initData — as an explicit escape hatch: it only ever comes
+ * from a literally-configured NEXT_PUBLIC_APP_URL, never an inferred
+ * platform URL, since a Vercel address is never itself a t.me link. The
+ * clinic is embedded so the Mini App opens the right tenant. The
+ * startapp=booking marker lets the booking page attribute the booking to
+ * the bot-chat deep link (appointment_source = telegram_chat) instead of
+ * the menu web_app button (telegram_mini_app).
  */
 const bookingLink = (clinicId: string): string | null => {
-  const base = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
-  if (!base) return null;
-  if (base === "https://t.me" || base.startsWith("https://t.me/")) return base;
-  try {
-    const url = new URL(`${base}/book?clinic=${encodeURIComponent(clinicId)}`);
-    url.searchParams.set("startapp", "booking");
-    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
-  } catch {
-    return null;
+  const configured = env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
+  if (configured === "https://t.me" || configured.startsWith("https://t.me/")) return configured;
+  for (const base of appUrlCandidates()) {
+    const trimmed = base.trim();
+    if (!trimmed) continue;
+    try {
+      const url = new URL(`${trimmed}/book?clinic=${encodeURIComponent(clinicId)}`);
+      url.searchParams.set("startapp", "booking");
+      if (url.protocol === "https:" || url.protocol === "http:") return url.toString();
+    } catch {
+      // Malformed candidate — try the next one.
+    }
   }
+  return null;
 };
 
 /**
@@ -39,19 +48,13 @@ const bookingLink = (clinicId: string): string | null => {
  * unavailable. Telegram rejects the WHOLE message (BUTTON_URL_INVALID) when a
  * web_app button's domain is not whitelisted in @BotFather, so the button is
  * only attached when an HTTPS app URL is configured (never for a t.me
- * deep-link base). sendTelegramMessage still downgrades it to a plain text
- * button if Telegram rejects it anyway, so the menu always renders.
+ * deep-link base — excluded by resolveHttpsAppUrl's https-only check).
+ * sendTelegramMessage still downgrades it to a plain text (or, for an inline
+ * keyboard, a plain link) button if Telegram rejects it anyway, so the menu
+ * always renders.
  */
-const webAppUrl = (clinicId: string): string | null => {
-  const base = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
-  if (!base || base === "https://t.me" || base.startsWith("https://t.me/")) return null;
-  try {
-    const url = new URL(`${base}/book?clinic=${encodeURIComponent(clinicId)}`);
-    return url.protocol === "https:" ? url.toString() : null;
-  } catch {
-    return null;
-  }
-};
+const webAppUrl = (clinicId: string): string | null =>
+  resolveHttpsAppUrl(`/book?clinic=${encodeURIComponent(clinicId)}`);
 
 /**
  * Reply keyboard for the main menu of a clinic. The booking button is a

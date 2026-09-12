@@ -117,35 +117,70 @@ export function timingSafeCheck(a: string | null | undefined, b: string | null |
   return timingSafeEqual(bufA, bufB);
 }
 
-function httpsWebhookUrl(base: string, username: string): string | null {
-  const trimmed = base.trim();
-  if (!trimmed) return null;
-  try {
-    const url = new URL(`/api/telegram/webhook?bot=${encodeURIComponent(username)}`, trimmed);
-    return url.protocol === "https:" ? url.toString() : null;
-  } catch {
-    return null;
-  }
+/**
+ * Every source this deployment's own public address could come from, in
+ * priority order:
+ *
+ *  1. NEXT_PUBLIC_APP_URL — an explicit custom domain always wins.
+ *  2. VERCEL_PROJECT_PRODUCTION_URL — Vercel's own stable production alias,
+ *     set automatically with zero configuration on every Vercel deployment.
+ *  3. VERCEL_URL — the current deployment's own address, same platform
+ *     guarantee, one rung further from "canonical" (a preview deploy has one
+ *     too), used only if the production alias isn't available for some reason.
+ *  4. requestOrigin — the public origin of the request that's asking, when
+ *     the caller has one (e.g. the activation endpoint always does; ongoing
+ *     bot message handling never does).
+ *
+ * This is deliberately NOT limited to "when NEXT_PUBLIC_APP_URL is unset":
+ * a real incident (2026-09-12) showed an operator setting it correctly in
+ * the Vercel dashboard is not the same as it actually being live in the
+ * running deployment — the variable can be saved for the wrong environment,
+ * or saved but never picked up because NEXT_PUBLIC_* values are inlined at
+ * *build* time and no new build ran. Vercel's own platform env vars need no
+ * such manual step at all, so a forgotten or stale NEXT_PUBLIC_APP_URL can
+ * no longer permanently strand webhook registration or the Mini App button
+ * on a Vercel deployment — which is exactly where this app is deployed.
+ */
+export function appUrlCandidates(requestOrigin?: string | null): string[] {
+  return [
+    env.NEXT_PUBLIC_APP_URL ?? "",
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "",
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "",
+    requestOrigin ?? "",
+  ];
 }
 
 /**
- * Webhook URL a clinic's bot must be registered with.
+ * Builds an absolute HTTPS URL for `path` against the first candidate base
+ * (see appUrlCandidates) that yields one. Telegram rejects both webhook and
+ * web_app URLs outright when they aren't HTTPS, so this is never relaxed to
+ * allow http: — a local http://localhost candidate correctly yields null.
  *
- * NEXT_PUBLIC_APP_URL wins when it is a usable HTTPS URL — it is the
- * deployment's canonical address, which may be a custom domain rather than
- * whichever host an operator happens to be browsing. `requestOrigin` (the
- * public origin of the activation request itself) is only a fallback, for
- * when that variable is unset, still http://localhost from initial setup,
- * or otherwise unusable: the server demonstrably knows where it is serving
- * from, so an operator should not be locked out of activating their bot by
- * a stale env var. Still HTTPS-only either way — Telegram rejects anything
- * else, so a local http:// origin correctly yields null here.
+ * A t.me base is skipped even though it's technically valid https: NEXT_
+ * PUBLIC_APP_URL=https://t.me/<bot>/<app> is a deliberate escape hatch
+ * bookingLink() (handlers.ts) recognizes on its own as a deep link to send
+ * a patient, but neither a webhook receiver nor a web_app button can live
+ * at t.me itself — resolving one there would be nonsensical, not merely a
+ * fallback of last resort.
  */
+export function resolveHttpsAppUrl(path: string, requestOrigin?: string | null): string | null {
+  for (const base of appUrlCandidates(requestOrigin)) {
+    const trimmed = base.trim();
+    if (!trimmed || trimmed === "https://t.me" || trimmed.startsWith("https://t.me/")) continue;
+    try {
+      const url = new URL(path, trimmed);
+      if (url.protocol === "https:") return url.toString();
+    } catch {
+      // Malformed candidate (e.g. a garbled custom domain) — try the next one.
+    }
+  }
+  return null;
+}
+
+/** Webhook URL a clinic's bot must be registered with. See resolveHttpsAppUrl
+ * for the full fallback order. */
 export function botWebhookUrl(username: string, requestOrigin?: string | null): string | null {
-  return (
-    httpsWebhookUrl(env.NEXT_PUBLIC_APP_URL ?? "", username) ??
-    httpsWebhookUrl(requestOrigin ?? "", username)
-  );
+  return resolveHttpsAppUrl(`/api/telegram/webhook?bot=${encodeURIComponent(username)}`, requestOrigin);
 }
 
 /** Registers/refreshes the webhook for a bot. Idempotent. */

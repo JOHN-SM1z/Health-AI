@@ -165,3 +165,58 @@ describe("botWebhookUrl fallback to the request's own origin", () => {
     expect(botWebhookUrl("clinic_a_bot", null)).toBeNull();
   });
 });
+
+describe("botWebhookUrl fallback to Vercel's own platform env vars", () => {
+  // Real production incident (2026-09-12): NEXT_PUBLIC_APP_URL was set
+  // correctly in the Vercel dashboard, by the operator's own account, and
+  // the bot still couldn't register its webhook — because saving the
+  // variable in the dashboard is not the same as it being live in the
+  // running deployment (wrong target environment, or no new build ran
+  // since NEXT_PUBLIC_* values are inlined at build time). Vercel sets
+  // these two vars itself, on every deployment, with no dashboard step at
+  // all, so they close this failure mode independently of the operator
+  // getting a manual step exactly right.
+  const original = envMock.NEXT_PUBLIC_APP_URL;
+  afterEach(() => {
+    envMock.NEXT_PUBLIC_APP_URL = original;
+    delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+    delete process.env.VERCEL_URL;
+  });
+
+  it("uses VERCEL_PROJECT_PRODUCTION_URL when NEXT_PUBLIC_APP_URL is unset", () => {
+    envMock.NEXT_PUBLIC_APP_URL = undefined;
+    process.env.VERCEL_PROJECT_PRODUCTION_URL = "health-ai-w1vc.vercel.app";
+    expect(botWebhookUrl("clinic_a_bot")).toBe(
+      "https://health-ai-w1vc.vercel.app/api/telegram/webhook?bot=clinic_a_bot",
+    );
+  });
+
+  it("falls back to VERCEL_URL when the production alias isn't set either", () => {
+    envMock.NEXT_PUBLIC_APP_URL = undefined;
+    process.env.VERCEL_URL = "health-ai-git-preview-abc123.vercel.app";
+    expect(botWebhookUrl("clinic_a_bot")).toBe(
+      "https://health-ai-git-preview-abc123.vercel.app/api/telegram/webhook?bot=clinic_a_bot",
+    );
+  });
+
+  it("prefers VERCEL_PROJECT_PRODUCTION_URL over VERCEL_URL when both are set", () => {
+    envMock.NEXT_PUBLIC_APP_URL = undefined;
+    process.env.VERCEL_PROJECT_PRODUCTION_URL = "health-ai-w1vc.vercel.app";
+    process.env.VERCEL_URL = "health-ai-git-preview-abc123.vercel.app";
+    expect(botWebhookUrl("clinic_a_bot")).toBe(
+      "https://health-ai-w1vc.vercel.app/api/telegram/webhook?bot=clinic_a_bot",
+    );
+  });
+
+  it("still prefers an explicitly configured NEXT_PUBLIC_APP_URL over both Vercel vars", () => {
+    process.env.VERCEL_PROJECT_PRODUCTION_URL = "health-ai-w1vc.vercel.app";
+    expect(botWebhookUrl("clinic_a_bot")).toBe(
+      "https://health.example.com/api/telegram/webhook?bot=clinic_a_bot",
+    );
+  });
+
+  it("never resolves a t.me base to a webhook URL, even as a Vercel-style candidate", () => {
+    envMock.NEXT_PUBLIC_APP_URL = "https://t.me/health_bot/book";
+    expect(botWebhookUrl("clinic_a_bot")).toBeNull();
+  });
+});
