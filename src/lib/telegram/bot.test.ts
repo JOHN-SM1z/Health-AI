@@ -47,7 +47,7 @@ describe("sendTelegramMessage", () => {
     expect(markup.keyboard).toHaveLength(2);
   });
 
-  it("drops web_app buttons from inline keyboards", async () => {
+  it("downgrades web_app buttons in inline keyboards to plain link buttons", async () => {
     sendMessageMock
       .mockRejectedValueOnce(new Error("Bad Request: BUTTON_URL_INVALID"))
       .mockResolvedValueOnce({ message_id: 7 });
@@ -65,10 +65,46 @@ describe("sendTelegramMessage", () => {
 
     expect(result).toBe(7);
     const markup = sendMessageMock.mock.calls[1][2].reply_markup;
-    expect(markup.inline_keyboard).toHaveLength(1);
+    // Both rows survive: the web_app button becomes a plain link button
+    // (still tappable — opens in an external browser instead of embedding
+    // the Mini App), the unrelated button is untouched.
+    expect(markup.inline_keyboard).toHaveLength(2);
     expect(markup.inline_keyboard[0][0]).toEqual({
+      text: "📅 Qabulga yozilish",
+      url: "https://example.com/book",
+    });
+    expect(markup.inline_keyboard[1][0]).toEqual({
       text: "👤 Operator",
       callback_data: "contact_operator",
+    });
+  });
+
+  it("never leaves a single-button inline row empty (the real booking-button shape)", async () => {
+    // Real production incident: the booking button is sent as a lone web_app
+    // button in its own inline row (exactly what the "Qabulga yozilish" menu
+    // handler builds). Dropping it outright — as opposed to a multi-button
+    // row where a sibling survives — left the row empty, so the whole row
+    // was filtered out and the patient received "tap the button below" with
+    // NO button under it: a dead end with no way to reach booking at all.
+    sendMessageMock
+      .mockRejectedValueOnce(new Error("Bad Request: BUTTON_URL_INVALID: domain not whitelisted"))
+      .mockResolvedValueOnce({ message_id: 8 });
+
+    const result = await sendTelegramMessage({
+      chatId: 777000,
+      text: "Qabulga yozilish uchun quyidagi tugmani bosing:",
+      replyMarkup: {
+        inline_keyboard: [[{ text: "📅 Qabulga yozilish (Ilovani ochish)", web_app: { url: "https://example.com/book" } }]],
+      },
+    });
+
+    expect(result).toBe(8);
+    const markup = sendMessageMock.mock.calls[1][2].reply_markup;
+    expect(markup.inline_keyboard).toHaveLength(1);
+    expect(markup.inline_keyboard[0]).toHaveLength(1);
+    expect(markup.inline_keyboard[0][0]).toEqual({
+      text: "📅 Qabulga yozilish (Ilovani ochish)",
+      url: "https://example.com/book",
     });
   });
 
