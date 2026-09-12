@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { adminWorkspaceRedirect, getStaffContext, hasRole, isCallCenterStaff } from "@/lib/auth/staff";
+import { adminWorkspaceRedirect, getStaffContext, hasRole, isCallCenterStaff, canViewPaymentDynamics } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
-import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users } from "lucide-react";
+import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet } from "lucide-react";
 
 export const metadata = { title: "Boshqaruv paneli" };
 
@@ -14,6 +14,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const isManagement = hasRole(ctx, "admin");
   const callCenter = isCallCenterStaff(ctx);
+  // Manager can reach Analytics for appointment stats, but never actual money
+  // figures (see canViewPaymentDynamics) — a page whose entire purpose is
+  // cash flow has no non-financial content to fall back to, so it's gated
+  // on the same, narrower, owner/admin-only check rather than isManagement.
+  const financeVisible = canViewPaymentDynamics(ctx);
 
   const nav = [
     { href: "/admin", label: "Bugun", icon: <LayoutDashboard className="h-4 w-4" />, show: true },
@@ -26,6 +31,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin/specialties", label: "Yo‘nalishlar", icon: <Sparkles className="h-4 w-4" />, show: isManagement },
     { href: "/admin/faqs", label: "Savol-javoblar", icon: <MessagesSquare className="h-4 w-4" />, show: isManagement },
     { href: "/admin/analytics", label: "Tahlillar", icon: <BarChart3 className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/finance", label: "Moliya", icon: <Wallet className="h-4 w-4" />, show: financeVisible },
     { href: "/admin/settings", label: "Sozlamalar", icon: <Settings className="h-4 w-4" />, show: isManagement },
   ].filter((n) => n.show !== false);
 

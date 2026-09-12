@@ -48,7 +48,9 @@ export async function GET(request: NextRequest) {
 
     let query = supabase
       .from("appointments")
-      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name), payments(status, amount)")
+      .select(
+        "id, source, status, cancelled_reason, no_show_reason, start_at, patients(full_name), services(name, price), doctors(name), payments(status, amount)",
+      )
       .eq("clinic_id", ctx.clinicId)
       .gte("start_at", since);
     if (until) query = query.lt("start_at", until);
@@ -77,6 +79,13 @@ export async function GET(request: NextRequest) {
       revenue_trend: mayViewPaymentDynamics ? agg.revenueTrend : [],
       revenue_by_week: mayViewPaymentDynamics ? agg.revenueByWeek : [],
       revenue_by_month: mayViewPaymentDynamics ? agg.revenueByMonth : [],
+      unpaid_total: mayViewPaymentDynamics ? agg.unpaidTotal : null,
+      pending_total: mayViewPaymentDynamics ? agg.pendingTotal : null,
+      refunded_total: mayViewPaymentDynamics ? agg.refundedTotal : null,
+      average_ticket: mayViewPaymentDynamics ? agg.averageTicket : null,
+      // Individually identifies a patient by name alongside a payment amount
+      // — the same financial-data gate as every other money figure here.
+      recent_payments: mayViewPaymentDynamics ? agg.recentPayments : [],
       top_services: agg.topServices.map(({ name, count, completedCount, revenue }) => ({
         name,
         count,
