@@ -56,6 +56,24 @@ export const STATUS_TONES: Record<string, "amber" | "blue" | "green" | "purple" 
   no_show: "gray",
 };
 
+export const PAYMENT_STATUS_LABELS: Record<string, string> = {
+  paid: "To‘langan",
+  unpaid: "To‘lanmagan",
+  pending: "Kutilmoqda",
+  refunded: "Qaytarilgan",
+  failed: "Muvaffaqiyatsiz",
+  manual_review: "Tekshiruvda",
+};
+
+export const PAYMENT_STATUS_TONES: Record<string, "green" | "amber" | "blue" | "gray" | "red" | "purple"> = {
+  paid: "green",
+  unpaid: "amber",
+  pending: "blue",
+  refunded: "gray",
+  failed: "red",
+  manual_review: "purple",
+};
+
 export const SOURCE_LABELS: Record<string, string> = {
   telegram_mini_app: "Mini App",
   telegram_chat: "Telegram bot",

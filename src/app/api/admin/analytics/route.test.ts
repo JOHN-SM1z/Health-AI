@@ -85,6 +85,11 @@ describe("admin analytics", () => {
         revenue_trend: { date: string; revenue: number }[];
         top_services: { name: string; count: number; completed_count: number; revenue: number }[];
         top_doctors: { name: string; count: number; completed_count: number; completion_rate: number; revenue: number }[];
+        unpaid_total: number | null;
+        pending_total: number | null;
+        refunded_total: number | null;
+        average_ticket: number | null;
+        recent_payments: { id: string; date: string; patientName: string; amount: number; status: string }[];
       };
     };
     expect(json.ok).toBe(true);
@@ -131,6 +136,21 @@ describe("admin analytics", () => {
     // The revenue figures above are only trustworthy if payments were
     // actually fetched and joined into the query in the first place.
     expect(appointments.selectArgs.join(" ")).toContain("payments(status, amount)");
+    expect(appointments.selectArgs.join(" ")).toContain("patients(full_name)");
+
+    // Cash-flow fields (§ real production ask: "add cash flow to the owner
+    // dashboard"). Same fixture as above: unpaid = rows 0,2,5 (80000+80000+
+    // 120000), refunded = row 1 (80000), average ticket = 200000 / 2 paid.
+    expect(json.data.unpaid_total).toBe(280000);
+    expect(json.data.pending_total).toBe(0);
+    expect(json.data.refunded_total).toBe(80000);
+    expect(json.data.average_ticket).toBe(100000);
+
+    // Ledger includes every row with a payment record (all 6 here),
+    // newest first regardless of appointment status.
+    expect(json.data.recent_payments).toHaveLength(6);
+    expect(json.data.recent_payments[0]).toMatchObject({ amount: 120000, status: "unpaid" }); // 2026-08-18T09:00, newest
+    expect(json.data.recent_payments[5]).toMatchObject({ amount: 80000, status: "unpaid" }); // 2026-08-17T04:00, oldest
   });
 
   it("caps the range at 365 days and defaults to 30", async () => {
@@ -161,6 +181,11 @@ describe("admin analytics", () => {
         revenue_by_month: unknown[];
         top_services: { revenue: number | null }[];
         top_doctors: { revenue: number | null }[];
+        unpaid_total: number | null;
+        pending_total: number | null;
+        refunded_total: number | null;
+        average_ticket: number | null;
+        recent_payments: unknown[];
         // Non-financial operational data must still reach a manager.
         cancellation_rate: number;
       };
@@ -174,6 +199,13 @@ describe("admin analytics", () => {
     expect(json.data.revenue_by_month).toEqual([]);
     expect(json.data.top_services.every((service) => service.revenue === null)).toBe(true);
     expect(json.data.top_doctors.every((doctor) => doctor.revenue === null)).toBe(true);
+    // A manager must never see money figures or a patient-linked payment
+    // ledger — the whole point of gating this page separately from Analytics.
+    expect(json.data.unpaid_total).toBeNull();
+    expect(json.data.pending_total).toBeNull();
+    expect(json.data.refunded_total).toBeNull();
+    expect(json.data.average_ticket).toBeNull();
+    expect(json.data.recent_payments).toEqual([]);
     // The cancellation rate is an operational metric, not a financial one —
     // a manager without owner/admin still needs it.
     expect(json.data.cancellation_rate).toBe(50);

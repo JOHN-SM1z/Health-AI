@@ -18,12 +18,16 @@ import { aggregateAppointments, weekKeyFromDayKey, monthKeyFromDayKey, type Anal
 
 const TZ = "Asia/Tashkent";
 
+let nextId = 1;
+
 function row(over: Partial<AnalyticsRow> & { start_at: string }): AnalyticsRow {
   return {
+    id: `apt-${nextId++}`,
     source: "telegram_mini_app",
     status: "pending",
     cancelled_reason: null,
     no_show_reason: null,
+    patients: { full_name: "Bemor" },
     services: { name: "Konsultatsiya", price: 100000 },
     doctors: { name: "Dr A" },
     payments: { status: "paid", amount: 100000 },
@@ -195,6 +199,75 @@ describe("aggregateAppointments — audit additions", () => {
       ["no_show", 2],
       ["completed", 1],
     ]);
+  });
+
+  it("sums unpaid/pending/refunded by the payment's own amount, independent of appointment status", () => {
+    const agg = aggregateAppointments(
+      [
+        // Unpaid: the visit already happened, but nothing was collected —
+        // this is exactly the kind of receivable a cash-flow view exists to
+        // surface, so it must count even though the appointment is "completed".
+        row({ status: "completed", start_at: "2026-08-10T05:00:00Z", payments: { status: "unpaid", amount: 50000 } }),
+        row({ status: "pending", start_at: "2026-08-10T06:00:00Z", payments: { status: "pending", amount: 30000 } }),
+        row({ status: "pending", start_at: "2026-08-10T07:00:00Z", payments: { status: "manual_review", amount: 20000 } }),
+        row({ status: "cancelled", start_at: "2026-08-10T08:00:00Z", payments: { status: "refunded", amount: 100000 } }),
+        // A failed attempt never held real money — must not inflate any total.
+        row({ status: "pending", start_at: "2026-08-10T09:00:00Z", payments: { status: "failed", amount: 15000 } }),
+      ],
+      TZ,
+    );
+    expect(agg.unpaidTotal).toBe(50000);
+    expect(agg.pendingTotal).toBe(50000); // 30000 (pending) + 20000 (manual_review)
+    expect(agg.refundedTotal).toBe(100000);
+  });
+
+  it("computes averageTicket over recognized-revenue payments only, 0 for none (never NaN)", () => {
+    expect(aggregateAppointments([], TZ).averageTicket).toBe(0);
+
+    const agg = aggregateAppointments(
+      [
+        row({ status: "completed", start_at: "2026-08-10T05:00:00Z", payments: { status: "paid", amount: 100000 } }),
+        row({ status: "completed", start_at: "2026-08-10T06:00:00Z", payments: { status: "paid", amount: 200000 } }),
+        // Not recognized revenue — must not dilute the average.
+        row({ status: "completed", start_at: "2026-08-10T07:00:00Z", payments: { status: "unpaid", amount: 999999 } }),
+      ],
+      TZ,
+    );
+    expect(agg.averageTicket).toBe(150000);
+  });
+
+  it("builds a recent-payments ledger from every appointment with a payment record, newest first, capped at ledgerLimit", () => {
+    const agg = aggregateAppointments(
+      [
+        row({
+          start_at: "2026-08-10T05:00:00Z",
+          patients: { full_name: "Aziza" },
+          services: { name: "Terapevt", price: 100000 },
+          doctors: { name: "Dr B" },
+          payments: { status: "paid", amount: 100000 },
+        }),
+        row({
+          start_at: "2026-08-12T05:00:00Z",
+          patients: { full_name: "Bekzod" },
+          payments: { status: "unpaid", amount: 40000 },
+        }),
+        // No payment row at all — must be excluded from the ledger entirely.
+        row({ start_at: "2026-08-11T05:00:00Z", payments: null }),
+      ],
+      TZ,
+      8,
+      1, // ledgerLimit — proves the cap is applied, not just the default
+    );
+    expect(agg.recentPayments).toHaveLength(1);
+    expect(agg.recentPayments[0]).toMatchObject({ patientName: "Bekzod", amount: 40000, status: "unpaid" });
+  });
+
+  it("falls back to a placeholder name when the patient join is missing", () => {
+    const agg = aggregateAppointments(
+      [row({ start_at: "2026-08-10T05:00:00Z", patients: null, payments: { status: "paid", amount: 100000 } })],
+      TZ,
+    );
+    expect(agg.recentPayments[0].patientName).toBe("Noma’lum bemor");
   });
 });
 
