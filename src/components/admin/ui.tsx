@@ -207,7 +207,7 @@ export function ABadge({
     amber: "bg-clay-tint text-clay-deep",
     blue: "bg-info-tint text-info",
     gray: "bg-ink-muted/5 text-ink-muted",
-    purple: "bg-[#efe9f8] text-[#6d4aa8]",
+    purple: "bg-purple-tint text-purple-deep",
     clay: "bg-clay-tint text-clay-deep",
     pine: "bg-pine text-white",
   };

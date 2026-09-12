@@ -21,6 +21,8 @@
   --danger-tint: #fbe9e6;
   --info: #2e6fbf;
   --info-tint: #e6eefa;
+  --purple-deep: #6d4aa8;
+  --purple-tint: #efe9f8;
 
   --shadow-card: 0 1px 2px rgba(16, 40, 46, 0.04), 0 1px 6px rgba(16, 40, 46, 0.04);
   --shadow-pop: 0 2px 8px rgba(16, 40, 46, 0.06), 0 16px 40px rgba(16, 40, 46, 0.1);
@@ -45,6 +47,8 @@
   --color-danger-tint: var(--danger-tint);
   --color-info: var(--info);
   --color-info-tint: var(--info-tint);
+  --color-purple-deep: var(--purple-deep);
+  --color-purple-tint: var(--purple-tint);
 
   --font-sans: var(--font-inter);
   --font-display: var(--font-sora);
