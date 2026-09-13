@@ -3,44 +3,24 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/browser";
-import type { Database } from "@/lib/supabase/database.types";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect, AModal, StatCard, LoadingRow } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect, AModal, LoadingRow } from "@/components/admin/ui";
 import { CalendarDays, UserPlus } from "lucide-react";
 import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
+import type { DashboardSnapshot, TodayAppointmentRow } from "@/lib/admin/dashboard-types";
+import type { Permission } from "@/lib/auth/permissions";
+import { OwnerOverview, ManagerOverview, ReceptionistOverview } from "@/components/admin/dashboard-overview";
 
-type Row = {
-  id: string;
-  start_at: string;
-  status: Database["public"]["Enums"]["appointment_status"];
-  source: Database["public"]["Enums"]["appointment_source"];
-  patients: { full_name: string | null; phone: string | null } | null;
-  doctors: { name: string } | null;
-  services: { name: string; price: number } | null;
-  payments: { status: string } | null;
-};
-
-type Dashboard = {
-  day: { start: string; end: string };
-  counts: Record<string, number>;
-  can_view_payment_dynamics: boolean;
-  revenue: number | null;
-  outstanding: number | null;
-  new_patients_today: number;
-  upcoming_reminders: number | null;
-  active_conversations: number;
-  attention_conversations: number;
-};
+type Row = TodayAppointmentRow;
+type Dashboard = DashboardSnapshot;
 
 type ServiceOption = { id: string; name: string; price: number; doctor_services: { doctor_id: string }[] | null };
 type DoctorOption = { id: string; name: string };
-
-const STATUS_KEYS = ["pending", "confirmed", "checked_in", "in_progress", "completed", "cancelled", "no_show"] as const;
 
 export default function TodayPage() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [canViewPaymentDynamics, setCanViewPaymentDynamics] = useState<boolean | null>(null);
+  const [permissions, setPermissions] = useState<Set<Permission> | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [todayLabel, setTodayLabel] = useState("");
@@ -52,8 +32,8 @@ export default function TodayPage() {
   useEffect(() => {
     void fetch("/api/admin/me")
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => setCanViewPaymentDynamics(j?.data?.canViewPaymentDynamics === true))
-      .catch(() => setCanViewPaymentDynamics(false));
+      .then((j) => setPermissions(new Set<Permission>(j?.data?.permissions ?? [])))
+      .catch(() => setPermissions(new Set()));
   }, []);
 
   const loadDashboard = async (): Promise<Dashboard | null> => {
@@ -140,39 +120,21 @@ export default function TodayPage() {
 
       {error && <AError message={error} />}
 
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard label="Yangi bemorlar" value={(dashboard?.new_patients_today ?? 0).toLocaleString("uz-UZ")} tone="info" />
-        <StatCard label="Eslatmalar (24 soat)" value={(dashboard?.upcoming_reminders ?? 0).toLocaleString("uz-UZ")} tone="neutral" />
-        {canViewPaymentDynamics && (
-          <>
-            <StatCard label="Tushum (bugun)" value={`${(dashboard?.revenue ?? 0).toLocaleString("uz-UZ")} so‘m`} tone="pine" />
-            <StatCard label="Qarzdorlik" value={`${(dashboard?.outstanding ?? 0).toLocaleString("uz-UZ")} so‘m`} tone="clay" />
-          </>
-        )}
-      </div>
-
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Link href="/admin/conversations">
-          <StatCard
-            label="Faol suhbatlar"
-            value={(dashboard?.active_conversations ?? 0).toLocaleString("uz-UZ")}
-            tone="info"
-          />
-        </Link>
-        <Link href="/admin/conversations">
-          <StatCard
-            label="Diqqat talab suhbatlar"
-            value={(dashboard?.attention_conversations ?? 0).toLocaleString("uz-UZ")}
-            tone="clay"
-          />
-        </Link>
-      </div>
-
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-7">
-        {STATUS_KEYS.map((k) => (
-          <StatCard key={k} label={STATUS_LABELS[k]} value={counts[k]} tone="neutral" />
-        ))}
-      </div>
+      {permissions === null ? (
+        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <Card key={i}>
+              <LoadingRow />
+            </Card>
+          ))}
+        </div>
+      ) : permissions.has("finance:view") ? (
+        <OwnerOverview dashboard={dashboard} rows={rows} counts={counts} />
+      ) : permissions.has("catalog:manage") ? (
+        <ManagerOverview dashboard={dashboard} rows={rows} counts={counts} />
+      ) : (
+        <ReceptionistOverview dashboard={dashboard} rows={rows} counts={counts} />
+      )}
 
       {rows === null ? (
         <Card>

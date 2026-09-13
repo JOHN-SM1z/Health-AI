@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, LoadingRow } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, StatCard, LoadingRow } from "@/components/admin/ui";
 import { ListOrdered } from "lucide-react";
 import { STATUS_LABELS, STATUS_TONES, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
 import { localDayWindow } from "@/lib/time/local";
@@ -91,6 +91,14 @@ export default function DoctorQueuePage() {
     );
   }, [rows]);
 
+  // Rows already exclude cancelled/no_show (see the query above), so every
+  // remaining row is either still ahead of the doctor or already completed.
+  const summary = useMemo(() => {
+    if (!rows) return null;
+    const completed = rows.filter((r) => r.status === "completed").length;
+    return { completed, remaining: rows.length - completed };
+  }, [rows]);
+
   const advance = async (r: Row) => {
     const next =
       r.status === "pending" || r.status === "confirmed"
@@ -120,6 +128,13 @@ export default function DoctorQueuePage() {
       />
 
       {error && <AError message={error} />}
+
+      {summary && (summary.remaining > 0 || summary.completed > 0) && (
+        <div className="mb-6 grid grid-cols-2 gap-3">
+          <StatCard label="Navbatda qolgan" value={summary.remaining} tone="info" />
+          <StatCard label="Bugun yakunlangan" value={summary.completed} tone="pine" />
+        </div>
+      )}
 
       {nextPatient && (
         <Card className="mb-6 border-pine/30 bg-pine-tint/60">
