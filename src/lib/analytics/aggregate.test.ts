@@ -30,7 +30,7 @@ function row(over: Partial<AnalyticsRow> & { start_at: string }): AnalyticsRow {
     patients: { full_name: "Bemor" },
     services: { name: "Konsultatsiya", price: 100000 },
     doctors: { name: "Dr A" },
-    payments: { status: "paid", amount: 100000 },
+    payments: { status: "paid", amount: 100000, provider: "manual" },
     ...over,
   };
 }
@@ -260,6 +260,32 @@ describe("aggregateAppointments — audit additions", () => {
     );
     expect(agg.recentPayments).toHaveLength(1);
     expect(agg.recentPayments[0]).toMatchObject({ patientName: "Bekzod", amount: 40000, status: "unpaid" });
+  });
+
+  it("groups recognized revenue by payment provider, busiest first", () => {
+    const agg = aggregateAppointments(
+      [
+        row({ status: "completed", start_at: "2026-08-10T05:00:00Z", payments: { status: "paid", amount: 50000, provider: "cash" } }),
+        row({ status: "completed", start_at: "2026-08-10T06:00:00Z", payments: { status: "paid", amount: 30000, provider: "cash" } }),
+        row({ status: "completed", start_at: "2026-08-10T07:00:00Z", payments: { status: "paid", amount: 100000, provider: "click" } }),
+        // Not recognized revenue (unpaid) — must not appear in the breakdown at all.
+        row({ status: "completed", start_at: "2026-08-10T08:00:00Z", payments: { status: "unpaid", amount: 999999, provider: "cash" } }),
+      ],
+      TZ,
+    );
+    expect(agg.revenueByProvider).toEqual([
+      { provider: "click", revenue: 100000 },
+      { provider: "cash", revenue: 80000 },
+    ]);
+  });
+
+  it("defaults a missing provider to \"manual\" (pre-existing fixtures / rows written before this field existed)", () => {
+    const agg = aggregateAppointments(
+      [row({ status: "completed", start_at: "2026-08-10T05:00:00Z", payments: { status: "paid", amount: 100000 } })],
+      TZ,
+    );
+    expect(agg.revenueByProvider).toEqual([{ provider: "manual", revenue: 100000 }]);
+    expect(agg.recentPayments[0].provider).toBe("manual");
   });
 
   it("falls back to a placeholder name when the patient join is missing", () => {

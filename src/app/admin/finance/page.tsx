@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader, Card, StatCard, AEmpty, AError, ASelect, ATable, ABadge, LoadingRow } from "@/components/admin/ui";
-import { TrendingUp, TrendingDown, Receipt, Landmark, ShieldAlert } from "lucide-react";
+import { TrendingDown, Receipt, Landmark, ShieldAlert } from "lucide-react";
 import {
   adminApi,
   AdminApiError,
@@ -10,7 +10,10 @@ import {
   formatDateTime,
   PAYMENT_STATUS_LABELS,
   PAYMENT_STATUS_TONES,
+  PROVIDER_LABELS,
+  PROVIDER_TONES,
 } from "@/lib/admin/client";
+import { RevenueTrendChart, trendRowsFor, type TrendBucket } from "@/components/admin/revenue-trend-chart";
 
 type LedgerEntry = {
   id: string;
@@ -20,6 +23,7 @@ type LedgerEntry = {
   doctorName: string;
   amount: number;
   status: string;
+  provider: string;
 };
 
 type FinanceAnalytics = {
@@ -42,12 +46,6 @@ const RANGES = [
   { value: "90", label: "Oxirgi 90 kun" },
 ];
 
-const TREND_BUCKETS = [
-  { value: "week", label: "Hafta" },
-  { value: "day", label: "Kun" },
-  { value: "month", label: "Oy" },
-] as const;
-
 /**
  * Owner/admin-only cash-flow view. Reuses the exact same analytics endpoint
  * and aggregation as /admin/analytics — this page changes only what's shown
@@ -63,7 +61,7 @@ const TREND_BUCKETS = [
  */
 export default function FinancePage() {
   const [range, setRange] = useState("30");
-  const [trendBucket, setTrendBucket] = useState<"day" | "week" | "month">("week");
+  const [trendBucket, setTrendBucket] = useState<TrendBucket>("week");
   const [data, setData] = useState<FinanceAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,15 +72,7 @@ export default function FinancePage() {
       .catch((e) => setError(e instanceof AdminApiError ? e.message : "Moliyaviy ma'lumotlarni yuklab bo‘lmadi"));
   }, [range]);
 
-  const trendRows = useMemo(() => {
-    if (!data?.can_view_payment_dynamics) return [];
-    const src = trendBucket === "week" ? data.revenue_by_week : trendBucket === "month" ? data.revenue_by_month : data.revenue_trend;
-    return (src ?? []).map((d) => ({ key: "date" in d ? d.date : d.key, revenue: d.revenue }));
-  }, [trendBucket, data]);
-
-  const maxTrend = trendRows[0]?.revenue ?? 1;
   const maxPaymentStatus = data?.by_payment_status[0]?.[1] ?? 1;
-  const periodTotal = useMemo(() => trendRows.reduce((sum, r) => sum + r.revenue, 0), [trendRows]);
 
   return (
     <div>
@@ -131,44 +121,13 @@ export default function FinancePage() {
           </div>
 
           <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Card>
-              <div className="mb-4 flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-ink-muted" />
-                <p className="text-sm font-bold text-foreground">Naqd pul oqimi</p>
-                <span className="ml-auto font-numeric text-xs text-ink-muted">
-                  {data === null ? "" : `Jami: ${formatPrice(periodTotal)}`}
-                </span>
-                <div className="w-32">
-                  <ASelect
-                    value={trendBucket}
-                    onChange={(v) => setTrendBucket(v as "day" | "week" | "month")}
-                    options={[...TREND_BUCKETS]}
-                    aria-label="Guruhlash"
-                  />
-                </div>
-              </div>
-              {data === null ? (
-                <LoadingRow />
-              ) : trendRows.length === 0 ? (
-                <AEmpty title="Ma'lumot yo‘q" subtitle="Bu davrda to‘langan qabullar yo‘q" icon={<TrendingUp className="h-5 w-5" />} />
-              ) : (
-                <div className="flex h-40 items-end gap-1.5">
-                  {trendRows.map((d) => (
-                    <div key={d.key} className="group flex flex-1 flex-col items-center gap-1">
-                      <span className="font-numeric text-[10px] text-ink-muted opacity-0 transition-opacity group-hover:opacity-100">
-                        {d.revenue.toLocaleString("uz-UZ")}
-                      </span>
-                      <div
-                        className="w-full rounded-t-md bg-gradient-to-t from-pine to-mint transition-[height] duration-500"
-                        style={{ height: `${Math.max((d.revenue / maxTrend) * 100, 6)}%` }}
-                        title={`${d.key}: ${d.revenue.toLocaleString("uz-UZ")} so‘m`}
-                      />
-                      <span className="font-numeric text-[10px] text-ink-muted">{d.key.slice(-5)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
+            <RevenueTrendChart
+              title="Naqd pul oqimi"
+              loading={data === null}
+              rows={trendRowsFor(trendBucket, data)}
+              bucket={trendBucket}
+              onBucketChange={setTrendBucket}
+            />
 
             <Card>
               <div className="mb-4 flex items-center gap-2">
@@ -216,7 +175,7 @@ export default function FinancePage() {
                 icon={<TrendingDown className="h-5 w-5" />}
               />
             ) : (
-              <ATable headers={["Sana", "Bemor", "Xizmat", "Shifokor", "Summasi", "Holati"]}>
+              <ATable headers={["Sana", "Bemor", "Xizmat", "Shifokor", "Summasi", "To‘lov turi", "Holati"]}>
                 {data.recent_payments.map((p) => (
                   <tr key={p.id}>
                     <td className="px-4 py-3 font-numeric text-sm text-ink-muted">{formatDateTime(p.date)}</td>
@@ -224,6 +183,9 @@ export default function FinancePage() {
                     <td className="px-4 py-3 text-sm text-ink-muted">{p.serviceName}</td>
                     <td className="px-4 py-3 text-sm text-ink-muted">{p.doctorName}</td>
                     <td className="px-4 py-3 font-numeric text-sm font-medium text-foreground">{formatPrice(p.amount)}</td>
+                    <td className="px-4 py-3">
+                      <ABadge tone={PROVIDER_TONES[p.provider] ?? "neutral"}>{PROVIDER_LABELS[p.provider] ?? p.provider}</ABadge>
+                    </td>
                     <td className="px-4 py-3">
                       <ABadge tone={PAYMENT_STATUS_TONES[p.status] ?? "neutral"}>
                         {PAYMENT_STATUS_LABELS[p.status] ?? p.status}

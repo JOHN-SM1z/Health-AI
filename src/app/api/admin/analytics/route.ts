@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
     let query = supabase
       .from("appointments")
       .select(
-        "id, source, status, cancelled_reason, no_show_reason, start_at, patients(full_name), services(name, price), doctors(name), payments(status, amount)",
+        "id, source, status, cancelled_reason, no_show_reason, start_at, patients(full_name), services(name, price), doctors(name), payments(status, amount, provider)",
       )
       .eq("clinic_id", ctx.clinicId)
       .gte("start_at", since);
@@ -79,6 +79,7 @@ export async function GET(request: NextRequest) {
       revenue_trend: mayViewPaymentDynamics ? agg.revenueTrend : [],
       revenue_by_week: mayViewPaymentDynamics ? agg.revenueByWeek : [],
       revenue_by_month: mayViewPaymentDynamics ? agg.revenueByMonth : [],
+      revenue_by_provider: mayViewPaymentDynamics ? agg.revenueByProvider : [],
       unpaid_total: mayViewPaymentDynamics ? agg.unpaidTotal : null,
       pending_total: mayViewPaymentDynamics ? agg.pendingTotal : null,
       refunded_total: mayViewPaymentDynamics ? agg.refundedTotal : null,

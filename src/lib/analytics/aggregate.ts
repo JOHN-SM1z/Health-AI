@@ -11,7 +11,15 @@ export type AnalyticsRow = {
   patients: { full_name: string } | null;
   services: { name: string; price: number } | null;
   doctors: { name: string } | null;
-  payments: { status: Database["public"]["Enums"]["payment_status"]; amount: number } | null;
+  payments: {
+    status: Database["public"]["Enums"]["payment_status"];
+    amount: number;
+    // Optional only so existing fixtures that predate this field keep
+    // compiling; every real row from the database always has one (NOT NULL
+    // column) — defaults to "manual" below, matching what every current
+    // write path already sets when a method isn't explicitly recorded.
+    provider?: Database["public"]["Enums"]["payment_provider"];
+  } | null;
 };
 
 export type LedgerEntry = {
@@ -22,6 +30,7 @@ export type LedgerEntry = {
   doctorName: string;
   amount: number;
   status: Database["public"]["Enums"]["payment_status"];
+  provider: Database["public"]["Enums"]["payment_provider"];
 };
 
 export type AppointmentsAggregate = {
@@ -40,6 +49,8 @@ export type AppointmentsAggregate = {
   revenueTrend: Array<{ date: string; revenue: number }>;
   revenueByWeek: Array<{ key: string; revenue: number }>;
   revenueByMonth: Array<{ key: string; revenue: number }>;
+  /** Recognized revenue (completed + paid) grouped by how it was collected, busiest first. */
+  revenueByProvider: Array<{ provider: string; revenue: number }>;
   topServices: Array<{ name: string; count: number; completedCount: number; revenue: number }>;
   topDoctors: Array<{ name: string; count: number; completedCount: number; revenue: number; completionRate: number }>;
   /** Sum of payments.amount currently sitting at "unpaid" (money owed, not yet collected). */
@@ -115,6 +126,7 @@ export function aggregateAppointments(
   const trend = new Map<string, number>();
   const weekTrend = new Map<string, number>();
   const monthTrend = new Map<string, number>();
+  const providerRevenue = new Map<string, number>();
   const services = new Map<string, { count: number; completedCount: number; revenue: number }>();
   const doctors = new Map<string, { count: number; completedCount: number; revenue: number }>();
   const ledger: LedgerEntry[] = [];
@@ -160,6 +172,8 @@ export function aggregateAppointments(
       weekTrend.set(week, (weekTrend.get(week) ?? 0) + amount);
       const month = monthKeyFromDayKey(day);
       monthTrend.set(month, (monthTrend.get(month) ?? 0) + amount);
+      const provider = a.payments?.provider ?? "manual";
+      providerRevenue.set(provider, (providerRevenue.get(provider) ?? 0) + amount);
     }
 
     // Money owed / in flight / paid back — distinct from `totalRevenue`,
@@ -183,6 +197,7 @@ export function aggregateAppointments(
         doctorName: a.doctors?.name ?? "Noma’lum shifokor",
         amount: paymentAmount,
         status: a.payments.status,
+        provider: a.payments.provider ?? "manual",
       });
     }
 
@@ -229,6 +244,9 @@ export function aggregateAppointments(
     revenueByMonth: [...monthTrend.entries()]
       .sort((a, b) => (a[0] < b[0] ? -1 : 1))
       .map(([key, revenue]) => ({ key, revenue })),
+    revenueByProvider: [...providerRevenue.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([provider, revenue]) => ({ provider, revenue })),
     topServices: [...services.entries()]
       .sort((a, b) => b[1].count - a[1].count)
       .slice(0, topN)

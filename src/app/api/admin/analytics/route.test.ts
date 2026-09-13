@@ -33,8 +33,8 @@ const APPOINTMENT_ROWS = [
   { source: "telegram_mini_app", status: "confirmed", cancelled_reason: null, start_at: "2026-08-17T04:00:00Z", services: { name: "Terapevt qabuli", price: 80000 }, doctors: { name: "Karimov Alisher" }, payments: { status: "unpaid", amount: 80000 } },
   { source: "telegram_mini_app", status: "cancelled", cancelled_reason: "Bemor tomonidan bekor qilindi", start_at: "2026-08-17T05:00:00Z", services: { name: "Terapevt qabuli", price: 80000 }, doctors: { name: "Karimov Alisher" }, payments: { status: "refunded", amount: 80000 } },
   { source: "telegram_mini_app", status: "cancelled", cancelled_reason: "Bemor tomonidan bekor qilindi", start_at: "2026-08-18T06:00:00Z", services: { name: "Terapevt qabuli", price: 80000 }, doctors: { name: "Karimov Alisher" }, payments: { status: "unpaid", amount: 80000 } },
-  { source: "walk_in", status: "completed", cancelled_reason: null, start_at: "2026-08-17T07:00:00Z", services: { name: "Kardiolog qabuli", price: 120000 }, doctors: { name: "Yusupova Dilnoza" }, payments: { status: "paid", amount: 120000 } },
-  { source: "walk_in", status: "completed", cancelled_reason: null, start_at: "2026-08-18T08:00:00Z", services: { name: "Terapevt qabuli", price: 80000 }, doctors: { name: "Karimov Alisher" }, payments: { status: "paid", amount: 80000 } },
+  { source: "walk_in", status: "completed", cancelled_reason: null, start_at: "2026-08-17T07:00:00Z", services: { name: "Kardiolog qabuli", price: 120000 }, doctors: { name: "Yusupova Dilnoza" }, payments: { status: "paid", amount: 120000, provider: "cash" } },
+  { source: "walk_in", status: "completed", cancelled_reason: null, start_at: "2026-08-18T08:00:00Z", services: { name: "Terapevt qabuli", price: 80000 }, doctors: { name: "Karimov Alisher" }, payments: { status: "paid", amount: 80000, provider: "click" } },
   { source: "walk_in", status: "cancelled", cancelled_reason: "Vaqt mos kelmadi", start_at: "2026-08-18T09:00:00Z", services: { name: "Kardiolog qabuli", price: 120000 }, doctors: { name: "Yusupova Dilnoza" }, payments: { status: "unpaid", amount: 120000 } },
 ];
 
@@ -83,6 +83,7 @@ describe("admin analytics", () => {
         total_revenue: number | null;
         cancel_reasons: { reason: string; count: number }[];
         revenue_trend: { date: string; revenue: number }[];
+        revenue_by_provider: { provider: string; revenue: number }[];
         top_services: { name: string; count: number; completed_count: number; revenue: number }[];
         top_doctors: { name: string; count: number; completed_count: number; completion_rate: number; revenue: number }[];
         unpaid_total: number | null;
@@ -115,6 +116,11 @@ describe("admin analytics", () => {
       { date: "2026-08-18", revenue: 80000 },
     ]);
     expect(json.data.total_revenue).toBe(200000);
+    // The two recognized-revenue rows (120000 cash, 80000 click).
+    expect(json.data.revenue_by_provider).toEqual([
+      { provider: "cash", revenue: 120000 },
+      { provider: "click", revenue: 80000 },
+    ]);
     // 3 unpaid (rows 0,2,5), 2 paid (rows 3,4), 1 refunded (row 1).
     expect(json.data.by_payment_status).toEqual([
       ["unpaid", 3],
@@ -135,7 +141,7 @@ describe("admin analytics", () => {
     );
     // The revenue figures above are only trustworthy if payments were
     // actually fetched and joined into the query in the first place.
-    expect(appointments.selectArgs.join(" ")).toContain("payments(status, amount)");
+    expect(appointments.selectArgs.join(" ")).toContain("payments(status, amount, provider)");
     expect(appointments.selectArgs.join(" ")).toContain("patients(full_name)");
 
     // Cash-flow fields (§ real production ask: "add cash flow to the owner
@@ -179,6 +185,7 @@ describe("admin analytics", () => {
         revenue_trend: unknown[];
         revenue_by_week: unknown[];
         revenue_by_month: unknown[];
+        revenue_by_provider: unknown[];
         top_services: { revenue: number | null }[];
         top_doctors: { revenue: number | null }[];
         unpaid_total: number | null;
@@ -197,6 +204,7 @@ describe("admin analytics", () => {
     expect(json.data.revenue_trend).toEqual([]);
     expect(json.data.revenue_by_week).toEqual([]);
     expect(json.data.revenue_by_month).toEqual([]);
+    expect(json.data.revenue_by_provider).toEqual([]);
     expect(json.data.top_services.every((service) => service.revenue === null)).toBe(true);
     expect(json.data.top_doctors.every((doctor) => doctor.revenue === null)).toBe(true);
     // A manager must never see money figures or a patient-linked payment

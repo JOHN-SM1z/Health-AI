@@ -39,32 +39,6 @@ function DoctorLoadCard({ rows, includeRevenue, title }: { rows: TodayAppointmen
   );
 }
 
-/** Owner/admin: business performance, revenue, staff performance, overall control. */
-export function OwnerOverview({ dashboard, rows, counts }: OverviewProps) {
-  return (
-    <>
-      <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard label="Tushum (bugun)" value={formatPrice(dashboard?.revenue)} tone="pine" />
-        <StatCard label="Qarzdorlik" value={formatPrice(dashboard?.outstanding)} tone="clay" />
-        <StatCard label="Yangi bemorlar" value={(dashboard?.new_patients_today ?? 0).toLocaleString("uz-UZ")} tone="info" />
-        <Link href="/admin/conversations">
-          <StatCard label="Diqqat talab suhbatlar" value={(dashboard?.attention_conversations ?? 0).toLocaleString("uz-UZ")} tone="clay" />
-        </Link>
-      </div>
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3">
-        <Link href="/admin/conversations">
-          <StatCard label="Faol suhbatlar" value={(dashboard?.active_conversations ?? 0).toLocaleString("uz-UZ")} tone="info" />
-        </Link>
-        {dashboard?.upcoming_reminders != null && (
-          <StatCard label="Eslatmalar (24 soat)" value={dashboard.upcoming_reminders.toLocaleString("uz-UZ")} tone="neutral" />
-        )}
-        <StatCard label="Bugungi qabullar" value={(counts.today ?? 0).toLocaleString("uz-UZ")} tone="neutral" />
-      </div>
-      <DoctorLoadCard rows={rows} includeRevenue title="Shifokorlar bo‘yicha bugun" />
-    </>
-  );
-}
-
 /** Manager: daily operations, staff scheduling, appointment/patient flow, clinic efficiency — no money. */
 export function ManagerOverview({ dashboard, rows, counts }: OverviewProps) {
   return (

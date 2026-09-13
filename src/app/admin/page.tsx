@@ -8,7 +8,8 @@ import { CalendarDays, UserPlus } from "lucide-react";
 import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
 import type { DashboardSnapshot, TodayAppointmentRow } from "@/lib/admin/dashboard-types";
 import type { Permission } from "@/lib/auth/permissions";
-import { OwnerOverview, ManagerOverview, ReceptionistOverview } from "@/components/admin/dashboard-overview";
+import { ManagerOverview, ReceptionistOverview } from "@/components/admin/dashboard-overview";
+import { OwnerDashboard } from "@/components/admin/owner-dashboard";
 
 type Row = TodayAppointmentRow;
 type Dashboard = DashboardSnapshot;
@@ -16,24 +17,59 @@ type Dashboard = DashboardSnapshot;
 type ServiceOption = { id: string; name: string; price: number; doctor_services: { doctor_id: string }[] | null };
 type DoctorOption = { id: string; name: string };
 
+/**
+ * The owner's job ("how is my clinic performing?") is fundamentally
+ * different from the front-desk/operations job everyone else here does —
+ * so instead of one shared page with a swapped-out top section, the owner
+ * gets a completely different component tree (OwnerDashboard), and never
+ * mounts the appointments-table/quick-booking state this page exists for.
+ */
 export default function TodayPage() {
+  const [permissions, setPermissions] = useState<Set<Permission> | null>(null);
+  const [clinicTimezone, setClinicTimezone] = useState<string | null>(null);
+
+  useEffect(() => {
+    void fetch("/api/admin/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        setPermissions(new Set<Permission>(j?.data?.permissions ?? []));
+        setClinicTimezone(j?.data?.clinicTimezone ?? "Asia/Tashkent");
+      })
+      .catch(() => {
+        setPermissions(new Set());
+        setClinicTimezone("Asia/Tashkent");
+      });
+  }, []);
+
+  if (permissions === null || clinicTimezone === null) {
+    return (
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <Card key={i}>
+            <LoadingRow />
+          </Card>
+        ))}
+      </div>
+    );
+  }
+
+  if (permissions.has("finance:view")) {
+    return <OwnerDashboard clinicTimezone={clinicTimezone} />;
+  }
+
+  return <OperationsView permissions={permissions} />;
+}
+
+function OperationsView({ permissions }: { permissions: Set<Permission> }) {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [permissions, setPermissions] = useState<Set<Permission> | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [todayLabel, setTodayLabel] = useState("");
 
   useEffect(() => {
     setTodayLabel(new Date().toLocaleDateString("uz-UZ", { weekday: "long", day: "numeric", month: "long" }));
-  }, []);
-
-  useEffect(() => {
-    void fetch("/api/admin/me")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => setPermissions(new Set<Permission>(j?.data?.permissions ?? [])))
-      .catch(() => setPermissions(new Set()));
   }, []);
 
   const loadDashboard = async (): Promise<Dashboard | null> => {
@@ -120,17 +156,7 @@ export default function TodayPage() {
 
       {error && <AError message={error} />}
 
-      {permissions === null ? (
-        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          {[0, 1, 2, 3].map((i) => (
-            <Card key={i}>
-              <LoadingRow />
-            </Card>
-          ))}
-        </div>
-      ) : permissions.has("finance:view") ? (
-        <OwnerOverview dashboard={dashboard} rows={rows} counts={counts} />
-      ) : permissions.has("catalog:manage") ? (
+      {permissions.has("catalog:manage") ? (
         <ManagerOverview dashboard={dashboard} rows={rows} counts={counts} />
       ) : (
         <ReceptionistOverview dashboard={dashboard} rows={rows} counts={counts} />
