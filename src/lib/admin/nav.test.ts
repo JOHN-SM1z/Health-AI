@@ -27,12 +27,18 @@ describe("adminNavItems", () => {
     expect(hrefs(["admin"])).toEqual(expected);
   });
 
-  it("gives manager management links but never finance", () => {
-    const links = hrefs(["manager"]);
-    expect(links).toContain("/admin/doctors");
-    expect(links).toContain("/admin/analytics");
-    expect(links).toContain("/admin/settings");
-    expect(links).not.toContain("/admin/finance");
+  it("gives manager exactly the suggested operational nav — no finance, no owner-only config", () => {
+    expect(hrefs(["manager"])).toEqual([
+      "/admin",
+      "/admin/appointments",
+      "/admin/calendar",
+      "/admin/conversations",
+      "/admin/patients",
+      "/admin/doctors",
+      "/admin/services",
+      "/admin/analytics",
+      "/admin/settings",
+    ]);
   });
 
   it("gives receptionist only the base operational links", () => {

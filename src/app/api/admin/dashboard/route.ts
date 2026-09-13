@@ -1,13 +1,25 @@
+import type { NextRequest } from "next/server";
+import { z } from "zod";
 import type { Database } from "@/lib/supabase/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRoles } from "@/lib/auth/guards";
 import { canViewPaymentDynamics } from "@/lib/auth/staff";
 import { handleApiError, ok } from "@/lib/api/errors";
-import { localDayWindow } from "@/lib/time/local";
+import { localDayWindow, localDayWindowForDate } from "@/lib/time/local";
 
 export const dynamic = "force-dynamic";
 
 const MANAGEMENT = ["owner", "admin", "manager"] as const;
+
+const querySchema = z.object({
+  // Clinic-local calendar date to view instead of today (manager dashboard
+  // day navigation) — optional; every existing caller that omits it keeps
+  // getting today, unchanged.
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Sana YYYY-MM-DD formatida bo‘lishi kerak")
+    .optional(),
+});
 
 type TodayRow = {
   status: Database["public"]["Enums"]["appointment_status"];
@@ -16,15 +28,17 @@ type TodayRow = {
 };
 
 /**
- * Today overview for the staff dashboard: appointment counts, collected and
+ * Day overview for the staff dashboard: appointment counts, collected and
  * outstanding amounts, new patients, and upcoming reminder jobs — always
- * scoped to the staff member's own clinic.
+ * scoped to the staff member's own clinic. Defaults to today; an optional
+ * `date` lets the manager dashboard page back/forward through other days.
  */
-export async function GET() {
+export async function GET(request?: NextRequest) {
   try {
     const ctx = await requireRoles("owner", "admin", "manager", "receptionist");
     const supabase = createAdminClient();
-    const { start, end } = localDayWindow(ctx.clinicTimezone);
+    const { date } = querySchema.parse(Object.fromEntries(request?.nextUrl.searchParams ?? []));
+    const { start, end } = date ? localDayWindowForDate(ctx.clinicTimezone, date) : localDayWindow(ctx.clinicTimezone);
     const mayViewPaymentDynamics = canViewPaymentDynamics(ctx);
 
     const { data: today, error: todayError } = await supabase

@@ -18,6 +18,7 @@ export type Permission =
   | "conversations:manage"
   | "patients:manage"
   | "catalog:manage"
+  | "taxonomy:manage"
   | "content:manage"
   | "analytics:view"
   | "finance:view"
@@ -27,11 +28,16 @@ export type Permission =
 
 const OPERATIONS: Permission[] = ["appointments:manage", "calendar:view", "conversations:manage", "patients:manage"];
 
-// Catalog (doctors/services/specialties), FAQs, analytics and settings have
-// always shared one gate (isManagement === hasRole(ctx, "admin")) — named
-// separately anyway so each stays independently adjustable as its own
-// feature instead of one opaque "isManagement" flag.
-const MANAGEMENT: Permission[] = [...OPERATIONS, "catalog:manage", "content:manage", "analytics:view", "settings:manage"];
+// The manager's operational surface: running today's clinic, plus the
+// doctor/service catalog and settings/analytics needed to do that — but not
+// the more administrative configuration pieces below (backend access is
+// unchanged either way; requireStaff("admin") still admits manager for all
+// of it, this only shapes what the manager dashboard's nav surfaces).
+const MANAGER_MANAGEMENT: Permission[] = [...OPERATIONS, "catalog:manage", "analytics:view", "settings:manage"];
+
+// Specialty taxonomy and the bot FAQ knowledge base are configuration work,
+// not day-to-day clinic operations — owner/admin only in the UI.
+const OWNER_ONLY_CONFIG: Permission[] = ["taxonomy:manage", "content:manage"];
 
 // Reserved for owner/admin only — see canViewPaymentDynamics() in staff.ts.
 const FINANCE: Permission[] = ["finance:view", "payments:manage"];
@@ -43,9 +49,9 @@ const FINANCE: Permission[] = ["finance:view", "payments:manage"];
  * equally-trusted full-access role, not a lesser one.
  */
 const ROLE_PERMISSIONS: Record<StaffRole, Permission[]> = {
-  owner: [...MANAGEMENT, ...FINANCE],
-  admin: [...MANAGEMENT, ...FINANCE],
-  manager: MANAGEMENT,
+  owner: [...MANAGER_MANAGEMENT, ...OWNER_ONLY_CONFIG, ...FINANCE],
+  admin: [...MANAGER_MANAGEMENT, ...OWNER_ONLY_CONFIG, ...FINANCE],
+  manager: MANAGER_MANAGEMENT,
   receptionist: OPERATIONS,
   doctor: ["doctor:workspace"],
 };

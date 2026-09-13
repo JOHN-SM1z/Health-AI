@@ -12,7 +12,8 @@ export const RANGE_PRESETS: Array<{ value: RangePreset; label: string }> = [
 
 export type DateRange = { from: string; to: string; previousFrom: string; previousTo: string };
 
-function addDays(ymd: string, delta: number): string {
+/** Adds (or subtracts) whole calendar days from a "YYYY-MM-DD" date. */
+export function addDays(ymd: string, delta: number): string {
   const [y, m, d] = ymd.split("-").map(Number);
   const date = new Date(Date.UTC(y, m - 1, d));
   date.setUTCDate(date.getUTCDate() + delta);

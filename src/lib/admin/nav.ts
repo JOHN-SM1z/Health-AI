@@ -28,8 +28,8 @@ export function adminNavItems(permissions: Set<Permission>): NavItem[] {
   if (permissions.has("catalog:manage")) {
     items.push({ href: "/admin/doctors", label: "Shifokorlar", icon: Stethoscope });
     items.push({ href: "/admin/services", label: "Xizmatlar", icon: Scissors });
-    items.push({ href: "/admin/specialties", label: "Yo‘nalishlar", icon: Sparkles });
   }
+  if (permissions.has("taxonomy:manage")) items.push({ href: "/admin/specialties", label: "Yo‘nalishlar", icon: Sparkles });
   if (permissions.has("content:manage")) items.push({ href: "/admin/faqs", label: "Savol-javoblar", icon: MessagesSquare });
   if (permissions.has("analytics:view")) items.push({ href: "/admin/analytics", label: "Tahlillar", icon: BarChart3 });
   if (permissions.has("finance:view")) items.push({ href: "/admin/finance", label: "Moliya", icon: Wallet });

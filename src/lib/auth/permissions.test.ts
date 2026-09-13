@@ -12,15 +12,22 @@ describe("getPermissions", () => {
     expect(owner.has("finance:view")).toBe(true);
     expect(owner.has("payments:manage")).toBe(true);
     expect(owner.has("catalog:manage")).toBe(true);
+    expect(owner.has("taxonomy:manage")).toBe(true);
+    expect(owner.has("content:manage")).toBe(true);
   });
 
-  it("gives manager the management surface but never finance", () => {
+  it("gives manager the operational management surface but never finance or admin-only config", () => {
     const manager = getPermissions(["manager"]);
     expect(manager.has("catalog:manage")).toBe(true);
     expect(manager.has("analytics:view")).toBe(true);
     expect(manager.has("settings:manage")).toBe(true);
     expect(manager.has("finance:view")).toBe(false);
     expect(manager.has("payments:manage")).toBe(false);
+    // Specialty taxonomy and the bot FAQ knowledge base are owner/admin-only
+    // configuration, not day-to-day operations (backend access is unchanged,
+    // this only governs the manager dashboard's nav).
+    expect(manager.has("taxonomy:manage")).toBe(false);
+    expect(manager.has("content:manage")).toBe(false);
   });
 
   it("gives receptionist only base operations, no management or finance", () => {
