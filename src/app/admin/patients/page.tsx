@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ATextArea, LoadingRow } from "@/components/admin/ui";
 import { Users } from "lucide-react";
 import { adminApi, AdminApiError, formatDateTime, STATUS_LABELS, STATUS_TONES, CHANNEL_LABELS } from "@/lib/admin/client";
@@ -64,11 +65,14 @@ type DetailResponse = {
 };
 
 export default function PatientsPage() {
+  const searchParams = useSearchParams();
   const [rows, setRows] = useState<PatientRow[] | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [q, setQ] = useState("");
-  const [search, setSearch] = useState("");
+  // Deep-linkable from elsewhere (e.g. the receptionist dashboard's patient
+  // search) via ?q= and ?id= — read once at mount, not kept in sync after.
+  const [q, setQ] = useState(() => searchParams.get("q") ?? "");
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
   const [onlyTelegram, setOnlyTelegram] = useState(false);
   const [noConsent, setNoConsent] = useState(false);
   const [detail, setDetail] = useState<DetailResponse | null>(null);
@@ -118,10 +122,20 @@ export default function PatientsPage() {
       setNotesDraft(res.patient?.operational_notes ?? "");
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Bemor ma'lumotlarini yuklab bo‘lmadi");
+      setDetailId(null);
     } finally {
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    const id = searchParams.get("id");
+    if (id) void openDetail(id);
+    // Mount-only: deep-links into a specific patient's detail panel (e.g.
+    // from the receptionist dashboard's search) without re-triggering on
+    // every searchParams identity change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const saveNotes = async () => {
     if (!detailId) return;

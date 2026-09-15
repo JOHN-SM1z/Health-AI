@@ -1,12 +1,23 @@
 import { createElement, type ReactNode } from "react";
 import { cn } from "@/components/mini-app/ui";
 
-export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
+export function PageHeader({
+  title,
+  subtitle,
+  action,
+  eyebrow = "Health AI — Boshqaruv",
+}: {
+  title: string;
+  subtitle?: string;
+  action?: ReactNode;
+  /** Overrides the default "Health AI — Boshqaruv" label above the title (e.g. "Health AI — Call Center"). */
+  eyebrow?: string;
+}) {
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
       <div>
         <p className="font-numeric text-[11px] font-medium uppercase tracking-[0.16em] text-ink-muted">
-          Health AI — Boshqaruv
+          {eyebrow}
         </p>
         <h1 className="font-display mt-1 text-2xl font-bold tracking-tight text-foreground">{title}</h1>
         {subtitle && <p className="mt-1 text-sm text-ink-muted">{subtitle}</p>}

@@ -2,9 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, UserPlus, ClipboardList, ShieldAlert, Stethoscope, CalendarDays } from "lucide-react";
-import { PageHeader, Card, StatCard, ABadge, ATable, ASelect, AEmpty, AError, AButton, LoadingRow } from "@/components/admin/ui";
-import { STATUS_LABELS, STATUS_TONES, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
+import { ChevronLeft, ChevronRight, UserPlus, ClipboardList, ShieldAlert, Stethoscope } from "lucide-react";
+import { PageHeader, Card, StatCard, ABadge, AError, AButton, LoadingRow, AEmpty } from "@/components/admin/ui";
+import { formatTime, adminApi, AdminApiError } from "@/lib/admin/client";
 import { doctorWorkloadToday, countDelayedToday } from "@/lib/admin/today-aggregate";
 import type { DashboardSnapshot, TodayAppointmentRow } from "@/lib/admin/dashboard-types";
 import { addDays } from "@/lib/admin/date-range";
@@ -12,16 +12,9 @@ import { createClient } from "@/lib/supabase/browser";
 import { clinicDateKey } from "@/lib/time/local";
 import { QuickBookingModal } from "@/components/admin/quick-booking-modal";
 import { CancelAppointmentModal } from "@/components/admin/cancel-appointment-modal";
+import { AppointmentBoard } from "@/components/admin/appointment-board";
 
 type Row = TodayAppointmentRow;
-
-const STATUS_FILTER_OPTIONS = [
-  { value: "all", label: "Barcha holatlar" },
-  ...(["pending", "confirmed", "checked_in", "in_progress", "completed", "cancelled", "no_show"] as const).map((s) => ({
-    value: s,
-    label: STATUS_LABELS[s],
-  })),
-];
 
 // Same-day operational thresholds — small samples (a single clinic, one
 // day) so these stay conservative to avoid crying wolf.
@@ -38,7 +31,6 @@ export function ManagerDashboard({ clinicTimezone }: { clinicTimezone: string })
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [now, setNow] = useState(() => new Date());
-  const [statusFilter, setStatusFilter] = useState("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<Row | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -90,11 +82,6 @@ export function ManagerDashboard({ clinicTimezone }: { clinicTimezone: string })
     }
     return c;
   }, [rows]);
-
-  const filteredRows = useMemo(() => {
-    if (!rows) return null;
-    return statusFilter === "all" ? rows : rows.filter((r) => r.status === statusFilter);
-  }, [rows, statusFilter]);
 
   const workload = useMemo(() => (rows ? doctorWorkloadToday(rows, now) : []), [rows, now]);
   const delayedCount = useMemo(() => (rows ? countDelayedToday(rows, now) : 0), [rows, now]);
@@ -267,83 +254,14 @@ export function ManagerDashboard({ clinicTimezone }: { clinicTimezone: string })
         </Card>
       </div>
 
-      <Card>
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-bold text-foreground">Bugungi qabullar</p>
-          <div className="w-48">
-            <ASelect value={statusFilter} onChange={setStatusFilter} options={STATUS_FILTER_OPTIONS} aria-label="Holat bo‘yicha filtr" />
-          </div>
-        </div>
-
-        {rows === null ? (
-          <LoadingRow />
-        ) : rows.length === 0 ? (
-          <AEmpty
-            title={isToday ? "Bugun qabul rejalashtirilmagan" : "Bu kunga qabul rejalashtirilmagan"}
-            subtitle="Yangi qabul qo‘shish uchun yuqoridagi tugmadan foydalaning."
-            icon={<CalendarDays className="h-6 w-6" />}
-          />
-        ) : filteredRows && filteredRows.length === 0 ? (
-          <AEmpty title="Bu holatda qabullar topilmadi" subtitle="Filtrni tozalab, boshqa holatni tanlang." icon={<CalendarDays className="h-6 w-6" />} />
-        ) : (
-          <ATable headers={["Vaqt", "Bemor", "Xizmat", "Shifokor", "Holat", "To‘lov", "Amal"]}>
-            {(filteredRows ?? []).map((r) => (
-              <tr key={r.id} className="hover:bg-sand">
-                <td className="px-4 py-3 font-semibold text-foreground">{formatTime(r.start_at)}</td>
-                <td className="px-4 py-3">
-                  <p className="font-medium text-foreground">{r.patients?.full_name ?? "—"}</p>
-                  {r.patients?.phone && <p className="text-xs text-ink-muted">{r.patients.phone}</p>}
-                </td>
-                <td className="px-4 py-3">
-                  <p className="text-foreground">{r.services?.name ?? "—"}</p>
-                  <p className="text-xs text-ink-muted">{formatPrice(r.services?.price)}</p>
-                </td>
-                <td className="px-4 py-3 text-foreground">{r.doctors?.name ?? "—"}</td>
-                <td className="px-4 py-3">
-                  <ABadge tone={STATUS_TONES[r.status]}>{STATUS_LABELS[r.status]}</ABadge>
-                </td>
-                <td className="px-4 py-3">
-                  <ABadge tone={r.payments?.status === "paid" ? "green" : r.payments?.status === "refunded" ? "gray" : "amber"}>
-                    {r.payments?.status === "paid" ? "To‘langan" : r.payments?.status === "refunded" ? "Qaytarilgan" : "To‘lanmagan"}
-                  </ABadge>
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-1.5">
-                    {r.status === "pending" && (
-                      <AButton size="sm" variant="outline" loading={busyId === r.id} onClick={() => void setStatus(r.id, "confirmed")}>
-                        Tasdiqlash
-                      </AButton>
-                    )}
-                    {r.status === "confirmed" && (
-                      <AButton size="sm" variant="outline" loading={busyId === r.id} onClick={() => void setStatus(r.id, "checked_in")}>
-                        Keldi
-                      </AButton>
-                    )}
-                    {r.status === "checked_in" && (
-                      <AButton size="sm" variant="primary" loading={busyId === r.id} onClick={() => void setStatus(r.id, "in_progress")}>
-                        Qabulni boshlash
-                      </AButton>
-                    )}
-                    {r.status === "in_progress" && (
-                      <AButton size="sm" variant="primary" loading={busyId === r.id} onClick={() => void setStatus(r.id, "completed")}>
-                        Yakunlash
-                      </AButton>
-                    )}
-                    {["pending", "confirmed"].includes(r.status) && (
-                      <AButton size="sm" variant="ghost" onClick={() => setCancelTarget(r)}>
-                        Bekor qilish
-                      </AButton>
-                    )}
-                    <Link href={`/admin/appointments?id=${r.id}`} className="inline-flex items-center rounded-lg px-2.5 py-1.5 text-xs font-medium text-pine-deep hover:bg-pine-tint">
-                      Batafsil
-                    </Link>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </ATable>
-        )}
-      </Card>
+      <AppointmentBoard
+        rows={rows}
+        busyId={busyId}
+        onSetStatus={(id, status) => void setStatus(id, status)}
+        onCancel={setCancelTarget}
+        emptyTitle={isToday ? "Bugun qabul rejalashtirilmagan" : "Bu kunga qabul rejalashtirilmagan"}
+        emptySubtitle="Yangi qabul qo‘shish uchun yuqoridagi tugmadan foydalaning."
+      />
 
       {modalOpen && (
         <QuickBookingModal
