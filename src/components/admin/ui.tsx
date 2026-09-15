@@ -1,12 +1,23 @@
 import { createElement, type ReactNode } from "react";
 import { cn } from "@/components/mini-app/ui";
 
-export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
+export function PageHeader({
+  title,
+  subtitle,
+  action,
+  eyebrow = "Health AI — Boshqaruv",
+}: {
+  title: string;
+  subtitle?: string;
+  action?: ReactNode;
+  /** Overrides the default "Health AI — Boshqaruv" label above the title (e.g. "Health AI — Call Center"). */
+  eyebrow?: string;
+}) {
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
       <div>
         <p className="font-numeric text-[11px] font-medium uppercase tracking-[0.16em] text-ink-muted">
-          Health AI — Boshqaruv
+          {eyebrow}
         </p>
         <h1 className="font-display mt-1 text-2xl font-bold tracking-tight text-foreground">{title}</h1>
         {subtitle && <p className="mt-1 text-sm text-ink-muted">{subtitle}</p>}
@@ -34,10 +45,16 @@ export function StatCard({
   label,
   value,
   tone,
+  sublabel,
+  delta,
 }: {
   label: string;
   value: string | number;
   tone?: "pine" | "clay" | "info" | "neutral";
+  /** Small caption under the value, e.g. the period this figure covers. */
+  sublabel?: string;
+  /** Period-over-period % change. Omit (or null) when there's nothing valid to compare against — never render a 0%/∞ placeholder. */
+  delta?: number | null;
 }) {
   const tones = {
     pine: "text-pine",
@@ -49,6 +66,16 @@ export function StatCard({
     <div className="rounded-2xl border border-hairline bg-surface p-4 shadow-[var(--shadow-card)]">
       <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-ink-muted">{label}</p>
       <p className={`font-numeric mt-1.5 text-2xl font-bold tracking-tight ${tones[tone ?? "neutral"]}`}>{value}</p>
+      {(sublabel || delta != null) && (
+        <div className="mt-1 flex items-center gap-1.5">
+          {sublabel && <span className="text-[11px] text-ink-muted">{sublabel}</span>}
+          {delta != null && (
+            <span className={`font-numeric text-xs font-semibold ${delta >= 0 ? "text-pine" : "text-danger"}`}>
+              {delta >= 0 ? "↑" : "↓"} {Math.abs(delta)}%
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

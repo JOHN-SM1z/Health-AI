@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { canViewPaymentDynamics, getStaffContext, isCallCenterStaff } from "@/lib/auth/staff";
+import { getPermissions } from "@/lib/auth/permissions";
 import { handleApiError, ok } from "@/lib/api/errors";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,7 @@ export async function GET() {
       platformAdmin: ctx.platformAdmin,
       canViewPaymentDynamics: canViewPaymentDynamics(ctx),
       isCallCenterStaff: isCallCenterStaff(ctx),
+      permissions: [...getPermissions(ctx.roles)],
     });
   } catch (e) {
     return handleApiError(e);

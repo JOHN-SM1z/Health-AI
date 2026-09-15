@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/browser";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, LoadingRow } from "@/components/admin/ui";
 import { CalendarRange } from "lucide-react";
 import { adminApi, AdminApiError, formatDateTime } from "@/lib/admin/client";
+import { getCurrentDoctor } from "@/lib/doctor/current-doctor";
 
 const WEEKDAYS = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"];
 
@@ -20,14 +21,7 @@ export default function DoctorSchedulePage() {
 
   const load = async () => {
     const supabase = createClient();
-    const authData = await supabase.auth.getUser();
-    const uid = authData.data.user?.id;
-
-    const { data: doctor } = await supabase
-      .from("doctors")
-      .select("id")
-      .eq("profile_id", uid ?? "")
-      .maybeSingle();
+    const doctor = await getCurrentDoctor(supabase);
     if (!doctor) {
       setDoctorId(null);
       return;

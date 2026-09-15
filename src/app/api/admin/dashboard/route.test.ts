@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { NextRequest } from "next/server";
 import { localDbAvailable } from "@/test/local-db";
 
 /**
@@ -104,8 +105,8 @@ describeDb("dashboard conversation counts (real DB, mocked session)", () => {
     staffMock.impl = async () => staffCtx();
   });
 
-  function get(): Promise<Response> {
-    return GET();
+  function get(date?: string): Promise<Response> {
+    return GET(new NextRequest(`http://localhost/api/admin/dashboard${date ? `?date=${date}` : ""}`));
   }
 
   it("reports live and attention-needed conversations scoped to the clinic", async () => {

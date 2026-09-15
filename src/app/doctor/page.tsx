@@ -1,12 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { ChevronLeft, ChevronRight, Stethoscope, CalendarDays } from "lucide-react";
 import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, LoadingRow } from "@/components/admin/ui";
-import { ListOrdered } from "lucide-react";
-import { STATUS_LABELS, STATUS_TONES, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
-import { localDayWindow } from "@/lib/time/local";
+import { getCurrentDoctor, type CurrentDoctor } from "@/lib/doctor/current-doctor";
+import { PageHeader, Card, ABadge, AEmpty, AError, AButton, StatCard, LoadingRow } from "@/components/admin/ui";
+import { STATUS_LABELS, STATUS_TONES, formatTime, formatDateTime, formatPrice, adminApi } from "@/lib/admin/client";
+import { addDays } from "@/lib/admin/date-range";
+import { clinicDateKey, localDayWindowForDate } from "@/lib/time/local";
+import { doctorDayCounts } from "@/lib/admin/today-aggregate";
+import { ConsultationModal } from "@/components/admin/consultation-modal";
+import { nextConsultationStep } from "@/lib/doctor/consultation-flow";
 
 const WEEKDAYS = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
 const MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
@@ -15,75 +21,114 @@ type Row = {
   id: string;
   start_at: string;
   status: Database["public"]["Enums"]["appointment_status"];
-  patients: { full_name: string | null; phone: string | null } | null;
+  notes: string | null;
+  patients: { id: string; full_name: string | null; phone: string | null } | null;
   services: { name: string; price: number } | null;
 };
 
-export default function DoctorQueuePage() {
+type WorkingHour = { weekday: number };
+
+// Pure date-label helpers built off a "YYYY-MM-DD" clinic-local key (never
+// `new Date()` + Intl directly) so the server-rendered and client-rendered
+// strings always match regardless of the browser's own locale/timezone data
+// — see the same concern noted in src/lib/time/local.ts.
+function isoWeekdayOf(ymd: string): number {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const jsDay = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return jsDay === 0 ? 7 : jsDay;
+}
+
+function formatYmdLabel(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const jsDay = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return `${WEEKDAYS[jsDay]}, ${d}-${MONTHS[m - 1]}`;
+}
+
+export default function DoctorDashboardPage() {
+  const [doctor, setDoctor] = useState<CurrentDoctor | null | undefined>(undefined);
+  const [clinicTimezone, setClinicTimezone] = useState<string | null>(null);
+  const [todayKey, setTodayKey] = useState<string | null>(null);
+  const [dateKey, setDateKey] = useState<string | null>(null);
+  const [workingHours, setWorkingHours] = useState<WorkingHour[] | null>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [upcoming, setUpcoming] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [doctorName, setDoctorName] = useState<string | null>(null);
-  // Client-only: rendered from fixed arrays (NOT Intl) so server and client
-  // produce identical strings regardless of ICU/locale data — avoids React
-  // #418 hydration mismatch (Node and Chromium differ on uz-UZ).
-  const [todayLabel] = useState(() => {
-    const now = new Date();
-    return `${WEEKDAYS[now.getDay()]}, ${now.getDate()}-${MONTHS[now.getMonth()]}`;
-  });
+  const [modalTarget, setModalTarget] = useState<Row | null>(null);
 
-  const load = async () => {
+  // Resolve the signed-in doctor and the clinic's own timezone once.
+  useEffect(() => {
     const supabase = createClient();
-    const authData = await supabase.auth.getUser();
-    const uid = authData.data.user?.id;
+    void (async () => {
+      const d = await getCurrentDoctor(supabase);
+      setDoctor(d);
+      if (!d) return;
 
-    const { data: doctor } = await supabase
-      .from("doctors")
-      .select("name")
-      .eq("profile_id", uid ?? "")
-      .maybeSingle();
+      let tz = "Asia/Tashkent";
+      try {
+        const me = await adminApi.get<{ clinicTimezone: string }>("/api/admin/me");
+        tz = me.clinicTimezone;
+      } catch {
+        // Best-effort only — a doctor's device may not match the clinic's
+        // timezone, but the dashboard shouldn't block on this call failing.
+      }
+      setClinicTimezone(tz);
+      const key = clinicDateKey(tz, new Date());
+      setTodayKey(key);
+      setDateKey(key);
 
-    if (!doctor) {
-      setRows([]);
-      setDoctorName(null);
-      return;
-    }
-    setDoctorName(doctor.name);
+      const { data: wh } = await supabase.from("doctor_working_hours").select("weekday").eq("doctor_id", d.id);
+      setWorkingHours(wh ?? []);
+    })();
+  }, []);
 
-    // "Today" must use the clinic's own timezone, never the browser's (see
-    // src/lib/time/local.ts) — a doctor's device may not be set to the
-    // clinic's local time.
-    let day = { start: new Date(new Date().setHours(0, 0, 0, 0)).toISOString(), end: new Date(new Date().setHours(24, 0, 0, 0)).toISOString() };
-    try {
-      const me = await adminApi.get<{ clinicTimezone: string }>("/api/admin/me");
-      day = localDayWindow(me.clinicTimezone);
-    } catch {
-      // Fall back to browser-local "today" rather than blocking the queue
-      // entirely — best-effort only when the identity call itself fails.
-    }
-
+  const loadDay = async () => {
+    if (!doctor || !clinicTimezone || !dateKey) return;
+    const supabase = createClient();
+    const { start, end } = localDayWindowForDate(clinicTimezone, dateKey);
     const { data, error: err } = await supabase
       .from("appointments")
-      .select("id, start_at, status, doctors!inner(profile_id), patients(full_name, phone), services(name, price)")
-      .eq("doctors.profile_id", uid ?? "")
-      .gte("start_at", day.start)
-      .lt("start_at", day.end)
+      .select("id, start_at, status, notes, patients(id, full_name, phone), services(name, price)")
+      .eq("doctor_id", doctor.id)
+      .gte("start_at", start)
+      .lt("start_at", end)
       .not("status", "in", '("cancelled","no_show")')
       .order("start_at", { ascending: true });
     if (err) {
-      setError("Navbatni yuklab bo‘lmadi");
+      setError("Qabullarni yuklab bo‘lmadi");
       return;
     }
-    setRows(data ?? []);
+    const dayRows = (data as Row[] | null) ?? [];
+    setRows(dayRows);
+    setError(null);
+
+    // Only worth fetching for today's empty state — a navigated-to day with
+    // no appointments doesn't need "what's coming up" prompting.
+    if (dayRows.length === 0 && dateKey === todayKey) {
+      const { data: soon } = await supabase
+        .from("appointments")
+        .select("id, start_at, status, notes, patients(id, full_name, phone), services(name, price)")
+        .eq("doctor_id", doctor.id)
+        .gt("start_at", end)
+        .not("status", "in", '("cancelled","no_show")')
+        .order("start_at", { ascending: true })
+        .limit(3);
+      setUpcoming((soon as Row[] | null) ?? []);
+    } else {
+      setUpcoming(null);
+    }
   };
 
   useEffect(() => {
-    void load();
-  }, []);
+    void loadDay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doctor, clinicTimezone, dateKey]);
 
+  // An active consultation always takes priority over anyone still waiting —
+  // it's the doctor's actual CURRENT patient, not just the next one up.
   const nextPatient = useMemo(() => {
     if (!rows) return null;
     return (
+      rows.find((r) => r.status === "in_progress") ??
       rows.find((r) => r.status === "checked_in") ??
       rows.find((r) => r.status === "confirmed") ??
       rows.find((r) => r.status === "pending") ??
@@ -91,96 +136,183 @@ export default function DoctorQueuePage() {
     );
   }, [rows]);
 
-  const advance = async (r: Row) => {
-    const next =
-      r.status === "pending" || r.status === "confirmed"
-        ? "in_progress"
-        : r.status === "in_progress"
-          ? "completed"
-          : r.status === "checked_in"
-            ? "in_progress"
-            : null;
-    if (!next) return;
-    setBusyId(r.id);
-    try {
-      await adminApi.patch(`/api/doctor/appointments/${r.id}`, { status: next });
-      await load();
-    } catch (e) {
-      setError(e instanceof AdminApiError ? e.message : "Xatolik yuz berdi");
-    } finally {
-      setBusyId(null);
+  const counts = useMemo(() => doctorDayCounts(rows ?? []), [rows]);
+
+  const nextWorkingDayLabel = useMemo(() => {
+    if (!workingHours || workingHours.length === 0 || !dateKey) return null;
+    const workWeekdays = new Set(workingHours.map((h) => h.weekday));
+    for (let delta = 1; delta <= 7; delta++) {
+      const ymd = addDays(dateKey, delta);
+      if (workWeekdays.has(isoWeekdayOf(ymd))) return formatYmdLabel(ymd);
     }
-  };
+    return null;
+  }, [workingHours, dateKey]);
 
-  return (
-    <div>
-      <PageHeader
-        title="Bugungi navbat"
-        subtitle={doctorName ? `Shifokor: ${doctorName}` : todayLabel}
-      />
+  if (doctor === undefined) {
+    return (
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <Card key={i}>
+            <LoadingRow />
+          </Card>
+        ))}
+      </div>
+    );
+  }
 
-      {error && <AError message={error} />}
-
-      {nextPatient && (
-        <Card className="mb-6 border-pine/30 bg-pine-tint/60">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-pine-deep">
-                <span className="pulse-dot" />
-                Navbatdagi bemor
-              </p>
-              <p className="font-display mt-1 text-lg font-bold text-foreground">{nextPatient.patients?.full_name ?? "—"}</p>
-              <p className="font-numeric text-sm text-ink-muted">
-                {formatTime(nextPatient.start_at)} · {nextPatient.services?.name ?? "—"} · {formatPrice(nextPatient.services?.price)}
-              </p>
-            </div>
-            <AButton loading={busyId === nextPatient.id} onClick={() => void advance(nextPatient)}>
-              {nextPatient.status === "in_progress" ? "Yakunlash" : "Qabulni boshlash"}
-            </AButton>
-          </div>
-        </Card>
-      )}
-
-      {rows === null ? (
-        <Card><LoadingRow /></Card>
-      ) : doctorName === null ? (
+  if (doctor === null) {
+    return (
+      <div>
+        <PageHeader eyebrow="Health AI — Shifokor" title="Bugungi qabullar" />
         <Card>
           <AEmpty
             title="Shifokor hisobi ulanmagan"
             subtitle="Admin panelda shifokor kartasiga profilingizni bog‘lang (Shifokorlar → Boshqarish)."
-            icon={<ListOrdered className="h-6 w-6" />}
+            icon={<Stethoscope className="h-6 w-6" />}
           />
+        </Card>
+      </div>
+    );
+  }
+
+  const isToday = dateKey === todayKey;
+
+  return (
+    <div>
+      <PageHeader
+        eyebrow="Health AI — Shifokor"
+        title="Bugungi qabullar"
+        subtitle={dateKey ? formatYmdLabel(dateKey) : undefined}
+        action={
+          dateKey && (
+            <div className="flex items-center gap-1.5">
+              <AButton variant="outline" size="sm" onClick={() => setDateKey(addDays(dateKey, -1))}>
+                <ChevronLeft className="h-4 w-4" />
+                <span className="sr-only">Oldingi kun</span>
+              </AButton>
+              {!isToday && todayKey && (
+                <AButton variant="secondary" size="sm" onClick={() => setDateKey(todayKey)}>
+                  Bugun
+                </AButton>
+              )}
+              <AButton variant="outline" size="sm" onClick={() => setDateKey(addDays(dateKey, 1))}>
+                <ChevronRight className="h-4 w-4" />
+                <span className="sr-only">Keyingi kun</span>
+              </AButton>
+            </div>
+          )
+        }
+      />
+
+      {error && <AError message={error} />}
+
+      {rows === null ? (
+        <Card>
+          <LoadingRow />
         </Card>
       ) : rows.length === 0 ? (
         <Card>
           <AEmpty
-            title="Bugun navbat yo‘q"
-            subtitle="Barcha qabullar yakunlangan yoki rejalashtirilmagan"
-            icon={<ListOrdered className="h-6 w-6" />}
+            title={isToday ? "Bugun qabul rejalashtirilmagan" : "Bu kunga qabul yo‘q"}
+            subtitle={isToday ? undefined : "Boshqa kunni tanlang yoki bugungi kunga qayting."}
+            icon={<CalendarDays className="h-6 w-6" />}
           />
+          {isToday && (nextWorkingDayLabel || (upcoming && upcoming.length > 0)) && (
+            <div className="mt-2 space-y-3 border-t border-hairline pt-4">
+              {nextWorkingDayLabel && (
+                <p className="text-sm text-ink-muted">
+                  Keyingi ish kuni: <span className="font-medium text-foreground">{nextWorkingDayLabel}</span>
+                </p>
+              )}
+              {upcoming && upcoming.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-muted">Yaqin kunlardagi qabullar</p>
+                  <ul className="space-y-1">
+                    {upcoming.map((r) => (
+                      <li key={r.id} className="text-sm text-foreground">
+                        {formatDateTime(r.start_at)} — {r.patients?.full_name ?? "Bemor"}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <Link
+                href="/doctor/schedule"
+                className="inline-flex items-center rounded-lg border border-hairline px-3 py-1.5 text-xs font-medium text-foreground hover:bg-sand"
+              >
+                Mening kalendarim
+              </Link>
+            </div>
+          )}
         </Card>
       ) : (
-        <ATable headers={["Vaqt", "Bemor", "Xizmat", "Narx", "Holat", "Amallar"]}>
-          {rows.map((r) => (
-            <tr key={r.id} className={r.id === nextPatient?.id ? "bg-pine-tint/50" : "hover:bg-sand"}>
-              <td className="px-4 py-3 font-semibold text-foreground">{formatTime(r.start_at)}</td>
-              <td className="px-4 py-3">
-                <p className="font-medium text-foreground">{r.patients?.full_name ?? "—"}</p>
-                {r.patients?.phone && <p className="text-xs text-ink-muted">{r.patients.phone}</p>}
-              </td>
-              <td className="px-4 py-3 text-foreground">{r.services?.name ?? "—"}</td>
-              <td className="px-4 py-3 text-foreground">{formatPrice(r.services?.price)}</td>
-              <td className="px-4 py-3"><ABadge tone={STATUS_TONES[r.status]}>{STATUS_LABELS[r.status]}</ABadge></td>
-              <td className="px-4 py-3">
-                {r.status !== "completed" && (
-                  <AButton size="sm" variant={r.status === "in_progress" ? "primary" : "outline"} loading={busyId === r.id} onClick={() => void advance(r)}>
-                    {r.status === "in_progress" ? "Yakunlash" : r.status === "checked_in" ? "Boshlash" : "Jarayonga olish"}
-                  </AButton>
-                )}
-              </td>
-            </tr>
-          ))}
-        </ATable>
+        <>
+          <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
+            <StatCard label="Bugungi qabullar" value={counts.total} />
+            <StatCard label="Kutilmoqda" value={counts.waiting} tone="clay" />
+            <StatCard label="Keldi" value={counts.checkedIn} tone="info" />
+            <StatCard label="Jarayonda" value={counts.inProgress} tone="info" />
+            <StatCard label="Yakunlangan" value={counts.completed} tone="pine" />
+          </div>
+
+          {nextPatient && (
+            <Card className="mb-6 border-pine/30 bg-pine-tint/60">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-pine-deep">
+                    <span className="pulse-dot" />
+                    Keyingi bemor
+                  </p>
+                  <p className="font-display mt-1 text-lg font-bold text-foreground">{nextPatient.patients?.full_name ?? "—"}</p>
+                  <p className="font-numeric text-sm text-ink-muted">
+                    {formatTime(nextPatient.start_at)} · {nextPatient.services?.name ?? "—"} · {formatPrice(nextPatient.services?.price)}
+                  </p>
+                  {nextPatient.notes?.trim() && (
+                    <p className="mt-1 max-w-md truncate text-xs text-ink-muted" title={nextPatient.notes}>
+                      “{nextPatient.notes}”
+                    </p>
+                  )}
+                </div>
+                <AButton onClick={() => setModalTarget(nextPatient)}>
+                  {nextConsultationStep(nextPatient.status)?.label ?? "Batafsil"}
+                </AButton>
+              </div>
+            </Card>
+          )}
+
+          <Card className="p-0">
+            <div className="divide-y divide-hairline/70">
+              {rows.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => setModalTarget(r)}
+                  className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-sand ${
+                    r.id === nextPatient?.id ? "bg-pine-tint/50" : ""
+                  }`}
+                >
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <span className="font-numeric w-14 shrink-0 text-sm font-semibold text-foreground">{formatTime(r.start_at)}</span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-foreground">{r.patients?.full_name ?? "—"}</p>
+                      <p className="truncate text-xs text-ink-muted">{r.services?.name ?? "—"}</p>
+                    </div>
+                  </div>
+                  <ABadge tone={STATUS_TONES[r.status] ?? "neutral"}>{STATUS_LABELS[r.status] ?? r.status}</ABadge>
+                </button>
+              ))}
+            </div>
+          </Card>
+        </>
+      )}
+
+      {modalTarget && (
+        <ConsultationModal
+          appointment={modalTarget}
+          doctorId={doctor.id}
+          onClose={() => setModalTarget(null)}
+          onStatusChanged={() => void loadDay()}
+        />
       )}
     </div>
   );

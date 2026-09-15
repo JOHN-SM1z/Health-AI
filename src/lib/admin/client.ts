@@ -74,6 +74,22 @@ export const PAYMENT_STATUS_TONES: Record<string, "green" | "amber" | "blue" | "
   manual_review: "purple",
 };
 
+export const PROVIDER_LABELS: Record<string, string> = {
+  manual: "Qo‘lda",
+  cash: "Naqd",
+  card_terminal: "Karta",
+  click: "Click",
+  payme: "Payme",
+};
+
+export const PROVIDER_TONES: Record<string, "green" | "amber" | "blue" | "gray" | "red" | "purple" | "neutral"> = {
+  manual: "gray",
+  cash: "green",
+  card_terminal: "blue",
+  click: "purple",
+  payme: "purple",
+};
+
 export const SOURCE_LABELS: Record<string, string> = {
   telegram_mini_app: "Mini App",
   telegram_chat: "Telegram bot",
@@ -89,6 +105,17 @@ export const SOURCE_LABELS: Record<string, string> = {
 export const CHANNEL_LABELS: Record<string, string> = {
   telegram: "Telegram",
   mini_app: "Mini App",
+};
+
+// Staff role slugs (staff_role enum) shown in the sidebar footer — kept in
+// Uzbek like every other label the staff-facing shell renders, instead of
+// the raw English enum value.
+export const ROLE_LABELS: Record<string, string> = {
+  owner: "Egasi",
+  admin: "Administrator",
+  manager: "Menejer",
+  receptionist: "Qabulxona",
+  doctor: "Shifokor",
 };
 
 export function formatDateTime(iso: string | null | undefined, withSeconds = false): string {
