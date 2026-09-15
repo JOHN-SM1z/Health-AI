@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/browser";
 import { QuickBookingModal } from "@/components/admin/quick-booking-modal";
 import { CancelAppointmentModal } from "@/components/admin/cancel-appointment-modal";
 import { RescheduleAppointmentModal } from "@/components/admin/reschedule-appointment-modal";
+import { RecordPaymentModal } from "@/components/admin/record-payment-modal";
 import { AppointmentBoard } from "@/components/admin/appointment-board";
 
 type Row = TodayAppointmentRow;
@@ -51,6 +52,7 @@ export function ReceptionistDashboard() {
   const [modalOpen, setModalOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<{ id: string; patientName: string } | null>(null);
   const [rescheduleTarget, setRescheduleTarget] = useState<OnlineBooking | null>(null);
+  const [paymentTarget, setPaymentTarget] = useState<Row | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -205,12 +207,10 @@ export function ReceptionistDashboard() {
             Suhbatlar
           </AButton>
         </Link>
-        {/* "To'lov" quick action intentionally omitted: recording a payment
-            (POST /api/admin/appointments/[id]/payment) is requireRoles("owner","admin")
-            only — receptionist isn't authorized to record payments in this
-            system today, so no action here could actually do anything. Flagged
-            in the PR rather than either building a dead button or silently
-            expanding receptionist's payment permission. */}
+        {/* No standalone "To'lov" quick action here — recording a payment
+            needs a specific appointment, so it lives on each row of the
+            board below ("To'lanmagan" is clickable) rather than as a
+            context-less button in this row. */}
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -353,6 +353,7 @@ export function ReceptionistDashboard() {
         busyId={busyId}
         onSetStatus={(id, status) => void setStatus(id, status)}
         onCancel={(row) => setCancelTarget({ id: row.id, patientName: row.patients?.full_name ?? "Bemor" })}
+        onRecordPayment={setPaymentTarget}
         emptyTitle="Bugun qabul yo‘q"
         emptySubtitle="Yangi qabul yaratish yoki onlayn so‘rovlarni tekshiring."
       />
@@ -391,6 +392,19 @@ export function ReceptionistDashboard() {
           onRescheduled={() => {
             setRescheduleTarget(null);
             void loadOnlineBookings();
+          }}
+        />
+      )}
+
+      {paymentTarget && (
+        <RecordPaymentModal
+          appointmentId={paymentTarget.id}
+          patientName={paymentTarget.patients?.full_name ?? "Bemor"}
+          amount={paymentTarget.services?.price}
+          onClose={() => setPaymentTarget(null)}
+          onRecorded={() => {
+            setPaymentTarget(null);
+            void load();
           }}
         />
       )}

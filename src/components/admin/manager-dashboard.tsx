@@ -12,6 +12,7 @@ import { createClient } from "@/lib/supabase/browser";
 import { clinicDateKey } from "@/lib/time/local";
 import { QuickBookingModal } from "@/components/admin/quick-booking-modal";
 import { CancelAppointmentModal } from "@/components/admin/cancel-appointment-modal";
+import { RecordPaymentModal } from "@/components/admin/record-payment-modal";
 import { AppointmentBoard } from "@/components/admin/appointment-board";
 
 type Row = TodayAppointmentRow;
@@ -33,6 +34,7 @@ export function ManagerDashboard({ clinicTimezone }: { clinicTimezone: string })
   const [now, setNow] = useState(() => new Date());
   const [modalOpen, setModalOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<Row | null>(null);
+  const [paymentTarget, setPaymentTarget] = useState<Row | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -259,6 +261,7 @@ export function ManagerDashboard({ clinicTimezone }: { clinicTimezone: string })
         busyId={busyId}
         onSetStatus={(id, status) => void setStatus(id, status)}
         onCancel={setCancelTarget}
+        onRecordPayment={setPaymentTarget}
         emptyTitle={isToday ? "Bugun qabul rejalashtirilmagan" : "Bu kunga qabul rejalashtirilmagan"}
         emptySubtitle="Yangi qabul qo‘shish uchun yuqoridagi tugmadan foydalaning."
       />
@@ -281,6 +284,19 @@ export function ManagerDashboard({ clinicTimezone }: { clinicTimezone: string })
           onClose={() => setCancelTarget(null)}
           onCancelled={() => {
             setCancelTarget(null);
+            if (selectedDate) void load(selectedDate);
+          }}
+        />
+      )}
+
+      {paymentTarget && (
+        <RecordPaymentModal
+          appointmentId={paymentTarget.id}
+          patientName={paymentTarget.patients?.full_name ?? "Bemor"}
+          amount={paymentTarget.services?.price}
+          onClose={() => setPaymentTarget(null)}
+          onRecorded={() => {
+            setPaymentTarget(null);
             if (selectedDate) void load(selectedDate);
           }}
         />

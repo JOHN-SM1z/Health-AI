@@ -31,6 +31,7 @@ export function AppointmentBoard({
   busyId,
   onSetStatus,
   onCancel,
+  onRecordPayment,
   emptyTitle,
   emptySubtitle,
 }: {
@@ -39,6 +40,8 @@ export function AppointmentBoard({
   busyId: string | null;
   onSetStatus: (id: string, status: string) => void;
   onCancel: (row: Row) => void;
+  /** Opens the payment-recording modal for this row. Omit to keep the "To'lov" cell a plain read-only badge (e.g. for a role that can't record payments). */
+  onRecordPayment?: (row: Row) => void;
   emptyTitle: string;
   emptySubtitle: string;
 }) {
@@ -82,9 +85,20 @@ export function AppointmentBoard({
                 <ABadge tone={STATUS_TONES[r.status]}>{STATUS_LABELS[r.status]}</ABadge>
               </td>
               <td className="px-4 py-3">
-                <ABadge tone={r.payments?.status === "paid" ? "green" : r.payments?.status === "refunded" ? "gray" : "amber"}>
-                  {r.payments?.status === "paid" ? "To‘langan" : r.payments?.status === "refunded" ? "Qaytarilgan" : "To‘lanmagan"}
-                </ABadge>
+                {r.payments?.status === "paid" || r.payments?.status === "refunded" || !onRecordPayment ? (
+                  <ABadge tone={r.payments?.status === "paid" ? "green" : r.payments?.status === "refunded" ? "gray" : "amber"}>
+                    {r.payments?.status === "paid" ? "To‘langan" : r.payments?.status === "refunded" ? "Qaytarilgan" : "To‘lanmagan"}
+                  </ABadge>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onRecordPayment(r)}
+                    className="inline-flex items-center gap-1 rounded-full bg-clay-tint px-2.5 py-0.5 text-xs font-semibold tracking-wide text-clay-deep transition-colors hover:brightness-95"
+                    title="To‘lovni qayd etish"
+                  >
+                    To‘lanmagan
+                  </button>
+                )}
               </td>
               <td className="px-4 py-3">
                 <div className="flex flex-wrap gap-1.5">

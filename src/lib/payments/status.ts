@@ -6,6 +6,7 @@ import { logger } from "@/lib/logger";
 import type { Database } from "@/lib/supabase/database.types";
 
 type PaymentStatus = Database["public"]["Enums"]["payment_status"];
+type PaymentProviderValue = Database["public"]["Enums"]["payment_provider"];
 
 const LEGAL_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
   unpaid: ["pending", "paid", "manual_review"],
@@ -30,6 +31,8 @@ export async function transitionPaymentStatus(opts: {
   appointmentId?: string;
   clinicId: string;
   to: PaymentStatus;
+  /** How the payment was actually collected — only meaningful (and only ever applied) when transitioning to "paid". Omitted, the row keeps whatever provider it already had. */
+  provider?: PaymentProviderValue;
   actorId?: string | null;
   actorType?: "staff" | "system";
   providerReference?: string | null;
@@ -69,10 +72,16 @@ export async function transitionPaymentStatus(opts: {
     );
   }
 
+  // The collection method (cash/card/etc.) is only ever updated on the
+  // transition that actually collects money — never silently overwritten by
+  // an unrelated transition (e.g. a refund) even if a caller passed one.
+  const nextProvider = opts.to === "paid" && opts.provider ? opts.provider : payment.provider;
+
   const { error } = await supabase
     .from("payments")
     .update({
       status: opts.to,
+      provider: nextProvider,
       paid_at: opts.to === "paid" ? new Date().toISOString() : payment.paid_at,
       paid_by: opts.to === "paid" ? opts.actorId ?? null : payment.paid_by,
       provider_reference: opts.providerReference ?? payment.provider_reference,
@@ -91,8 +100,8 @@ export async function transitionPaymentStatus(opts: {
     entityType: "payments",
     entityId: payment.id,
     actor: { actorId: opts.actorId, actorType: opts.actorType ?? "staff" },
-    newValues: { status: opts.to, provider: payment.provider },
-    oldValues: { status: payment.status },
+    newValues: { status: opts.to, provider: nextProvider },
+    oldValues: { status: payment.status, provider: payment.provider },
   });
 
   return { ok: true };

@@ -7,6 +7,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect, AModal, ATextArea, LoadingRow } from "@/components/admin/ui";
 import { ClipboardList } from "lucide-react";
 import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatDateTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
+import { RecordPaymentModal } from "@/components/admin/record-payment-modal";
 
 type Row = {
   id: string;
@@ -33,6 +34,7 @@ export default function AppointmentsPage() {
   const [cancelRow, setCancelRow] = useState<Row | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelBusy, setCancelBusy] = useState(false);
+  const [paymentRow, setPaymentRow] = useState<Row | null>(null);
 
   const markNoShow = async () => {
     if (!noShowRow || !noShowReason.trim()) return;
@@ -177,6 +179,7 @@ export default function AppointmentsPage() {
               onError={setError}
               onNoShow={setNoShowRow}
               onCancel={setCancelRow}
+              onPay={setPaymentRow}
             />
           ))}
         </ATable>
@@ -236,6 +239,19 @@ export default function AppointmentsPage() {
           />
         </AModal>
       )}
+
+      {paymentRow && (
+        <RecordPaymentModal
+          appointmentId={paymentRow.id}
+          patientName={paymentRow.patients?.full_name ?? "Bemor"}
+          amount={paymentRow.services?.price}
+          onClose={() => setPaymentRow(null)}
+          onRecorded={() => {
+            setPaymentRow(null);
+            void load();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -247,6 +263,7 @@ function AppointmentRow({
   onError,
   onNoShow,
   onCancel,
+  onPay,
 }: {
   row: Row;
   highlighted: boolean;
@@ -254,6 +271,7 @@ function AppointmentRow({
   onError: (m: string) => void;
   onNoShow: (row: Row) => void;
   onCancel: (row: Row) => void;
+  onPay: (row: Row) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -285,9 +303,18 @@ function AppointmentRow({
       <td className="px-4 py-3"><ABadge tone="gray">{SOURCE_LABELS[row.source] ?? row.source}</ABadge></td>
       <td className="px-4 py-3"><ABadge tone={STATUS_TONES[row.status]}>{STATUS_LABELS[row.status]}</ABadge></td>
       <td className="px-4 py-3">
-        <ABadge tone={row.payments?.status === "paid" ? "green" : "amber"}>
-          {row.payments?.status === "paid" ? "To‘langan" : "To‘lanmagan"}
-        </ABadge>
+        {row.payments?.status === "paid" ? (
+          <ABadge tone="green">To‘langan</ABadge>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onPay(row)}
+            className="inline-flex items-center gap-1 rounded-full bg-clay-tint px-2.5 py-0.5 text-xs font-semibold tracking-wide text-clay-deep transition-colors hover:brightness-95"
+            title="To‘lovni qayd etish"
+          >
+            To‘lanmagan
+          </button>
+        )}
       </td>
       <td className="px-4 py-3">
         <div className="flex flex-wrap gap-1.5">
