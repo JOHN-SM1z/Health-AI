@@ -107,6 +107,17 @@ export const CHANNEL_LABELS: Record<string, string> = {
   mini_app: "Mini App",
 };
 
+// Staff role slugs (staff_role enum) shown in the sidebar footer — kept in
+// Uzbek like every other label the staff-facing shell renders, instead of
+// the raw English enum value.
+export const ROLE_LABELS: Record<string, string> = {
+  owner: "Egasi",
+  admin: "Administrator",
+  manager: "Menejer",
+  receptionist: "Qabulxona",
+  doctor: "Shifokor",
+};
+
 export function formatDateTime(iso: string | null | undefined, withSeconds = false): string {
   if (!iso) return "—";
   const d = new Date(iso);

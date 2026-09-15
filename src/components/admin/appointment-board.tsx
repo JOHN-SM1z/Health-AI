@@ -105,7 +105,7 @@ export function AppointmentBoard({
                   )}
                   {r.status === "in_progress" && (
                     <AButton size="sm" variant="primary" loading={busyId === r.id} onClick={() => onSetStatus(r.id, "completed")}>
-                      Yakunlash
+                      Qabulni yakunlash
                     </AButton>
                   )}
                   {["pending", "confirmed"].includes(r.status) && (

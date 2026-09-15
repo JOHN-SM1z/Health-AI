@@ -258,10 +258,10 @@ export default function DoctorPatientsPage() {
                             patients: { id: detail.id, full_name: detail.full_name, phone: detail.phone },
                           })
                         }
-                        className="flex w-full items-center justify-between rounded-xl border border-hairline px-3 py-2 text-left hover:bg-sand"
+                        className="flex w-full items-center justify-between gap-3 rounded-xl border border-hairline px-3 py-2 text-left hover:bg-sand"
                       >
-                        <div>
-                          <p className="text-sm font-medium text-foreground">{v.services?.name ?? "Xizmat"}</p>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-foreground">{v.services?.name ?? "Xizmat"}</p>
                           <p className="text-xs text-ink-muted">{formatDateTime(v.start_at)}</p>
                         </div>
                         <ABadge tone={STATUS_TONES[v.status] ?? "neutral"}>{STATUS_LABELS[v.status] ?? v.status}</ABadge>

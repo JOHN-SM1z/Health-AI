@@ -291,11 +291,11 @@ export default function DoctorDashboardPage() {
                     r.id === nextPatient?.id ? "bg-pine-tint/50" : ""
                   }`}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
                     <span className="font-numeric w-14 shrink-0 text-sm font-semibold text-foreground">{formatTime(r.start_at)}</span>
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{r.patients?.full_name ?? "—"}</p>
-                      <p className="text-xs text-ink-muted">{r.services?.name ?? "—"}</p>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-foreground">{r.patients?.full_name ?? "—"}</p>
+                      <p className="truncate text-xs text-ink-muted">{r.services?.name ?? "—"}</p>
                     </div>
                   </div>
                   <ABadge tone={STATUS_TONES[r.status] ?? "neutral"}>{STATUS_LABELS[r.status] ?? r.status}</ABadge>

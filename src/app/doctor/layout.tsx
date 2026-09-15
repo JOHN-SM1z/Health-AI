@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getStaffContext, hasRole } from "@/lib/auth/staff";
 import { doctorNavItems } from "@/lib/admin/nav";
+import { ROLE_LABELS } from "@/lib/admin/client";
 import { StaffShell } from "@/components/admin/shell";
 
 export const metadata = { title: "Shifokor paneli" };
@@ -28,7 +29,7 @@ export default async function DoctorLayout({ children }: { children: React.React
         )
       }
       profileId={ctx.profileId}
-      roleLabel={ctx.roles.join(", ")}
+      roleLabel={ctx.roles.map((r) => ROLE_LABELS[r] ?? r).join(", ")}
       homeHref="/doctor"
     >
       {children}
