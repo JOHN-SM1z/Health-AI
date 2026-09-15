@@ -11,7 +11,7 @@ import {
   BarChart3,
   Wallet,
   Settings,
-  ListOrdered,
+  History,
   CalendarRange,
 } from "lucide-react";
 import type { Permission } from "@/lib/auth/permissions";
@@ -37,9 +37,19 @@ export function adminNavItems(permissions: Set<Permission>): NavItem[] {
   return items;
 }
 
+/**
+ * The brief's suggested sidebar also lists "Suhbatlar" — omitted because the
+ * backend genuinely has no doctor access to conversations at all (RLS and
+ * the API routes both gate conversations/messages to owner/admin/manager/
+ * receptionist only; see role_based_rls.sql). "Mening qabullarim" and
+ * "Qabul tarixi" are consolidated into one real page (a filterable full
+ * appointment list, past and upcoming) rather than two near-duplicates.
+ */
 export function doctorNavItems(): NavItem[] {
   return [
-    { href: "/doctor", label: "Bugungi navbat", icon: ListOrdered },
-    { href: "/doctor/schedule", label: "Jadvalim", icon: CalendarRange },
+    { href: "/doctor", label: "Bugun", icon: LayoutDashboard },
+    { href: "/doctor/patients", label: "Mening bemorlarim", icon: Users },
+    { href: "/doctor/appointments", label: "Qabul tarixi", icon: History },
+    { href: "/doctor/schedule", label: "Mening kalendarim", icon: CalendarRange },
   ];
 }

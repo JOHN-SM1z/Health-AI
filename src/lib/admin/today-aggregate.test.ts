@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { doctorWorkloadToday, countDelayedToday } from "@/lib/admin/today-aggregate";
+import { doctorWorkloadToday, countDelayedToday, doctorDayCounts } from "@/lib/admin/today-aggregate";
 import type { TodayAppointmentRow } from "@/lib/admin/dashboard-types";
 
 function row(overrides: Partial<TodayAppointmentRow>): TodayAppointmentRow {
@@ -69,5 +69,21 @@ describe("countDelayedToday", () => {
 
   it("is 0 for no rows", () => {
     expect(countDelayedToday([], NOW)).toBe(0);
+  });
+});
+
+describe("doctorDayCounts", () => {
+  it("collapses pending and confirmed into one waiting bucket", () => {
+    const rows = [{ status: "pending" }, { status: "confirmed" }, { status: "confirmed" }];
+    expect(doctorDayCounts(rows)).toEqual({ total: 3, waiting: 3, checkedIn: 0, inProgress: 0, completed: 0 });
+  });
+
+  it("counts each remaining status into its own bucket", () => {
+    const rows = [{ status: "checked_in" }, { status: "in_progress" }, { status: "completed" }, { status: "completed" }];
+    expect(doctorDayCounts(rows)).toEqual({ total: 4, waiting: 0, checkedIn: 1, inProgress: 1, completed: 2 });
+  });
+
+  it("is all zero for no rows", () => {
+    expect(doctorDayCounts([])).toEqual({ total: 0, waiting: 0, checkedIn: 0, inProgress: 0, completed: 0 });
   });
 });

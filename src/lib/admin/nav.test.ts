@@ -53,7 +53,12 @@ describe("adminNavItems", () => {
 });
 
 describe("doctorNavItems", () => {
-  it("returns the queue and schedule links", () => {
-    expect(doctorNavItems().map((n) => n.href)).toEqual(["/doctor", "/doctor/schedule"]);
+  it("returns today, my-patients, history and calendar — no conversations link", () => {
+    expect(doctorNavItems().map((n) => n.href)).toEqual([
+      "/doctor",
+      "/doctor/patients",
+      "/doctor/appointments",
+      "/doctor/schedule",
+    ]);
   });
 });

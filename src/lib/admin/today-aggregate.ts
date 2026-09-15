@@ -38,3 +38,28 @@ export function doctorWorkloadToday(rows: TodayAppointmentRow[], now: Date): Doc
 export function countDelayedToday(rows: TodayAppointmentRow[], now: Date): number {
   return rows.filter((r) => ["pending", "confirmed", "checked_in"].includes(r.status) && new Date(r.start_at) < now).length;
 }
+
+export type DoctorDayCounts = {
+  total: number;
+  waiting: number;
+  checkedIn: number;
+  inProgress: number;
+  completed: number;
+};
+
+/**
+ * Per-doctor today-summary for the doctor dashboard's 5-metric top row.
+ * Pending and confirmed collapse into one "waiting to arrive" bucket —
+ * doctors don't manage the confirmation step (reception does), so the
+ * dashboard's brief asks for one "Kutilmoqda" figure, not two.
+ */
+export function doctorDayCounts(rows: { status: string }[]): DoctorDayCounts {
+  const counts: DoctorDayCounts = { total: rows.length, waiting: 0, checkedIn: 0, inProgress: 0, completed: 0 };
+  for (const r of rows) {
+    if (r.status === "pending" || r.status === "confirmed") counts.waiting += 1;
+    else if (r.status === "checked_in") counts.checkedIn += 1;
+    else if (r.status === "in_progress") counts.inProgress += 1;
+    else if (r.status === "completed") counts.completed += 1;
+  }
+  return counts;
+}
