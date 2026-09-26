@@ -43,6 +43,11 @@ Patient (Telegram)                      Clinic staff (browser)
 - **specialties / services / doctors / doctor_services / doctor_working_hours / doctor_time_blocks** — clinic catalog
 - **appointments** — status machine (`pending → confirmed → checked_in → in_progress → completed`, `cancelled`, `no_show`), **exclusion constraint** `no_overlapping_active_appointments` prevents double-booking at DB level
 - **payments** — linked to appointment, status machine with audit trail
+- **referrals** — doctor-to-doctor referral within one clinic, raised from the consultation (the
+  appointment in which the referring doctor saw the patient); composite foreign keys keep the
+  patient, both doctors and that appointment inside the referral's clinic; status machine
+  `pending → accepted → completed` (or `declined` / `revoked` / `expired`) enforced by trigger for
+  every writer; audited without its clinical text (reason, handoff note)
 - **conversations / messages / voice_messages** — chat history, admin takeover support
 - **faq_entries / app_settings** — clinic content and settings
 - **notification_jobs** — reminders/confirmations queue, sent by cron

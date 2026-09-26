@@ -1060,6 +1060,163 @@ export type Database = {
         }
         Relationships: []
       }
+      referrals: {
+        Row: {
+          accepted_at: string | null
+          accepted_by: string | null
+          clinic_id: string
+          completed_at: string | null
+          completed_by: string | null
+          created_at: string
+          created_by: string
+          declined_at: string | null
+          declined_by: string | null
+          declined_reason: string | null
+          expires_at: string
+          handoff_note: string | null
+          id: string
+          originating_appointment_id: string
+          patient_id: string
+          priority: Database["public"]["Enums"]["referral_priority"]
+          reason: string
+          referred_to_doctor_id: string
+          referring_doctor_id: string
+          revoked_at: string | null
+          revoked_by: string | null
+          revoked_reason: string | null
+          status: Database["public"]["Enums"]["referral_status"]
+          updated_at: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          clinic_id: string
+          completed_at?: string | null
+          completed_by?: string | null
+          created_at?: string
+          created_by: string
+          declined_at?: string | null
+          declined_by?: string | null
+          declined_reason?: string | null
+          expires_at?: string
+          handoff_note?: string | null
+          id?: string
+          originating_appointment_id: string
+          patient_id: string
+          priority?: Database["public"]["Enums"]["referral_priority"]
+          reason: string
+          referred_to_doctor_id: string
+          referring_doctor_id: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          revoked_reason?: string | null
+          status?: Database["public"]["Enums"]["referral_status"]
+          updated_at?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          clinic_id?: string
+          completed_at?: string | null
+          completed_by?: string | null
+          created_at?: string
+          created_by?: string
+          declined_at?: string | null
+          declined_by?: string | null
+          declined_reason?: string | null
+          expires_at?: string
+          handoff_note?: string | null
+          id?: string
+          originating_appointment_id?: string
+          patient_id?: string
+          priority?: Database["public"]["Enums"]["referral_priority"]
+          reason?: string
+          referred_to_doctor_id?: string
+          referring_doctor_id?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          revoked_reason?: string | null
+          status?: Database["public"]["Enums"]["referral_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referrals_accepted_by_fkey"
+            columns: ["accepted_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referrals_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referrals_completed_by_fkey"
+            columns: ["completed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referrals_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referrals_declined_by_fkey"
+            columns: ["declined_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referrals_originating_appointment_fkey"
+            columns: [
+              "originating_appointment_id",
+              "clinic_id",
+              "patient_id",
+              "referring_doctor_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id", "clinic_id", "patient_id", "doctor_id"]
+          },
+          {
+            foreignKeyName: "referrals_patient_same_clinic_fkey"
+            columns: ["patient_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "referrals_referred_to_doctor_same_clinic_fkey"
+            columns: ["referred_to_doctor_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "doctors"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "referrals_referring_doctor_same_clinic_fkey"
+            columns: ["referring_doctor_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "doctors"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "referrals_revoked_by_fkey"
+            columns: ["revoked_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       services: {
         Row: {
           active: boolean
@@ -1341,6 +1498,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_linked_doctor: { Args: { p_doctor_id: string }; Returns: boolean }
       is_platform_admin: { Args: never; Returns: boolean }
       release_webhook_update: {
         Args: { p_external_id: string; p_source: string }
@@ -1397,6 +1555,14 @@ export type Database = {
         | "failed"
         | "refunded"
         | "manual_review"
+      referral_priority: "routine" | "urgent"
+      referral_status:
+        | "pending"
+        | "accepted"
+        | "declined"
+        | "completed"
+        | "revoked"
+        | "expired"
       staff_role: "owner" | "manager" | "admin" | "receptionist" | "doctor"
       telegram_bot_status: "disabled" | "active" | "error"
       time_block_reason: "break" | "absence" | "reservation" | "admin_hold"
@@ -1576,6 +1742,15 @@ export const Constants = {
         "failed",
         "refunded",
         "manual_review",
+      ],
+      referral_priority: ["routine", "urgent"],
+      referral_status: [
+        "pending",
+        "accepted",
+        "declined",
+        "completed",
+        "revoked",
+        "expired",
       ],
       staff_role: ["owner", "manager", "admin", "receptionist", "doctor"],
       telegram_bot_status: ["disabled", "active", "error"],

@@ -20,6 +20,11 @@
   - `service_role` — server-side only (Next.js API routes), bypasses RLS by design.
 - Grants are applied in `20260813000013_grants.sql`; new tables inherit via
   `ALTER DEFAULT PRIVILEGES`.
+- `referrals` opts out of those blanket grants: `authenticated` may only SELECT, and RLS limits
+  that to the referring doctor and — while the referral is open and unexpired, or once they
+  completed it — the receiving doctor. Only `service_role` writes (no DELETE for any role; a
+  referral is withdrawn by revoking it). Its reason and handoff note are clinical text: never
+  logged, never copied into `audit_events`.
 - Double-booking is prevented in Postgres (exclusion constraint + RPC), not in app code.
 
 ## Secrets
