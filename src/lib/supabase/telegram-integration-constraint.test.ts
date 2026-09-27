@@ -17,33 +17,36 @@ const URL = process.env.SUPABASE_URL ?? "";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
-const CLINIC_ID = "11111111-1111-4111-8111-111111111111";
-
 let admin: SupabaseClient;
+/**
+ * A throwaway clinic, never the shared seed clinic: these tests delete and
+ * rewrite the clinic's single integration row (clinic_id is its primary key).
+ */
+let clinicId: string;
 
 describeDb("clinic_telegram_integrations CHECK constraint", () => {
   beforeAll(async () => {
     admin = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
-    // Clean slate: remove any leftover row for this clinic.
-    await admin
-      .from("clinic_telegram_integrations")
-      .delete()
-      .eq("clinic_id", CLINIC_ID);
+    const suffix = Date.now().toString(36);
+    const { data: clinic, error } = await admin
+      .from("clinics")
+      .insert({ name: `Integration Constraint Clinic ${suffix}`, slug: `integration-constraint-${suffix}`, timezone: "Asia/Tashkent", currency: "UZS" })
+      .select("id")
+      .single();
+    expect(error).toBeNull();
+    clinicId = clinic!.id;
   });
 
   afterAll(async () => {
-    // Clean up any rows we inserted.
-    await admin
-      .from("clinic_telegram_integrations")
-      .delete()
-      .eq("clinic_id", CLINIC_ID);
+    // Cascades to the clinic's clinic_telegram_integrations row.
+    if (clinicId) await admin.from("clinics").delete().eq("id", clinicId);
   });
 
   it("allows INSERT with enabled=false and no token", async () => {
     const { data, error } = await admin
       .from("clinic_telegram_integrations")
       .insert({
-        clinic_id: CLINIC_ID,
+        clinic_id: clinicId,
         enabled: false,
       })
       .select("clinic_id, enabled")
@@ -59,12 +62,12 @@ describeDb("clinic_telegram_integrations CHECK constraint", () => {
     await admin
       .from("clinic_telegram_integrations")
       .delete()
-      .eq("clinic_id", CLINIC_ID);
+      .eq("clinic_id", clinicId);
 
     const { error } = await admin
       .from("clinic_telegram_integrations")
       .insert({
-        clinic_id: CLINIC_ID,
+        clinic_id: clinicId,
         enabled: true,
       });
 
@@ -79,12 +82,12 @@ describeDb("clinic_telegram_integrations CHECK constraint", () => {
     await admin
       .from("clinic_telegram_integrations")
       .delete()
-      .eq("clinic_id", CLINIC_ID);
+      .eq("clinic_id", clinicId);
 
     const { data, error } = await admin
       .from("clinic_telegram_integrations")
       .insert({
-        clinic_id: CLINIC_ID,
+        clinic_id: clinicId,
         telegram_bot_token: "fake-token-123",
         enabled: true,
       })
@@ -103,7 +106,7 @@ describeDb("clinic_telegram_integrations CHECK constraint", () => {
     const { error } = await admin
       .from("clinic_telegram_integrations")
       .update({ telegram_bot_token: null })
-      .eq("clinic_id", CLINIC_ID);
+      .eq("clinic_id", clinicId);
 
     expect(error).not.toBeNull();
     expect(error!.message).toContain(
@@ -118,7 +121,7 @@ describeDb("clinic_telegram_integrations CHECK constraint", () => {
         enabled: false,
         telegram_bot_token: null,
       })
-      .eq("clinic_id", CLINIC_ID)
+      .eq("clinic_id", clinicId)
       .select("clinic_id, enabled, telegram_bot_token")
       .single();
 
@@ -134,7 +137,7 @@ describeDb("clinic_telegram_integrations CHECK constraint", () => {
         telegram_bot_token: "new-token-789",
         enabled: true,
       })
-      .eq("clinic_id", CLINIC_ID)
+      .eq("clinic_id", clinicId)
       .select("clinic_id, enabled, telegram_bot_token")
       .single();
 
@@ -148,13 +151,13 @@ describeDb("clinic_telegram_integrations CHECK constraint", () => {
     await admin
       .from("clinic_telegram_integrations")
       .update({ enabled: false, telegram_bot_token: null })
-      .eq("clinic_id", CLINIC_ID);
+      .eq("clinic_id", clinicId);
 
     // Now try to enable without adding a token.
     const { error } = await admin
       .from("clinic_telegram_integrations")
       .update({ enabled: true })
-      .eq("clinic_id", CLINIC_ID);
+      .eq("clinic_id", clinicId);
 
     expect(error).not.toBeNull();
     expect(error!.message).toContain(

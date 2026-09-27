@@ -35,6 +35,13 @@ const CLINIC_ID = "11111111-1111-4111-8111-111111111111";
 const TZ = "Asia/Tashkent"; // UTC+5
 /** Throwaway processed_webhooks key used by the server-only RPC grant tests. */
 const RPC_GRANT_PROBE = `rpc-grant-probe-${Date.now()}`;
+/**
+ * Tags every appointment this file books. Other suites (processor.test.ts,
+ * multi-channel-booking.test.ts) book the same seed doctor from parallel
+ * workers, so cleanup matches this tag — never just the doctor — or it
+ * deletes their live fixtures (and, by cascade, their payments and jobs).
+ */
+const FIXTURE_NOTES = "integration.test.ts fixture";
 
 let admin: SupabaseClient;
 let anon: SupabaseClient;
@@ -48,6 +55,12 @@ function buildClients(): { admin: SupabaseClient; anon: SupabaseClient } {
   admin = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
   anon = createClient(URL, ANON_KEY, { auth: { persistSession: false } });
   return { admin, anon };
+}
+
+/** Deletes only this file's appointments, including leftovers from an interrupted run. */
+async function deleteFixtureAppointments(): Promise<void> {
+  const { error } = await admin.from("appointments").delete().eq("clinic_id", CLINIC_ID).eq("notes", FIXTURE_NOTES);
+  expect(error).toBeNull();
 }
 
 /** Next occurrence of `weekday` (1=Mon..7=Sun) at 10:00 Tashkent, ≥48h ahead. */
@@ -82,10 +95,13 @@ describeDb("local Supabase booking engine", () => {
     doctorId = doctor!.id;
     serviceId = service!.id;
     patientId = patient!.id;
-    // Wipe leftovers from previous runs so the suite is idempotent.
-    // All fixture appointments target this seed doctor.
-    await admin.from("appointments").delete().eq("doctor_id", doctorId);
+    // Wipe this file's leftovers from previous runs so the suite is
+    // idempotent — but only its own tagged rows: the seed doctor is shared.
+    await deleteFixtureAppointments();
   });
+
+  // Safety net for a test that failed before its own cleanup ran.
+  afterAll(deleteFixtureAppointments);
 
   /** Next occurrence of `weekday` (1=Mon..7=Sun) at 10:00 Tashkent, ≥48h ahead. */
   it("books an appointment via RPC within working hours", async () => {
@@ -98,7 +114,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: startAt,
       p_status: "pending",
       p_source: "telegram_mini_app",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     });
     expect(error).toBeNull();
@@ -120,7 +136,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: startAt,
       p_status: "pending",
       p_source: "telegram_mini_app",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     };
     const first = (await admin.rpc("book_appointment", params)).data as {
@@ -149,7 +165,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: startAt,
       p_status: "pending",
       p_source: "telegram_mini_app",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     };
     const [a, b] = await Promise.all([admin.rpc("book_appointment", params), admin.rpc("book_appointment", params)]);
@@ -173,7 +189,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: startAt,
       p_status: "pending",
       p_source: "telegram_mini_app",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     };
     const booked = (await admin.rpc("book_appointment", params)).data as {
@@ -203,7 +219,7 @@ describeDb("local Supabase booking engine", () => {
     const rebookWon = pending.length === 1 && cancelled.length === 1;
     const cancelWon = pending.length === 0 && cancelled.length === 1 && (all ?? []).length === 1;
     expect(rebookWon || cancelWon).toBe(true);
-    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", startAt);
+    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", startAt).eq("notes", FIXTURE_NOTES);
   });
 
   it("reschedule-during-booking race: exactly one appointment lands on the target slot", async () => {
@@ -217,7 +233,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: slot1,
       p_status: "pending",
       p_source: "telegram_mini_app",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     })).data as { appointment_id: string | null; error_code: string | null };
     expect(booked.error_code).toBeNull();
@@ -238,7 +254,7 @@ describeDb("local Supabase booking engine", () => {
         p_start_at: slot2,
         p_status: "pending",
         p_source: "telegram_mini_app",
-        p_notes: null,
+        p_notes: FIXTURE_NOTES,
         p_created_by: null,
       }),
     ]);
@@ -253,8 +269,8 @@ describeDb("local Supabase booking engine", () => {
       .eq("status", "pending");
     expect(onSlot2 ?? []).toHaveLength(1);
 
-    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", slot1);
-    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", slot2);
+    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", slot1).eq("notes", FIXTURE_NOTES);
+    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", slot2).eq("notes", FIXTURE_NOTES);
   });
 
   it("rejects booking outside working hours (outside_working_hours)", async () => {
@@ -268,7 +284,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: offHours,
       p_status: "pending",
       p_source: "telegram_mini_app",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     });
     const result = data as { error_code: string | null; error_message: string | null };
@@ -285,7 +301,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: startAt,
       p_status: "pending",
       p_source: "telegram_mini_app",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     };
     const first = (await admin.rpc("book_appointment", params)).data as { appointment_id: string | null };
@@ -313,6 +329,7 @@ describeDb("local Supabase booking engine", () => {
       end_at: endAt,
       status: "confirmed",
       source: "admin",
+      notes: FIXTURE_NOTES,
     };
     const first = await admin.from("appointments").insert(row).select("id").single();
     expect(first.error).toBeNull();
@@ -347,7 +364,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: nextWeekdayAt10(1),
       p_status: "pending",
       p_source: "admin",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     });
     expect((data as { error_code: string | null }).error_code).toBe("clinic_not_found");
@@ -373,7 +390,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: nextWeekdayAt10(1),
       p_status: "pending",
       p_source: "admin",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     });
     expect((data as { error_code: string | null }).error_code).toBe("doctor_not_found");
@@ -402,7 +419,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: nextWeekdayAt10(1),
       p_status: "pending",
       p_source: "admin",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     });
     expect((data as { error_code: string | null }).error_code).toBe("patient_not_found");
@@ -441,7 +458,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: nextWeekdayAt10(2),
       p_status: "pending",
       p_source: "admin",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     });
     expect((rejected.data as { error_code: string | null }).error_code).toBe("service_not_offered");
@@ -455,7 +472,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: nextWeekdayAt10(2),
       p_status: "pending",
       p_source: "admin",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     });
     const acceptedResult = accepted.data as { appointment_id: string | null; error_code: string | null };
@@ -491,7 +508,7 @@ describeDb("local Supabase booking engine", () => {
       p_start_at: startAt.toISOString(),
       p_status: "pending",
       p_source: "admin",
-      p_notes: null,
+      p_notes: FIXTURE_NOTES,
       p_created_by: null,
     });
     expect((data as { error_code: string | null }).error_code).toBe("time_blocked");
@@ -622,6 +639,7 @@ describeDb("RPC authorization + tenant isolation", () => {
       p_start_at: startAt,
       p_status: "pending",
       p_source: "telegram_mini_app",
+      p_notes: FIXTURE_NOTES,
     });
     expect(error).toBeNull();
     expect((data as { error_code: string | null }).error_code).toBeNull();

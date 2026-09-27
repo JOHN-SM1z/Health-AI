@@ -63,6 +63,9 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
   let serviceA: string;
 
   const suffix = Date.now().toString(36);
+  // telegram_bot_id is unique, so a fixed id collides with a row leaked by an
+  // interrupted earlier run and fails every run after it until a DB reset.
+  const botIdB = Date.now();
   const emailA = `staff-a-${suffix}@test.local`;
   const emailB = `staff-b-${suffix}@test.local`;
   const emailReceptionistA = `staff-a-recep-${suffix}@test.local`;
@@ -187,7 +190,7 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
     const { error: integError } = await admin.from("clinic_telegram_integrations").insert({
       clinic_id: clinicB,
       telegram_bot_token: "123456789:SECRET_BOT_TOKEN_B",
-      telegram_bot_id: 123456789,
+      telegram_bot_id: botIdB,
       telegram_username: `tenant_b_bot_${suffix}`,
       status: "active",
       enabled: true,
@@ -227,11 +230,13 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
         }
       }
       if (clinicB) {
-        try {
-          await admin.from("clinics").delete().eq("id", clinicB);
-        } catch {
-          // already gone
-        }
+        // Audited rows go first: deleted inside the clinic's own cascade,
+        // their audit trigger inserts audit_events for the vanishing clinic
+        // and the FK aborts the whole delete, leaking clinic B into later runs.
+        await admin.from("appointments").delete().eq("clinic_id", clinicB); // cascades payments
+        await admin.from("conversations").delete().eq("clinic_id", clinicB);
+        const { error } = await admin.from("clinics").delete().eq("id", clinicB);
+        expect(error).toBeNull();
       }
     }
   });

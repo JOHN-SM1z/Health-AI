@@ -28,6 +28,12 @@ const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? 
 
 const CLINIC_A = "11111111-1111-4111-8111-111111111111"; // seed clinic (see integration.test.ts)
 const TZ = "Asia/Tashkent";
+/**
+ * Tags this file's clinic A bookings. Clinic A's doctor is the shared seed
+ * doctor that other suites book in parallel, so cleanup matches this tag,
+ * never the doctor or a date range.
+ */
+const FIXTURE_NOTES = "multi-channel-booking.test.ts fixture";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
@@ -68,7 +74,7 @@ describeDb("one booking engine serves every channel, for more than one clinic", 
     doctorAId = doctorA!.id;
     serviceAId = serviceA!.id;
     patientAId = patientA!.id;
-    await admin.from("appointments").delete().eq("doctor_id", doctorAId).gte("start_at", nextWeekdayAt10(1, 60));
+    await admin.from("appointments").delete().eq("clinic_id", CLINIC_A).eq("notes", FIXTURE_NOTES);
 
     const { data: clinicB } = await admin
       .from("clinics")
@@ -114,8 +120,12 @@ describeDb("one booking engine serves every channel, for more than one clinic", 
   });
 
   afterAll(async () => {
-    await admin.from("clinics").delete().eq("id", clinicBId); // cascades doctors/services/patients/appointments/payments
-    await admin.from("appointments").delete().eq("doctor_id", doctorAId).gte("start_at", nextWeekdayAt10(1, 60));
+    await admin.from("appointments").delete().eq("clinic_id", CLINIC_A).eq("notes", FIXTURE_NOTES);
+    // Audited appointments/payments must go before the clinic: in its cascade
+    // the audit trigger references the vanishing clinic and aborts the delete.
+    await admin.from("appointments").delete().eq("clinic_id", clinicBId); // cascades payments
+    const { error } = await admin.from("clinics").delete().eq("id", clinicBId); // cascades doctors/services/patients
+    expect(error).toBeNull();
   });
 
   it.each(SOURCES)("clinic A: %s books through the same book_appointment() RPC as every other channel", async (source) => {
@@ -129,6 +139,7 @@ describeDb("one booking engine serves every channel, for more than one clinic", 
       p_start_at: startAt,
       p_status: "confirmed",
       p_source: source,
+      p_notes: FIXTURE_NOTES,
     });
     expect(error).toBeNull();
     const result = data as { appointment_id: string; error_code: string | null };
