@@ -17,7 +17,8 @@ import { localDbAvailable } from "@/test/local-db";
 
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const TZ = "Asia/Tashkent";
+// A zone where it is daytime now: walk-ins "now" stay inside one local day.
+const TZ = daytimeTimezone();
 
 const session = vi.hoisted(() => ({ ctx: null as unknown }));
 
@@ -34,6 +35,7 @@ import { GET as listReferrals, POST as createReferral } from "../referrals/route
 import { PATCH as actOnReferral } from "../referrals/[id]/route";
 import { PATCH as setAppointmentStatus } from "../appointments/[id]/route";
 import { GET as getAdminPatient } from "@/app/api/admin/patients/route";
+import { daytimeTimezone } from "@/test/daytime-timezone";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
@@ -414,7 +416,7 @@ describeDb("referred-patient clinical workspace", () => {
 
     if (minutesToClinicMidnight() < 15) {
       // A walk-in must end within today's working hours.
-      expect(await start("b", x.id, { serviceId: quickService })).toMatchObject({ status: 409, body: { code: "outside_working_hours" } });
+      expect(await start("b", x.id, { serviceId: quickService })).toMatchObject({ status: 422, body: { code: "INVALID_TIME", details: { reason: "outside_working_hours" } } });
       return;
     }
 

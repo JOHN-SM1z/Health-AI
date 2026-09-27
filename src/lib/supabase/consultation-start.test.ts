@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
+import { daytimeTimezone } from "@/test/daytime-timezone";
 
 /**
  * Starting a consultation at the DATABASE layer
@@ -12,6 +13,8 @@ import postgres from "postgres";
  * clinic B.
  */
 
+// A zone where it is daytime now: walk-ins "now" stay inside one local day.
+const TZ = daytimeTimezone();
 const DB_URL = process.env.SUPABASE_DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 
 async function probeDatabase(): Promise<string | null> {
@@ -130,8 +133,8 @@ describeDb("consultation start — one transaction, exactly once (database layer
   beforeAll(async () => {
     sql = postgres(DB_URL, { max: 4, onnotice: () => {} });
     await sql`insert into public.clinics ${sql([
-      { id: clinicA, name: `Start Clinic A ${suffix}`, slug: `start-a-${suffix}`, timezone: "Asia/Tashkent" },
-      { id: clinicB, name: `Start Clinic B ${suffix}`, slug: `start-b-${suffix}`, timezone: "Asia/Tashkent" },
+      { id: clinicA, name: `Start Clinic A ${suffix}`, slug: `start-a-${suffix}`, timezone: TZ },
+      { id: clinicB, name: `Start Clinic B ${suffix}`, slug: `start-b-${suffix}`, timezone: TZ },
     ])}`;
     const users = Object.entries(profiles).map(([name, id]) => ({ id, email: `start-${name}-${suffix}@test.local` }));
     await sql`insert into auth.users ${sql(users)}`;

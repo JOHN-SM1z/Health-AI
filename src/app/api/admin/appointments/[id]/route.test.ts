@@ -113,7 +113,10 @@ describeDb("admin appointment status PATCH (real DB, mocked session)", () => {
   });
 
   async function insertAppointment(status = "pending") {
-    const start = new Date(Date.now() + 3 * 86400000 + seq++ * 30 * 60000).toISOString();
+    // 10:00 Tashkent on successive days: always inside one local day's working hours.
+    const day = new Date(Date.now() + (3 + seq++) * 86400000);
+    day.setUTCHours(5, 0, 0, 0);
+    const start = day.toISOString();
     const { data, error } = await admin
       .from("appointments")
       .insert({

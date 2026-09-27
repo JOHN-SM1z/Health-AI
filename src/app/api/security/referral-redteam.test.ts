@@ -26,7 +26,8 @@ import { localDbAvailable } from "@/test/local-db";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const ANON_KEY = process.env.SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const TZ = "Asia/Tashkent";
+// A zone where it is daytime now: walk-ins "now" stay inside one local day.
+const TZ = daytimeTimezone();
 const PASSWORD = "RedTeam-Test-123!";
 
 const session = vi.hoisted(() => ({ ctx: null as unknown }));
@@ -49,6 +50,7 @@ import { GET as adminPatientsGet } from "@/app/api/admin/patients/route";
 import { POST as adminBook } from "@/app/api/admin/appointments/route";
 import { PATCH as adminRevoke } from "@/app/api/admin/referrals/[id]/route";
 import { POST as expireJob } from "@/app/api/referrals/expire/route";
+import { daytimeTimezone } from "@/test/daytime-timezone";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
@@ -358,7 +360,7 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     denied(await writeRecord(Z.id, { appointmentId: Z.consultation }), [404]);
     denied(await startConsultation(Z.id, { serviceId: service.B }), [404]);
     // Clinic B's service or doctor inside clinic A's flows.
-    denied(await startConsultation(W.id, { serviceId: service.B }), [400, 404, 409]);
+    denied(await startConsultation(W.id, { serviceId: service.B }), [400, 404, 409, 422]);
     const { data: wVisits } = await admin.from("appointments").select("id").eq("patient_id", W.id).eq("doctor_id", doctors.b);
     expect(wVisits).toEqual([]);
     denied(
@@ -630,7 +632,7 @@ describeDb("RED TEAM — referral-based clinical access", () => {
         source: "admin",
         clinicId: clinic.B,
       }),
-      [400, 404, 409],
+      [400, 404, 409, 422],
     );
   });
 

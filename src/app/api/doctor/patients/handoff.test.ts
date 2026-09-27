@@ -18,7 +18,8 @@ import { localDbAvailable } from "@/test/local-db";
 
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const TZ = "Asia/Tashkent";
+// A zone where it is daytime now: walk-ins "now" stay inside one local day.
+const TZ = daytimeTimezone();
 
 const session = vi.hoisted(() => ({ ctx: null as unknown }));
 
@@ -34,6 +35,7 @@ import { POST as createReferral, GET as listReferrals } from "../referrals/route
 import { GET as getReferral, PATCH as actOnReferral } from "../referrals/[id]/route";
 import { PATCH as doctorAppointmentStatus } from "../appointments/[id]/route";
 import { PATCH as frontDeskAppointment } from "@/app/api/admin/appointments/[id]/route";
+import { daytimeTimezone } from "@/test/daytime-timezone";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 

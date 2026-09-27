@@ -7,6 +7,7 @@ import { canDoctorAccessPatientClinicalData } from "@/lib/clinical-access/access
 import { canStartConsultation } from "@/lib/clinical-access/workspace";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
 import { startConsultationInDatabase, startWalkInInDatabase } from "@/lib/clinical-access/consultation-start";
+import { BookingError, bookingError } from "@/lib/booking/engine";
 
 const STARTABLE = ["pending", "confirmed", "checked_in"];
 
@@ -26,12 +27,15 @@ async function inProgressConsultation(doctor: LinkedDoctor, patientId: string): 
   return data?.id ?? null;
 }
 
-const BOOKING_ERRORS: Record<string, [number, string]> = {
-  outside_working_hours: [409, "Hozir ish vaqtingiz emas — qabulni qabulxona orqali yozing"],
-  time_blocked: [409, "Hozir sizda tanaffus yoki band vaqt belgilangan"],
-  slot_taken: [409, "Hozir sizda boshqa qabul bor"],
-  service_not_offered: [400, "Bu xizmat sizning xizmatlaringiz ro‘yxatida yo‘q"],
-  past_slot: [409, "Qabul vaqtini belgilab bo‘lmadi, qayta urinib ko‘ring"],
+// The walk-in goes through the same booking operation (book_appointment, in
+// start_walk_in_consultation): the booking contract's codes, worded for the
+// doctor who is starting it now.
+const WALK_IN_MESSAGES: Record<string, string> = {
+  outside_working_hours: "Hozir ish vaqtingiz emas — qabulni qabulxona orqali yozing",
+  time_blocked: "Hozir sizda tanaffus yoki band vaqt belgilangan",
+  slot_taken: "Hozir sizda boshqa qabul bor",
+  service_not_offered: "Bu xizmat sizning xizmatlaringiz ro‘yxatida yo‘q",
+  past_slot: "Qabul vaqtini belgilab bo‘lmadi, qayta urinib ko‘ring",
 };
 
 /**
@@ -108,8 +112,8 @@ export async function startConsultation(
         const raced = await inProgressConsultation(doctor, patientId);
         if (raced) return { appointmentId: raced, started: false };
       }
-      const [status, message] = BOOKING_ERRORS[walkIn.errorCode ?? ""] ?? [409, "Qabulni boshlab bo‘lmadi"];
-      throw new ApiError(status, message, walkIn.errorCode ?? "booking_failed");
+      const refusal = bookingError(walkIn.errorCode ?? "rpc_error");
+      throw new BookingError(refusal.status, WALK_IN_MESSAGES[walkIn.errorCode ?? ""] ?? refusal.message, refusal.bookingCode, refusal.reason);
     }
     appointmentId = walkIn.appointmentId;
   }

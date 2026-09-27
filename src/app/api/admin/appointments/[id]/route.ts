@@ -6,8 +6,8 @@ import { parseBody } from "@/lib/api/validate";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { enqueueCancellationNotification, enqueueRescheduleNotification } from "@/lib/notifications/jobs";
 import { trackAnalytics } from "@/lib/analytics";
-import { logger } from "@/lib/logger";
 import { startConsultationInDatabase } from "@/lib/clinical-access/consultation-start";
+import { isSlotConflict, rescheduleAppointment, slotUnavailable } from "@/lib/booking/engine";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +31,7 @@ const schema = z.discriminatedUnion("action", [
     }),
   z.object({
     action: z.literal("reschedule"),
-    newStartAt: z.string().datetime(),
+    newStartAt: z.string().datetime({ offset: true }),
   }),
 ]);
 
@@ -125,6 +125,8 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
         })
         .eq("id", id)
         .eq("clinic_id", staff.clinicId);
+      // Reactivating a cancelled visit whose time another booking took since.
+      if (isSlotConflict(error)) throw slotUnavailable();
       if (error) throw new ApiError(500, "Holatni yangilab bo‘lmadi");
 
       if (isCancel && !wasClosed && appointment.patients?.telegram_user_id) {
@@ -137,20 +139,14 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
       return ok({ updated: true });
     }
 
-    // reschedule
-    const { data: rpcResult, error: rpcError } = await supabase.rpc("reschedule_appointment", {
-      p_appointment_id: id,
-      p_new_start_at: body.newStartAt,
-      p_actor: staff.profileId,
+    // reschedule — the same per-doctor lock and constraint as booking; the
+    // appointment never conflicts with itself.
+    await rescheduleAppointment({
+      clinicId: staff.clinicId,
+      appointmentId: id,
+      newStartAt: new Date(body.newStartAt).toISOString(),
+      actorId: staff.profileId,
     });
-    if (rpcError) {
-      logger.error("reschedule rpc failed", { error: rpcError.message });
-      throw new ApiError(500, "Vaqtni o‘zgartirib bo‘lmadi", "reschedule_failed");
-    }
-    const result = rpcResult as { error_code?: string | null; error_message?: string | null };
-    if (result.error_code) {
-      throw new ApiError(409, result.error_message ?? "Bu vaqt band", result.error_code);
-    }
 
     if (appointment.patients?.telegram_user_id) {
       await enqueueRescheduleNotification({

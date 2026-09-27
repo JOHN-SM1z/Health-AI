@@ -126,6 +126,7 @@ export type Database = {
           doctor_id: string
           end_at: string
           id: string
+          idempotency_key: string | null
           no_show_reason: string | null
           notes: string | null
           patient_id: string
@@ -145,6 +146,7 @@ export type Database = {
           doctor_id: string
           end_at: string
           id?: string
+          idempotency_key?: string | null
           no_show_reason?: string | null
           notes?: string | null
           patient_id: string
@@ -164,6 +166,7 @@ export type Database = {
           doctor_id?: string
           end_at?: string
           id?: string
+          idempotency_key?: string | null
           no_show_reason?: string | null
           notes?: string | null
           patient_id?: string
@@ -197,24 +200,24 @@ export type Database = {
           },
           {
             foreignKeyName: "appointments_doctor_id_fkey"
-            columns: ["doctor_id"]
+            columns: ["doctor_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "doctors"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
           {
             foreignKeyName: "appointments_patient_id_fkey"
-            columns: ["patient_id"]
+            columns: ["patient_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "patients"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
           {
             foreignKeyName: "appointments_service_id_fkey"
-            columns: ["service_id"]
+            columns: ["service_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "services"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
         ]
       }
@@ -1591,6 +1594,7 @@ export type Database = {
           p_clinic_id: string
           p_created_by?: string
           p_doctor_id: string
+          p_idempotency_key?: string
           p_notes?: string
           p_patient_id: string
           p_service_id: string
@@ -1686,6 +1690,7 @@ export type Database = {
         Args: {
           p_actor?: string
           p_appointment_id: string
+          p_clinic_id: string
           p_new_start_at: string
         }
         Returns: Record<string, unknown>

@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { logger } from "@/lib/logger";
 import type { Database } from "@/lib/supabase/database.types";
+import { isSlotConflict, slotUnavailable } from "@/lib/booking/engine";
 
 type AppointmentStatus = Database["public"]["Enums"]["appointment_status"];
 export type ConsultationChannel = "doctor_workspace" | "doctor_queue" | "front_desk";
@@ -35,6 +36,8 @@ export async function startConsultationInDatabase(opts: {
     p_link_referral: opts.linkReferral,
     p_doctor_id: opts.doctorId,
   });
+  // A cancelled visit started again after another booking took its time.
+  if (isSlotConflict(error)) throw slotUnavailable();
   if (error) {
     logger.error("start_consultation failed", { code: error.code });
     throw new ApiError(500, "Qabulni boshlab bo‘lmadi", "consultation_start_failed");

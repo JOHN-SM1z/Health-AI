@@ -172,7 +172,10 @@ describeDb("doctor appointments routes (real DB, mocked session)", () => {
   });
 
   async function insertAppointment(over: Partial<{ doctor: string; clinic: string; status: string; start: string }> = {}) {
-    const start = over.start ?? new Date(Date.now() + 3 * 86400000 + seq++ * 60 * 60000).toISOString();
+    // 10:00 Tashkent on successive days: always inside one local day's working hours.
+    const day = new Date(Date.now() + (3 + seq++) * 86400000);
+    day.setUTCHours(5, 0, 0, 0);
+    const start = over.start ?? day.toISOString();
     const { data, error } = await admin
       .from("appointments")
       .insert({

@@ -329,7 +329,7 @@ describeDb("referral lifecycle through the API — transitions, access terminati
     expect(await status(referral)).toBe("expired");
     await expectLifecycleAudit(referral, x.id, "referral_expired", null);
     expect(await detail("b", referral)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
-  });
+  }, 20_000); // waits for a real expiry (seconds) — generous under parallel load
 
   it("completed: no referral-based access for Dr B — and past expires_at neither doctor keeps anything of the other's", async () => {
     const x = await patientX();
@@ -356,7 +356,7 @@ describeDb("referral lifecycle through the API — transitions, access terminati
     const aAfter = (await workspace("a", x.id)).body.data!.record as { records: Array<{ id: string }> };
     expect(aAfter.records.map((r) => r.id)).toEqual([x.aRecord]);
     expect((await detail("a", referral)).status).toBe(200); // the referring doctor's own referral
-  });
+  }, 20_000); // waits for a real expiry (seconds) — generous under parallel load
 
   it("an open referral tells Dr B until when referral-based access lasts", async () => {
     const x = await patientX();
