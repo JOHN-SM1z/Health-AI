@@ -19,7 +19,9 @@ notifications, and a human's eye on every screen.
 - [ ] Cancel an appointment → confirmation message; slot becomes free again
 - [ ] "Shifokor tanlashda yordam" answers from FAQ/catalog; NOT a diagnosis
 - [ ] Urgency keywords (e.g. "yurak og'riyapti", "вызовите скорую", "chest pain")
-      → escalation message + Telegram alert to TELEGRAM_ADMIN_CHAT_IDS
+      → approved urgent-care message (also while an operator holds the chat); the chat shows
+      as *Shoshilinch* first in `/admin/conversations` and in the dashboard count; the bot
+      stops auto-replying
 - [ ] Voice message → transcribed (if transcription enabled) or graceful decline
 - [ ] Unknown commands → helpful fallback reply
 

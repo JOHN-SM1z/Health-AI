@@ -38,9 +38,14 @@ Patient (Telegram)                      Clinic staff (browser)
 
 ## Data model (public schema)
 
-- **clinics** — tenant root; most tables carry `clinic_id` (RLS isolation)
-- **profiles + staff_roles** — staff accounts (Supabase Auth user ↔ profile; role: owner/admin/doctor)
-- **patients** — Telegram-identified (telegram_user_id) with consent flag
+- **clinics** — tenant root; most tables carry `clinic_id` (RLS isolation). Every foreign key
+  between two clinic-owned tables includes `clinic_id` (composite), so a row can only point
+  inside its own clinic
+- **profiles + staff_roles** — staff accounts (Supabase Auth user ↔ profile; one role per person
+  per clinic: owner/admin/manager/receptionist/doctor), managed by the owner under *Xodimlar*
+- **patients** — Telegram-identified (telegram_user_id, verified initData) with consent flag; a
+  website booking (no verified identity) reuses a record only without a Telegram identity and
+  with the same phone and name, and never edits one
 - **specialties / services / doctors / doctor_services / doctor_working_hours / doctor_time_blocks** — clinic catalog
 - **appointments** — status machine (`pending → confirmed → checked_in → in_progress → completed`, `cancelled`, `no_show`), **exclusion constraint** `no_overlapping_active_appointments` prevents double-booking at DB level
 - **payments** — linked to appointment, status machine with audit trail
@@ -55,7 +60,9 @@ Patient (Telegram)                      Clinic staff (browser)
   lab orders and results, medical history and follow-up plans; each tied to the author's own consultation (composite FK), immutable
   (corrections are new records), readable only where the consultation is (see
   [security.md](security.md#clinical-records))
-- **conversations / messages / voice_messages** — chat history, admin takeover support
+- **conversations / messages / voice_messages** — chat history, admin takeover support,
+  `conversations.urgent_at` (urgent wording nobody has taken over yet), `voice_messages.purged_at`
+  (audio and transcripts removed after retention); written by the server only
 - **faq_entries / app_settings** — clinic content and settings
 - **notification_jobs** — reminders/confirmations queue, sent by cron
 - **processed_webhooks** — Telegram webhook idempotency
@@ -162,13 +169,21 @@ decline or complete the referral in place, following its lifecycle stepper. See
 - Reminders (1 hour before appointment) are enqueued as `notification_jobs` and sent by the
   `/api/notifications/process` endpoint, called by Cloud Scheduler (cron) — no in-process timers,
   so zero instances still receive reminders.
+- The same scheduled run enforces voice retention: past `expires_at` a voice message's audio
+  is deleted from private storage and its transcripts and Telegram file reference are removed
+  (`src/lib/voice/retention.ts`); a failed deletion is retried on the next run.
+- Doctors see the referrals awaiting their answer as a count on *Yo‘llanmalar*
+  (`GET /api/doctor/referrals/pending-count`: a number only, no referral text, no audit rows).
 
 ## AI pipeline
 
 - Chat is grounded: the bot fetches clinic catalog + booking context and builds a system prompt;
   the AI never sees training-data-only answers.
-- Every assistant reply passes through `src/lib/safety/policy.ts`: urgency keywords escalate to a
-  human ("Bu holat shoshilinch yordam talab qilishi mumkin…"), disallowed claims (diagnosis,
+- Urgent wording is decided before any AI (`src/lib/safety/policy.ts`): the approved
+  urgent-care message ("Bu holat shoshilinch yordam talab qilishi mumkin…") goes out — also in a
+  conversation an operator holds — the conversation is flagged `urgent_at` and automatic replies
+  stop; staff see it first in the conversation center and on the dashboard.
+- Every assistant reply passes through the same policy: disallowed claims (diagnosis,
   prescriptions) are rejected; the AI is instructed it is not a doctor.
 - Voice notes: Telegram `voice` messages → transcription endpoint (feature-flagged) → same chat flow.
 
@@ -184,7 +199,10 @@ the same interface (see [payment-provider.md](payment-provider.md)).
   verified server-side with HMAC-SHA256 (bot token) and a freshness window.
 - **Staff** — Supabase Auth email/password. Panels read via the browser client (RLS enforces
   role + clinic), mutations go through API routes guarded by `requireStaff(role)` which checks
-  the JWT against `staff_roles` on every request.
+  the JWT against `staff_roles` on every request — a member the owner removes loses the panel on
+  their next request. The owner adds members (a new account gets a one-time password), changes
+  roles and removes members (`/api/admin/staff/members`, owner only, audited); everyone changes
+  their own password under *Parolim*.
 - **Cron** — `/api/notifications/process` and `/api/referrals/expire` require
   `Authorization: Bearer <CRON_SECRET>` (constant-time check, `src/lib/cron-auth.ts`).
 - **Webhook** — `/api/telegram/webhook` requires `X-Telegram-Bot-Api-Secret-Token` matching

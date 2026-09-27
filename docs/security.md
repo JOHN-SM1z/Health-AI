@@ -46,6 +46,19 @@
   token could insert a payment already marked `paid` over `/rest/v1/payments`, and operational
   staff could move appointments or forge `created_by`/`cancelled_by` outside the booking engine.
   Reads with the user's token are unchanged (RLS).
+- **Patient communication is written by the server only** too (`20260930000006`):
+  `conversations`, `messages`, `voice_messages` and `notification_jobs` have no INSERT/UPDATE/
+  DELETE for signed-in roles. Takeover is the server's compare-and-set, an operator reply is
+  recorded after Telegram accepted it, reminders are enqueued and claimed by the server. Staff
+  cannot upload into the private voice bucket.
+- **Every reference stays inside its clinic.** Every foreign key between two clinic-owned tables
+  is composite — `(x_id, clinic_id) → parent(id, clinic_id)` — so no row of one clinic can
+  point at another clinic's doctor, patient, conversation, appointment, voice message,
+  specialty or record, whoever writes it (a structural test fails on any new key that leaves
+  `clinic_id` out).
+- **SECURITY DEFINER functions** all run with `search_path = public, pg_temp`; none is
+  executable by `anon`; trigger functions by nobody; RLS helpers only by signed-in users and the
+  server (a catalog test checks all three).
 
 ## Secrets
 
@@ -56,16 +69,23 @@
   `TELEGRAM_WEBHOOK_SECRET`, `CRON_SECRET` must never be committed or
   exposed to the browser.
 - Service role key is only available server-side; browser builds receive only the anon key.
+- Production refuses to start when `CRON_SECRET` or `TELEGRAM_WEBHOOK_SECRET` is missing, shorter
+  than 32 characters, a placeholder from the docs (`change-me-in-production`,
+  `your-random-secret`, …) or one character repeated (`src/instrumentation.ts`).
+- Staff accounts created by the owner get a one-time random password (24 characters), shown to
+  the owner once and never stored or logged; the member replaces it under *Parolim*, which
+  re-checks the current password first.
 
 ## API hardening
 
 - `src/proxy.ts` protects `/admin` and `/doctor` routes.
 - All routes: input validation with zod (`parseBody` in `src/lib/api/validate`), centralized
   error handling (`handleApiError`) — no stack traces leaked.
-- Rate limiting: `src/lib/rate-limit.ts` (in-memory fixed window, per server instance, keyed by
-  IP) on booking and auth-heavy public endpoints — pair it with a load-balancer policy for a
-  global cap; `src/lib/rate-limit-shared.ts` (counted in Postgres, shared by every instance) for
-  limits that guard clinical data; tests cover both.
+- Rate limiting: `src/lib/rate-limit-shared.ts` (counted in Postgres, shared by every instance)
+  for the public writes — booking, patient cancellation, Telegram sign-in — and for limits that
+  guard clinical data; `src/lib/rate-limit.ts` (in-memory fixed window, per instance, keyed by
+  IP) for read-heavy public endpoints (catalog, availability) and as the fallback when the
+  database cannot be asked; tests cover both.
 - Security headers on every response (HSTS, `X-Content-Type-Options`, `X-Frame-Options`,
   `Referrer-Policy`, `Permissions-Policy`), with `frame-ancestors` allowing only Telegram for
   the Mini App routes.
@@ -297,11 +317,37 @@ Found and fixed (each with a regression test that fails if the fix is reverted):
 | F7 | A consultation's start, its referral link and its `consultation_started` audit row were three requests: a failure in between left a started consultation unaudited, and two concurrent starts audited twice | one transaction with a compare-and-swap on the status (`start_consultation()`, `20260930000001`) |
 | F8 | (pre-existing, found when CI first ran the suites on the real Supabase CLI stack) the anon role kept Supabase's default privileges on public tables: an anonymous `GET /rest/v1/patients` returned 200 with an empty RLS result instead of being refused, contrary to 20260813000013's intent | `20260930000004` revokes anon's table and sequence privileges and the default privileges for later tables |
 
+## Audit of every phase (2026-09-27)
+
+A review of phases 0–15 against the code and the live schema. Each finding is fixed with a
+regression test (unit, route, database or E2E):
+
+| # | Finding | Fix |
+|---|---|---|
+| F9 | The `messages` / `voice_messages` insert policies compared `c.clinic_id = c.clinic_id` (always true): staff of one clinic could attach a message to another clinic's conversation | policies removed — patient communication is server-written only; composite foreign keys |
+| F10 | Fourteen foreign keys between clinic-owned tables checked only the id: a manager could give another clinic's doctor working hours or time blocks (changing that clinic's availability), point a conversation at another clinic's patient, or a reminder at another clinic's appointment | every such key is `(x_id, clinic_id)`; the migration refuses to run over existing crossing rows |
+| F11 | Staff tokens could insert "operator replies" never sent to Telegram, take conversations over outside the compare-and-set, and point a reminder at any Telegram user (`notification_jobs` update policy) | `20260930000006`: no signed-in writes on conversations, messages, voice messages, notification jobs; HTTP red team checks with real sessions |
+| F12 | A website booking matched the patient by phone alone and overwrote the name: anyone who knew a number could rename that patient and attach visits — later clinical notes — to their record; a Telegram patient's chat received a stranger's reminders | an unverified booking reuses a record only without a Telegram identity and with the same phone **and** name, never edits one, and otherwise creates its own |
+| F13 | Urgent wording was escalated only to the optional platform bot's chats (usually nobody); the conversation was not flagged for the clinic's staff, the AI kept answering, and a held conversation got no urgent-care message | see [Medical safety](#medical-safety-non-security-but-critical) |
+| F14 | Voice-button callbacks acted on any voice message of the clinic named in the callback data (which a modified client controls): one patient could consent to transcribing another's recording | the recording must belong to the pressing Telegram user |
+| F15 | The privacy page promises voice messages are deleted after the retention period; nothing deleted them | the scheduled job removes audio, transcripts and the Telegram file reference after `expires_at` (`voice_messages.purged_at`) |
+| F16 | A patient could cancel a visit already checked in or in progress, or in the past; staff and doctor status changes and payment transitions had no compare-and-set (a webhook and a staff action could both apply); a doctor could move a cancelled visit to "completed" | status-guarded, clinic-scoped compare-and-set everywhere; a payment race test fails without it |
+| F17 | Reactivating a cancelled appointment skipped the working-hours and time-block checks | validated like a booking in the slot trigger |
+| F18 | Production accepted a one-character `CRON_SECRET` / `TELEGRAM_WEBHOOK_SECRET` | ≥ 32 characters, no placeholders |
+| F19 | SECURITY DEFINER functions without `pg_temp` pinned last; `anon` could execute them | search_path and grants normalised (catalog test) |
+| F20 | Deleting a clinic failed (audit rows written for the clinic being erased) | the erasure is marked for the transaction; its audit trail goes with it |
+| F21 | A second click on reception's walk-in booking could fail with 500 (~1 in 40): the upsert on `id` raced the `(id, clinic_id)` key | plain insert; a duplicate means the attempt's patient already exists |
+
 ## Medical safety (non-security but critical)
 
 `src/lib/safety/policy.ts`:
 
-- urgency keywords (Uzbek/Russian/English) → mandatory escalation message + human handoff,
+- urgency keywords (Uzbek/Russian/English) are checked before any AI: the approved urgent-care
+  message goes out — also while an operator holds the conversation — the conversation is flagged
+  `urgent_at` with automatic replies stopped, and the clinic's staff see it first in the
+  conversation center and on the dashboard until someone takes it over. The patient is told the
+  staff were alerted only once that flag is recorded; a confirmed voice transcription is treated
+  the same way,
 - disallowed claims (diagnosis, prescription, "you don't need a doctor") blocked with
   patterns, e.g. `sizga <dori> kerak`,
 - the AI prompt states it is not a doctor and is grounded only in clinic data.

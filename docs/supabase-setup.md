@@ -37,7 +37,7 @@ Prerequisite for a full local run: `npm run db:reset-local` (above) and a
 
 ## Migrations
 
-21 migrations in `supabase/migrations/` (ordered, repeatable on any environment):
+47 migrations in `supabase/migrations/` (ordered, repeatable on any environment; `supabase/full-db-setup.sql` is all of them as one script). The first 21:
 
 1. `0001`–`0008` — schema: clinics, profiles, staff_roles, patients, specialties,
    services, doctors, doctor_services, working hours, time blocks, appointments,
@@ -56,6 +56,12 @@ Prerequisite for a full local run: `npm run db:reset-local` (above) and a
    file ids, booking availability validation on all writes, and integrity gaps
    (payment inserts, conversation timestamps, Telegram-identity protection,
    notification indexes).
+
+Later migrations add the referral and clinical-records model and lifecycle, the unified
+booking engine (`20260930000005`) and tenant integrity (`20260930000006`: composite
+same-clinic foreign keys everywhere, patient communication written by the server only —
+which supersedes the staff reply/upload policies of `0015`–`0021` — SECURITY DEFINER
+search_path and grants, reactivation checks, clinic deletion, `urgent_at`, `purged_at`).
 
 Regenerate TypeScript types after schema changes:
 
@@ -90,8 +96,10 @@ Reads `OWNER_EMAIL` / `OWNER_PASSWORD` (and `CLINIC_SLUG`/`CLINIC_NAME` for a ne
 from `.env`, creates the auth user, the clinic if missing, and the `owner` staff role.
 Idempotent — safe to re-run.
 
-**Additional staff:** create the auth user in Supabase Studio → insert `profiles` +
-`staff_roles` rows (or use the admin panel once an owner exists).
+**Additional staff:** the owner adds them in the admin panel under *Xodimlar* (email, name,
+role — admin, manager, receptionist or doctor). A new account gets a one-time password shown
+to the owner once; the member replaces it under *Parolim*. The owner changes roles and removes
+members there too (audited); the owner role itself is only assigned by `create-owner`.
 
 ## Postgres functions (used by the app)
 

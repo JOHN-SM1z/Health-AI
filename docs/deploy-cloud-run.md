@@ -43,7 +43,8 @@ done
 Notes:
 
 - `TELEGRAM_WEBHOOK_SECRET` and `CRON_SECRET` must be long random strings
-  (`openssl rand -hex 32`).
+  (`openssl rand -hex 32`): production refuses to start with either shorter than 32
+  characters or copied from the docs.
 - There is no `WEBHOOK_SECRET` secret — the webhook secret is
   `TELEGRAM_WEBHOOK_SECRET` (the app validates it at startup and the webhook
   rejects requests without the matching `X-Telegram-Bot-Api-Secret-Token`).

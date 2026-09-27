@@ -26,6 +26,7 @@ This operational checklist governs the deployment, verification, and rollback pr
 ### C. Initial Data & Staff Bootstrapping
 - [ ] Run owner creation bootstrap script (`npm run create-owner`) with production credentials to create the primary clinic and owner profile.
 - [ ] Log into `/admin/login` using owner credentials and configure clinic settings, services, doctors, working hours, and FAQs.
+- [ ] Add staff under *Xodimlar* (one-time password per new account, replaced by the member under *Parolim*); link doctor accounts under *Shifokorlar*.
 
 ### D. Automated Quality & Build Gates
 - [ ] Run static type check (`npm run typecheck`) and confirm **0 errors**.
@@ -51,7 +52,7 @@ This operational checklist governs the deployment, verification, and rollback pr
 - [ ] Configure Telegram Mini App URL in @BotFather setting `https://<PRODUCTION_DOMAIN>/book`.
 
 ### C. Background Jobs & Scheduler
-- [ ] Configure Cloud Scheduler (or cron daemon) to trigger `POST https://<PRODUCTION_DOMAIN>/api/notifications/process` every 15 minutes (`*/15 * * * *`).
+- [ ] Configure Cloud Scheduler (or cron daemon) to trigger `POST https://<PRODUCTION_DOMAIN>/api/notifications/process` every 15 minutes (`*/15 * * * *`). The same run deletes voice messages past their retention (privacy page §2) — the response reports `voicePurged` / `voicePurgeFailed`.
 - [ ] Set Cloud Scheduler HTTP request header `Authorization: Bearer <CRON_SECRET>`.
 - [ ] Configure a second job: `POST https://<PRODUCTION_DOMAIN>/api/referrals/expire` hourly (`7 * * * *`), same header.
 
