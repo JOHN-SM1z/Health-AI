@@ -84,6 +84,19 @@ export function slotUnavailable(): BookingError {
   return bookingError("slot_taken");
 }
 
+/**
+ * A refusal from the appointment slot trigger — an overlap, or a cancelled
+ * visit brought back to a time that is no longer bookable (working hours,
+ * a time block, an inactive doctor) — as the contract error; null for any
+ * other failure. The trigger names the cause in the error's hint.
+ */
+export function slotWriteError(error: { code?: string; hint?: string | null } | null | undefined): BookingError | null {
+  if (!error) return null;
+  if (isSlotConflict(error)) return slotUnavailable();
+  if (error.hint && Object.hasOwn(ENGINE_ERRORS, error.hint)) return bookingError(error.hint);
+  return null;
+}
+
 /** Client-generated key of one booking attempt: repeat it on retries, a new one per new attempt. */
 export const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 

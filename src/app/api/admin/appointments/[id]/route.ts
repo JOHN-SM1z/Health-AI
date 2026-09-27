@@ -7,7 +7,7 @@ import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { enqueueCancellationNotification, enqueueRescheduleNotification } from "@/lib/notifications/jobs";
 import { trackAnalytics } from "@/lib/analytics";
 import { startConsultationInDatabase } from "@/lib/clinical-access/consultation-start";
-import { isSlotConflict, rescheduleAppointment, slotUnavailable } from "@/lib/booking/engine";
+import { rescheduleAppointment, slotWriteError } from "@/lib/booking/engine";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +35,11 @@ const schema = z.discriminatedUnion("action", [
   }),
 ]);
 
+/** The appointment changed between reading and writing it: the caller reloads and decides again. */
+function appointmentChanged(): ApiError {
+  return new ApiError(409, "Qabul holati o‘zgargan, sahifani yangilang", "appointment_changed");
+}
+
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**
@@ -61,7 +66,9 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
       if (["cancelled", "no_show", "completed"].includes(appointment.status)) {
         throw new ApiError(409, "Qabul allaqachon yakunlangan", "already_closed");
       }
-      const { error } = await supabase
+      // Compare-and-set on the status read above: a change made meanwhile
+      // (the doctor started the visit, another cancel) is never overwritten.
+      const { data: cancelled, error } = await supabase
         .from("appointments")
         .update({
           status: "cancelled",
@@ -69,8 +76,12 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
           cancelled_reason: body.reason ?? "Xodim tomonidan bekor qilindi",
           cancelled_by: staff.profileId,
         })
-        .eq("id", id);
+        .eq("id", id)
+        .eq("clinic_id", staff.clinicId)
+        .eq("status", appointment.status)
+        .select("id");
       if (error) throw new ApiError(500, "Bekor qilib bo‘lmadi");
+      if (!cancelled?.length) throw appointmentChanged();
 
       if (appointment.patients?.telegram_user_id) {
         await enqueueCancellationNotification({
@@ -110,7 +121,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
         if (!started) throw new ApiError(409, "Qabul holati o‘zgargan, sahifani yangilang", "appointment_changed");
         return ok({ updated: true });
       }
-      const { error } = await supabase
+      const { data: changed, error } = await supabase
         .from("appointments")
         .update({
           status: body.status,
@@ -124,10 +135,15 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
           ...(isNoShow ? { no_show_reason: body.noShowReason } : {}),
         })
         .eq("id", id)
-        .eq("clinic_id", staff.clinicId);
-      // Reactivating a cancelled visit whose time another booking took since.
-      if (isSlotConflict(error)) throw slotUnavailable();
+        .eq("clinic_id", staff.clinicId)
+        .eq("status", appointment.status)
+        .select("id");
+      // Reactivating a cancelled visit is validated like a booking: its time
+      // may have been taken since, or be outside today's hours or in a break.
+      const refused = slotWriteError(error);
+      if (refused) throw refused;
       if (error) throw new ApiError(500, "Holatni yangilab bo‘lmadi");
+      if (!changed?.length) throw appointmentChanged();
 
       if (isCancel && !wasClosed && appointment.patients?.telegram_user_id) {
         await enqueueCancellationNotification({

@@ -55,9 +55,14 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
       throw new ApiError(404, "Qabul topilmadi", "appointment_not_found");
     }
 
-    // Only forward transitions are allowed.
-    const rank: Record<string, number> = { checked_in: 1, in_progress: 2, completed: 3 };
-    if ((rank[body.status] ?? 0) < (rank[appointment.status] ?? 0)) {
+    // A repeated tap (the same status again) changes nothing.
+    if (body.status === appointment.status) return ok({ updated: false, status: body.status });
+
+    // Only an active visit moves, and only forward. A cancelled or no-show
+    // visit is reception's to bring back (validated like a booking); a
+    // completed one is closed.
+    const rank: Record<string, number> = { pending: 0, confirmed: 0, checked_in: 1, in_progress: 2, completed: 3 };
+    if (!(appointment.status in rank) || appointment.status === "completed" || rank[body.status] < rank[appointment.status]) {
       throw new ApiError(409, "Noto‘g‘ri holat o‘tishi", "invalid_transition");
     }
 
@@ -74,12 +79,16 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
       // Someone else changed the visit in between (a concurrent start included).
       if (!started) throw new ApiError(409, "Qabul holati o‘zgargan, sahifani yangilang", "consultation_changed");
     } else {
-      const { error } = await supabase
+      // Compare-and-set: reception may have cancelled the visit meanwhile.
+      const { data: changed, error } = await supabase
         .from("appointments")
         .update({ status: body.status })
         .eq("id", id)
-        .eq("clinic_id", staff.clinicId);
+        .eq("clinic_id", staff.clinicId)
+        .eq("status", appointment.status)
+        .select("id");
       if (error) throw new ApiError(500, "Holatni yangilab bo‘lmadi");
+      if (!changed?.length) throw new ApiError(409, "Qabul holati o‘zgargan, sahifani yangilang", "consultation_changed");
     }
 
     await trackAnalytics({

@@ -90,11 +90,15 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
       if (!patient) throw bookingError("patient_not_found");
     } else if (body.idempotencyKey) {
+      // A retry or a second click of the same attempt finds its patient
+      // already created: the unique violation means exactly that (an upsert
+      // on the id alone raced against the (id, clinic_id) key and failed).
+      // The booking operation below checks the patient is this clinic's.
       const id = walkInPatientId(ctx.clinicId, body.idempotencyKey);
       const { error } = await supabase
         .from("patients")
-        .upsert({ id, clinic_id: ctx.clinicId, full_name: body.patientName, phone: body.phone ?? null }, { onConflict: "id", ignoreDuplicates: true });
-      if (error) throw new ApiError(500, "Bemorni yaratib bo‘lmadi");
+        .insert({ id, clinic_id: ctx.clinicId, full_name: body.patientName, phone: body.phone ?? null });
+      if (error && error.code !== "23505") throw new ApiError(500, "Bemorni yaratib bo‘lmadi");
       patientId = id;
     } else {
       const { data: created, error } = await supabase

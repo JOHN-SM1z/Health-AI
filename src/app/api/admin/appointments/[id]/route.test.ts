@@ -184,4 +184,34 @@ describeDb("admin appointment status PATCH (real DB, mocked session)", () => {
     expect(appt!.cancelled_reason).toBeNull();
     expect(appt!.cancelled_by).toBeNull();
   });
+
+  it("brings a cancelled visit back only while its time is still bookable — a break there answers SLOT_UNAVAILABLE", async () => {
+    const id = await insertAppointment("cancelled");
+    const { data: appt } = await admin.from("appointments").select("start_at, end_at").eq("id", id).single();
+    const { data: block, error: blockError } = await admin
+      .from("doctor_time_blocks")
+      .insert({ clinic_id: clinicId, doctor_id: doctorId, starts_at: appt!.start_at, ends_at: appt!.end_at, reason: "break" })
+      .select("id")
+      .single();
+    expect(blockError).toBeNull();
+
+    const refused = await patch(id, { action: "status", status: "confirmed" });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ code: "SLOT_UNAVAILABLE", details: { reason: "time_blocked" } });
+    const { data: still } = await admin.from("appointments").select("status").eq("id", id).single();
+    expect(still!.status).toBe("cancelled");
+
+    await admin.from("doctor_time_blocks").delete().eq("id", block!.id);
+    const back = await patch(id, { action: "status", status: "confirmed" });
+    expect(back.status).toBe(200);
+  });
+
+  it("cancelling twice: the second answers already closed and changes nothing", async () => {
+    const id = await insertAppointment();
+    expect((await patch(id, { action: "cancel", reason: "Bemor so‘radi" })).status).toBe(200);
+    const again = await patch(id, { action: "cancel", reason: "Ikkinchi marta" });
+    expect(again.status).toBe(409);
+    const { data } = await admin.from("appointments").select("cancelled_reason").eq("id", id).single();
+    expect(data!.cancelled_reason).toBe("Bemor so‘radi");
+  });
 });

@@ -2,11 +2,12 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getClinicFromRequest } from "@/lib/clinics/context";
-import { resolvePatientFromInitData, devIdentityAllowed, getOrCreatePatientByContact } from "@/lib/patients/identity";
+import { resolvePatientFromInitData, devIdentityAllowed, getOrCreateWebPatient } from "@/lib/patients/identity";
 import { handleApiError, ApiError, ok, fail } from "@/lib/api/errors";
 import { parseBody } from "@/lib/api/validate";
 import { phoneSchema, nameSchema, uuidSchema } from "@/lib/api/validate";
-import { rateLimit, keyFromIp } from "@/lib/rate-limit";
+import { keyFromIp } from "@/lib/rate-limit";
+import { sharedRateLimit } from "@/lib/rate-limit-shared";
 import { trackAnalytics } from "@/lib/analytics";
 import { enqueueBookingNotifications } from "@/lib/notifications/jobs";
 import { getPaymentProvider } from "@/lib/payments/provider";
@@ -33,7 +34,7 @@ const createBookingSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-    const limit = rateLimit({ key: keyFromIp(ip, "bookings"), limit: 10, windowMs: 60_000 });
+    const limit = await sharedRateLimit({ key: keyFromIp(ip, "bookings"), limit: 10, windowMs: 60_000 });
     if (!limit.ok) return fail("Juda ko‘p so‘rov", 429, "rate_limited");
 
     const body = await parseBody(request, createBookingSchema);
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
       // Direct website booking — a genuine self-service booking with no
       // staff involved, distinct from a reception-entered 'walk_in'
       // (api/admin/appointments) even though both have no Telegram identity.
-      patient = await getOrCreatePatientByContact({
+      patient = await getOrCreateWebPatient({
         clinicId: clinic.id,
         phone: body.phone,
         fullName: body.patientName,
@@ -70,17 +71,22 @@ export async function POST(request: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // Record consent + contact details on the patient.
-    const { error: patientUpdateError } = await supabase
-      .from("patients")
-      .update({
-        consent_given: true,
-        consent_given_at: new Date().toISOString(),
-        full_name: body.patientName,
-        phone: body.phone,
-      })
-      .eq("id", patient.id);
-    if (patientUpdateError) throw new ApiError(500, "Bemor ma‘lumotlarini saqlab bo‘lmadi");
+    // A verified Telegram patient keeps their own record current (consent,
+    // name, phone). A website visitor's details were recorded above only on a
+    // record of their own — never written onto an existing one.
+    if (body.initData) {
+      const { error: patientUpdateError } = await supabase
+        .from("patients")
+        .update({
+          consent_given: true,
+          consent_given_at: new Date().toISOString(),
+          full_name: body.patientName,
+          phone: body.phone,
+        })
+        .eq("id", patient.id)
+        .eq("clinic_id", clinic.id);
+      if (patientUpdateError) throw new ApiError(500, "Bemor ma‘lumotlarini saqlab bo‘lmadi");
+    }
 
     await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "booking_attempt", payload: { serviceId: body.serviceId } });
 

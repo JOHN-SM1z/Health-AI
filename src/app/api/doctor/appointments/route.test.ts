@@ -245,6 +245,25 @@ describeDb("doctor appointments routes (real DB, mocked session)", () => {
       expect(res.status).toBe(400);
     });
 
+    it("never revives a cancelled visit or reopens a completed one — both are refused and left as they were", async () => {
+      for (const status of ["cancelled", "completed"]) {
+        const appt = await insertAppointment({ status });
+        for (const to of ["checked_in", "in_progress", "completed"].filter((s) => s !== status)) {
+          const res = await patch(appt.id, { status: to });
+          expect(res.status, `${status} → ${to}`).toBe(409);
+        }
+        const { data } = await admin.from("appointments").select("status").eq("id", appt.id).single();
+        expect(data!.status).toBe(status);
+      }
+    });
+
+    it("a repeated tap on the current status changes nothing", async () => {
+      const appt = await insertAppointment({ status: "checked_in" });
+      const res = await patch(appt.id, { status: "checked_in" });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { data?: { updated?: boolean } }).data?.updated).toBe(false);
+    });
+
     it("advances a doctor's own appointment forward", async () => {
       const appt = await insertAppointment();
       const res = await patch(appt.id, { status: "checked_in" });

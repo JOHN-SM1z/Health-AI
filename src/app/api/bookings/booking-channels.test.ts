@@ -41,6 +41,7 @@ vi.mock("@/lib/patients/identity", async (importOriginal) => {
   };
 });
 vi.mock("@/lib/rate-limit", () => ({ rateLimit: () => ({ ok: true, retryAfterSeconds: 0 }), keyFromIp: () => "test" }));
+vi.mock("@/lib/rate-limit-shared", () => ({ sharedRateLimit: async () => ({ ok: true, retryAfterSeconds: 0 }) }));
 // Patient notifications are not under test, and real jobs (due at once) would
 // leak into the notification-processor suites that claim every due job.
 vi.mock("@/lib/notifications/jobs", () => ({
@@ -102,6 +103,22 @@ describeDb("online and offline booking share one engine — real routes, real da
           consent: true,
           source: "telegram_mini_app",
           ...(opts.key ? { idempotencyKey: opts.key } : {}),
+        }),
+      ),
+    );
+  }
+  /** The website's POST /api/bookings: no Telegram identity, only what the visitor typed. */
+  async function bookOnWebsite(startAt: string, patientName: string, phone: string) {
+    return read(
+      await onlineBook(
+        json(`http://localhost/api/bookings?clinic=${clinicA}`, "POST", {
+          doctorId: doctorA,
+          serviceId: serviceA,
+          startAt,
+          patientName,
+          phone,
+          consent: true,
+          idempotencyKey: randomUUID(),
         }),
       ),
     );
@@ -344,5 +361,60 @@ describeDb("online and offline booking share one engine — real routes, real da
       [422, "INVALID_PATIENT"],
     ]);
     for (const r of cases) expect(JSON.stringify(r.body)).not.toMatch(/violat|constraint|postgres|sqlstate|23P01|P0001/i);
+  });
+  it("a website booking never takes over or edits someone else's patient record — it reuses one only on a name and phone match", async () => {
+    const phone = `+99890${String(Math.floor(Math.random() * 10_000_000)).padStart(7, "0")}`;
+    const telegramPatient = randomUUID();
+    const deskPatient = randomUUID();
+    await sql`insert into public.patients ${sql([
+      { id: telegramPatient, clinic_id: clinicA, full_name: `Telegram Egasi ${suffix}`, phone, telegram_user_id: 870_000_000 + Math.floor(Math.random() * 9_000_000) },
+      { id: deskPatient, clinic_id: clinicA, full_name: `Dilnoza Karimova ${suffix}`, phone, telegram_user_id: null },
+    ])}`;
+    const patientOf = async (r: Res) => {
+      const [row] = await sql<{ patient_id: string }[]>`select patient_id from public.appointments where id = ${idOf(r)!}`;
+      return row.patient_id;
+    };
+
+    // A stranger who knows the number: a record of their own; nobody else's is touched.
+    const stranger = await bookOnWebsite(freshSlot(), `Begona Odam ${suffix}`, phone);
+    expect(stranger.status).toBe(201);
+    const strangerPatient = await patientOf(stranger);
+    expect([telegramPatient, deskPatient]).not.toContain(strangerPatient);
+    const names = await sql<{ id: string; full_name: string }[]>`
+      select id, full_name from public.patients where id in ${sql([telegramPatient, deskPatient])} order by full_name`;
+    expect(names.map((n) => n.full_name).sort()).toEqual([`Dilnoza Karimova ${suffix}`, `Telegram Egasi ${suffix}`].sort());
+
+    // The Telegram patient's name typed on the website still does not reach their Telegram record.
+    const posing = await bookOnWebsite(freshSlot(), `Telegram Egasi ${suffix}`, phone);
+    expect(await patientOf(posing)).not.toBe(telegramPatient);
+
+    // The returning visitor (same phone, same name, typed differently) reuses their own record.
+    const returning = await bookOnWebsite(freshSlot(), `  dilnoza   KARIMOVA ${suffix} `, phone);
+    expect(returning.status).toBe(201);
+    expect(await patientOf(returning)).toBe(deskPatient);
+  });
+
+  it("a patient cancels only their own booking before it starts — never a visit that is under way", async () => {
+    const cancel = async (id: string, patient: string) =>
+      read(
+        await patientCancel(json(`http://localhost/api/bookings/${id}/cancel?clinic=${clinicA}`, "POST", { initData: `tg:${patient}` }), {
+          params: Promise.resolve({ id }),
+        }),
+      );
+    const booked = await bookOnline(online[5], freshSlot());
+    const id = idOf(booked)!;
+
+    // Someone else's booking: refused, untouched.
+    expect((await cancel(id, online[6])).status).toBe(403);
+
+    // Checked in at the desk: the patient can no longer cancel it.
+    await sql`update public.appointments set status = 'checked_in' where id = ${id}`;
+    expect(await cancel(id, online[5])).toMatchObject({ status: 409, body: { code: "not_cancellable" } });
+    const [{ status }] = await sql<{ status: string }[]>`select status from public.appointments where id = ${id}`;
+    expect(status).toBe("checked_in");
+
+    // A booking still ahead: cancelled.
+    const later = await bookOnline(online[5], freshSlot());
+    expect((await cancel(idOf(later)!, online[5])).status).toBe(200);
   });
 });
