@@ -67,9 +67,18 @@ npm run lint           # eslint (0 errors)
 npm test               # vitest — DB integration suites probe the local stack and
                        # SKIP with a clear warning when it is unavailable
 npm run db:reset-local # clean local DB: migrations + seed, one command
+npm run db:full-setup  # regenerate supabase/full-db-setup.sql after adding a migration
 npm run create-owner   # create the first owner account + clinic (see supabase-setup.md)
 npm run build          # production build (standalone)
+
+# End-to-end, against the built app on the LOCAL stack only (npm run build && npm start):
+npm run e2e:seed       # demo clinic + staff accounts (idempotent; refuses non-local hosts)
+npm run test:e2e       # referral workflow in the browser (desktop/tablet/phone) + HTTP red team
 ```
+
+CI (`.github/workflows/ci.yml`) runs all of the above on every push: lint, typecheck, tests
+without a database, build, then a Supabase stack from the CLI with every migration and the
+seed, the full test suite, and the end-to-end scripts against the built app.
 
 ---
 

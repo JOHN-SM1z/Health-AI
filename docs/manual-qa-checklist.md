@@ -3,6 +3,12 @@
 Run against the deployed environment (or local stack with dev mode) before go-live.
 Each row: expected behavior. Mark all green = go.
 
+Automated on every push (CI) and locally with `npm run e2e:seed && npm run test:e2e` against
+the built app: the doctor-to-doctor referral workflow at desktop, tablet and phone widths
+(including the lapsed-referral states and the reception/manager screens) and the HTTP red team.
+The rows below cover what those scripts do not: the Telegram bot and Mini App, payments,
+notifications, and a human's eye on every screen.
+
 ## Telegram bot
 
 - [ ] `/start` shows the menu with the Mini App button and booking entry
