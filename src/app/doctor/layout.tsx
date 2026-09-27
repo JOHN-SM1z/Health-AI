@@ -55,6 +55,16 @@ export default async function DoctorLayout({ children }: { children: React.React
             <span className="font-display text-sm font-bold tracking-tight">Shifokor paneli</span>
           </Link>
         </header>
+        {/* Phones and small tablets: the sidebar is hidden, so its sections sit in a scrollable strip. */}
+        <nav
+          aria-label="Shifokor bo‘limlari"
+          className="flex gap-1 overflow-x-auto border-b border-hairline bg-surface px-2 py-1.5 md:hidden [&>a]:shrink-0 [&>a]:whitespace-nowrap"
+        >
+          <NavLink href="/doctor" exact icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
+          <NavLink href="/doctor/patients" icon={<Users className="h-4 w-4" />}>Bemorlarim</NavLink>
+          <NavLink href="/doctor/referrals" icon={<Send className="h-4 w-4" />}>Yo‘llanmalar</NavLink>
+          <NavLink href="/doctor/schedule" icon={<CalendarRange className="h-4 w-4" />}>Jadvalim</NavLink>
+        </nav>
         <div className="flex-1 overflow-x-hidden p-4 md:p-8">{children}</div>
       </div>
     </div>

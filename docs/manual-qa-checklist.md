@@ -84,6 +84,12 @@ Each row: expected behavior. Mark all green = go.
 - [ ] After revoke / expiry: the workspace shows *Yo‘llanma bekor qilingan* / *muddati tugagan* with no patient data; an unrelated patient id shows *Bemor topilmadi*
 - [ ] Reception, managers and owners never see clinical records (patient panel, REST API)
 
+## Doctor portal on phones and tablets
+
+- [ ] Phone (≤ 767px): the strip under the header reaches *Bugungi navbat*, *Bemorlarim*, *Yo‘llanmalar*, *Jadvalim*; no page scrolls sideways
+- [ ] Phone: patient page — referral card, lifecycle stepper, record form and *Yozuvni saqlash* fit the width; the referral dialog and review fit the screen
+- [ ] Tablet (768–1024px): sidebar navigation; referral list, detail (*Qabul qilish*) and patient page usable without sideways scrolling
+
 ## Referral lifecycle and audit
 
 - [ ] Workspace header of a referred patient shows *Yo‘llanma bo‘yicha kirish … da tugaydi*
