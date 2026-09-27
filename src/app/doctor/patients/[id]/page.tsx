@@ -4,13 +4,12 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ClipboardList, Clock, ShieldOff, UserRound } from "lucide-react";
-import { PageHeader, Card, ABadge, AEmpty, AError, AButton, ASelect, LoadingRow } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, AEmpty, AError, AButton, ASelect, ATextArea, LoadingRow } from "@/components/admin/ui";
 import {
   adminApi,
   AdminApiError,
   formatDateTime,
   formatTime,
-  CLINICAL_RECORD_TYPE_LABELS,
   CLINICAL_RECORD_TYPE_TONES,
   REFERRAL_PRIORITY_LABELS,
   REFERRAL_STATUS_LABELS,
@@ -20,6 +19,8 @@ import {
 } from "@/lib/admin/client";
 import { ReferralDialog } from "@/components/doctor/referral-dialog";
 import { ClinicalRecordForm, type RecordDraft } from "@/components/doctor/clinical-record-form";
+import { ReferralLifecycle } from "@/components/doctor/referral-lifecycle";
+import { RECORD_CATEGORY_LABELS, type RecordCategory } from "@/lib/clinical-records/categories";
 
 type Appointment = {
   id: string;
@@ -42,6 +43,9 @@ type ClinicalRecord = {
   mine: boolean;
   correctsRecordId: string | null;
   correctedByRecordId: string | null;
+  /** Written in the doctor's consultation under way, or earlier (set by the server). */
+  stage: "current" | "historical";
+  category: RecordCategory;
 };
 
 type Referral = {
@@ -55,6 +59,10 @@ type Referral = {
   expiresAt: string;
   referringDoctor: { id: string; name: string } | null;
   referredToDoctor: { id: string; name: string } | null;
+  followUpAppointmentId: string | null;
+  acceptedAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
 };
 
 type ConsultationRef = { appointmentId: string; startAt: string; serviceName: string | null };
@@ -116,11 +124,12 @@ const REFERABLE = ["in_progress", "completed"];
 const SCHEDULED = ["pending", "confirmed", "checked_in"];
 
 /** Record types gathered in the clinical summary (consultation notes stay with their visit). */
-const SUMMARY_TYPES = ["diagnosis", "medical_history", "prescription", "lab_result"] as const;
+const SUMMARY_TYPES = ["diagnosis", "medical_history", "prescription", "lab_order", "lab_result"] as const;
 const SUMMARY_TITLES: Record<(typeof SUMMARY_TYPES)[number], string> = {
   diagnosis: "Tashxislar",
   medical_history: "Anamnez",
   prescription: "Retseptlar",
+  lab_order: "Tahlilga yo‘llanmalar",
   lab_result: "Tahlil natijalari",
 };
 
@@ -144,7 +153,7 @@ function RecordItem({
   return (
     <li className="rounded-xl border border-hairline px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
-        <ABadge tone={CLINICAL_RECORD_TYPE_TONES[record.type] ?? "neutral"}>{CLINICAL_RECORD_TYPE_LABELS[record.type] ?? record.type}</ABadge>
+        <ABadge tone={CLINICAL_RECORD_TYPE_TONES[record.type] ?? "neutral"}>{RECORD_CATEGORY_LABELS[record.category] ?? record.type}</ABadge>
         {record.correctsRecordId && <ABadge tone="blue">Tuzatish</ABadge>}
         {record.correctedByRecordId && <ABadge tone="gray">Tuzatilgan</ABadge>}
         {record.code && <span className="font-numeric text-xs text-ink-muted">{record.code}</span>}
@@ -179,6 +188,8 @@ export default function DoctorPatientWorkspacePage() {
   const [correcting, setCorrecting] = useState<RecordDraft & { appointmentId: string } | null>(null);
   const [referFrom, setReferFrom] = useState<Appointment | null>(null);
   const [confirmComplete, setConfirmComplete] = useState<string | null>(null);
+  const [declineFor, setDeclineFor] = useState<string | null>(null);
+  const [declineReason, setDeclineReason] = useState("");
   const [notice, setNotice] = useState<ReactNode | null>(null);
 
   const load = useCallback(async () => {
@@ -216,10 +227,12 @@ export default function DoctorPatientWorkspacePage() {
     act(() => adminApi.post(`/api/doctor/patients/${id}/consultations`, body));
   const completeConsultation = (appointmentId: string) =>
     act(() => adminApi.patch(`/api/doctor/appointments/${appointmentId}`, { status: "completed" }));
-  const actOnReferral = (referralId: string, action: "accept" | "complete") =>
+  const actOnReferral = (referralId: string, action: "accept" | "decline" | "complete", reason?: string) =>
     act(async () => {
-      await adminApi.patch(`/api/doctor/referrals/${referralId}`, { action });
+      await adminApi.patch(`/api/doctor/referrals/${referralId}`, { action, ...(reason ? { reason } : {}) });
       setConfirmComplete(null);
+      setDeclineFor(null);
+      setDeclineReason("");
     });
   const correct = (rec: ClinicalRecord) =>
     setCorrecting({ recordId: rec.id, type: rec.type, summary: rec.summary, details: rec.details, code: rec.code, appointmentId: rec.appointmentId });
@@ -270,7 +283,9 @@ export default function DoctorPatientWorkspacePage() {
     .filter((a) => a.id !== current?.appointmentId && SCHEDULED.includes(a.status))
     .sort((x, y) => x.startAt.localeCompare(y.startAt));
   const previous = workspace.appointments.filter((a) => a.id !== current?.appointmentId && !SCHEDULED.includes(a.status));
-  const activeReferralToMe = workspace.referrals.some((r) => r.role === "receiver" && ["pending", "accepted"].includes(r.status));
+  const activeReferralToMe = workspace.referrals.some((r) => r.role === "receiver" && ["pending", "accepted", "in_progress"].includes(r.status));
+  // The referral this consultation is the handoff for, if any.
+  const handoff = current ? workspace.referrals.find((r) => r.role === "receiver" && r.followUpAppointmentId === current.appointmentId) : undefined;
   const currentRecords = current ? (recordsByAppointment.get(current.appointmentId) ?? []) : [];
   const referringDoctorIds = new Set(workspace.referrals.filter((r) => r.role === "receiver").map((r) => r.referringDoctor?.id));
   // The server sends each visible record's consultation; anything else is
@@ -321,6 +336,9 @@ export default function DoctorPatientWorkspacePage() {
                   <p className="whitespace-pre-wrap text-sm text-foreground">{r.handoffNote}</p>
                 </>
               )}
+              <div className="mt-3">
+                <ReferralLifecycle status={r.status} createdAt={r.createdAt} acceptedAt={r.acceptedAt} startedAt={r.startedAt} completedAt={r.completedAt} />
+              </div>
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-ink-muted">
                   Yuborilgan {formatDateTime(r.createdAt)} · Amal qiladi {formatDateTime(r.expiresAt)} ·{" "}
@@ -328,17 +346,41 @@ export default function DoctorPatientWorkspacePage() {
                     Yo‘llanmani ochish
                   </Link>
                 </p>
-                {r.role === "receiver" && r.status === "pending" && (
-                  <AButton size="sm" loading={busy} onClick={() => void actOnReferral(r.id, "accept")}>
-                    Yo‘llanmani qabul qilish
-                  </AButton>
+                {r.role === "receiver" && r.status === "pending" && declineFor !== r.id && (
+                  <div className="flex gap-2">
+                    <AButton size="sm" variant="outline" onClick={() => setDeclineFor(r.id)}>
+                      Rad etish
+                    </AButton>
+                    <AButton size="sm" loading={busy} onClick={() => void actOnReferral(r.id, "accept")}>
+                      Yo‘llanmani qabul qilish
+                    </AButton>
+                  </div>
                 )}
-                {r.role === "receiver" && r.status === "accepted" && confirmComplete !== r.id && (
+                {r.role === "receiver" && r.status === "in_progress" && confirmComplete !== r.id && (
                   <AButton size="sm" variant="outline" onClick={() => setConfirmComplete(r.id)}>
                     Yo‘llanmani yakunlash
                   </AButton>
                 )}
               </div>
+              {r.role === "receiver" && r.status === "accepted" && (
+                <p className="mt-2 text-sm text-ink-muted">
+                  Keyingi qadam: quyida o‘z qabulingizni boshlang — yo‘llanma “Qabul boshlangan” holatiga o‘tadi.
+                </p>
+              )}
+              {declineFor === r.id && (
+                <div className="mt-3 flex flex-col gap-2 border-t border-hairline pt-3">
+                  <p className="text-sm text-foreground">Rad etish sababi (ixtiyoriy) — yo‘llagan shifokor uni ko‘radi.</p>
+                  <ATextArea value={declineReason} onChange={setDeclineReason} rows={2} aria-label="Rad etish sababi" />
+                  <div className="flex gap-2">
+                    <AButton size="sm" variant="outline" onClick={() => setDeclineFor(null)}>
+                      Orqaga
+                    </AButton>
+                    <AButton size="sm" loading={busy} onClick={() => void actOnReferral(r.id, "decline", declineReason.trim() || undefined)}>
+                      Yo‘llanmani rad etish
+                    </AButton>
+                  </div>
+                </div>
+              )}
               {confirmComplete === r.id && (
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-hairline pt-3">
                   <p className="text-sm text-foreground">
@@ -364,13 +406,21 @@ export default function DoctorPatientWorkspacePage() {
           {current ? (
             <div className="flex flex-col gap-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm text-foreground">
-                  <ABadge tone="purple">Jarayonda</ABadge>{" "}
-                  <span className="ml-1">
-                    {formatDateTime(current.startAt)}
-                    {current.serviceName ? ` · ${current.serviceName}` : ""}
-                  </span>
-                </p>
+                <div>
+                  <p className="text-sm text-foreground">
+                    <ABadge tone="purple">Jarayonda</ABadge>{" "}
+                    <span className="ml-1">
+                      {formatDateTime(current.startAt)}
+                      {current.serviceName ? ` · ${current.serviceName}` : ""}
+                    </span>
+                  </p>
+                  {handoff && (
+                    <p className="mt-1 text-xs text-ink-muted">
+                      {handoff.referringDoctor?.name ?? "—"} yo‘llanmasi bo‘yicha qabul — yozuvlaringiz sizning nomingizdan saqlanadi, oldingi
+                      yozuvlar o‘zgarmaydi.
+                    </p>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <AButton
                     variant="outline"
@@ -481,6 +531,9 @@ export default function DoctorPatientWorkspacePage() {
                 <ul className="flex flex-col gap-2" aria-label={SUMMARY_TITLES[type]}>
                   {items.map((r) => (
                     <li key={r.id} className="text-sm">
+                      {type === "diagnosis" && (
+                        <ABadge tone={r.stage === "current" ? "purple" : "neutral"}>{RECORD_CATEGORY_LABELS[r.category]}</ABadge>
+                      )}{" "}
                       <span className="font-medium text-foreground">{r.summary}</span>
                       {r.code && <span className="font-numeric text-xs text-ink-muted"> · {r.code}</span>}
                       <p className="text-xs text-ink-muted">
@@ -497,7 +550,7 @@ export default function DoctorPatientWorkspacePage() {
 
       <Section
         title="Oldingi yozuvlar"
-        subtitle="Qabullar va ularda yozilgan tibbiy yozuvlar — har birida muallif va vaqt ko‘rsatilgan."
+        subtitle="Qabullar va ularda yozilgan tibbiy yozuvlar — har birida muallif va vaqt. Ular mualliflariniki: ko‘rish yoki yangi tashxis qo‘yish ularni o‘zgartirmaydi."
       >
         {unplaced.length > 0 && (
           <Card>

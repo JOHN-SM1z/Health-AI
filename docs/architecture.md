@@ -46,11 +46,12 @@ Patient (Telegram)                      Clinic staff (browser)
 - **referrals** — doctor-to-doctor referral within one clinic, raised from the consultation (the
   appointment in which the referring doctor saw the patient); composite foreign keys keep the
   patient, both doctors and that appointment inside the referral's clinic; status machine
-  `pending → accepted → completed` (or `declined` / `revoked` / `expired`) enforced by trigger for
-  every writer; audited without its clinical text (reason, handoff note); optional link to the
-  follow-up appointment booked with the receiving doctor
-- **clinical_records** — doctor-authored consultation notes, diagnoses, prescriptions, lab results
-  and medical history; each tied to the author's own consultation (composite FK), immutable
+  `pending → accepted → in_progress → completed` (or `declined` / `revoked` / `expired`)
+  enforced by trigger for every writer; audited without its clinical text (reason, handoff note);
+  linked to the receiving doctor's consultation for it (`follow_up_appointment_id`, booked by
+  reception or started by the doctor) — the referral is in progress once that consultation starts
+- **clinical_records** — doctor-authored clinical notes, assessments, diagnoses, prescriptions,
+  lab orders and results, medical history and follow-up plans; each tied to the author's own consultation (composite FK), immutable
   (corrections are new records), readable only where the consultation is (see
   [security.md](security.md#clinical-records))
 - **conversations / messages / voice_messages** — chat history, admin takeover support
@@ -80,16 +81,27 @@ Doctor A refers a patient to Doctor B in the same clinic:
    priority, reason, optional handoff note and validity (30–180 days), reviews it, and sends it →
    `POST /api/doctor/referrals`. Each reviewed referral carries a client-generated idempotency key,
    so a double click or retry resolves to the referral already created.
-2. **Respond** — Doctor B sees it on the `/doctor` dashboard (*Sizga kelgan yo‘llanmalar*) and
-   under `/doctor/referrals` (*Kelgan*), and accepts or declines
-   (`PATCH /api/doctor/referrals/[id]`). After accepting, Doctor B sees the patient's
-   appointment history with Doctor A.
-3. **Book** — reception opens the patient in `/admin/patients`, sees the referral (metadata
-   only) and books the follow-up with Doctor B (`POST /api/admin/appointments` with
+2. **Review and respond** — Doctor B sees it on the `/doctor` dashboard (*Sizga kelgan
+   yo‘llanmalar*), under `/doctor/referrals` and on the patient's workspace, reviews the
+   consultation it came from, and accepts or declines (`PATCH /api/doctor/referrals/[id]`, also
+   from the workspace). After accepting, Doctor B sees Doctor A's history of the patient —
+   visits and clinical records, each attributed to Doctor A.
+3. **Book** (optional) — reception opens the patient in `/admin/patients`, sees the referral
+   (metadata only) and books the follow-up with Doctor B (`POST /api/admin/appointments` with
    `referralId`), which goes through `book_appointment` and is then linked to the referral.
-4. **Close** — Doctor B completes it; Doctor A (or owner/admin/manager via
-   `PATCH /api/admin/referrals/[id]`) can revoke it while it is open. Open referrals past
-   `expires_at` are expired lazily whenever referrals are listed or read.
+4. **Consult** — Doctor B starts their own consultation: the booked follow-up (workspace, queue
+   or front desk) or a walk-in from the workspace. It becomes the referral's follow-up and the
+   database moves the referral to **in progress** (`referral_in_progress`); the start is audited
+   as `consultation_started`. Doctor B documents it in `clinical_records` — current assessment,
+   new diagnosis, clinical note, prescription, laboratory order, follow-up/onward referral — all
+   authored by Doctor B; Doctor A's records are shown as history (*Oldingi tashxis* …), never
+   changed. Categories come from `src/lib/clinical-records/categories.ts` (record type + whether
+   it belongs to the doctor's consultation under way).
+5. **Close** — Doctor B completes it (only once in progress); Doctor A (or owner/admin/manager
+   via `PATCH /api/admin/referrals/[id]`) can revoke it while it is open. Open referrals
+   (pending, accepted, in progress) past `expires_at` are expired lazily whenever referrals are
+   listed or read. Afterwards Doctor B keeps their own consultation, and Doctor A sees it and its
+   records as the referral's follow-up.
 
 Server logic lives in `src/lib/referrals/service.ts`; the database (trigger + RLS + composite
 foreign keys) enforces the same rules independently of the API.
@@ -101,8 +113,9 @@ doctor's patient workspace `/doctor/patients/[id]`, reached from the queue, the 
 referred-patients list and *Bemorlarim* (`/doctor/patients`, the doctor's own and referred patients,
 searchable). The workspace separates the doctor's own consultation ("Mening qabulim": start it,
 document and correct it, finish it) from previous records, each shown with its author, time and
-type; a *Klinik xulosa* groups the records in force (diagnoses, history, prescriptions, lab results)
-with their authors, and the receiving doctor can accept or complete the referral in place. See
+type; a *Klinik xulosa* groups the records in force (historical and new diagnoses, history,
+prescriptions, lab orders and results) with their authors, and the receiving doctor can accept,
+decline or complete the referral in place, following its lifecycle stepper. See
 [security.md](security.md#clinical-access-doctors).
 
 ## Notifications

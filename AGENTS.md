@@ -16,7 +16,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Never implement AI or automated diagnosis, treatment advice or prescriptions, or claims that AI output is medical advice.
 - Clinical text exists only where a doctor writes it:
   - `referrals`: the referring doctor's reason and handoff note — visible only to the two doctors on the referral.
-  - `clinical_records`: consultation notes, diagnoses, prescriptions, laboratory results and medical history, written by a doctor in their own consultation. Readable only by doctors that `doctor_can_read_appointment()` admits. Records are immutable (corrections are new records) and keep author, consultation, time and type.
+  - `clinical_records`: clinical notes, assessments, diagnoses, prescriptions, laboratory orders and results, medical history and follow-up plans, written by a doctor in their own consultation. Readable only by doctors that `doctor_can_read_appointment()` admits. Records are immutable (corrections are new records) and keep author, consultation, time and type.
   - Never show clinical text to operational staff, patients, logs, audit rows, analytics, or the patient-facing bot.
   - AI must never write, read, or summarise clinical text.
 - AI must only provide clinic information or non-diagnostic booking navigation. Urgent wording must trigger the approved urgent-care message and human-admin escalation.

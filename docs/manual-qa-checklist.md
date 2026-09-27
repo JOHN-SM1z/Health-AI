@@ -74,7 +74,12 @@ Each row: expected behavior. Mark all green = go.
 - [ ] *Hozir qabulni boshlash* starts a walk-in (or *Qabulni boshlash* for today's booked visit); records saved there show *Siz yozgansiz* under *Mening qabulim*, apart from *Oldingi yozuvlar*
 - [ ] A record can't be edited; *Tuzatish* (in the current or a previous consultation) adds a correction and marks the original *Tuzatilgan*
 - [ ] *Klinik xulosa* lists diagnoses, history, prescriptions and lab results in force — a corrected record gives way to its correction — each with author and date
-- [ ] Pending referral: *Yo‘llanmani qabul qilish* in the workspace unlocks *Hozir qabulni boshlash*; *Yo‘llanmani yakunlash* asks for confirmation, and without an own consultation the page then shows *Yo‘llanma yakunlangan*
+- [ ] Pending referral: *Yo‘llanmani qabul qilish* in the workspace unlocks *Hozir qabulni boshlash*; *Rad etish* (optional reason) declines it and the page shows *Yo‘llanma rad etilgan*
+- [ ] Accepted: no *Yakunlash* anywhere until Doctor B's consultation starts; the stepper shows *Qabul qilindi*
+- [ ] Starting the consultation (workspace walk-in, today's booked visit, the queue or the front desk) moves the referral to *Qabul boshlangan*; *Mening qabulim* says it is the referral's consultation
+- [ ] Record types in *Mening qabulim*: *Joriy baho*, *Yangi tashxis*, *Klinik qayd*, *Retsept*, *Tahlilga yo‘llanma*, *Tahlil natijasi*, *Anamnez*, *Keyingi qadam / yo‘llanma* — all *Siz yozgansiz*; Doctor A's diagnosis stays *Oldingi tashxis* with *Muallif: …* and is unchanged
+- [ ] *Yo‘llanmani yakunlash* asks for confirmation; afterwards Doctor B keeps their own consultation, and Doctor A sees Doctor B's records on the follow-up, authored by Doctor B
+- [ ] `audit_events`: `referral_accepted` / `referral_declined` / `referral_in_progress` / `referral_completed` / `consultation_started` rows with ids only
 - [ ] *Bemorlarim* lists own patients (*Mening bemorim*, last visit that took place) and actively referred ones; revoked, expired and unrelated patients are absent; search by name or phone digits
 - [ ] After revoke / expiry: the workspace shows *Yo‘llanma bekor qilingan* / *muddati tugagan* with no patient data; an unrelated patient id shows *Bemor topilmadi*
 - [ ] Reception, managers and owners never see clinical records (patient panel, REST API)

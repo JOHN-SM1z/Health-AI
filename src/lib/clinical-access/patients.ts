@@ -5,7 +5,8 @@ import type { LinkedDoctor } from "@/lib/auth/guards";
 
 /**
  * The patients a doctor may open: their own (any appointment with them) and
- * those actively referred to them (pending or accepted, unexpired) — the same
+ * those actively referred to them (pending, accepted or in progress,
+ * unexpired) — the same
  * rule as public.doctor_patient_access(), so every patient listed here opens
  * in the workspace and no other patient of the clinic ever appears.
  */
@@ -53,7 +54,7 @@ export async function listDoctorPatients(doctor: LinkedDoctor, query: string): P
       .select("id, patient_id, status, created_at, referring:doctors!referrals_referring_doctor_same_clinic_fkey(name)")
       .eq("clinic_id", doctor.clinicId)
       .eq("referred_to_doctor_id", doctor.doctorId)
-      .in("status", ["pending", "accepted"])
+      .in("status", ["pending", "accepted", "in_progress"])
       .gt("expires_at", new Date().toISOString())
       .order("created_at", { ascending: false }),
   ]);

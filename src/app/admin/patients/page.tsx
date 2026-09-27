@@ -403,14 +403,14 @@ export default function PatientsPage() {
                             Qabul: {formatDateTime(r.followUp.startAt)} · {STATUS_LABELS[r.followUp.status] ?? r.followUp.status}
                           </p>
                         )}
-                        {(r.canBookFollowUp || (isManagement && (r.status === "pending" || r.status === "accepted"))) && (
+                        {(r.canBookFollowUp || (isManagement && ["pending", "accepted", "in_progress"].includes(r.status))) && (
                           <div className="mt-2 flex flex-wrap gap-2">
                             {r.canBookFollowUp && r.referredToDoctor && (
                               <AButton size="sm" onClick={() => bookFollowUp(r)}>
                                 Qabulga yozish
                               </AButton>
                             )}
-                            {isManagement && (r.status === "pending" || r.status === "accepted") && (
+                            {isManagement && ["pending", "accepted", "in_progress"].includes(r.status) && (
                               <AButton size="sm" variant="ghost" onClick={() => setRevokeFor(r)}>
                                 Bekor qilish
                               </AButton>

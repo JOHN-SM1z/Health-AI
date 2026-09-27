@@ -7,6 +7,7 @@ import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { enqueueCancellationNotification, enqueueRescheduleNotification } from "@/lib/notifications/jobs";
 import { trackAnalytics } from "@/lib/analytics";
 import { logger } from "@/lib/logger";
+import { recordConsultationStarted } from "@/lib/clinical-access/consultation-audit";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +51,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
 
     const { data: appointment, error: fetchError } = await supabase
       .from("appointments")
-      .select("id, patient_id, status, cancelled_at, cancelled_reason, cancelled_by, patients!inner(telegram_user_id)")
+      .select("id, patient_id, doctor_id, status, cancelled_at, cancelled_reason, cancelled_by, patients!inner(telegram_user_id)")
       .eq("id", id)
       .eq("clinic_id", staff.clinicId)
       .maybeSingle();
@@ -109,6 +110,17 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
         })
         .eq("id", id);
       if (error) throw new ApiError(500, "Holatni yangilab bo‘lmadi");
+
+      if (body.status === "in_progress" && appointment.status !== "in_progress") {
+        await recordConsultationStarted({
+          clinicId: staff.clinicId,
+          appointmentId: appointment.id,
+          patientId: appointment.patient_id,
+          doctorId: appointment.doctor_id,
+          actorId: staff.profileId,
+          via: "front_desk",
+        });
+      }
 
       if (isCancel && !wasClosed && appointment.patients?.telegram_user_id) {
         await enqueueCancellationNotification({

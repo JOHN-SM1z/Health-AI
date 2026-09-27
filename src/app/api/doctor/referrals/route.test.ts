@@ -688,6 +688,18 @@ describeDb("referral API (doctor portal + reception)", () => {
 
     expect(await act("receiver", id, { action: "accept" })).toMatchObject({ status: 200 });
     expect(await act("receiver", id, { action: "decline" })).toMatchObject({ status: 409, body: { code: "invalid_transition" } });
+    // Completed only once the receiving doctor's consultation has started.
+    expect(await act("receiver", id, { action: "complete" })).toMatchObject({ status: 409, body: { code: "consultation_not_started" } });
+    expect((await detail("receiver", id)).body.data!.referral).toMatchObject({ status: "accepted", allowedActions: [] });
+    const { data: row } = await admin.from("referrals").select("patient_id").eq("id", id).single();
+    const own = await consultation(doctors.receiver, "in_progress", row!.patient_id);
+    await admin.from("referrals").update({ follow_up_appointment_id: own }).eq("id", id);
+    expect((await detail("receiver", id)).body.data!.referral).toMatchObject({
+      status: "in_progress",
+      startedAt: expect.any(String),
+      followUp: { id: own },
+      allowedActions: ["complete"],
+    });
     expect(await act("receiver", id, { action: "complete" })).toMatchObject({ status: 200, body: { data: { status: "completed" } } });
 
     const declined = await freshReferral();

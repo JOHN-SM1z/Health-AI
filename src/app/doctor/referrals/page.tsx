@@ -35,7 +35,7 @@ const TABS: Array<{ box: Box; label: string }> = [
 ];
 
 /** A referral that still opens the patient's workspace for the receiving doctor. */
-const OPEN = ["pending", "accepted"];
+const OPEN = ["pending", "accepted", "in_progress"];
 
 function Detail({ label, children }: { label: string; children: React.ReactNode }) {
   return (

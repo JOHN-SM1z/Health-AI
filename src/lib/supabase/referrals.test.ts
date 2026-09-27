@@ -66,6 +66,8 @@ type Referral = {
   created_by: string;
   accepted_at: Date | null;
   accepted_by: string | null;
+  started_at: Date | null;
+  started_by: string | null;
   declined_at: Date | null;
   declined_by: string | null;
   declined_reason: string | null;
@@ -205,6 +207,14 @@ describeDb("referrals data model (Phase 1)", () => {
       const [row] = await tx<Referral[]>`update public.referrals set ${tx(patch)} where id = ${id} returning *`;
       return row;
     });
+  }
+
+  const accept = (id: string) => transition(id, { status: "accepted", accepted_by: profiles.receiver });
+
+  /** The receiving doctor's consultation for the referral starts: linked as its follow-up, the referral is in progress. */
+  async function startConsultation(referral: Referral): Promise<Referral> {
+    const own = await consultation({ doctor: doctors.receiver, patient: referral.patient_id, status: "in_progress" });
+    return transition(referral.id, { follow_up_appointment_id: own.appointmentId });
   }
 
   function auditTrail(referralId: string): Promise<AuditRow[]> {
@@ -560,7 +570,7 @@ describeDb("referrals data model (Phase 1)", () => {
   // ---------- Status transitions ----------
 
   describe("status transitions", () => {
-    it("pending -> accepted -> completed by the receiving doctor, stamped by the database and audited", async () => {
+    it("pending -> accepted -> in_progress -> completed by the receiving doctor, stamped by the database and audited", async () => {
       const referral = await openReferral();
       const accepted = await transition(referral.id, {
         status: "accepted",
@@ -571,19 +581,111 @@ describeDb("referrals data model (Phase 1)", () => {
       expect(accepted.accepted_by).toBe(profiles.receiver);
       expect(accepted.accepted_at!.getTime()).toBeGreaterThanOrEqual(referral.created_at.getTime());
 
+      // Linking the receiving doctor's started consultation moves it on.
+      const started = await startConsultation(accepted);
+      expect(started).toMatchObject({ status: "in_progress", started_by: profiles.receiver });
+      expect(started.started_at!.getTime()).toBeGreaterThanOrEqual(accepted.accepted_at!.getTime());
+
       const completed = await transition(referral.id, { status: "completed", completed_by: profiles.receiver });
       expect(completed.status).toBe("completed");
-      expect(completed.completed_at!.getTime()).toBeGreaterThanOrEqual(accepted.accepted_at!.getTime());
+      expect(completed.completed_at!.getTime()).toBeGreaterThanOrEqual(started.started_at!.getTime());
       expect(completed.accepted_at).toEqual(accepted.accepted_at);
+      expect(completed.started_at).toEqual(started.started_at);
 
       const trail = await auditTrail(referral.id);
       expect(trail.map((t) => [t.action, t.actor_id])).toEqual([
         ["referral_created", profiles.referrer],
         ["referral_accepted", profiles.receiver],
+        ["referral_in_progress", profiles.receiver],
         ["referral_completed", profiles.receiver],
       ]);
       expect(trail[1].old_values).toEqual({ status: "pending" });
-      expect(trail[2].old_values).toEqual({ status: "accepted" });
+      expect(trail[2].old_values).toEqual({ status: "accepted", follow_up_appointment_id: null });
+      expect(trail[2].new_values).toMatchObject({ status: "in_progress", follow_up_appointment_id: started.follow_up_appointment_id });
+      expect(trail[3].old_values).toEqual({ status: "in_progress" });
+    });
+
+    it("is in progress only once the receiving doctor's consultation has started — whoever starts it", async () => {
+      const referral = await openReferral();
+      await accept(referral.id);
+      // Not by declaration: there is no consultation yet.
+      const early = await pgError(() => transition(referral.id, { status: "in_progress", started_by: profiles.receiver }));
+      expect(early.message).toMatch(/in progress only once its follow-up consultation has started/);
+
+      // A booked follow-up that has not started is not enough either.
+      const booked = await consultation({ doctor: doctors.receiver, patient: referral.patient_id, status: "confirmed" });
+      const linked = await transition(referral.id, { follow_up_appointment_id: booked.appointmentId });
+      expect(linked.status).toBe("accepted");
+      const stillEarly = await pgError(() => transition(referral.id, { status: "in_progress", started_by: profiles.receiver }));
+      expect(stillEarly.message).toMatch(/in progress only once/);
+
+      // The visit starting — from the doctor's queue or the front desk — moves it.
+      await sql`update public.appointments set status = 'in_progress' where id = ${booked.appointmentId}`;
+      const [row] = await sql<Referral[]>`select * from public.referrals where id = ${referral.id}`;
+      expect(row).toMatchObject({ status: "in_progress", started_by: profiles.receiver });
+      expect((await auditTrail(referral.id)).at(-1)).toMatchObject({ action: "referral_in_progress", actor_id: profiles.receiver });
+
+      // Checking in is not starting. And a visit always starts — even when the
+      // referral can't follow (receiving doctor deactivated meanwhile), it
+      // simply stays accepted; afterwards only the receiving doctor moves it.
+      const other = await openReferral();
+      await accept(other.id);
+      const otherVisit = await consultation({ doctor: doctors.receiver, patient: other.patient_id, status: "confirmed" });
+      await transition(other.id, { follow_up_appointment_id: otherVisit.appointmentId });
+      await sql`update public.appointments set status = 'checked_in' where id = ${otherVisit.appointmentId}`;
+      expect((await sql`select status from public.referrals where id = ${other.id}`)[0].status).toBe("accepted");
+      await setDoctorActive(doctors.receiver, false);
+      try {
+        await sql`update public.appointments set status = 'in_progress' where id = ${otherVisit.appointmentId}`;
+        expect((await sql`select status from public.appointments where id = ${otherVisit.appointmentId}`)[0].status).toBe("in_progress");
+        expect((await sql`select status from public.referrals where id = ${other.id}`)[0].status).toBe("accepted");
+      } finally {
+        await setDoctorActive(doctors.receiver, true);
+      }
+      for (const actor of [profiles.bystander, profiles.referrer, profiles.manager]) {
+        const err = await pgError(() => transition(other.id, { status: "in_progress", started_by: actor }));
+        expect(err.message).toMatch(/only the receiving doctor can mark the referral in_progress/);
+      }
+      expect(await transition(other.id, { status: "in_progress", started_by: profiles.receiver })).toMatchObject({ status: "in_progress" });
+    });
+
+    it("a consultation that took place replaces a booked follow-up that has not started", async () => {
+      const referral = await openReferral();
+      await accept(referral.id);
+      const booked = await consultation({ doctor: doctors.receiver, patient: referral.patient_id, status: "confirmed" });
+      await transition(referral.id, { follow_up_appointment_id: booked.appointmentId });
+
+      // Seen earlier than booked: the walk-in becomes the follow-up.
+      const started = await startConsultation(referral);
+      expect(started.status).toBe("in_progress");
+      expect(started.follow_up_appointment_id).not.toBe(booked.appointmentId);
+
+      // A second, not-started booking can't take the place of a started one.
+      const fresh = await openReferral();
+      await accept(fresh.id);
+      const walkIn = await startConsultation(fresh);
+      const later = await consultation({ doctor: doctors.receiver, patient: fresh.patient_id, status: "confirmed" });
+      const err = await pgError(() => transition(fresh.id, { follow_up_appointment_id: later.appointmentId }));
+      expect(err.message).toMatch(/only be booked once the referral is accepted/);
+      expect(walkIn.status).toBe("in_progress");
+    });
+
+    it("an in-progress referral can be revoked or expire, is still one open referral per pair, and never goes back", async () => {
+      const referral = await openReferral();
+      await accept(referral.id);
+      await startConsultation(referral);
+      const duplicate = await pgError(async () =>
+        insertReferral(referralValues({ patientId: referral.patient_id, appointmentId: referral.originating_appointment_id })),
+      );
+      expect(duplicate.constraint_name).toBe("referrals_one_open_per_pair");
+      for (const patch of [{ status: "accepted" }, { status: "pending" }] as Values[]) {
+        const err = await pgError(() => transition(referral.id, patch));
+        expect(err.message).toMatch(/invalid status transition in_progress -> /);
+      }
+      const early = await pgError(() => transition(referral.id, { status: "expired" }));
+      expect(early.message).toMatch(/does not expire until/);
+      const revoked = await transition(referral.id, { status: "revoked", revoked_by: profiles.referrer, revoked_reason: "Patient transferred" });
+      expect(revoked.status).toBe("revoked");
     });
 
     it("pending -> declined by the receiving doctor is final", async () => {
@@ -609,7 +711,11 @@ describeDb("referrals data model (Phase 1)", () => {
       await transition(done.id, { status: "accepted", accepted_by: profiles.receiver });
       const reversed = await pgError(() => transition(done.id, { status: "pending" }));
       expect(reversed.message).toMatch(/invalid status transition accepted -> pending/);
+      // Completed only after the receiving doctor's consultation started.
+      const unseen = await pgError(() => transition(done.id, { status: "completed", completed_by: profiles.receiver }));
+      expect(unseen.message).toMatch(/invalid status transition accepted -> completed/);
 
+      await startConsultation(done);
       await transition(done.id, { status: "completed", completed_by: profiles.receiver });
       const afterCompletion: Values[] = [
         { status: "revoked", revoked_by: profiles.referrer, revoked_reason: "Too late" },
@@ -805,6 +911,7 @@ describeDb("referrals data model (Phase 1)", () => {
       expect(atCreation.message).toMatch(/only be booked once the referral is accepted/);
 
       const completed = await acceptedReferral();
+      await startConsultation(completed);
       await transition(completed.id, { status: "completed", completed_by: profiles.receiver });
       const late = await pgError(async () =>
         transition(completed.id, { follow_up_appointment_id: (await followUp(completed)).appointmentId }),
@@ -947,6 +1054,8 @@ describeDb("referrals data model (Phase 1)", () => {
 
       const completed = await openReferral();
       await transition(completed.id, { status: "accepted", accepted_by: profiles.receiver });
+      const inProgress = await startConsultation(completed);
+      expect(await visibleTo(profiles.receiver, inProgress.id)).toBe(true);
       await transition(completed.id, { status: "completed", completed_by: profiles.receiver });
       expect(await visibleTo(profiles.receiver, completed.id)).toBe(true);
     });

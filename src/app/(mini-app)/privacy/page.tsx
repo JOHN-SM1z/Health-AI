@@ -37,8 +37,8 @@ export default function PrivacyPage() {
             haqidagi qarorlar faqat shifokor bilan.
           </p>
           <p className="mt-1">
-            Qabul davomida shifokoringiz tibbiy yozuvlar (ko‘rik xulosasi, tashxis, retsept, tahlil
-            natijalari, anamnez) kiritishi mumkin. Har bir yozuvda uni kim va qachon yozgani saqlanadi,
+            Qabul davomida shifokoringiz tibbiy yozuvlar (klinik qayd va baho, tashxis, retsept,
+            tahlilga yo‘llanma va tahlil natijalari, anamnez, keyingi qadamlar) kiritishi mumkin. Har bir yozuvda uni kim va qachon yozgani saqlanadi,
             yozuvlar keyin o‘zgartirilmaydi. Ularni faqat sizni davolayotgan shifokorlar ko‘radi —
             qabulxona, boshqa xodimlar, bot va sun‘iy intellekt ko‘rmaydi.
           </p>

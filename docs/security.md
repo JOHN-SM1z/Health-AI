@@ -104,8 +104,9 @@ Working in the same clinic gives a doctor no access to a patient. One decision,
 
 ## Clinical records
 
-`clinical_records` (`20260927000005_clinical_records.sql`) holds doctor-authored consultation notes,
-diagnoses, prescriptions, laboratory results and medical history.
+`clinical_records` (`20260927000005_clinical_records.sql`, types extended in
+`20260928000001_clinical_handoff_types.sql`) holds doctor-authored clinical notes, assessments,
+diagnoses, prescriptions, laboratory orders and results, medical history and follow-up plans.
 
 - **Provenance can't be forged.** A record belongs to one consultation, and the composite foreign key
   `(appointment_id, clinic_id, patient_id, author_doctor_id) → appointments (id, clinic_id,
@@ -132,6 +133,10 @@ diagnoses, prescriptions, laboratory results and medical history.
 - **Nothing silently dropped.** A visible record always arrives with its consultation, even one
   older than the workspace's 100-visit window (fetched by id and re-checked with
   `canSeeAppointment()`).
+- **Handoff never rewrites history.** A receiving doctor's assessment or new diagnosis is a new
+  record in their own consultation; the referring doctor's diagnosis stays as written, attributed
+  to its author and shown as a historical diagnosis. Only a record's own author can correct it
+  (the DB refuses anyone else, 409 `correction_not_allowed`).
 - **States.** A doctor whose referral for the patient lapsed gets 410 with the reason
   (`referral_revoked`, `referral_expired`, `referral_declined`, `referral_completed`) and no data;
   anyone else gets 404.
@@ -159,6 +164,18 @@ diagnoses, prescriptions, laboratory results and medical history.
   access once a referral is declined, revoked or expired.
 - The receiving doctor sees the patient's appointment history with the referring doctor
   (date, service, status — no clinical text) only after accepting.
+- Lifecycle (`20260928000002_clinical_handoff.sql`): `pending → accepted → in_progress →
+  completed`, `pending → declined`, `revoked`/`expired` while open. `in_progress` is set by the
+  database only — when the receiving doctor's own consultation linked as the follow-up has
+  started (linking an already started one, or the linked visit starting from any path), with
+  `started_by` = the receiving doctor's account; a trigger failure there never blocks the visit.
+  `completed` only from `in_progress` (the API answers 409 `consultation_not_started` before).
+  An in-progress referral shares the same history as an accepted one, until completed, revoked
+  or expired, and counts as open for the one-open-referral-per-pair rule.
+- Audit: `referral_accepted`, `referral_declined`, `referral_in_progress`, `referral_completed`
+  (DB trigger, actor = the account on the transition) and `consultation_started` (server, actor
+  = whoever started it: doctor workspace, doctor queue or front desk; with the referral id) —
+  ids and statuses only, never the reason, note or record text.
 - Every detail view is written to `audit_events` (`referral_viewed`, role + whether history was
   shown) in **strict** mode: if the access log cannot be written the view fails (503) instead
   of being served unlogged.
@@ -169,7 +186,8 @@ diagnoses, prescriptions, laboratory results and medical history.
   owner/admin/manager can revoke (`/api/admin/referrals/[id]`).
 - A follow-up appointment is booked through the transactional booking engine and then linked;
   the DB only accepts it for an accepted, unexpired referral, with the receiving doctor, for the
-  referred patient, one active follow-up at a time. If the link loses a race the new appointment
+  referred patient, one active follow-up at a time (a consultation that took place may replace a
+  booked follow-up that has not started). If the link loses a race the new appointment
   is cancelled and the request fails (409).
 
 ## Medical safety (non-security but critical)

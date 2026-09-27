@@ -8,6 +8,7 @@ import { canDoctorAccessPatientClinicalData } from "@/lib/clinical-access/access
 import { canStartConsultation } from "@/lib/clinical-access/workspace";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
 import { linkConsultationToReferral } from "@/lib/referrals/service";
+import { recordConsultationStarted } from "@/lib/clinical-access/consultation-audit";
 
 const STARTABLE = ["pending", "confirmed", "checked_in"];
 
@@ -41,8 +42,10 @@ const BOOKING_ERRORS: Record<string, [number, string]> = {
  * through the booking engine (working hours, time blocks and overlaps all
  * checked there). Allowed for the doctor's own patient or a patient referred
  * to them with an accepted referral; a started consultation of an accepted
- * referral becomes its follow-up. Idempotent: an existing in-progress
- * consultation with the patient is returned instead of starting another.
+ * referral becomes its follow-up and the referral moves to in progress
+ * (enforced by the database). Audited as 'consultation_started'. Idempotent:
+ * an existing in-progress consultation with the patient is returned instead
+ * of starting another.
  */
 export async function startConsultation(
   doctor: LinkedDoctor,
@@ -118,6 +121,15 @@ export async function startConsultation(
   }
 
   await linkConsultationToReferral(doctor, patientId, appointmentId);
+  await recordConsultationStarted({
+    clinicId: doctor.clinicId,
+    appointmentId,
+    patientId,
+    doctorId: doctor.doctorId,
+    actorId: doctor.profileId,
+    via: "doctor_workspace",
+    walkIn: !input.appointmentId,
+  });
   await trackAnalytics({
     clinicId: doctor.clinicId,
     patientId,

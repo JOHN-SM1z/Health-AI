@@ -12,6 +12,8 @@ describe("effectiveStatus", () => {
     expect(effectiveStatus("pending", "2026-09-27T11:59:59Z", now)).toBe("expired");
     expect(effectiveStatus("accepted", "2026-09-27T12:00:00Z", now)).toBe("expired");
     expect(effectiveStatus("pending", "2026-09-28T00:00:00Z", now)).toBe("pending");
+    expect(effectiveStatus("in_progress", "2026-09-27T11:00:00Z", now)).toBe("expired");
+    expect(effectiveStatus("in_progress", "2026-09-28T00:00:00Z", now)).toBe("in_progress");
   });
 
   it("never rewrites a closed referral", () => {
@@ -22,15 +24,18 @@ describe("effectiveStatus", () => {
 });
 
 describe("allowedActions", () => {
-  it("offers accept/decline, then complete, to the receiving doctor", () => {
+  it("offers accept/decline, then — once their consultation started — complete, to the receiving doctor", () => {
     expect(allowedActions("receiver", "pending")).toEqual(["accept", "decline"]);
-    expect(allowedActions("receiver", "accepted")).toEqual(["complete"]);
+    // Accepted moves on by starting the consultation, not by an action.
+    expect(allowedActions("receiver", "accepted")).toEqual([]);
+    expect(allowedActions("receiver", "in_progress")).toEqual(["complete"]);
     expect(allowedActions("receiver", "completed")).toEqual([]);
   });
 
   it("offers revoke to the referring doctor only while the referral is open", () => {
     expect(allowedActions("referrer", "pending")).toEqual(["revoke"]);
     expect(allowedActions("referrer", "accepted")).toEqual(["revoke"]);
+    expect(allowedActions("referrer", "in_progress")).toEqual(["revoke"]);
     for (const status of ["completed", "declined", "revoked", "expired"] as const) {
       expect(allowedActions("referrer", status)).toEqual([]);
     }
@@ -47,6 +52,8 @@ describe("referralError", () => {
     [{ code: "P0001", message: "referral: the originating consultation must be in progress or completed (it is pending)" }, 409, "consultation_not_attended"],
     [{ code: "P0001", message: "referral: the receiving doctor has no linked doctor account" }, 409, "receiving_doctor_unavailable"],
     [{ code: "P0001", message: "referral: invalid status transition pending -> completed" }, 409, "invalid_transition"],
+    [{ code: "P0001", message: "referral: invalid status transition accepted -> completed" }, 409, "consultation_not_started"],
+    [{ code: "P0001", message: "referral: a referral is in progress only once its follow-up consultation has started" }, 409, "consultation_not_started"],
     [{ code: "P0001", message: "referral: the referral expired at 2026-09-01 00:00:00+00" }, 409, "referral_expired"],
     [{ code: "P0001", message: "referral: only the receiving doctor can mark the referral accepted" }, 403, "forbidden"],
     [{ code: "P0001", message: "referral: a follow-up appointment is already booked" }, 409, "follow_up_exists"],

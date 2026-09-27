@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Send } from "lucide-react";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AModal, ATextArea, LoadingRow } from "@/components/admin/ui";
+import { ReferralLifecycle } from "@/components/doctor/referral-lifecycle";
 import {
   adminApi,
   AdminApiError,
@@ -32,6 +33,7 @@ type Referral = {
   createdAt: string;
   expiresAt: string;
   acceptedAt: string | null;
+  startedAt: string | null;
   declinedAt: string | null;
   completedAt: string | null;
   revokedAt: string | null;
@@ -175,6 +177,18 @@ export default function DoctorReferralPage() {
         </Card>
       )}
 
+      {incoming && referral.status === "accepted" && referral.patientRecordAccessible && (
+        <Card className="mb-4">
+          <p className="text-sm text-foreground">
+            Keyingi qadam: bemor bilan o‘z qabulingizni bemor kartasida boshlang — yo‘llanma “Qabul boshlangan” holatiga o‘tadi, yakunlash
+            esa shundan keyin mumkin bo‘ladi.{" "}
+            <Link href={`/doctor/patients/${referral.patientId}`} className="font-medium text-pine hover:underline">
+              Bemor kartasini ochish
+            </Link>
+          </p>
+        </Card>
+      )}
+
       {referral.allowedActions.length > 0 && (
         <div className="mb-4 flex flex-wrap gap-2">
           {referral.allowedActions.map((action) => (
@@ -199,6 +213,15 @@ export default function DoctorReferralPage() {
               {REFERRAL_PRIORITY_LABELS[referral.priority] ?? referral.priority}
             </ABadge>
           </div>
+          <div className="mb-4">
+            <ReferralLifecycle
+              status={referral.status}
+              createdAt={referral.createdAt}
+              acceptedAt={referral.acceptedAt}
+              startedAt={referral.startedAt}
+              completedAt={referral.completedAt}
+            />
+          </div>
           <p className="mb-1 font-display text-sm font-bold text-foreground">Yo‘llanma sababi</p>
           <p className="mb-4 whitespace-pre-wrap text-sm text-foreground">{referral.reason}</p>
           {referral.handoffNote && (
@@ -218,6 +241,7 @@ export default function DoctorReferralPage() {
           <Field label="Yuborilgan">{formatDateTime(referral.createdAt)}</Field>
           <Field label="Amal qilish muddati">{formatDateTime(referral.expiresAt)}</Field>
           {referral.acceptedAt && <Field label="Qabul qilingan">{formatDateTime(referral.acceptedAt)}</Field>}
+          {referral.startedAt && <Field label="Qabul boshlangan">{formatDateTime(referral.startedAt)}</Field>}
           {referral.declinedAt && <Field label="Rad etilgan">{formatDateTime(referral.declinedAt)}</Field>}
           {referral.completedAt && <Field label="Yakunlangan">{formatDateTime(referral.completedAt)}</Field>}
           {referral.revokedAt && <Field label="Bekor qilingan">{formatDateTime(referral.revokedAt)}</Field>}
@@ -239,7 +263,7 @@ export default function DoctorReferralPage() {
             <Field label="Yo‘llanma berilgan qabul">
               {referral.consultation ? <AppointmentLine appointment={referral.consultation} /> : "—"}
             </Field>
-            <Field label="Yozilgan qabul">
+            <Field label="Yo‘llanma bo‘yicha qabul">
               {referral.followUp ? <AppointmentLine appointment={referral.followUp} /> : "Hali yozilmagan"}
             </Field>
           </Card>

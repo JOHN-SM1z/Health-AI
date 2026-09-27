@@ -28,8 +28,11 @@ type StaffInClinic = StaffContext & { clinicId: string };
 type DoctorRef = { id: string; name: string; title?: string | null };
 type AppointmentRef = { id: string; start_at: string; status: string; services?: { name: string } | null };
 
-const OPEN_STATUSES: ReferralStatus[] = ["pending", "accepted"];
+/** Referrals still under way: PENDING → ACCEPTED → IN_PROGRESS, until completed, declined, revoked or expired. */
+const OPEN_STATUSES: ReferralStatus[] = ["pending", "accepted", "in_progress"];
 const INACTIVE_APPOINTMENT_STATUSES = ["cancelled", "no_show"];
+/** A booked follow-up that has not started yet: a consultation that took place may replace it. */
+const NOT_STARTED_APPOINTMENT_STATUSES = ["pending", "confirmed", "checked_in"];
 
 // Open referrals past their expiry are marked expired on the next read. The
 // database compares against its own now(), so only referrals expired for
@@ -44,11 +47,15 @@ export function effectiveStatus(status: ReferralStatus, expiresAt: string, now =
   return OPEN_STATUSES.includes(status) && Date.parse(expiresAt) <= now ? "expired" : status;
 }
 
-/** Which actions to offer the caller; the database re-checks every one. */
+/**
+ * Which actions to offer the caller; the database re-checks every one. An
+ * accepted referral moves on by the receiving doctor starting their
+ * consultation (not an action here), and is completed once that started.
+ */
 export function allowedActions(role: ReferralRole, status: ReferralStatus): ReferralAction[] {
   if (role === "receiver") {
     if (status === "pending") return ["accept", "decline"];
-    if (status === "accepted") return ["complete"];
+    if (status === "in_progress") return ["complete"];
     return [];
   }
   return OPEN_STATUSES.includes(status) ? ["revoke"] : [];
@@ -63,7 +70,7 @@ function roleOf(doctor: LinkedDoctor, row: { referring_doctor_id: string; referr
 /** Same rule as the "referrals read for receiving doctor" RLS policy. */
 function visibleTo(role: ReferralRole | null, status: ReferralStatus): boolean {
   if (role === "referrer") return true;
-  return role === "receiver" && (status === "pending" || status === "accepted" || status === "completed");
+  return role === "receiver" && (OPEN_STATUSES.includes(status) || status === "completed");
 }
 
 /** Maps a database rule violation to an API error without logging row data. */
@@ -95,6 +102,9 @@ export function referralError(error: { code?: string; message?: string }): ApiEr
     return new ApiError(403, "Faqat qabulni o‘tkazgan shifokor yo‘llanma bera oladi", "not_referring_doctor");
   }
   if (has("expired at")) return new ApiError(409, "Yo‘llanma muddati tugagan", "referral_expired");
+  if (has("in progress only once") || has("invalid status transition accepted -> completed")) {
+    return new ApiError(409, "Avval bemor bilan qabulingizni boshlang", "consultation_not_started");
+  }
   if (has("invalid status transition")) return new ApiError(409, "Yo‘llanma holati buni ruxsat bermaydi", "invalid_transition");
   if (has("only the receiving doctor") || has("only the referring doctor")) {
     return new ApiError(403, "Bu amal uchun ruxsat yo‘q", "forbidden");
@@ -194,7 +204,7 @@ export async function listReferralsForDoctor(
     .limit(100);
   query =
     box === "incoming"
-      ? query.eq("referred_to_doctor_id", doctor.doctorId).in("status", ["pending", "accepted", "completed"])
+      ? query.eq("referred_to_doctor_id", doctor.doctorId).in("status", [...OPEN_STATUSES, "completed"])
       : query.eq("referring_doctor_id", doctor.doctorId);
   // An open referral inside the sweep margin is still stored as open but is
   // shown as expired, so "expired" is filtered after the effective status.
@@ -234,6 +244,8 @@ export type ReferralDetail = {
   createdAt: string;
   expiresAt: string;
   acceptedAt: string | null;
+  /** When the receiving doctor's consultation for the referral started. */
+  startedAt: string | null;
   declinedAt: string | null;
   completedAt: string | null;
   revokedAt: string | null;
@@ -249,8 +261,8 @@ export type ReferralDetail = {
   /**
    * The patient's visits with the referring doctor, as far as the clinical
    * access decision covers them: always for the referring doctor (their own
-   * visits); for the receiving doctor only while the referral is accepted
-   * and unexpired. Null otherwise.
+   * visits); for the receiving doctor only while the referral is accepted or
+   * in progress, and unexpired. Null otherwise.
    */
   history: AppointmentRef[] | null;
   allowedActions: ReferralAction[];
@@ -270,6 +282,7 @@ type DetailRow = {
   expires_at: string;
   created_at: string;
   accepted_at: string | null;
+  started_at: string | null;
   declined_at: string | null;
   declined_reason: string | null;
   completed_at: string | null;
@@ -296,7 +309,7 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
   const { data, error } = await supabase
     .from("referrals")
     .select(
-      `id, patient_id, referring_doctor_id, referred_to_doctor_id, originating_appointment_id, follow_up_appointment_id, reason, handoff_note, priority, status, expires_at, created_at, accepted_at, declined_at, declined_reason, completed_at, revoked_at, revoked_reason, ${REFERRING}(id, name, title), ${REFERRED_TO}(id, name, title)`,
+      `id, patient_id, referring_doctor_id, referred_to_doctor_id, originating_appointment_id, follow_up_appointment_id, reason, handoff_note, priority, status, expires_at, created_at, accepted_at, started_at, declined_at, declined_reason, completed_at, revoked_at, revoked_reason, ${REFERRING}(id, name, title), ${REFERRED_TO}(id, name, title)`,
     )
     .eq("id", referralId)
     .eq("clinic_id", doctor.clinicId)
@@ -386,6 +399,7 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     acceptedAt: row.accepted_at,
+    startedAt: row.started_at,
     declinedAt: row.declined_at,
     completedAt: row.completed_at,
     revokedAt: row.revoked_at,
@@ -419,18 +433,21 @@ export type PatientReferral = {
   referringDoctor: DoctorRef | null;
   referredToDoctor: DoctorRef | null;
   followUpAppointmentId: string | null;
+  acceptedAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
 };
 
 /**
  * The patient's referrals the calling doctor is on and may still see — the
  * same visibility as the referral pages (the referring doctor: all of theirs;
- * the receiving doctor: pending/accepted while unexpired, and completed).
+ * the receiving doctor: open ones while unexpired, and completed).
  */
 export async function listPatientReferralsForDoctor(doctor: LinkedDoctor, patientId: string): Promise<PatientReferral[]> {
   const { data, error } = await createAdminClient()
     .from("referrals")
     .select(
-      `id, status, priority, reason, handoff_note, created_at, expires_at, follow_up_appointment_id, referring_doctor_id, referred_to_doctor_id, ${REFERRING}(id, name), ${REFERRED_TO}(id, name)`,
+      `id, status, priority, reason, handoff_note, created_at, expires_at, accepted_at, started_at, completed_at, follow_up_appointment_id, referring_doctor_id, referred_to_doctor_id, ${REFERRING}(id, name), ${REFERRED_TO}(id, name)`,
     )
     .eq("clinic_id", doctor.clinicId)
     .eq("patient_id", patientId)
@@ -448,6 +465,9 @@ export async function listPatientReferralsForDoctor(doctor: LinkedDoctor, patien
     handoff_note: string | null;
     created_at: string;
     expires_at: string;
+    accepted_at: string | null;
+    started_at: string | null;
+    completed_at: string | null;
     follow_up_appointment_id: string | null;
     referring_doctor_id: string;
     referred_to_doctor_id: string;
@@ -471,6 +491,9 @@ export async function listPatientReferralsForDoctor(doctor: LinkedDoctor, patien
         referringDoctor: row.referring,
         referredToDoctor: row.referred_to,
         followUpAppointmentId: row.follow_up_appointment_id,
+        acceptedAt: row.accepted_at,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
       },
     ];
   });
@@ -495,10 +518,21 @@ export async function latestReferralToDoctor(doctor: LinkedDoctor, patientId: st
 
 /**
  * Links a consultation the receiving doctor started to the accepted referral
- * still waiting for its follow-up, if any. Best effort: the consultation
- * stands on its own either way.
+ * waiting for it — one with no follow-up yet, a cancelled/no-show one, or a
+ * booked one that has not started (the doctor saw the patient earlier). The
+ * database then moves the referral to in progress in the same statement; a
+ * referral whose own booked follow-up is the consultation moves by itself.
+ * Best effort: the consultation stands on its own either way. Returns the
+ * referral the consultation belongs to, if any.
  */
-export async function linkConsultationToReferral(doctor: LinkedDoctor, patientId: string, appointmentId: string): Promise<void> {
+export async function linkConsultationToReferral(
+  doctor: LinkedDoctor,
+  patientId: string,
+  appointmentId: string,
+): Promise<string | null> {
+  const linked = await referralForConsultation(doctor.clinicId, appointmentId);
+  if (linked) return linked;
+
   const { data } = await createAdminClient()
     .from("referrals")
     .select("id, follow_up_appointment_id, follow_up:appointments!referrals_follow_up_appointment_fkey(status)")
@@ -509,14 +543,32 @@ export async function linkConsultationToReferral(doctor: LinkedDoctor, patientId
     .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: true });
   const waiting = ((data ?? []) as unknown as Array<{ id: string; follow_up_appointment_id: string | null; follow_up: { status: string } | null }>).find(
-    (r) => !r.follow_up_appointment_id || (r.follow_up && INACTIVE_APPOINTMENT_STATUSES.includes(r.follow_up.status)),
+    (r) =>
+      !r.follow_up_appointment_id ||
+      (r.follow_up &&
+        (INACTIVE_APPOINTMENT_STATUSES.includes(r.follow_up.status) || NOT_STARTED_APPOINTMENT_STATUSES.includes(r.follow_up.status))),
   );
-  if (!waiting || waiting.follow_up_appointment_id === appointmentId) return;
+  if (!waiting) return null;
   try {
-    await linkFollowUp(doctor.clinicId, waiting.id, appointmentId, waiting.follow_up_appointment_id);
+    return (await linkFollowUp(doctor.clinicId, waiting.id, appointmentId, waiting.follow_up_appointment_id)) ? waiting.id : null;
   } catch (e) {
     logger.warn("consultation not linked to referral", { code: e instanceof ApiError ? e.code : undefined });
+    return null;
   }
+}
+
+/** The open or completed referral whose follow-up is this consultation, if any. */
+export async function referralForConsultation(clinicId: string, appointmentId: string): Promise<string | null> {
+  const { data } = await createAdminClient()
+    .from("referrals")
+    .select("id")
+    .eq("clinic_id", clinicId)
+    .eq("follow_up_appointment_id", appointmentId)
+    .in("status", ["accepted", "in_progress", "completed"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.id ?? null;
 }
 
 export type CreateReferralInput = {
@@ -686,7 +738,10 @@ async function applyTransition(clinicId: string, referralId: string, from: Refer
   return { status: data.status };
 }
 
-/** accept/decline/complete by the receiving doctor, revoke by the referring doctor. */
+/**
+ * accept/decline (pending) and complete (in progress) by the receiving
+ * doctor, revoke (while open) by the referring doctor.
+ */
 export async function actOnReferral(
   doctor: LinkedDoctor,
   referralId: string,
@@ -705,6 +760,10 @@ export async function actOnReferral(
   if (!row || !role) throw new ApiError(404, "Yo‘llanma topilmadi", "referral_not_found");
   if (role !== (action === "revoke" ? "referrer" : "receiver")) {
     throw new ApiError(403, "Bu amal uchun ruxsat yo‘q", "forbidden");
+  }
+
+  if (action === "complete" && row.status === "accepted") {
+    throw new ApiError(409, "Avval bemor bilan qabulingizni boshlang", "consultation_not_started");
   }
 
   const actor = doctor.profileId;

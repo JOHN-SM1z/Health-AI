@@ -5,6 +5,8 @@ import { requireStaff } from "@/lib/auth/guards";
 import { parseBody } from "@/lib/api/validate";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { trackAnalytics } from "@/lib/analytics";
+import { linkConsultationToReferral } from "@/lib/referrals/service";
+import { recordConsultationStarted } from "@/lib/clinical-access/consultation-audit";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +19,9 @@ type RouteContext = { params: Promise<{ id: string }> };
 /**
  * Doctor-only appointment status flow: checked_in → in_progress → completed.
  * Doctors can only act on their OWN appointments (verified server-side).
+ * Starting a consultation (→ in_progress) links it to an accepted referral
+ * waiting for it and is audited as 'consultation_started'; the referral then
+ * moves to in progress in the database.
  */
 export async function PATCH(request: NextRequest, ctx: RouteContext) {
   try {
@@ -28,7 +33,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
     // The doctor must be linked to a doctors record in this clinic.
     const { data: doctor } = await supabase
       .from("doctors")
-      .select("id")
+      .select("id, name")
       .eq("profile_id", staff.profileId)
       .eq("clinic_id", staff.clinicId)
       .eq("active", true)
@@ -55,6 +60,22 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
       .update({ status: body.status })
       .eq("id", id);
     if (error) throw new ApiError(500, "Holatni yangilab bo‘lmadi");
+
+    if (body.status === "in_progress" && appointment.status !== "in_progress") {
+      await linkConsultationToReferral(
+        { ...staff, doctorId: doctor.id, doctorName: doctor.name },
+        appointment.patient_id,
+        appointment.id,
+      );
+      await recordConsultationStarted({
+        clinicId: staff.clinicId,
+        appointmentId: appointment.id,
+        patientId: appointment.patient_id,
+        doctorId: doctor.id,
+        actorId: staff.profileId,
+        via: "doctor_queue",
+      });
+    }
 
     await trackAnalytics({
       clinicId: staff.clinicId,

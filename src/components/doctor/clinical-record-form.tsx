@@ -2,20 +2,14 @@
 
 import { useRef, useState } from "react";
 import { AButton, AError, AInput, ASelect, ATextArea } from "@/components/admin/ui";
-import { adminApi, AdminApiError, CLINICAL_RECORD_TYPE_LABELS } from "@/lib/admin/client";
+import { adminApi, AdminApiError } from "@/lib/admin/client";
+import { WRITABLE_RECORD_TYPES } from "@/lib/clinical-records/categories";
 import { newIdempotencyKey } from "@/lib/idempotency-key";
 
 export type RecordDraft = { recordId: string; type: string; summary: string; details: string | null; code: string | null };
 
-const TYPES = Object.entries(CLINICAL_RECORD_TYPE_LABELS).map(([value, label]) => ({ value, label }));
-
-const SUMMARY_HINTS: Record<string, string> = {
-  consultation_note: "Ko‘rikning qisqacha xulosasi",
-  diagnosis: "Tashxis",
-  prescription: "Dori, dozasi va qabul qilish tartibi",
-  lab_result: "Tahlil nomi va natijasi",
-  medical_history: "Anamnez: surunkali kasallik, allergiya va h.k.",
-};
+const TYPES = WRITABLE_RECORD_TYPES.map(({ value, label }) => ({ value, label }));
+const SUMMARY_HINTS: Record<string, string> = Object.fromEntries(WRITABLE_RECORD_TYPES.map((t) => [t.value, t.hint]));
 
 /**
  * Adds a record to the doctor's own consultation (or corrects one of their
@@ -35,7 +29,7 @@ export function ClinicalRecordForm({
   onSaved: () => void;
   onCancel?: () => void;
 }) {
-  const [type, setType] = useState(correcting?.type ?? "consultation_note");
+  const [type, setType] = useState(correcting?.type ?? "assessment");
   const [summary, setSummary] = useState(correcting?.summary ?? "");
   const [details, setDetails] = useState(correcting?.details ?? "");
   const [code, setCode] = useState(correcting?.code ?? "");

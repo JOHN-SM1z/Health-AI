@@ -1177,6 +1177,8 @@ export type Database = {
           revoked_at: string | null
           revoked_by: string | null
           revoked_reason: string | null
+          started_at: string | null
+          started_by: string | null
           status: Database["public"]["Enums"]["referral_status"]
           updated_at: string
         }
@@ -1205,6 +1207,8 @@ export type Database = {
           revoked_at?: string | null
           revoked_by?: string | null
           revoked_reason?: string | null
+          started_at?: string | null
+          started_by?: string | null
           status?: Database["public"]["Enums"]["referral_status"]
           updated_at?: string
         }
@@ -1233,6 +1237,8 @@ export type Database = {
           revoked_at?: string | null
           revoked_by?: string | null
           revoked_reason?: string | null
+          started_at?: string | null
+          started_by?: string | null
           status?: Database["public"]["Enums"]["referral_status"]
           updated_at?: string
         }
@@ -1320,6 +1326,13 @@ export type Database = {
           {
             foreignKeyName: "referrals_revoked_by_fkey"
             columns: ["revoked_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referrals_started_by_fkey"
+            columns: ["started_by"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -1650,10 +1663,13 @@ export type Database = {
       actor_type: "staff" | "system" | "patient" | "telegram"
       clinical_record_type:
         | "consultation_note"
+        | "assessment"
         | "diagnosis"
         | "prescription"
+        | "lab_order"
         | "lab_result"
         | "medical_history"
+        | "follow_up"
       appointment_source:
         | "telegram_mini_app"
         | "telegram_chat"
@@ -1698,6 +1714,7 @@ export type Database = {
       referral_status:
         | "pending"
         | "accepted"
+        | "in_progress"
         | "declined"
         | "completed"
         | "revoked"
@@ -1839,10 +1856,13 @@ export const Constants = {
       actor_type: ["staff", "system", "patient", "telegram"],
       clinical_record_type: [
         "consultation_note",
+        "assessment",
         "diagnosis",
         "prescription",
+        "lab_order",
         "lab_result",
         "medical_history",
+        "follow_up",
       ],
       appointment_source: [
         "telegram_mini_app",
@@ -1893,6 +1913,7 @@ export const Constants = {
       referral_status: [
         "pending",
         "accepted",
+        "in_progress",
         "declined",
         "completed",
         "revoked",

@@ -153,6 +153,12 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
   const transition = (id: string, patch: Values) =>
     asServer((tx) => tx`update public.referrals set ${tx(patch)} where id = ${id}`);
   const accept = (id: string) => transition(id, { status: "accepted", accepted_by: profiles.b });
+  /** Dr B's consultation for the referral starts: linked as its follow-up, the referral is in progress. */
+  async function startHandoff(id: string, patient: string): Promise<string> {
+    const consultation = await visit(patient, doctors.b, clinicA, "in_progress");
+    await transition(id, { follow_up_appointment_id: consultation });
+    return consultation;
+  }
   const revoke = (id: string, by = profiles.a) =>
     transition(id, { status: "revoked", revoked_by: by, revoked_reason: "No longer needed" });
 
@@ -322,17 +328,15 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     expect(await seenBy(profiles.b, declinedX.id)).toEqual(nothing);
   });
 
-  it("5b. completing the referral ends the handoff; a follow-up visit makes the patient Dr B's own", async () => {
-    const x = await patientX();
-    const referral = await refer(x.id, x.consultation);
-    await accept(referral);
-    await transition(referral, { status: "completed", completed_by: profiles.b });
-    expect(await seenBy(profiles.b, x.id)).toEqual(nothing);
-
+  it("5b. completing the referral ends the handoff; Dr B's own consultation makes the patient theirs", async () => {
     const x2 = await patientX();
     const referral2 = await refer(x2.id, x2.consultation);
     await accept(referral2);
-    const followUp = await visit(x2.id, doctors.b);
+    const followUp = await startHandoff(referral2, x2.id);
+    // In progress: Dr A's history stays shared while Dr B consults.
+    expect(await access(doctors.b, x2.id)).toMatchObject({ own_patient: true, history_doctor_ids: [doctors.a] });
+    expect(await seenBy(profiles.b, x2.id)).toMatchObject({ appointments: [...x2.withA, followUp].sort() });
+
     await transition(referral2, { status: "completed", completed_by: profiles.b });
     // Own relationship now: the record and Dr B's own visit — not Dr A's history.
     expect(await access(doctors.b, x2.id)).toMatchObject({ own_patient: true, history_doctor_ids: [] });
@@ -548,7 +552,9 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     expect(await access(doctors.a, x.id)).toMatchObject({ referral_appointment_ids: [followUp] });
     expect(await seenBy(profiles.a, x.id)).toMatchObject({ appointments: [...x.withA, followUp].sort() });
 
-    // Once completed, Dr B keeps only their own visit.
+    // The booked follow-up starts (moving the referral in progress); once
+    // completed, Dr B keeps only their own visit.
+    await sql`update public.appointments set status = 'in_progress' where id = ${followUp}`;
     await transition(referral, { status: "completed", completed_by: profiles.b });
     expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: true, referral_appointment_ids: [], history_doctor_ids: [] });
     expect(await seenBy(profiles.b, x.id)).toMatchObject({ appointments: [followUp] });

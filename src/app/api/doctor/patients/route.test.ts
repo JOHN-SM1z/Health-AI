@@ -355,19 +355,25 @@ describeDb("referral-based clinical access — server and API layers", () => {
     expect(await canDoctorAccessPatientClinicalData(doctors.b, second.x.id)).toMatchObject({ relationship: "none" });
   });
 
-  it("5b. completing the referral ends the handoff: no history, no contact details", async () => {
+  it("5b. completing the referral ends the handoff: Dr A's history is no longer shared", async () => {
     const { x, referral } = await referredAndAccepted();
+    // Not before Dr B has seen the patient.
+    expect(await act("b", referral, { action: "complete" })).toMatchObject({ status: 409, body: { code: "consultation_not_started" } });
+    const own = await visit(x.id, doctors.b, clinicA, "in_progress");
+    await admin.from("referrals").update({ follow_up_appointment_id: own }).eq("id", referral);
+    expect(await referralStatus(referral)).toBe("in_progress");
+    expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual([...x.withA, own].sort());
     expect(await act("b", referral, { action: "complete" })).toMatchObject({ status: 200 });
 
-    expect(await record("b", x.id)).toMatchObject({ status: 410, body: { code: "referral_completed" } });
-    // The referral stays on Dr B's record, without the patient's data.
+    // Dr B keeps their own consultation — and nothing of Dr A's.
+    expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual([own]);
     const detail = await referralDetail("b", referral);
     expect(detail.status).toBe(200);
     expect(detail.body.data!.referral).toMatchObject({
       status: "completed",
       history: null,
       consultation: null,
-      patient: { fullName: `Access API patient ${suffix}`, phone: null, preferredLanguage: null },
+      followUp: { id: own },
     });
     // The referring doctor keeps their own patient.
     const asReferrer = await referralDetail("a", referral);
@@ -527,6 +533,9 @@ describeDb("referral-based clinical access — server and API layers", () => {
     await admin.from("referrals").update({ follow_up_appointment_id: followUp }).eq("id", referral);
     await expectParity(); // follow-up booked: Dr A now sees it, through both layers
     expect(await viaRls("a")).toContain(followUp);
+    await admin.from("appointments").update({ status: "in_progress" }).eq("id", followUp);
+    expect(await referralStatus(referral)).toBe("in_progress");
+    await expectParity(); // in progress
     await act("b", referral, { action: "complete" });
     await expectParity(); // completed: Dr B keeps only their own visit
     expect(await viaRls("b")).toEqual([followUp]);

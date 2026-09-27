@@ -7,7 +7,7 @@ import { createReferral, listReferralsForDoctor, type ReferralStatus } from "@/l
 
 export const dynamic = "force-dynamic";
 
-const STATUSES: ReferralStatus[] = ["pending", "accepted", "declined", "completed", "revoked", "expired"];
+const STATUSES: ReferralStatus[] = ["pending", "accepted", "in_progress", "declined", "completed", "revoked", "expired"];
 
 // Only ids and the doctor's own text are accepted: the patient and clinic are
 // taken from the consultation server-side, never from the request.

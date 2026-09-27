@@ -13,6 +13,7 @@ import {
 import { listVisibleClinicalRecords, type ClinicalRecordView } from "@/lib/clinical-records/service";
 import { listPatientReferralsForDoctor, type PatientReferral } from "@/lib/referrals/service";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
+import { recordCategory, type RecordCategory, type RecordStage } from "@/lib/clinical-records/categories";
 
 /**
  * A doctor's clinical workspace for one patient: everything on it — the
@@ -34,6 +35,14 @@ export type ClinicalAppointment = {
 
 export type ConsultationRef = { appointmentId: string; startAt: string; serviceName: string | null };
 
+/**
+ * A record as the calling doctor sees it in a handoff: written in their
+ * consultation under way (current) or earlier (historical) — e.g. the
+ * referring doctor's diagnosis is a historical diagnosis, the receiving
+ * doctor's own one a new diagnosis. The record itself is never changed.
+ */
+export type WorkspaceRecord = ClinicalRecordView & { stage: RecordStage; category: RecordCategory };
+
 export type PatientWorkspace = {
   patient: { id: string; fullName: string | null; phone: string | null; preferredLanguage: string };
   relationship: Exclude<ClinicalRelationship, "none">;
@@ -41,7 +50,7 @@ export type PatientWorkspace = {
   /** Consultations the decision covers, newest first. */
   appointments: ClinicalAppointment[];
   /** Clinical records the decision covers, with provenance, newest first. */
-  records: ClinicalRecordView[];
+  records: WorkspaceRecord[];
   /** Referrals of this patient the doctor is on and may see, with their text. */
   referrals: PatientReferral[];
   consultation: {
@@ -191,7 +200,10 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
     relationship: access.relationship,
     activeReferralIds: access.activeReferralIds,
     appointments,
-    records,
+    records: records.map((r) => {
+      const stage: RecordStage = current && r.appointmentId === current.id ? "current" : "historical";
+      return { ...r, stage, category: recordCategory(r.type, stage) };
+    }),
     referrals,
     consultation: {
       current: current ? asRef(current) : null,

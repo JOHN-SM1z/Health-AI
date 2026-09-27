@@ -4,6 +4,7 @@ import { requireLinkedDoctor } from "@/lib/auth/guards";
 import { parseBody, uuidSchema } from "@/lib/api/validate";
 import { ApiError, handleApiError, ok } from "@/lib/api/errors";
 import { createClinicalRecord } from "@/lib/clinical-records/service";
+import { CLINICAL_RECORD_TYPES } from "@/lib/clinical-records/categories";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 const recordSchema = z.object({
   idempotencyKey: uuidSchema,
   appointmentId: uuidSchema,
-  recordType: z.enum(["consultation_note", "diagnosis", "prescription", "lab_result", "medical_history"]),
+  recordType: z.enum(CLINICAL_RECORD_TYPES),
   summary: z.string().trim().min(1, "Qisqacha mazmunni yozing").max(300),
   details: z.string().trim().max(4000).optional(),
   code: z
