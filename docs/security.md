@@ -16,7 +16,10 @@
   caller's role:
   - `authenticated` (staff) — read: same clinic as the profile; write: owner/admin rules
     per table; doctors manage only their own working hours/blocks/appointments.
-  - `anon` — no table grants at all (patients never appear as anon SQL users).
+  - `anon` — no table grants at all (patients never appear as anon SQL users). A Supabase
+    project's own default privileges give anon every new public table; `20260930000004` revokes
+    them (and the defaults for later tables), so an anonymous `/rest/v1/<table>` is refused (401)
+    rather than answered with an empty RLS result.
   - `service_role` — server-side only (Next.js API routes), bypasses RLS by design.
 - Grants are applied in `20260813000013_grants.sql`; new tables inherit via
   `ALTER DEFAULT PRIVILEGES`.
@@ -287,6 +290,7 @@ Found and fixed (each with a regression test that fails if the fix is reverted):
 | F5 | (pre-existing, found in the follow-up pass) A manager's own token could `POST /rest/v1/payments` with `status: 'paid'` — the direct-write guard only covered UPDATE | appointments, patients and payments are server-written only: no INSERT/UPDATE/DELETE for signed-in or anonymous roles (`20260930000002`) |
 | F6 | (pre-existing) Operational staff tokens could insert or move appointments and edit patients over `/rest/v1` — outside the booking engine, without notifications, with forged `created_by`/`cancelled_by` | same migration; the admin API (service role, after authorization) is the only write path |
 | F7 | A consultation's start, its referral link and its `consultation_started` audit row were three requests: a failure in between left a started consultation unaudited, and two concurrent starts audited twice | one transaction with a compare-and-swap on the status (`start_consultation()`, `20260930000001`) |
+| F8 | (pre-existing, found when CI first ran the suites on the real Supabase CLI stack) the anon role kept Supabase's default privileges on public tables: an anonymous `GET /rest/v1/patients` returned 200 with an empty RLS result instead of being refused, contrary to 20260813000013's intent | `20260930000004` revokes anon's table and sequence privileges and the default privileges for later tables |
 
 ## Medical safety (non-security but critical)
 

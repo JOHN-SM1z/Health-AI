@@ -70,6 +70,8 @@ async function pgError(run: () => Promise<unknown>): Promise<postgres.PostgresEr
   throw new Error("expected the database to reject the statement");
 }
 
+const ROLLBACK = Symbol("rollback");
+
 describeDb("referral-based clinical access — database layer (doctor_patient_access + RLS)", () => {
   let sql: postgres.Sql;
   const suffix = Date.now().toString(36);
@@ -496,17 +498,26 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
   // ---------- Hardening (20260927000004_clinical_access_hardening.sql) ----------
 
   it("11. Voice recordings are readable only by operational staff, never by doctors", async () => {
+    // One always-rolled-back transaction: Supabase Storage forbids deleting
+    // storage.objects rows directly, so the fixture must never be committed.
     const path = `${clinicA}/${randomUUID()}.ogg`;
-    await sql`insert into storage.objects (bucket_id, name) values ('voice-messages', ${path})`;
-    try {
-      const readable = (profileId: string) =>
-        asUser(profileId, async (tx) => (await tx`select name from storage.objects where name = ${path}`).length === 1);
-      expect(await readable(profiles.receptionist)).toBe(true);
-      expect(await readable(profiles.manager)).toBe(true);
-      for (const doctor of [profiles.a, profiles.b, profiles.c, profiles.k]) expect(await readable(doctor)).toBe(false);
-    } finally {
-      await sql`delete from storage.objects where name = ${path}`;
-    }
+    const seen: Record<string, boolean> = {};
+    const cast = { receptionist: profiles.receptionist, manager: profiles.manager, a: profiles.a, b: profiles.b, c: profiles.c, k: profiles.k };
+    await sql
+      .begin(async (tx) => {
+        await tx`insert into storage.objects (bucket_id, name) values ('voice-messages', ${path})`;
+        for (const [name, profileId] of Object.entries(cast)) {
+          await tx.unsafe("set local role authenticated");
+          await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: profileId, role: "authenticated" })}, true)`;
+          seen[name] = (await tx`select name from storage.objects where name = ${path}`).length === 1;
+          await tx.unsafe("reset role");
+        }
+        throw ROLLBACK;
+      })
+      .catch((e) => {
+        if (e !== ROLLBACK) throw e;
+      });
+    expect(seen).toEqual({ receptionist: true, manager: true, a: false, b: false, c: false, k: false });
   });
 
   it("12. A deactivated doctor loses clinical access at the database, like at the API", async () => {
