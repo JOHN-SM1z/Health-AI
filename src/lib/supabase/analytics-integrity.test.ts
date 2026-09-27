@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
-import { aggregateAppointments, type AnalyticsRow } from "@/lib/analytics/aggregate";
+import { aggregateAppointments, monthKeyFromDayKey, weekKeyFromDayKey, type AnalyticsRow } from "@/lib/analytics/aggregate";
 
 /**
  * Analytics integrity (Phase 13 red-team, spec 9): the aggregation used by
@@ -81,35 +81,77 @@ describeDb("analytics integrity (real DB totals)", () => {
   });
 
   afterAll(async () => {
-    if (admin && clinicId) await admin.from("clinics").delete().eq("id", clinicId);
+    if (!admin || !clinicId) return;
+    // Audited appointments/payments must go before the clinic: in its cascade
+    // the audit trigger references the vanishing clinic and aborts the delete.
+    await admin.from("appointments").delete().eq("clinic_id", clinicId); // cascades payments
+    const { error } = await admin.from("clinics").delete().eq("id", clinicId);
+    expect(error).toBeNull();
   });
 
-  const insertAppt = (startAt: Date, status: string, source: string, reason: string | null = null, noShowReason: string | null = null) =>
-    admin.from("appointments").insert({
-      clinic_id: clinicId,
-      patient_id: patientId,
-      doctor_id: doctorId,
-      service_id: serviceId,
-      start_at: startAt.toISOString(),
-      end_at: new Date(startAt.getTime() + 30 * 60000).toISOString(),
-      status,
-      source,
-      cancelled_reason: reason,
-      no_show_reason: noShowReason,
-    });
+  const insertAppt = async (startAt: Date, status: string, source: string, reason: string | null = null, noShowReason: string | null = null) => {
+    const { data, error } = await admin
+      .from("appointments")
+      .insert({
+        clinic_id: clinicId,
+        patient_id: patientId,
+        doctor_id: doctorId,
+        service_id: serviceId,
+        start_at: startAt.toISOString(),
+        end_at: new Date(startAt.getTime() + 30 * 60000).toISOString(),
+        status,
+        source,
+        cancelled_reason: reason,
+        no_show_reason: noShowReason,
+      })
+      .select("id")
+      .single();
+    expect(error).toBeNull();
+    // Revenue counts only completed appointments whose payment is PAID
+    // (aggregate.ts), so each completed fixture carries a paid payment.
+    if (status === "completed") {
+      const { error: payError } = await admin
+        .from("payments")
+        .insert({ clinic_id: clinicId, appointment_id: data!.id, patient_id: patientId, amount: 50_000, status: "paid" });
+      expect(payError).toBeNull();
+    }
+  };
 
   /** Local calendar day in Asia/Tashkent for a UTC instant. */
   const localDay = (d: Date) =>
     new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 
+  /** The YYYY-MM-DD day `days` calendar days after `dayKey` (plain date math, no timezone). */
+  const addDays = (dayKey: string, days: number) => {
+    const [y, m, d] = dayKey.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+  };
+
+  /**
+   * Local Monday of last week — or of the week before, if that Monday→
+   * Wednesday would straddle a month boundary (keeping one month bucket).
+   * Always 7–20 days ago: in the past, and inside the endpoint's 30-day
+   * window on whatever day the suite runs.
+   */
+  const fixtureMonday = () => {
+    const today = localDay(new Date());
+    const daysSinceMonday = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7;
+    const monday = addDays(today, -daysSinceMonday - 7);
+    return addDays(monday, 2).slice(0, 7) === monday.slice(0, 7) ? monday : addDays(monday, -7);
+  };
+
   it("totals match the known fixture set, including UTC+5 day-boundary revenue", async () => {
-    // Fixture: fixed UTC instants so expectations are deterministic.
-    // 2026-08-17 05:00Z == 10:00 local Mon; 19:30Z == 00:30 local next day.
-    const day1 = new Date("2026-08-17T05:00:00Z"); // local Mon 10:00
-    const day1Plus = new Date("2026-08-17T05:30:00Z"); // local Mon 10:30
-    const day1Late = new Date("2026-08-18T19:30:00Z"); // local Wed 00:30 -> NEXT day bucket
-    const day2 = new Date("2026-08-18T05:00:00Z"); // local Tue 10:00
-    const day2Noon = new Date("2026-08-18T05:30:00Z"); // local Tue 10:30
+    // Fixture instants are derived from today: hard-coded dates silently aged
+    // out of the endpoint's 30-day window. Asia/Tashkent is UTC+5 year-round:
+    // 05:00Z == 10:00 local; 19:30Z == 00:30 local the NEXT day.
+    const mon = fixtureMonday();
+    const tue = addDays(mon, 1);
+    const wed = addDays(mon, 2);
+    const day1 = new Date(`${mon}T05:00:00Z`); // local Mon 10:00
+    const day1Plus = new Date(`${mon}T05:30:00Z`); // local Mon 10:30
+    const day1Late = new Date(`${tue}T19:30:00Z`); // local Wed 00:30 -> NEXT day bucket
+    const day2 = new Date(`${tue}T05:00:00Z`); // local Tue 10:00
+    const day2Noon = new Date(`${tue}T05:30:00Z`); // local Tue 10:30
 
     await insertAppt(day1, "completed", "telegram_mini_app"); // revenue 50k, bucket Mon
     await insertAppt(day1Plus, "completed", "walk_in"); // revenue 50k, bucket Mon
@@ -123,7 +165,9 @@ describeDb("analytics integrity (real DB totals)", () => {
     const since = new Date(Date.now() - 30 * 86400000).toISOString();
     const { data, error } = await admin
       .from("appointments")
-      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name)")
+      .select(
+        "id, source, status, cancelled_reason, no_show_reason, start_at, patients(full_name), services(name, price), doctors(name), payments(status, amount)",
+      )
       .eq("clinic_id", clinicId)
       .gte("start_at", since);
     expect(error).toBeNull();
@@ -135,6 +179,7 @@ describeDb("analytics integrity (real DB totals)", () => {
     expect(agg.cancelled).toBe(1);
     expect(agg.noShows).toBe(2);
     expect(agg.completed).toBe(3);
+    expect(agg.totalRevenue).toBe(150_000);
 
     // By source / status.
     const bySource = Object.fromEntries(agg.bySource);
@@ -148,8 +193,6 @@ describeDb("analytics integrity (real DB totals)", () => {
 
     // Revenue trend bucketed by CLINIC-LOCAL day: the 19:30Z appointment
     // lands in the NEXT local day (Wednesday), not the UTC day.
-    const mon = localDay(day1);
-    const wed = "2026-08-19";
     expect(agg.revenueTrend).toEqual([
       { date: mon, revenue: 100_000 }, // two completed on Mon 10:00
       { date: wed, revenue: 50_000 }, // 00:30 local Wednesday
@@ -159,12 +202,15 @@ describeDb("analytics integrity (real DB totals)", () => {
     const totalRevenue = agg.revenueTrend.reduce((s, d) => s + d.revenue, 0);
     expect(agg.revenueByWeek.reduce((s, d) => s + d.revenue, 0)).toBe(totalRevenue);
     expect(agg.revenueByMonth.reduce((s, d) => s + d.revenue, 0)).toBe(totalRevenue);
-    expect(agg.revenueByWeek).toEqual([{ key: "2026-W34", revenue: 150_000 }]);
-    expect(agg.revenueByMonth).toEqual([{ key: "2026-08", revenue: 150_000 }]);
+    // Mon–Wed is always one ISO week, and fixtureMonday() keeps it in one month.
+    expect(agg.revenueByWeek).toEqual([{ key: weekKeyFromDayKey(mon), revenue: 150_000 }]);
+    expect(agg.revenueByMonth).toEqual([{ key: monthKeyFromDayKey(mon), revenue: 150_000 }]);
 
-    // Top service/doctor: counts + revenue only from completed rows.
-    expect(agg.topServices).toEqual([{ name: `Konsultatsiya ${suffix}`, count: 7, revenue: 150_000 }]);
-    expect(agg.topDoctors).toEqual([{ name: `Dr Analytics ${suffix}`, count: 7, revenue: 150_000 }]);
+    // Top service/doctor: counts cover every row; revenue only completed + paid rows.
+    expect(agg.topServices).toEqual([{ name: `Konsultatsiya ${suffix}`, count: 7, completedCount: 3, revenue: 150_000 }]);
+    expect(agg.topDoctors).toEqual([
+      { name: `Dr Analytics ${suffix}`, count: 7, completedCount: 3, revenue: 150_000, completionRate: 42.9 },
+    ]);
   });
 
   it("partial days and empty ranges aggregate to zero without errors", async () => {
