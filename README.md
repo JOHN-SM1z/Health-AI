@@ -73,7 +73,7 @@ npm run build          # production build (standalone)
 
 # End-to-end, against the built app on the LOCAL stack only (npm run build && npm start):
 npm run e2e:seed       # demo clinic + staff accounts (idempotent; refuses non-local hosts)
-npm run test:e2e       # referral workflow in the browser (desktop/tablet/phone) + HTTP red team
+npm run test:e2e       # referral workflow, online-vs-reception booking race (browser) + HTTP red team
 ```
 
 CI (`.github/workflows/ci.yml`) runs all of the above on every push: lint, typecheck, tests

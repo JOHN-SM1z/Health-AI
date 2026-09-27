@@ -9,9 +9,10 @@
 //   manager@e2e.local       manager
 //
 // All with the password in e2e/lib.mjs. Both doctors work 00:00–23:59 every
-// day, so a consultation can start whenever the scripts run.
+// day, and the clinic's timezone is one where it is daytime when the seed
+// runs, so a consultation can start "now" whenever the scripts run.
 import { createClient } from "@supabase/supabase-js";
-import { DEMO, DEMO_NAMES, PASSWORD, assertLocalOnly, connect } from "./lib.mjs";
+import { DEMO, DEMO_NAMES, PASSWORD, assertLocalOnly, connect, daytimeTimezone } from "./lib.mjs";
 
 assertLocalOnly();
 const CLINIC = "e2e00000-0000-4000-8000-000000000001";
@@ -55,8 +56,11 @@ async function doctor(email, name, title) {
 }
 
 try {
-  await db`insert into public.clinics (id, name, slug, timezone, currency) values (${CLINIC}, 'E2E demo klinikasi', 'e2e-demo', 'Asia/Tashkent', 'UZS')
-           on conflict (id) do nothing`;
+  // A zone where it is daytime now, so the scripts' "start a consultation
+  // now" never runs past the clinic's local midnight (see lib.mjs).
+  const timezone = daytimeTimezone();
+  await db`insert into public.clinics (id, name, slug, timezone, currency) values (${CLINIC}, 'E2E demo klinikasi', 'e2e-demo', ${timezone}, 'UZS')
+           on conflict (id) do update set timezone = excluded.timezone`;
   await service(DEMO_NAMES.generalService, 20, 150000);
   await service(DEMO_NAMES.cardiologyService, 30, 250000);
   await doctor(DEMO.referrer, DEMO_NAMES.referrer, "Terapevt");

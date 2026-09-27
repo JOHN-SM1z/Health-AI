@@ -63,15 +63,50 @@ Patient (Telegram)                      Clinic staff (browser)
 
 ## Booking engine (double-booking protection)
 
-All bookings go through the `book_appointment` Postgres function which:
+**Invariant:** for any clinic, doctor and conflicting time interval, the database holds at most
+ONE active appointment — whichever channel created it.
 
-1. takes an advisory transaction lock per doctor,
-2. validates the slot against working hours and time blocks,
-3. checks for overlapping active appointments (status in pending/confirmed/checked_in/in_progress),
-4. inserts and returns `appointment_id` or a typed `error_code` (`slot_taken`, `outside_working_hours`, …).
+```
+Mini App / bot deep link ─┐                                        ┌─ SUCCESS (201; 200 on an
+Website (/book) ──────────┤→ POST /api/bookings ─────────┐          │   idempotent replay)
+Reception / admin ────────┤→ POST /api/admin/appointments ┤→ createAppointment() (src/lib/booking/engine.ts)
+Doctor's walk-in ─────────┘→ start_walk_in_consultation ──┘      → book_appointment()  ──┤
+                                                                   → exclusion constraint └─ SLOT_UNAVAILABLE (409) …
+```
 
-`reschedule_appointment` does the same for reschedules. Direct inserts are still blocked by the
-partial exclusion constraint. This makes the engine safe even under concurrent requests.
+- **The guarantee is a constraint.** `no_overlapping_active_appointments`:
+  `EXCLUDE USING gist (clinic_id WITH =, doctor_id WITH =, tstzrange(start_at, end_at, '[)') WITH &&)
+  WHERE status NOT IN ('cancelled', 'no_show')`. Postgres checks it on every INSERT and UPDATE by
+  every role; of two concurrent writers the second waits for the first and is refused (23P01).
+  Durations vary (service duration or the doctor's override), so conflicts are interval overlaps:
+  14:00–14:30 and 14:15–14:45 conflict; 14:00–14:30 and 14:30–15:00 do not.
+- **Active** = every status except `cancelled` and `no_show` (they release the time); `completed`
+  keeps it.
+- **One operation.** `book_appointment()` validates clinic, doctor, service (and the doctor's
+  service list), patient — all of the clinic — then the time (future, inside one working-hour
+  window of its own local day in the clinic's timezone, no time block), takes an advisory lock per
+  clinic+doctor, re-checks, and inserts appointment + payment in one transaction. End time and
+  price come from the database, never the caller. A conflict found by the constraint (any race the
+  lock does not cover) returns `slot_taken`, not an error.
+- **Idempotency.** Each booking attempt carries a client-generated `idempotencyKey` (unique per
+  clinic): a retry — double click, network retry, reconnect — returns the first attempt's
+  appointment (`replayed`) instead of a second one; the same key for another booking is refused.
+  Reception walk-in patients get an id derived from the key, so a retry creates no second patient.
+- **Availability is a hint.** `GET /api/availability` reserves nothing; the booking decides. The Mini
+  App answers `SLOT_UNAVAILABLE` by reloading availability; reception sees it in the open modal.
+- **Rescheduling** — `reschedule_appointment(p_clinic_id, …)`: clinic-scoped, same lock, row lock,
+  same checks; the appointment never conflicts with itself. **Cancelling** sets `cancelled`, which
+  releases the time; reactivating it over a newer booking is refused (`SLOT_UNAVAILABLE`).
+- **Tenancy is structural.** Composite foreign keys tie an appointment's doctor, patient and service
+  to the appointment's own clinic; the same time in another clinic is never a conflict.
+- **Error contract** (booking endpoints): `SLOT_UNAVAILABLE` 409, `INVALID_TIME` / `INVALID_DOCTOR` /
+  `INVALID_PATIENT` / `INVALID_SERVICE` / `INVALID_CLINIC` 422, `IDEMPOTENCY_KEY_REUSED` 409,
+  `APPOINTMENT_NOT_FOUND` 404, `NOT_RESCHEDULABLE` 409, `SERVER_ERROR` 500 — `{ error, code,
+  details: { reason } }`; authentication stays 401/403. Database errors are never returned.
+- **Timezone.** Instants are `timestamptz`; the API takes ISO 8601 with an offset. Reception picks
+  the clinic's wall-clock time (`startLocal`), converted on the server in `clinics.timezone` —
+  never the browser's. Working hours are applied in Postgres with the clinic's IANA zone (DST
+  included where a zone has it; Asia/Tashkent has none).
 
 ## Referral workflow
 

@@ -31,7 +31,12 @@
 - `doctors.profile_id` (which staff account a doctor record belongs to) is set only server-side:
   a trigger rejects authenticated sessions that set or change it, and `(clinic_id, profile_id)`
   is unique, so a staff account maps to at most one doctor record per clinic.
-- Double-booking is prevented in Postgres (exclusion constraint + RPC), not in app code.
+- Double-booking is prevented in Postgres, not in app code: the exclusion constraint
+  `no_overlapping_active_appointments` on (clinic, doctor, [start, end)) over active statuses holds
+  whatever writes the row, and composite foreign keys keep an appointment's doctor, patient and
+  service in its own clinic (see architecture.md › Booking engine). Booking and rescheduling are
+  service-role-only functions; the client's clinic, price, duration, status and availability are
+  never trusted.
 - `appointments`, `patients` and `payments` are **written by the server only**
   (`20260930000002_server_only_booking_writes.sql`): signed-in and anonymous tokens have no
   INSERT/UPDATE/DELETE on them, whatever the role. Bookings and walk-ins go through

@@ -22,6 +22,19 @@ export const DEMO_NAMES = {
   cardiologyService: "Kardiolog ko‘rigi (E2E)",
 };
 
+/**
+ * An IANA timezone in which it is now between 07:00 and 17:00 local time (the
+ * seed gives the demo clinic this zone): a walk-in started "now" stays inside
+ * one local day's working hours whenever the scripts run.
+ */
+export function daytimeTimezone(now = new Date()) {
+  for (const tz of ["Asia/Tashkent", "Europe/London", "America/New_York", "Asia/Tokyo"]) {
+    const hour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", hourCycle: "h23" }).format(now));
+    if (hour >= 7 && hour < 17) return tz;
+  }
+  return "Asia/Tashkent";
+}
+
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 
 /** Refuses to run unless the app, the API and the database are all on this machine. */
@@ -90,9 +103,9 @@ export const VIEWPORTS = {
 export async function signIn(browser, report, email, viewport = "desktop", { expectDenials = false } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORTS[viewport], hasTouch: viewport !== "desktop", isMobile: viewport === "phone" });
   const page = await context.newPage();
-  // Where a step deliberately opens forbidden pages, the browser's own
-  // "Failed to load resource: 404/410" lines for those responses are expected.
-  const expected = (text) => expectDenials && /Failed to load resource: .* (404|410)/.test(text);
+  // Where a step deliberately opens forbidden pages or books a taken time, the
+  // browser's own "Failed to load resource: 404/409/410" lines are expected.
+  const expected = (text) => expectDenials && /Failed to load resource: .* (404|409|410)/.test(text);
   page.on("console", (m) => m.type() === "error" && !expected(m.text()) && report.problems.push(`[${email}] console: ${m.text()}`));
   page.on("pageerror", (e) => report.problems.push(`[${email}] pageerror: ${e.message}`));
   page.on("response", (r) => r.status() >= 500 && report.problems.push(`[${email}] HTTP ${r.status()} ${r.url()}`));

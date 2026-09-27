@@ -17,6 +17,14 @@
 
 ## Done
 
+- [x] ~~15. Unified booking engine & double-booking prevention~~ (2026-09-27)
+  - invariant as a constraint: `EXCLUDE (clinic_id =, doctor_id =, [start,end) &&)` over active statuses; composite same-clinic foreign keys for doctor/patient/service
+  - one booking service (`src/lib/booking/engine.ts` → `book_appointment()`) for the Mini App, bot deep link, website, reception, admin and the doctor's walk-in; clinic-scoped `reschedule_appointment()` with row lock
+  - idempotency keys per booking attempt (unique per clinic; replay instead of a second appointment; no duplicate walk-in patient)
+  - fixes: slots crossing local midnight passed the working-hours check; reception times read in the browser's timezone; Mini App availability ignored the clinic of the link; first doctor tap did nothing; confirm button stuck after a taken slot; overlap from the slot trigger reported as a server error
+  - error contract `SLOT_UNAVAILABLE` / `INVALID_*` / `IDEMPOTENCY_KEY_REUSED` …; Mini App refreshes availability, reception sees it in the modal
+  - tests: 2/5/10-way races (DB), online-vs-reception races both orders + 10-way mixed (real routes), duration overlap, idempotency, cancel/rebook, reschedule (occupied/self/concurrent), tenancy, midnight/DST; E2E `e2e/booking-channels.mjs`
+
 - [x] ~~14. Clinical referrals (Phase 1)~~ (2026-09-27)
   - `referrals` table: same-clinic composite FKs, state machine trigger, RLS, redacted audit, follow-up appointment link
   - doctor portal `/doctor/referrals` (refer, accept/decline/complete/revoke, history after accept), reception booking of the follow-up, management revoke

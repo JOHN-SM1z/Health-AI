@@ -95,12 +95,17 @@ Idempotent — safe to re-run.
 
 ## Postgres functions (used by the app)
 
-- `book_appointment(p_clinic_id, p_patient_id, p_doctor_id, p_service_id, p_start_at, p_status, p_source, p_notes, p_created_by)`
-  → `{ appointment_id, error_code, error_message }`
-- `reschedule_appointment(p_appointment_id, p_new_start_at, p_updated_by)`
-  → `{ appointment_id, error_code, error_message }`
+- `book_appointment(p_clinic_id, p_patient_id, p_doctor_id, p_service_id, p_start_at, p_status, p_source, p_notes, p_created_by, p_idempotency_key)`
+  → `{ appointment_id, amount, error_code, error_message, replayed }` — the one booking operation
+  (service role only; called through `src/lib/booking/engine.ts`). `error_code` ∈ `invalid_status,
+  clinic_not_found, doctor_not_found, service_not_found, patient_not_found, service_not_offered,
+  past_slot, outside_working_hours, time_blocked, slot_taken, idempotency_key_reused`.
+- `reschedule_appointment(p_clinic_id, p_appointment_id, p_new_start_at, p_actor)`
+  → `{ error_code, error_message }` — `appointment_not_found, not_reschedulable, past_slot,
+  outside_working_hours, time_blocked, slot_taken`.
 
-Both return `error_code` in `{slot_taken, outside_working_hours, conflict, not_found, invalid_state}`.
+See [architecture.md › Booking engine](architecture.md#booking-engine-double-booking-protection)
+for the invariant and the constraint that enforces it.
 Statuses in `appointment_status` enum: `pending, confirmed, checked_in, in_progress, completed, cancelled, no_show`.
 
 ## Production database
