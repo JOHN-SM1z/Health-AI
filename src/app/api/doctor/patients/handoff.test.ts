@@ -375,7 +375,8 @@ describeDb("clinical handoff workflow", () => {
 
     expect(await workspace("b", x.id)).toMatchObject({ status: 410, body: { code: "referral_declined" } });
     expect(await start("b", x.id, { serviceId: quickService })).toMatchObject({ status: 410, body: { code: "referral_declined" } });
-    expect(await act("b", referral, { action: "accept" })).toMatchObject({ status: 409, body: { code: "invalid_transition" } });
+    // Declined is final: Dr B no longer has it, so accepting answers why (410) and writes nothing.
+    expect(await act("b", referral, { action: "accept" })).toMatchObject({ status: 410, body: { code: "referral_declined" } });
     expect((await detail("a", referral)).body.data!.referral).toMatchObject({ status: "declined", declinedReason: reason });
 
     const declined = (await audits(referral)).find((a) => a.action === "referral_declined");

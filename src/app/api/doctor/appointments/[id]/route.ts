@@ -26,6 +26,10 @@ type RouteContext = { params: Promise<{ id: string }> };
 export async function PATCH(request: NextRequest, ctx: RouteContext) {
   try {
     const staff = await requireStaff("doctor");
+    // The doctor role itself: requireStaff ranks owner/admin/manager above
+    // doctor, and a management account linked to a doctor record is still
+    // not a doctor for the doctor portal (same rule as requireLinkedDoctor).
+    if (!staff.roles.includes("doctor")) throw new ApiError(403, "Bu amal faqat shifokorlar uchun", "forbidden");
     const { id } = await ctx.params;
     const body = await parseBody(request, statusSchema);
     const supabase = createAdminClient();
@@ -46,8 +50,11 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
       .eq("id", id)
       .eq("clinic_id", staff.clinicId)
       .maybeSingle();
-    if (fetchError || !appointment) throw new ApiError(404, "Qabul topilmadi", "appointment_not_found");
-    if (appointment.doctor_id !== doctor.id) throw new ApiError(403, "Bu qabul sizga tegishli emas", "not_yours");
+    // Another doctor's appointment answers exactly like one that doesn't exist:
+    // an id can't be probed.
+    if (fetchError || !appointment || appointment.doctor_id !== doctor.id) {
+      throw new ApiError(404, "Qabul topilmadi", "appointment_not_found");
+    }
 
     // Only forward transitions are allowed.
     const rank: Record<string, number> = { checked_in: 1, in_progress: 2, completed: 3 };

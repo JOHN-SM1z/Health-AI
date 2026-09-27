@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRoles } from "@/lib/auth/guards";
+import { anyColumnContains } from "@/lib/api/postgrest";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { parseBody, uuidSchema } from "@/lib/api/validate";
 import { listPatientReferrals } from "@/lib/referrals/service";
@@ -87,9 +88,8 @@ export async function GET(request: NextRequest) {
     if (noConsent) query = query.eq("consent_given", false);
 
     if (q) {
-      query = query.or(
-        `full_name.ilike.%${q}%,phone.ilike.%${q}%,telegram_username.ilike.%${q}%,telegram_first_name.ilike.%${q}%`,
-      );
+      // The search text is always a quoted literal — never filter syntax.
+      query = query.or(anyColumnContains(["full_name", "phone", "telegram_username", "telegram_first_name"], q));
     }
 
     const { data, error, count } = await query;

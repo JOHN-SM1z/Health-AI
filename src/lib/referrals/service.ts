@@ -106,7 +106,9 @@ export function referralError(error: { code?: string; message?: string }): ApiEr
   if (has("in progress only once") || has("invalid status transition accepted -> completed")) {
     return new ApiError(409, "Avval bemor bilan qabulingizni boshlang", "consultation_not_started");
   }
-  if (has("invalid status transition")) return new ApiError(409, "Yo‘llanma holati buni ruxsat bermaydi", "invalid_transition");
+  if (has("invalid status transition") || has("cannot be edited") || has("may only set its own fields")) {
+    return new ApiError(409, "Yo‘llanma holati buni ruxsat bermaydi", "invalid_transition");
+  }
   if (has("only the receiving doctor") || has("only the referring doctor")) {
     return new ApiError(403, "Bu amal uchun ruxsat yo‘q", "forbidden");
   }
@@ -766,6 +768,14 @@ async function applyTransition(clinicId: string, referralId: string, from: Refer
   return { status: data.status };
 }
 
+function transitionRefused(role: ReferralRole, status: ReferralStatus, action: ReferralAction): ApiError {
+  if (role === "receiver" && action === "complete" && status === "accepted") {
+    return new ApiError(409, "Avval bemor bilan qabulingizni boshlang", "consultation_not_started");
+  }
+  if (status === "expired") return new ApiError(409, "Yo‘llanma muddati tugagan", "referral_expired");
+  return new ApiError(409, "Yo‘llanma holati buni ruxsat bermaydi", "invalid_transition");
+}
+
 /**
  * accept/decline (pending) and complete (in progress) by the receiving
  * doctor, revoke (while open) by the referring doctor.
@@ -778,7 +788,7 @@ export async function actOnReferral(
 ): Promise<{ status: ReferralStatus }> {
   const { data: row, error } = await createAdminClient()
     .from("referrals")
-    .select("id, status, referring_doctor_id, referred_to_doctor_id")
+    .select("id, status, expires_at, referring_doctor_id, referred_to_doctor_id")
     .eq("id", referralId)
     .eq("clinic_id", doctor.clinicId)
     .maybeSingle();
@@ -789,10 +799,12 @@ export async function actOnReferral(
   if (role !== (action === "revoke" ? "referrer" : "receiver")) {
     throw new ApiError(403, "Bu amal uchun ruxsat yo‘q", "forbidden");
   }
-
-  if (action === "complete" && row.status === "accepted") {
-    throw new ApiError(409, "Avval bemor bilan qabulingizni boshlang", "consultation_not_started");
-  }
+  // The action must be one the referral's current state offers this doctor:
+  // a receiver can't act on a referral they can no longer see (410), and a
+  // repeated or out-of-order action is refused (409) — never a silent no-op.
+  const status = effectiveStatus(row.status, row.expires_at);
+  if (!visibleTo(role, status, row.expires_at)) throw lapsedReferralError(status);
+  if (!allowedActions(role, status).includes(action)) throw transitionRefused(role, status, action);
 
   const actor = doctor.profileId;
   const patch: TransitionPatch =
@@ -960,12 +972,15 @@ export async function linkFollowUp(
 export async function revokeReferralAsManagement(staff: StaffInClinic, referralId: string, reason: string) {
   const { data: row, error } = await createAdminClient()
     .from("referrals")
-    .select("id, status")
+    .select("id, status, expires_at")
     .eq("id", referralId)
     .eq("clinic_id", staff.clinicId)
     .maybeSingle();
   if (error) throw new ApiError(500, "Yo‘llanmani yuklab bo‘lmadi");
   if (!row) throw new ApiError(404, "Yo‘llanma topilmadi", "referral_not_found");
+  // Only an open referral can be withdrawn; a closed one is final.
+  const status = effectiveStatus(row.status, row.expires_at);
+  if (!OPEN_STATUSES.includes(status)) throw transitionRefused("referrer", status, "revoke");
   return applyTransition(staff.clinicId, row.id, row.status, {
     status: "revoked",
     revoked_by: staff.profileId,

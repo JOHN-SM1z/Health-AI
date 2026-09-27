@@ -458,7 +458,7 @@ describeDb("referral-based clinical access — server and API layers", () => {
         params(x.consultation),
       ),
     );
-    expect(touched).toMatchObject({ status: 403, body: { code: "not_yours" } });
+    expect(touched).toMatchObject({ status: 404, body: { code: "appointment_not_found" } });
     // The referral detail is about X, whatever else is asked.
     const detail = await referralDetail("b", referral);
     expect(JSON.stringify(detail.body)).not.toContain(yVisit);

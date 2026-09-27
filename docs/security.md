@@ -181,7 +181,9 @@ diagnoses, prescriptions, laboratory orders and results, medical history and fol
   shown) in **strict** mode: if the access log cannot be written the view fails (503) instead
   of being served unlogged.
 - Status changes use compare-and-swap on the current status (409 on a lost race); the DB trigger
-  still enforces the state machine and who may make each transition.
+  still enforces the state machine and who may make each transition. Before writing, the server
+  checks the action is one the referral's current state offers the caller: a lapsed referral
+  answers 410 with the reason, a repeated or out-of-order action 409 — never a silent no-op.
 - Reception and management (`/api/admin/patients`) see referral metadata only (doctors, status,
   priority, dates, follow-up appointment) — never the reason or handoff note. Only
   owner/admin/manager can revoke (`/api/admin/referrals/[id]`).
@@ -241,6 +243,28 @@ stamped by the database):
   role. Ids and statuses only, never clinical text.
 - Direct reads with a doctor's own token are limited to `patients`/`appointments` (operational
   data, no clinical text) and are not logged per row; clinical text never takes that path.
+
+## Red-team audit of referral-based clinical access (2026-09-27)
+
+Attacks executed, not reviewed: `src/app/api/security/referral-redteam.test.ts` (real routes,
+services, decision, triggers and RLS; real signed-in sessions for direct REST/RPC attacks) plus an
+HTTP pass against the built app with real logins (37 requests: anonymous, forged cookie, default
+cron secret, receiver, receptionist, manager, referring doctor). Covered: another patient's,
+doctor's or clinic's id; expired, revoked, completed and declined referrals; forged body fields
+(`clinicId`, `patientId`, `authorDoctorId`, `referringDoctorId`, `createdBy`, `created_at`,
+`status`); malformed ids and PostgREST filter syntax in URLs; client-state bypasses; server-action
+requests; server-rendered pages; unauthenticated, receptionist, manager and other-doctor sessions;
+direct REST/RPC with each role's own token; referral laundering (an onward referral passes on the
+forwarding doctor's history only).
+
+Found and fixed (each with a regression test that fails if the fix is reverted):
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| F1 | `/api/doctor/appointments` (queue status, time blocks) used `requireStaff("doctor")`, which ranks owner/admin/manager above doctor: a management account linked to a doctor record could change appointment statuses and time blocks without the doctor role | the doctor role itself is required (same rule as `requireLinkedDoctor`) |
+| F2 | Referral actions were not checked against the referral's state before writing: a repeated accept/complete returned 200 as a silent no-op (also on a completed referral past its validity the receiver can no longer see); a repeated revoke/decline surfaced as HTTP 500 | `actOnReferral` / management revoke check the effective status, visibility and allowed actions first: 410 with the reason for a lapsed referral, 409 for a repeated or out-of-order action; DB refusals never map to 500 |
+| F3 | Another doctor's appointment id answered 403 `not_yours` on the queue route — confirming it exists | 404, identical to a missing id |
+| F4 | Reception's patient search interpolated `q` into a PostgREST `.or()` filter: `,` `(` `)` `.` let a caller inject filter conditions or crash the query (500) | the search text is a quoted literal (`src/lib/api/postgrest.ts`); quote, backslash and `%`/`*` wildcards dropped |
 
 ## Medical safety (non-security but critical)
 

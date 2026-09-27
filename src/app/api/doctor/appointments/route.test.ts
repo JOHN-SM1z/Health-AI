@@ -205,12 +205,23 @@ describeDb("doctor appointments routes (real DB, mocked session)", () => {
       expect(res.status).toBe(404);
     });
 
-    it("rejects someone else's appointment with 403", async () => {
+    it("answers someone else's appointment exactly like a missing one (404), and leaves it untouched", async () => {
       const appt = await insertAppointment({ doctor: otherDoctorId });
       const res = await patch(appt.id, { status: "checked_in" });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
       const body = (await res.json()) as { code?: string };
-      expect(body.code).toBe("not_yours");
+      expect(body.code).toBe("appointment_not_found");
+      const { data } = await admin.from("appointments").select("status").eq("id", appt.id).single();
+      expect(data!.status).not.toBe("checked_in");
+    });
+
+    it("refuses a management account that is linked to a doctor record but lacks the doctor role", async () => {
+      staffMock.impl = async () => ({ ...staffCtx(), roles: ["manager"] as const });
+      const appt = await insertAppointment();
+      const res = await patch(appt.id, { status: "checked_in" });
+      expect(res.status).toBe(403);
+      const { data } = await admin.from("appointments").select("status").eq("id", appt.id).single();
+      expect(data!.status).not.toBe("checked_in");
     });
 
     it("rejects a backwards transition with 409", async () => {
