@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AButton, AError, AInput, AModal, ASelect, LoadingRow } from "@/components/admin/ui";
 import { adminApi, AdminApiError } from "@/lib/admin/client";
+import { newIdempotencyKey } from "@/lib/idempotency-key";
 
 type ServiceOption = { id: string; name: string; price: number; doctor_services: { doctor_id: string }[] | null };
 type DoctorOption = { id: string; name: string };
@@ -17,9 +18,12 @@ export type FollowUpPreset = {
 
 /**
  * Staff booking through the transactional booking engine
- * (POST /api/admin/appointments). Without a preset it records a walk-in for a
- * new patient; with `followUp` it books a referral's follow-up for the
- * referred patient with the receiving doctor.
+ * (POST /api/admin/appointments) — the same booking operation online patients
+ * use, so a slot a patient took first is refused here too. Without a preset
+ * it records a walk-in for a new patient; with `followUp` it books a
+ * referral's follow-up for the referred patient with the receiving doctor.
+ * The chosen date and time are the clinic's wall-clock time (converted on the
+ * server in the clinic's timezone, never the browser's).
  */
 export function QuickBookingModal({
   onClose,
@@ -72,10 +76,17 @@ export function QuickBookingModal({
     ? !!serviceId && !!startAt
     : !!serviceId && !!doctorId && !!startAt && patientName.trim().length >= 2 && phone.trim().length >= 7;
 
+  // One idempotency key per booking attempt: a double click or a retried
+  // request returns the appointment the first one created. Changing anything
+  // in the form makes it a new attempt.
+  const attempt = useRef<{ id: string; key: string } | null>(null);
+
   const submit = async () => {
     if (!ready) return;
     setSubmitting(true);
     setLoadError(null);
+    const attemptId = [followUp?.referralId, patientName.trim(), phone.trim(), doctorId, serviceId, startAt].join("|");
+    if (attempt.current?.id !== attemptId) attempt.current = { id: attemptId, key: newIdempotencyKey() };
     try {
       await adminApi.post(
         "/api/admin/appointments",
@@ -85,22 +96,33 @@ export function QuickBookingModal({
               patientId: followUp.patientId,
               doctorId: followUp.doctor.id,
               serviceId,
-              startAt: new Date(startAt).toISOString(),
+              startLocal: startAt,
               source: "admin",
               referralId: followUp.referralId,
+              idempotencyKey: attempt.current.key,
             }
           : {
               patientName: patientName.trim(),
               phone: phone.trim(),
               doctorId,
               serviceId,
-              startAt: new Date(startAt).toISOString(),
+              startLocal: startAt,
               source: "walk_in",
+              idempotencyKey: attempt.current.key,
             },
       );
       onCreated();
     } catch (e) {
-      onError(e instanceof AdminApiError ? e.message : "Yozishda xatolik");
+      // Shown in the modal: the receptionist picks another time right here.
+      // SLOT_UNAVAILABLE cannot be overridden — the booking engine decided.
+      const message =
+        e instanceof AdminApiError
+          ? e.code === "SLOT_UNAVAILABLE"
+            ? "Bu vaqt endi bo‘sh emas. Iltimos, boshqa vaqtni tanlang."
+            : e.message
+          : "Yozishda xatolik";
+      setLoadError(message);
+      if (!(e instanceof AdminApiError)) onError(message);
       setSubmitting(false);
     }
   };

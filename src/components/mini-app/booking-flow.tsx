@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Stethoscope, UserRound } from "lucide-react";
 import { useTelegramInitData } from "@/components/mini-app/telegram-provider";
 import { Button, Card, Input, Badge, Spinner, EmptyState, ErrorBanner, NoticeBanner, SectionTitle, cn } from "@/components/mini-app/ui";
-import { apiGet, apiPost } from "@/lib/client/api";
+import { apiGet, apiPost, getClientClinicId } from "@/lib/client/api";
+import { newIdempotencyKey } from "@/lib/idempotency-key";
 
 type Catalog = {
   clinic: {
@@ -94,7 +95,14 @@ export function BookingFlow() {
   const [patientName, setPatientName] = useState("");
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
-  const [bookingResult, setBookingResult] = useState<{ ok: boolean; message: string; appointmentId?: string; paymentUrl?: string } | null>(null);
+  const [bookingResult, setBookingResult] = useState<{
+    ok: boolean;
+    message: string;
+    appointmentId?: string;
+    paymentUrl?: string;
+    /** The chosen slot is gone: going back reloads availability. */
+    refreshSlots?: boolean;
+  } | null>(null);
   const [creating, setCreating] = useState(false);
 
   // Mirrors the server-side rules in src/lib/api/validate.ts (phoneSchema,
@@ -142,6 +150,10 @@ export function BookingFlow() {
       setLoadingSlots(true);
       setError(null);
       const params = new URLSearchParams({ serviceId: sid, doctorId: did, days: "14" });
+      // The clinic of this booking link — without it the server answers for
+      // the default clinic (another clinic's services are "not found").
+      const clinicId = getClientClinicId();
+      if (clinicId) params.set("clinic", clinicId);
       const res = await fetch(`/api/availability?${params}`);
       const json = (await res.json()) as { ok?: boolean; data?: SlotResponse; error?: string };
       if (res.ok && json.ok && json.data) {
@@ -157,16 +169,25 @@ export function BookingFlow() {
 
   const selectedDoctor = catalog?.doctors.find((d) => d.id === doctorId) ?? null;
 
-  const startBooking = () => {
-    if (!serviceId || !doctorId) return;
-    void loadSlots(serviceId, doctorId);
+  // Takes the doctor just chosen: the doctorId state is not updated yet
+  // inside the same click.
+  const startBooking = (chosenDoctorId: string) => {
+    if (!serviceId) return;
+    void loadSlots(serviceId, chosenDoctorId);
     setStep({ name: "slot" });
   };
+
+  // One idempotency key per booking attempt (doctor, service, slot): a retry
+  // of the same attempt — a second tap, a timed-out request sent again —
+  // returns the appointment the first one created instead of a second one.
+  const attempt = useRef<{ id: string; key: string } | null>(null);
 
   const confirmBooking = async () => {
     if (!serviceId || !doctorId || !selectedSlot) return;
     setCreating(true);
     setError(null);
+    const attemptId = `${doctorId}|${serviceId}|${selectedSlot.start}`;
+    if (attempt.current?.id !== attemptId) attempt.current = { id: attemptId, key: newIdempotencyKey() };
     const res = await apiPost<AppointmentResponse>(
       "/api/bookings",
       {
@@ -178,9 +199,13 @@ export function BookingFlow() {
         consent: true,
         notes: notes.trim() || undefined,
         source: chatDeepLink ? "telegram_chat" : "telegram_mini_app",
+        idempotencyKey: attempt.current.key,
       },
       identity,
     );
+    // Whatever the outcome, the confirm button is usable again (after a taken
+    // slot the patient comes back here to confirm another time).
+    setCreating(false);
 
     if (res.ok) {
       trackEvent("booking_success");
@@ -206,15 +231,21 @@ export function BookingFlow() {
         paymentUrl,
       });
       setStep({ name: "result" });
-    } else if (res.code === "slot_taken") {
+    } else if (res.code === "SLOT_UNAVAILABLE" || res.code === "INVALID_TIME") {
+      // Taken (online or at reception) since the slots were shown, or no
+      // longer bookable: the availability was only a hint. Offer fresh slots.
+      attempt.current = null;
       setBookingResult({
         ok: false,
-        message: "Bu vaqt boshqa bemor tomonidan band qilingan. Iltimos, boshqa vaqtni tanlang.",
+        message:
+          res.code === "SLOT_UNAVAILABLE"
+            ? "Bu vaqt endi bo‘sh emas. Iltimos, boshqa vaqtni tanlang."
+            : res.error,
+        refreshSlots: true,
       });
       setStep({ name: "result" });
     } else {
       setError(res.error);
-      setCreating(false);
     }
   };
 
@@ -390,7 +421,7 @@ export function BookingFlow() {
               key={d.id}
               onClick={() => {
                 setDoctorId(d.id);
-                startBooking();
+                startBooking(d.id);
               }}
               className={cn(
                 "rounded-xl border p-3 text-left transition-colors",
@@ -549,7 +580,17 @@ export function BookingFlow() {
           message={bookingResult?.message ?? ""}
           appointmentId={bookingResult?.appointmentId}
           paymentUrl={bookingResult?.paymentUrl}
-          onRetry={bookingResult?.ok ? undefined : () => setStep({ name: "slot" })}
+          onRetry={
+            bookingResult?.ok
+              ? undefined
+              : () => {
+                  if (bookingResult?.refreshSlots && serviceId && doctorId) {
+                    setSelectedSlot(null);
+                    void loadSlots(serviceId, doctorId);
+                  }
+                  setStep({ name: "slot" });
+                }
+          }
           onDone={() => {
             if (bookingResult?.appointmentId) {
               router.push(`/booking/confirmation?id=${bookingResult.appointmentId}`);
