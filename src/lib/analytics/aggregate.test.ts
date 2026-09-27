@@ -280,6 +280,14 @@ describe("weekKeyFromDayKey / monthKeyFromDayKey", () => {
     expect(weekKeyFromDayKey("2027-01-04")).toBe("2027-W01");
   });
 
+  it("puts a week that starts in late December into the next year", () => {
+    expect(weekKeyFromDayKey("2025-12-29")).toBe("2026-W01"); // Monday
+    expect(weekKeyFromDayKey("2025-12-31")).toBe("2026-W01");
+    expect(weekKeyFromDayKey("2026-01-04")).toBe("2026-W01"); // Sunday
+    expect(weekKeyFromDayKey("2024-12-30")).toBe("2025-W01");
+    expect(weekKeyFromDayKey("2021-01-03")).toBe("2020-W53"); // and the reverse
+  });
+
   it("maps day keys to months", () => {
     expect(monthKeyFromDayKey("2026-08-31")).toBe("2026-08");
     expect(monthKeyFromDayKey("2026-12-01")).toBe("2026-12");

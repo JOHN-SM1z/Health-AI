@@ -65,9 +65,11 @@ export function weekKeyFromDayKey(dayKey: string): string {
   const dayOfWeek = date.getUTCDay();
   const monday = new Date(date);
   monday.setUTCDate(monday.getUTCDate() - ((dayOfWeek + 6) % 7));
-  const year = monday.getUTCFullYear();
   const thursday = new Date(monday);
   thursday.setUTCDate(thursday.getUTCDate() + 3);
+  // An ISO week belongs to the year of its Thursday, not its Monday:
+  // Monday 2025-12-29 starts 2026-W01.
+  const year = thursday.getUTCFullYear();
   const week = Math.ceil(((thursday.getTime() - Date.UTC(year, 0, 1)) / 86400000 + 1) / 7);
   return `${year}-W${String(week).padStart(2, "0")}`;
 }
