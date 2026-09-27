@@ -8,9 +8,17 @@
 
 - [ ] **Click / Payme payment adapters** - signature verification, idempotent webhooks, merchant credentials; only `manual` payment is production-usable
 - [ ] **Production Telegram setup** - real bot tokens via `/admin/settings` and `CRON_SECRET` env before go-live
+- [ ] **Referral notifications** - the receiving doctor is not notified (Telegram/e-mail) of a new referral; they see it under `/doctor/referrals`
+- [ ] **Referral privacy wording review** - `/privacy` §3/§4 now describe doctor-to-doctor referrals; needs owner/legal sign-off
+- [ ] **Clinic deletion blocked by audit trigger** - `audit_track_changes()` logs cascaded child deletes against the clinic being deleted → `audit_events_clinic_id_fkey` violation (pre-existing)
 - [ ] **Production deploy (Phase 14)** - docs/go-live-checklist.md, docs/manual-qa-checklist.md, docs/deployment.md, docs/rollback.md ready; actual release + rollback drill not performed
 
 ## Done
+
+- [x] ~~14. Clinical referrals (Phase 1)~~ (2026-09-27)
+  - `referrals` table: same-clinic composite FKs, state machine trigger, RLS, redacted audit, follow-up appointment link
+  - doctor portal `/doctor/referrals` (refer, accept/decline/complete/revoke, history after accept), reception booking of the follow-up, management revoke
+  - `requireLinkedDoctor` guard, strict access logging, server-only doctor account linking
 
 - [x] ~~0. Audit~~ (2026-08-18)
   - `docs/architecture.md` + `docs/security.md`; threat model: cross-tenant, payment integrity, AI safety

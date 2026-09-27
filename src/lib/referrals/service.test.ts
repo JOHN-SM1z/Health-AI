@@ -1,0 +1,64 @@
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("@/lib/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
+
+import { logger } from "@/lib/logger";
+import { allowedActions, effectiveStatus, referralError } from "@/lib/referrals/service";
+
+describe("effectiveStatus", () => {
+  const now = Date.parse("2026-09-27T12:00:00Z");
+
+  it("reports an open referral past its expiry as expired", () => {
+    expect(effectiveStatus("pending", "2026-09-27T11:59:59Z", now)).toBe("expired");
+    expect(effectiveStatus("accepted", "2026-09-27T12:00:00Z", now)).toBe("expired");
+    expect(effectiveStatus("pending", "2026-09-28T00:00:00Z", now)).toBe("pending");
+  });
+
+  it("never rewrites a closed referral", () => {
+    for (const status of ["completed", "declined", "revoked", "expired"] as const) {
+      expect(effectiveStatus(status, "2020-01-01T00:00:00Z", now)).toBe(status);
+    }
+  });
+});
+
+describe("allowedActions", () => {
+  it("offers accept/decline, then complete, to the receiving doctor", () => {
+    expect(allowedActions("receiver", "pending")).toEqual(["accept", "decline"]);
+    expect(allowedActions("receiver", "accepted")).toEqual(["complete"]);
+    expect(allowedActions("receiver", "completed")).toEqual([]);
+  });
+
+  it("offers revoke to the referring doctor only while the referral is open", () => {
+    expect(allowedActions("referrer", "pending")).toEqual(["revoke"]);
+    expect(allowedActions("referrer", "accepted")).toEqual(["revoke"]);
+    for (const status of ["completed", "declined", "revoked", "expired"] as const) {
+      expect(allowedActions("referrer", status)).toEqual([]);
+    }
+  });
+});
+
+describe("referralError", () => {
+  it.each([
+    [{ code: "23505", message: 'duplicate key value violates unique constraint "referrals_one_open_per_pair"' }, 409, "referral_already_open"],
+    [{ code: "23503", message: 'violates foreign key constraint "referrals_referred_to_doctor_same_clinic_fkey"' }, 404, "doctor_not_found"],
+    [{ code: "23503", message: 'violates foreign key constraint "referrals_originating_appointment_fkey"' }, 404, "consultation_not_found"],
+    [{ code: "23503", message: 'violates foreign key constraint "referrals_follow_up_appointment_fkey"' }, 409, "follow_up_mismatch"],
+    [{ code: "23514", message: 'violates check constraint "referrals_not_self_referral"' }, 400, "self_referral"],
+    [{ code: "P0001", message: "referral: the originating consultation must be in progress or completed (it is pending)" }, 409, "consultation_not_attended"],
+    [{ code: "P0001", message: "referral: the receiving doctor has no linked doctor account" }, 409, "receiving_doctor_unavailable"],
+    [{ code: "P0001", message: "referral: invalid status transition pending -> completed" }, 409, "invalid_transition"],
+    [{ code: "P0001", message: "referral: the referral expired at 2026-09-01 00:00:00+00" }, 409, "referral_expired"],
+    [{ code: "P0001", message: "referral: only the receiving doctor can mark the referral accepted" }, 403, "forbidden"],
+    [{ code: "P0001", message: "referral: a follow-up appointment is already booked" }, 409, "follow_up_exists"],
+    [{ code: "23514", message: 'violates check constraint "referrals_reason_check"' }, 400, "validation"],
+  ])("maps %j to %i %s", (error, status, code) => {
+    expect(referralError(error)).toMatchObject({ status, code });
+  });
+
+  it("falls back to a 500 and logs only the error code, never the message", () => {
+    const err = referralError({ code: "XX000", message: "row contained: sensitive clinical text" });
+    expect(err).toMatchObject({ status: 500, code: "referral_write_failed" });
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith("referral write failed", { code: "XX000" });
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain("sensitive clinical text");
+  });
+});

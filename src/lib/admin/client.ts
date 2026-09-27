@@ -74,6 +74,29 @@ export const PAYMENT_STATUS_TONES: Record<string, "green" | "amber" | "blue" | "
   manual_review: "purple",
 };
 
+export const REFERRAL_STATUS_LABELS: Record<string, string> = {
+  pending: "Kutilmoqda",
+  accepted: "Qabul qilindi",
+  declined: "Rad etildi",
+  completed: "Yakunlandi",
+  revoked: "Bekor qilindi",
+  expired: "Muddati o‘tgan",
+};
+
+export const REFERRAL_STATUS_TONES: Record<string, "amber" | "blue" | "green" | "red" | "gray"> = {
+  pending: "amber",
+  accepted: "blue",
+  declined: "red",
+  completed: "green",
+  revoked: "gray",
+  expired: "gray",
+};
+
+export const REFERRAL_PRIORITY_LABELS: Record<string, string> = {
+  routine: "Oddiy",
+  urgent: "Shoshilinch",
+};
+
 export const SOURCE_LABELS: Record<string, string> = {
   telegram_mini_app: "Mini App",
   telegram_chat: "Telegram bot",

@@ -1073,6 +1073,7 @@ export type Database = {
           declined_by: string | null
           declined_reason: string | null
           expires_at: string
+          follow_up_appointment_id: string | null
           handoff_note: string | null
           id: string
           originating_appointment_id: string
@@ -1099,6 +1100,7 @@ export type Database = {
           declined_by?: string | null
           declined_reason?: string | null
           expires_at?: string
+          follow_up_appointment_id?: string | null
           handoff_note?: string | null
           id?: string
           originating_appointment_id: string
@@ -1125,6 +1127,7 @@ export type Database = {
           declined_by?: string | null
           declined_reason?: string | null
           expires_at?: string
+          follow_up_appointment_id?: string | null
           handoff_note?: string | null
           id?: string
           originating_appointment_id?: string
@@ -1174,6 +1177,18 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referrals_follow_up_appointment_fkey"
+            columns: [
+              "follow_up_appointment_id",
+              "clinic_id",
+              "patient_id",
+              "referred_to_doctor_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id", "clinic_id", "patient_id", "doctor_id"]
           },
           {
             foreignKeyName: "referrals_originating_appointment_fkey"

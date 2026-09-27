@@ -7,6 +7,7 @@ import { phoneSchema, nameSchema, uuidSchema, parseBody } from "@/lib/api/valida
 import { trackAnalytics } from "@/lib/analytics";
 import { enqueueBookingNotifications } from "@/lib/notifications/jobs";
 import { logger } from "@/lib/logger";
+import { assertFollowUpBookable, linkFollowUp } from "@/lib/referrals/service";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,9 @@ const createSchema = z.object({
   source: z.enum(["admin", "walk_in"]),
   patientId: uuidSchema.optional(),
   notes: z.string().max(500).optional(),
+  // Books the follow-up of an accepted referral: the referral fixes the
+  // patient and the doctor, and the new appointment is linked to it.
+  referralId: uuidSchema.optional(),
 });
 
 /**
@@ -32,9 +36,14 @@ export async function POST(request: NextRequest) {
     const body = await parseBody(request, createSchema);
     const supabase = createAdminClient();
 
+    const followUp = body.referralId
+      ? await assertFollowUpBookable(ctx.clinicId, body.referralId, body.doctorId, body.patientId)
+      : null;
+
     // Resolve patient: reuse an existing patient or create one (walk-in
-    // patients have no Telegram identity).
-    let patientId = body.patientId;
+    // patients have no Telegram identity). A referral follow-up is always for
+    // the referred patient.
+    let patientId = followUp?.patientId ?? body.patientId;
     if (patientId) {
       const { data: patient } = await supabase
         .from("patients")
@@ -84,6 +93,37 @@ export async function POST(request: NextRequest) {
       throw new ApiError(409, result.error_message ?? "Bu vaqt band", result.error_code ?? "conflict");
     }
 
+    if (followUp && body.referralId) {
+      let linked = false;
+      let linkError: unknown = null;
+      try {
+        linked = await linkFollowUp(ctx.clinicId, body.referralId, result.appointment_id, followUp.currentFollowUpId);
+      } catch (e) {
+        linkError = e;
+      }
+      if (!linked) {
+        // The referral changed after the check (another booking won the race,
+        // or it was revoked/expired): release the slot before anyone is
+        // notified about it.
+        const { error: releaseError } = await supabase
+          .from("appointments")
+          .update({
+            status: "cancelled",
+            cancelled_at: new Date().toISOString(),
+            cancelled_reason: linkError
+              ? "Yo‘llanma yopilgani sababli qabul bekor qilindi"
+              : "Yo‘llanma uchun boshqa qabul allaqachon yozilgan",
+            cancelled_by: ctx.profileId,
+          })
+          .eq("id", result.appointment_id)
+          .eq("clinic_id", ctx.clinicId);
+        if (releaseError) {
+          logger.error("referral follow-up release failed", { appointmentId: result.appointment_id, code: releaseError.code });
+        }
+        throw linkError ?? new ApiError(409, "Bu yo‘llanma uchun qabul allaqachon yozilgan", "follow_up_exists");
+      }
+    }
+
     // Notify the patient when they have a Telegram identity.
     const { data: patient } = await supabase
       .from("patients")
@@ -103,7 +143,7 @@ export async function POST(request: NextRequest) {
       clinicId: ctx.clinicId,
       patientId,
       eventType: "admin_booking_created",
-      payload: { source: body.source },
+      payload: { source: body.source, ...(followUp ? { referral_follow_up: true } : {}) },
     });
 
     return ok({ appointmentId: result.appointment_id }, { status: 201 });

@@ -56,6 +56,7 @@ type Referral = {
   referring_doctor_id: string;
   referred_to_doctor_id: string;
   originating_appointment_id: string;
+  follow_up_appointment_id: string | null;
   reason: string;
   handoff_note: string | null;
   priority: string;
@@ -119,7 +120,6 @@ describeDb("referrals data model (Phase 1)", () => {
     receiver: randomUUID(),
     bystander: randomUUID(),
     former: randomUUID(),
-    twin: randomUUID(),
     unlinked: randomUUID(),
     inactive: randomUUID(),
     roleless: randomUUID(),
@@ -151,7 +151,9 @@ describeDb("referrals data model (Phase 1)", () => {
   }
 
   /** A consultation: an appointment in which `doctor` saw the patient. */
-  async function consultation(opts: { doctor?: string; clinic?: string; status?: string; patient?: string } = {}): Promise<Visit> {
+  async function consultation(
+    opts: { doctor?: string; clinic?: string; status?: string; patient?: string; createdBy?: string } = {},
+  ): Promise<Visit> {
     const clinicId = opts.clinic ?? clinicA;
     const patientId = opts.patient ?? (await newPatient(clinicId));
     const start = new Date(Date.UTC(2026, 0, 5, 5, 0) + day++ * 86_400_000);
@@ -165,6 +167,7 @@ describeDb("referrals data model (Phase 1)", () => {
         end_at: new Date(start.getTime() + 30 * 60_000),
         status: opts.status ?? "in_progress",
         source: "walk_in",
+        created_by: opts.createdBy ?? null,
       })}
       returning id`;
     return { patientId, appointmentId: row.id };
@@ -249,8 +252,6 @@ describeDb("referrals data model (Phase 1)", () => {
       { id: doctors.receiver, clinic_id: clinicA, profile_id: profiles.receiver, name: `Dr Receiver ${suffix}`, active: true },
       { id: doctors.bystander, clinic_id: clinicA, profile_id: profiles.bystander, name: `Dr Bystander ${suffix}`, active: true },
       { id: doctors.former, clinic_id: clinicA, profile_id: profiles.former, name: `Dr Former ${suffix}`, active: true },
-      // A second doctor record linked to the referrer's own account.
-      { id: doctors.twin, clinic_id: clinicA, profile_id: profiles.referrer, name: `Dr Referrer twin ${suffix}`, active: true },
       { id: doctors.unlinked, clinic_id: clinicA, profile_id: null, name: `Dr Unlinked ${suffix}`, active: true },
       { id: doctors.inactive, clinic_id: clinicA, profile_id: profiles.sleeper, name: `Dr Inactive ${suffix}`, active: false },
       // Linked to an account that holds no doctor role.
@@ -263,7 +264,7 @@ describeDb("referrals data model (Phase 1)", () => {
       { id: serviceB, clinic_id: clinicB, name: `Referral consult B ${suffix}`, duration_minutes: 30, price: 100000 },
     ])}`;
 
-    const hours = [doctors.referrer, doctors.bystander, doctors.former, doctors.clinicB].flatMap((doctorId) =>
+    const hours = [doctors.referrer, doctors.receiver, doctors.bystander, doctors.former, doctors.clinicB].flatMap((doctorId) =>
       [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({
         clinic_id: doctorId === doctors.clinicB ? clinicB : clinicA,
         doctor_id: doctorId,
@@ -479,15 +480,19 @@ describeDb("referrals data model (Phase 1)", () => {
       }
     });
 
-    it("rejects self-referral, including to a second doctor record on the same account", async () => {
+    it("rejects self-referral", async () => {
       const visit = await consultation();
       const sameRecord = await pgError(() => insertReferral(referralValues(visit, { referred_to_doctor_id: doctors.referrer })));
       expect(sameRecord.code).toBe("23514");
       expect(sameRecord.constraint_name).toBe("referrals_not_self_referral");
+    });
 
-      const sameAccount = await pgError(() => insertReferral(referralValues(visit, { referred_to_doctor_id: doctors.twin })));
-      expect(sameAccount.code).toBe("P0001");
-      expect(sameAccount.message).toMatch(/self-referral/);
+    it("an account can hold only one doctor record per clinic, so self-referral can't hide behind a second record", async () => {
+      const err = await pgError(
+        () => sql`insert into public.doctors (clinic_id, profile_id, name) values (${clinicA}, ${profiles.referrer}, ${`Dr Twin ${suffix}`})`,
+      );
+      expect(err.code).toBe("23505");
+      expect(err.constraint_name).toBe("doctors_clinic_profile_key");
     });
   });
 
@@ -749,6 +754,122 @@ describeDb("referrals data model (Phase 1)", () => {
       },
       15_000,
     );
+  });
+
+  // ---------- Follow-up booking ----------
+
+  describe("follow-up booking", () => {
+    async function acceptedReferral(): Promise<Referral> {
+      const referral = await openReferral();
+      return transition(referral.id, { status: "accepted", accepted_by: profiles.receiver });
+    }
+
+    /** An appointment reception booked for the referral's patient. */
+    function followUp(referral: Referral, opts: { doctor?: string; patient?: string; status?: string } = {}) {
+      return consultation({
+        doctor: opts.doctor ?? doctors.receiver,
+        patient: opts.patient ?? referral.patient_id,
+        status: opts.status ?? "pending",
+        createdBy: profiles.receptionist,
+      });
+    }
+
+    it("links the appointment booked with the receiving doctor, audited as the staff member who booked it", async () => {
+      const referral = await acceptedReferral();
+      const booking = await followUp(referral);
+
+      const linked = await transition(referral.id, { follow_up_appointment_id: booking.appointmentId });
+      expect(linked.follow_up_appointment_id).toBe(booking.appointmentId);
+      expect(linked.status).toBe("accepted");
+
+      const trail = await auditTrail(referral.id);
+      expect(trail.at(-1)).toMatchObject({
+        action: "referral_follow_up_booked",
+        actor_id: profiles.receptionist,
+        actor_type: "staff",
+        old_values: { follow_up_appointment_id: null },
+      });
+    });
+
+    it("is only possible once the referral is accepted", async () => {
+      const pending = await openReferral();
+      const booking = await followUp(pending);
+      const early = await pgError(() => transition(pending.id, { follow_up_appointment_id: booking.appointmentId }));
+      expect(early.message).toMatch(/only be booked once the referral is accepted/);
+
+      const visit = await consultation();
+      const atCreation = await pgError(async () =>
+        insertReferral(referralValues(visit, { follow_up_appointment_id: (await followUp(pending)).appointmentId })),
+      );
+      expect(atCreation.message).toMatch(/only be booked once the referral is accepted/);
+
+      const completed = await acceptedReferral();
+      await transition(completed.id, { status: "completed", completed_by: profiles.receiver });
+      const late = await pgError(async () =>
+        transition(completed.id, { follow_up_appointment_id: (await followUp(completed)).appointmentId }),
+      );
+      expect(late.message).toMatch(/only be booked once the referral is accepted/);
+    });
+
+    it("must be with the receiving doctor, for the referred patient", async () => {
+      const referral = await acceptedReferral();
+      const withAnotherDoctor = await followUp(referral, { doctor: doctors.bystander });
+      const forAnotherPatient = await followUp(referral, { patient: await newPatient() });
+
+      for (const booking of [withAnotherDoctor, forAnotherPatient]) {
+        const err = await pgError(() => transition(referral.id, { follow_up_appointment_id: booking.appointmentId }));
+        expect(err.code).toBe("23503");
+        expect(err.constraint_name).toBe("referrals_follow_up_appointment_fkey");
+      }
+    });
+
+    it("keeps one active follow-up: no second booking, no unlinking, no cancelled appointment", async () => {
+      const referral = await acceptedReferral();
+      const first = await followUp(referral);
+      await transition(referral.id, { follow_up_appointment_id: first.appointmentId });
+
+      const second = await followUp(referral);
+      const duplicate = await pgError(() => transition(referral.id, { follow_up_appointment_id: second.appointmentId }));
+      expect(duplicate.message).toMatch(/a follow-up appointment is already booked/);
+
+      const unlink = await pgError(() => transition(referral.id, { follow_up_appointment_id: null }));
+      expect(unlink.message).toMatch(/cannot be unlinked/);
+
+      // Once the booked appointment is cancelled, a replacement may be linked.
+      await sql`update public.appointments set status = 'cancelled' where id = ${first.appointmentId}`;
+      const replaced = await transition(referral.id, { follow_up_appointment_id: second.appointmentId });
+      expect(replaced.follow_up_appointment_id).toBe(second.appointmentId);
+
+      const fresh = await acceptedReferral();
+      const cancelled = await followUp(fresh, { status: "cancelled" });
+      const err = await pgError(() => transition(fresh.id, { follow_up_appointment_id: cancelled.appointmentId }));
+      expect(err.message).toMatch(/follow-up appointment is cancelled/);
+    });
+  });
+
+  // ---------- Doctor accounts ----------
+
+  describe("doctor accounts", () => {
+    it("linking an account to a doctor record is server-side only, while other edits keep working", async () => {
+      const link = await pgError(() =>
+        asStaff(profiles.manager, (tx) => tx`update public.doctors set profile_id = ${profiles.manager} where id = ${doctors.unlinked}`),
+      );
+      expect(link.message).toMatch(/linking a doctor account is server-side only/);
+
+      const create = await pgError(() =>
+        asStaff(
+          profiles.manager,
+          (tx) => tx`insert into public.doctors (clinic_id, profile_id, name) values (${clinicA}, ${profiles.manager}, ${`Dr Self ${suffix}`})`,
+        ),
+      );
+      expect(create.message).toMatch(/linking a doctor account is server-side only/);
+
+      const edited = await asStaff(
+        profiles.manager,
+        (tx) => tx`update public.doctors set bio = ${`Edited ${suffix}`} where id = ${doctors.unlinked} returning id`,
+      );
+      expect(edited).toHaveLength(1);
+    });
   });
 
   // ---------- Tenant isolation, RLS and privileges ----------

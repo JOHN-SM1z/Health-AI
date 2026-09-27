@@ -47,7 +47,8 @@ Patient (Telegram)                      Clinic staff (browser)
   appointment in which the referring doctor saw the patient); composite foreign keys keep the
   patient, both doctors and that appointment inside the referral's clinic; status machine
   `pending → accepted → completed` (or `declined` / `revoked` / `expired`) enforced by trigger for
-  every writer; audited without its clinical text (reason, handoff note)
+  every writer; audited without its clinical text (reason, handoff note); optional link to the
+  follow-up appointment booked with the receiving doctor
 - **conversations / messages / voice_messages** — chat history, admin takeover support
 - **faq_entries / app_settings** — clinic content and settings
 - **notification_jobs** — reminders/confirmations queue, sent by cron
@@ -65,6 +66,26 @@ All bookings go through the `book_appointment` Postgres function which:
 
 `reschedule_appointment` does the same for reschedules. Direct inserts are still blocked by the
 partial exclusion constraint. This makes the engine safe even under concurrent requests.
+
+## Referral workflow
+
+Doctor A refers a patient to Doctor B in the same clinic:
+
+1. **Refer** — in `/doctor` (today's queue) Doctor A opens *Yo‘llanma* on an `in_progress` or
+   `completed` consultation and picks a colleague, priority, reason, optional handoff note and
+   validity (30–180 days) → `POST /api/doctor/referrals`.
+2. **Respond** — Doctor B sees it under `/doctor/referrals` (*Kelgan*) and accepts or declines
+   (`PATCH /api/doctor/referrals/[id]`). After accepting, Doctor B sees the patient's
+   appointment history with Doctor A.
+3. **Book** — reception opens the patient in `/admin/patients`, sees the referral (metadata
+   only) and books the follow-up with Doctor B (`POST /api/admin/appointments` with
+   `referralId`), which goes through `book_appointment` and is then linked to the referral.
+4. **Close** — Doctor B completes it; Doctor A (or owner/admin/manager via
+   `PATCH /api/admin/referrals/[id]`) can revoke it while it is open. Open referrals past
+   `expires_at` are expired lazily whenever referrals are listed or read.
+
+Server logic lives in `src/lib/referrals/service.ts`; the database (trigger + RLS + composite
+foreign keys) enforces the same rules independently of the API.
 
 ## Notifications
 

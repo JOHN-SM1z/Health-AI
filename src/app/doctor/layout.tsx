@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getStaffContext, hasRole } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
-import { HeartPulse, ListOrdered, CalendarRange } from "lucide-react";
+import { HeartPulse, ListOrdered, CalendarRange, Send } from "lucide-react";
 
 export const metadata = { title: "Shifokor paneli" };
 
@@ -27,7 +27,8 @@ export default async function DoctorLayout({ children }: { children: React.React
           <p className="font-numeric px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.16em] text-ink-muted/80">
             Ish jarayoni
           </p>
-          <NavLink href="/doctor" icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
+          <NavLink href="/doctor" exact icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
+          <NavLink href="/doctor/referrals" icon={<Send className="h-4 w-4" />}>Yo‘llanmalar</NavLink>
           <NavLink href="/doctor/schedule" icon={<CalendarRange className="h-4 w-4" />}>Jadvalim</NavLink>
           {hasRole(ctx, "admin") && (
             <Link

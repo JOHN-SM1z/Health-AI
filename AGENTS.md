@@ -14,6 +14,9 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - This is a real clinic booking product. Prioritize patient safety, privacy, authorization, accurate appointment availability, and payment integrity over speed or UI polish.
 - Never implement diagnosis, treatment advice, prescriptions, clinical records, or claims that AI output is medical advice.
+  - Sole exception: a doctor-to-doctor referral (`referrals`) may store the referring doctor's own free-text reason and handoff note.
+  - Only the two doctors on the referral may see that text. Never show it to other staff, patients, logs, audit rows, or the patient-facing bot.
+  - AI must never write, read, or summarise that text.
 - AI must only provide clinic information or non-diagnostic booking navigation. Urgent wording must trigger the approved urgent-care message and human-admin escalation.
 - Never claim a booking, payment, transcription, notification, or Telegram delivery succeeded unless the backend verified it.
 

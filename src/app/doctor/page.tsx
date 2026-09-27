@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, LoadingRow } from "@/components/admin/ui";
 import { ListOrdered } from "lucide-react";
 import { STATUS_LABELS, STATUS_TONES, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
 import { localDayWindow } from "@/lib/time/local";
+import { ReferralDialog } from "@/components/doctor/referral-dialog";
 
 const WEEKDAYS = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
 const MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
@@ -24,6 +26,8 @@ export default function DoctorQueuePage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [doctorName, setDoctorName] = useState<string | null>(null);
+  const [referFor, setReferFor] = useState<Row | null>(null);
+  const [sentReferralId, setSentReferralId] = useState<string | null>(null);
   // Client-only: rendered from fixed arrays (NOT Intl) so server and client
   // produce identical strings regardless of ICU/locale data — avoids React
   // #418 hydration mismatch (Node and Chromium differ on uz-UZ).
@@ -121,6 +125,17 @@ export default function DoctorQueuePage() {
 
       {error && <AError message={error} />}
 
+      {sentReferralId && (
+        <Card className="mb-6 border-pine/30 bg-pine-tint/60">
+          <p className="text-sm font-medium text-pine-deep">
+            Yo‘llanma yuborildi.{" "}
+            <Link href={`/doctor/referrals/${sentReferralId}`} className="underline">
+              Yo‘llanmani ko‘rish
+            </Link>
+          </p>
+        </Card>
+      )}
+
       {nextPatient && (
         <Card className="mb-6 border-pine/30 bg-pine-tint/60">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -172,15 +187,34 @@ export default function DoctorQueuePage() {
               <td className="px-4 py-3 text-foreground">{formatPrice(r.services?.price)}</td>
               <td className="px-4 py-3"><ABadge tone={STATUS_TONES[r.status]}>{STATUS_LABELS[r.status]}</ABadge></td>
               <td className="px-4 py-3">
-                {r.status !== "completed" && (
-                  <AButton size="sm" variant={r.status === "in_progress" ? "primary" : "outline"} loading={busyId === r.id} onClick={() => void advance(r)}>
-                    {r.status === "in_progress" ? "Yakunlash" : r.status === "checked_in" ? "Boshlash" : "Jarayonga olish"}
-                  </AButton>
-                )}
+                <div className="flex flex-wrap gap-2">
+                  {r.status !== "completed" && (
+                    <AButton size="sm" variant={r.status === "in_progress" ? "primary" : "outline"} loading={busyId === r.id} onClick={() => void advance(r)}>
+                      {r.status === "in_progress" ? "Yakunlash" : r.status === "checked_in" ? "Boshlash" : "Jarayonga olish"}
+                    </AButton>
+                  )}
+                  {(r.status === "in_progress" || r.status === "completed") && (
+                    <AButton size="sm" variant="outline" onClick={() => setReferFor(r)}>
+                      Yo‘llanma
+                    </AButton>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
         </ATable>
+      )}
+
+      {referFor && (
+        <ReferralDialog
+          appointmentId={referFor.id}
+          patientName={referFor.patients?.full_name ?? "—"}
+          onClose={() => setReferFor(null)}
+          onCreated={(id) => {
+            setReferFor(null);
+            setSentReferralId(id);
+          }}
+        />
       )}
     </div>
   );

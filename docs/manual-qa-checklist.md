@@ -46,6 +46,18 @@ Each row: expected behavior. Mark all green = go.
 - [ ] Doctor cannot see or mutate other doctors' appointments
 - [ ] Self-service break blocks the slot for patients
 
+## Referrals
+
+- [ ] Doctor: *Yo‘llanma* on an in-progress/completed consultation → colleague list excludes self; reason required
+- [ ] Referral appears as *Kutilmoqda* under *Yuborilgan* (referrer) and *Kelgan* (receiver)
+- [ ] Receiver sees no appointment history until *Qabul qilish*; after accepting, history with the referrer appears
+- [ ] Declining/revoking with a reason works; the receiver can no longer open a declined/revoked referral (404 page)
+- [ ] A doctor who is not a party gets *Yo‘llanma topilmadi* for the referral URL
+- [ ] Reception: patient panel shows *Yo‘llanmalar* (doctors, status, priority) but never the reason/handoff note; *Qabulga yozish* books with the receiving doctor only, then disappears
+- [ ] Only owner/admin/manager see *Bekor qilish* on a referral in the patient panel
+- [ ] Owner/manager account linked to a doctor record is refused on `/api/doctor/referrals` (403)
+- [ ] `audit_events` has `referral_created/accepted/follow_up_booked/viewed` rows without the reason/handoff text
+
 ## Notifications
 
 - [ ] Cloud Scheduler runs; reminder arrives ~1h before a confirmed appointment

@@ -173,6 +173,7 @@ export function ATextArea({
   rows = 3,
   className,
   disabled,
+  "aria-label": ariaLabel,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -180,11 +181,13 @@ export function ATextArea({
   rows?: number;
   className?: string;
   disabled?: boolean;
+  "aria-label"?: string;
 }) {
   return (
     <textarea
       value={value}
       rows={rows}
+      aria-label={ariaLabel}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       disabled={disabled}

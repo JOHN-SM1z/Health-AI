@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRoles } from "@/lib/auth/guards";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { parseBody, uuidSchema } from "@/lib/api/validate";
+import { listPatientReferrals } from "@/lib/referrals/service";
 
 export const dynamic = "force-dynamic";
 
@@ -43,9 +44,9 @@ export async function GET(request: NextRequest) {
         .eq("clinic_id", staff.clinicId)
         .maybeSingle();
       if (patientError) throw patientError;
-      if (!patient) return ok({ patient: null, appointments: [], conversations: [] });
+      if (!patient) return ok({ patient: null, appointments: [], conversations: [], referrals: [] });
 
-      const [{ data: appointments, error: appointmentsError }, { data: conversations, error: conversationsError }] =
+      const [{ data: appointments, error: appointmentsError }, { data: conversations, error: conversationsError }, referrals] =
         await Promise.all([
           supabase
             .from("appointments")
@@ -53,18 +54,22 @@ export async function GET(request: NextRequest) {
               "id, start_at, status, source, services(name), doctors(name)",
             )
             .eq("patient_id", detailId)
+            .eq("clinic_id", staff.clinicId)
             .order("start_at", { ascending: false })
             .limit(20),
           supabase
             .from("conversations")
             .select("id, status, channel, updated_at")
             .eq("patient_id", detailId)
+            .eq("clinic_id", staff.clinicId)
             .order("updated_at", { ascending: false })
             .limit(10),
+          // Scheduling metadata only: clinical text stays with the doctors.
+          listPatientReferrals(staff.clinicId, detailId),
         ]);
       if (appointmentsError) throw appointmentsError;
       if (conversationsError) throw conversationsError;
-      return ok({ patient, appointments: appointments ?? [], conversations: conversations ?? [] });
+      return ok({ patient, appointments: appointments ?? [], conversations: conversations ?? [], referrals });
     }
 
     let query = supabase

@@ -25,6 +25,9 @@
   completed it — the receiving doctor. Only `service_role` writes (no DELETE for any role; a
   referral is withdrawn by revoking it). Its reason and handoff note are clinical text: never
   logged, never copied into `audit_events`.
+- `doctors.profile_id` (which staff account a doctor record belongs to) is set only server-side:
+  a trigger rejects authenticated sessions that set or change it, and `(clinic_id, profile_id)`
+  is unique, so a staff account maps to at most one doctor record per clinic.
 - Double-booking is prevented in Postgres (exclusion constraint + RPC), not in app code.
 
 ## Secrets
@@ -48,6 +51,31 @@
   `Referrer-Policy`, `Permissions-Policy`), with `frame-ancestors` allowing only Telegram for
   the Mini App routes.
 - Voice notes are uploaded to Supabase Storage with clinic-scoped paths and short-lived access.
+
+## Referrals
+
+- Doctor endpoints (`/api/doctor/referrals/...`) use `requireLinkedDoctor()`: the caller must
+  hold the exact `doctor` role *and* be linked to an active doctor record in the same clinic.
+  Owner/admin/manager accounts linked to a doctor record are refused (403) — management never
+  reads referral clinical text through the doctor portal.
+- A doctor may only refer from their own consultation (`in_progress` / `completed`
+  appointment); the patient and clinic come from that appointment, never from the browser.
+- Non-parties get 404 (not 403), so referral ids cannot be probed. The receiving doctor loses
+  access once a referral is declined, revoked or expired.
+- The receiving doctor sees the patient's appointment history with the referring doctor
+  (date, service, status — no clinical text) only after accepting.
+- Every detail view is written to `audit_events` (`referral_viewed`, role + whether history was
+  shown) in **strict** mode: if the access log cannot be written the view fails (503) instead
+  of being served unlogged.
+- Status changes use compare-and-swap on the current status (409 on a lost race); the DB trigger
+  still enforces the state machine and who may make each transition.
+- Reception and management (`/api/admin/patients`) see referral metadata only (doctors, status,
+  priority, dates, follow-up appointment) — never the reason or handoff note. Only
+  owner/admin/manager can revoke (`/api/admin/referrals/[id]`).
+- A follow-up appointment is booked through the transactional booking engine and then linked;
+  the DB only accepts it for an accepted, unexpired referral, with the receiving doctor, for the
+  referred patient, one active follow-up at a time. If the link loses a race the new appointment
+  is cancelled and the request fails (409).
 
 ## Medical safety (non-security but critical)
 
