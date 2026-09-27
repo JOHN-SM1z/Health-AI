@@ -19,6 +19,7 @@
   - `referrals` table: same-clinic composite FKs, state machine trigger, RLS, redacted audit, follow-up appointment link
   - doctor portal `/doctor/referrals` (refer, accept/decline/complete/revoke, history after accept), reception booking of the follow-up, management revoke
   - `requireLinkedDoctor` guard, strict access logging, server-only doctor account linking
+  - review-before-send dialog, idempotent creation (`creation_key`), server-side recipient check, pending referrals on the doctor dashboard
 
 - [x] ~~0. Audit~~ (2026-08-18)
   - `docs/architecture.md` + `docs/security.md`; threat model: cross-tenant, payment integrity, AI safety

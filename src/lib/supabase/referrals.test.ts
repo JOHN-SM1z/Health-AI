@@ -57,6 +57,7 @@ type Referral = {
   referred_to_doctor_id: string;
   originating_appointment_id: string;
   follow_up_appointment_id: string | null;
+  creation_key: string | null;
   reason: string;
   handoff_note: string | null;
   priority: string;
@@ -873,6 +874,43 @@ describeDb("referrals data model (Phase 1)", () => {
   });
 
   // ---------- Tenant isolation, RLS and privileges ----------
+
+  describe("creation key (idempotency)", () => {
+    it("is unique per referring doctor, so a repeated creation cannot slip through", async () => {
+      const key = randomUUID();
+      const first = await openReferral({ creation_key: key });
+      expect(first.creation_key).toBe(key);
+
+      // The same doctor reusing the key — even for another patient — is rejected.
+      const repeat = await pgError(() => openReferral({ creation_key: key }));
+      expect(repeat.code).toBe("23505");
+      expect(repeat.message).toMatch(/referrals_creation_key_key/);
+
+      // Another doctor's keys are a separate space.
+      const other = await insertReferral(
+        referralValues(await consultation({ doctor: doctors.bystander }), {
+          referring_doctor_id: doctors.bystander,
+          created_by: profiles.bystander,
+          creation_key: key,
+        }),
+      );
+      expect(other.creation_key).toBe(key);
+    });
+
+    it("cannot be changed or cleared once set", async () => {
+      const referral = await openReferral({ creation_key: randomUUID() });
+      for (const creation_key of [randomUUID(), null]) {
+        const err = await pgError(() => transition(referral.id, { creation_key }));
+        expect(err.message).toMatch(/cannot be edited/);
+      }
+    });
+
+    it("is never copied into the audit trail", async () => {
+      const key = randomUUID();
+      const referral = await openReferral({ creation_key: key });
+      expect(JSON.stringify(await auditTrail(referral.id))).not.toContain(key);
+    });
+  });
 
   describe("tenant isolation and access", () => {
     it("only the two doctors on the referral can read it — not other staff, other clinics or anonymous callers", async () => {

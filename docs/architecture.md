@@ -72,9 +72,12 @@ partial exclusion constraint. This makes the engine safe even under concurrent r
 Doctor A refers a patient to Doctor B in the same clinic:
 
 1. **Refer** — in `/doctor` (today's queue) Doctor A opens *Yo‘llanma* on an `in_progress` or
-   `completed` consultation and picks a colleague, priority, reason, optional handoff note and
-   validity (30–180 days) → `POST /api/doctor/referrals`.
-2. **Respond** — Doctor B sees it under `/doctor/referrals` (*Kelgan*) and accepts or declines
+   `completed` consultation — the only patient context a doctor has — and picks a colleague,
+   priority, reason, optional handoff note and validity (30–180 days), reviews it, and sends it →
+   `POST /api/doctor/referrals`. Each reviewed referral carries a client-generated idempotency key,
+   so a double click or retry resolves to the referral already created.
+2. **Respond** — Doctor B sees it on the `/doctor` dashboard (*Sizga kelgan yo‘llanmalar*) and
+   under `/doctor/referrals` (*Kelgan*), and accepts or declines
    (`PATCH /api/doctor/referrals/[id]`). After accepting, Doctor B sees the patient's
    appointment history with Doctor A.
 3. **Book** — reception opens the patient in `/admin/patients`, sees the referral (metadata

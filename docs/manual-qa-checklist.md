@@ -49,6 +49,9 @@ Each row: expected behavior. Mark all green = go.
 ## Referrals
 
 - [ ] Doctor: *Yo‘llanma* on an in-progress/completed consultation → colleague list excludes self; reason required
+- [ ] *Ko‘rib chiqish* shows doctor, priority, validity, reason and note; *Tahrirlash* keeps the input; nothing is sent before *Yo‘llanma yuborish*
+- [ ] Double-clicking *Yo‘llanma yuborish* creates one referral and one `referral_created` audit row
+- [ ] Receiving doctor's `/doctor` dashboard shows *Sizga kelgan yo‘llanmalar (n)* with patient, referrer and priority only
 - [ ] Referral appears as *Kutilmoqda* under *Yuborilgan* (referrer) and *Kelgan* (receiver)
 - [ ] Receiver sees no appointment history until *Qabul qilish*; after accepting, history with the referrer appears
 - [ ] Declining/revoking with a reason works; the receiver can no longer open a declined/revoked referral (404 page)

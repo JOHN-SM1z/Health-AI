@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AButton, AError, AModal, ASelect, ATextArea, LoadingRow } from "@/components/admin/ui";
-import { adminApi, AdminApiError, REFERRAL_PRIORITY_LABELS } from "@/lib/admin/client";
+import { adminApi, AdminApiError, formatDateTime, REFERRAL_PRIORITY_LABELS } from "@/lib/admin/client";
 
 type Recipient = { id: string; name: string; title: string | null; specialty: string | null };
+
+/** The consultation the referral is raised from — the doctor's own visit with the patient. */
+export type ReferralConsultation = { appointmentId: string; startAt: string; serviceName: string | null };
 
 const VALIDITY_OPTIONS = [
   { value: "30", label: "30 kun" },
@@ -13,14 +16,38 @@ const VALIDITY_OPTIONS = [
   { value: "180", label: "180 kun" },
 ];
 
-/** Refers the patient of one of the doctor's own consultations to a colleague. */
+/** A random v4 UUID, also where crypto.randomUUID is unavailable (non-secure context). */
+function newIdempotencyKey(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const hex = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function ReviewRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="border-b border-hairline/70 py-2 text-sm last:border-b-0">
+      <p className="text-xs text-ink-muted">{label}</p>
+      <div className="mt-0.5 whitespace-pre-wrap font-medium text-foreground">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Refers the patient of one of the doctor's own consultations to a colleague:
+ * fill in → review → send. The server decides everything that matters
+ * (the doctor's access to the consultation, the patient, the recipient's
+ * clinic); this dialog only collects the doctor's choices.
+ */
 export function ReferralDialog({
-  appointmentId,
+  consultation,
   patientName,
   onClose,
   onCreated,
 }: {
-  appointmentId: string;
+  consultation: ReferralConsultation;
   patientName: string;
   onClose: () => void;
   onCreated: (referralId: string) => void;
@@ -33,6 +60,11 @@ export function ReferralDialog({
   const [handoffNote, setHandoffNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Set when the doctor opens the review: one idempotency key per intended
+  // referral, so a double click or a retry after a lost response can't send
+  // it twice. Going back to edit drops it; the next review gets a new one.
+  const [review, setReview] = useState<{ idempotencyKey: string; approxExpiry: string } | null>(null);
+  const inFlight = useRef(false);
 
   useEffect(() => {
     adminApi
@@ -44,15 +76,27 @@ export function ReferralDialog({
       });
   }, []);
 
-  const canSubmit = !!doctorId && reason.trim().length >= 3;
+  const recipient = recipients?.find((d) => d.id === doctorId) ?? null;
+  const canReview = !!recipient && reason.trim().length >= 3;
+  const doctorLabel = (d: Recipient) => [d.name, d.specialty ?? d.title].filter(Boolean).join(" — ");
+
+  const openReview = () => {
+    setError(null);
+    setReview({
+      idempotencyKey: newIdempotencyKey(),
+      approxExpiry: formatDateTime(new Date(Date.now() + Number(validForDays) * 86_400_000).toISOString()),
+    });
+  };
 
   const submit = async () => {
-    if (!canSubmit) return;
+    if (!review || !canReview || inFlight.current) return;
+    inFlight.current = true;
     setSubmitting(true);
     setError(null);
     try {
       const res = await adminApi.post<{ referral: { id: string } }>("/api/doctor/referrals", {
-        appointmentId,
+        idempotencyKey: review.idempotencyKey,
+        appointmentId: consultation.appointmentId,
         referredToDoctorId: doctorId,
         reason: reason.trim(),
         handoffNote: handoffNote.trim() || undefined,
@@ -61,36 +105,71 @@ export function ReferralDialog({
       });
       onCreated(res.referral.id);
     } catch (e) {
+      // The same key is kept, so sending again after a network error is safe.
       setError(e instanceof AdminApiError ? e.message : "Yo‘llanmani yuborib bo‘lmadi");
       setSubmitting(false);
+    } finally {
+      inFlight.current = false;
     }
   };
 
-  const doctorLabel = (d: Recipient) => [d.name, d.specialty ?? d.title].filter(Boolean).join(" — ");
-
   return (
     <AModal
-      title="Yo‘llanma berish"
+      title={review ? "Yo‘llanmani tekshiring" : "Yo‘llanma berish"}
       onClose={onClose}
       footer={
-        <>
-          <AButton variant="ghost" onClick={onClose} disabled={submitting}>
-            Bekor qilish
-          </AButton>
-          <AButton loading={submitting} disabled={!canSubmit} onClick={() => void submit()}>
-            Yo‘llanma yuborish
-          </AButton>
-        </>
+        review ? (
+          <>
+            <AButton variant="ghost" onClick={() => setReview(null)} disabled={submitting}>
+              Tahrirlash
+            </AButton>
+            <AButton loading={submitting} onClick={() => void submit()}>
+              Yo‘llanma yuborish
+            </AButton>
+          </>
+        ) : (
+          <>
+            <AButton variant="ghost" onClick={onClose}>
+              Bekor qilish
+            </AButton>
+            <AButton disabled={!canReview} onClick={openReview}>
+              Ko‘rib chiqish
+            </AButton>
+          </>
+        )
       }
     >
       {error && <AError message={error} />}
-      <p className="text-sm text-ink-muted">
-        Bemor: <span className="font-medium text-foreground">{patientName}</span>
-      </p>
+      <div className="rounded-xl border border-hairline px-3 py-2 text-sm">
+        <p>
+          <span className="text-ink-muted">Bemor:</span> <span className="font-medium text-foreground">{patientName}</span>
+        </p>
+        <p>
+          <span className="text-ink-muted">Qabul:</span>{" "}
+          <span className="font-medium text-foreground">
+            {formatDateTime(consultation.startAt)}
+            {consultation.serviceName ? ` · ${consultation.serviceName}` : ""}
+          </span>
+        </p>
+      </div>
+
       {recipients === null ? (
         <LoadingRow />
       ) : recipients.length === 0 ? (
         <p className="text-sm text-ink-muted">Yo‘llanma berish mumkin bo‘lgan shifokor topilmadi.</p>
+      ) : review && recipient ? (
+        <div>
+          <ReviewRow label="Qabul qiluvchi shifokor">{doctorLabel(recipient)}</ReviewRow>
+          <ReviewRow label="Muhimlik">{REFERRAL_PRIORITY_LABELS[priority]}</ReviewRow>
+          <ReviewRow label="Amal qilish muddati">
+            {validForDays} kun (taxminan {review.approxExpiry} gacha)
+          </ReviewRow>
+          <ReviewRow label="Yo‘llanma sababi">{reason.trim()}</ReviewRow>
+          <ReviewRow label="Shifokor uchun izoh">{handoffNote.trim() || "—"}</ReviewRow>
+          <p className="mt-2 text-xs text-ink-muted">
+            Yuborilgach sabab va izohni o‘zgartirib bo‘lmaydi. Ularni faqat siz va qabul qiluvchi shifokor ko‘radi.
+          </p>
+        </div>
       ) : (
         <div className="flex flex-col gap-3">
           <div>
@@ -130,9 +209,7 @@ export function ReferralDialog({
             <p className="mb-1 text-xs font-medium text-ink-muted">Amal qilish muddati</p>
             <ASelect value={validForDays} onChange={setValidForDays} options={VALIDITY_OPTIONS} aria-label="Amal qilish muddati" />
           </div>
-          <p className="text-xs text-ink-muted">
-            Sabab va izohni faqat siz va qabul qiluvchi shifokor ko‘radi.
-          </p>
+          <p className="text-xs text-ink-muted">Sabab va izohni faqat siz va qabul qiluvchi shifokor ko‘radi.</p>
         </div>
       )}
     </AModal>

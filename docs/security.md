@@ -59,7 +59,18 @@
   Owner/admin/manager accounts linked to a doctor record are refused (403) — management never
   reads referral clinical text through the doctor portal.
 - A doctor may only refer from their own consultation (`in_progress` / `completed`
-  appointment); the patient and clinic come from that appointment, never from the browser.
+  appointment); the patient and clinic come from that appointment, never from the browser
+  (unknown request fields are stripped by the zod schema).
+- The receiving doctor is checked server-side before anything is written: a doctor record in the
+  caller's clinic (otherwise 404, the same answer as for an id that exists nowhere), active,
+  linked to an account holding the doctor role, not the caller. The DB trigger and composite FK
+  enforce the same rule again on insert.
+- Creation is idempotent: every request carries `idempotencyKey` (a UUID generated when the
+  doctor opens the review step), stored as `referrals.creation_key`, unique per referring doctor
+  and immutable. A repeat — sequential or concurrent — returns the referral already created
+  (200, `replayed: true`) without writing anything, so `referral_created` is audited once; the
+  same key with different content is refused (409 `idempotency_key_reused`). The key is never
+  copied into `audit_events`.
 - Non-parties get 404 (not 403), so referral ids cannot be probed. The receiving doctor loses
   access once a referral is declined, revoked or expired.
 - The receiving doctor sees the patient's appointment history with the referring doctor

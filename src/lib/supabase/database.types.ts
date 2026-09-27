@@ -1069,6 +1069,7 @@ export type Database = {
           completed_by: string | null
           created_at: string
           created_by: string
+          creation_key: string | null
           declined_at: string | null
           declined_by: string | null
           declined_reason: string | null
@@ -1096,6 +1097,7 @@ export type Database = {
           completed_by?: string | null
           created_at?: string
           created_by: string
+          creation_key?: string | null
           declined_at?: string | null
           declined_by?: string | null
           declined_reason?: string | null
@@ -1123,6 +1125,7 @@ export type Database = {
           completed_by?: string | null
           created_at?: string
           created_by?: string
+          creation_key?: string | null
           declined_at?: string | null
           declined_by?: string | null
           declined_reason?: string | null

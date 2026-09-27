@@ -6,7 +6,16 @@ import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, LoadingRow } from "@/components/admin/ui";
 import { ListOrdered } from "lucide-react";
-import { STATUS_LABELS, STATUS_TONES, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
+import {
+  STATUS_LABELS,
+  STATUS_TONES,
+  REFERRAL_PRIORITY_LABELS,
+  formatTime,
+  formatPrice,
+  formatDateTime,
+  adminApi,
+  AdminApiError,
+} from "@/lib/admin/client";
 import { localDayWindow } from "@/lib/time/local";
 import { ReferralDialog } from "@/components/doctor/referral-dialog";
 
@@ -21,6 +30,15 @@ type Row = {
   services: { name: string; price: number } | null;
 };
 
+/** Metadata only — the reason and handoff note stay on the referral page. */
+type PendingReferral = {
+  id: string;
+  priority: string;
+  createdAt: string;
+  patientName: string | null;
+  referringDoctor: { id: string; name: string } | null;
+};
+
 export default function DoctorQueuePage() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +46,8 @@ export default function DoctorQueuePage() {
   const [doctorName, setDoctorName] = useState<string | null>(null);
   const [referFor, setReferFor] = useState<Row | null>(null);
   const [sentReferralId, setSentReferralId] = useState<string | null>(null);
+  const [pendingReferrals, setPendingReferrals] = useState<PendingReferral[] | null>(null);
+  const [referralsError, setReferralsError] = useState<string | null>(null);
   // Client-only: rendered from fixed arrays (NOT Intl) so server and client
   // produce identical strings regardless of ICU/locale data — avoids React
   // #418 hydration mismatch (Node and Chromium differ on uz-UZ).
@@ -85,6 +105,18 @@ export default function DoctorQueuePage() {
     void load();
   }, []);
 
+  // Referrals colleagues sent to this doctor that still wait for a response.
+  useEffect(() => {
+    adminApi
+      .get<{ referrals: PendingReferral[] }>("/api/doctor/referrals?box=incoming&status=pending")
+      .then((res) => setPendingReferrals(res.referrals))
+      .catch((e) => {
+        setPendingReferrals([]);
+        // An unlinked account already sees the "not linked" notice below.
+        if (!(e instanceof AdminApiError && e.code === "doctor_not_linked")) setReferralsError("Yo‘llanmalarni yuklab bo‘lmadi");
+      });
+  }, []);
+
   const nextPatient = useMemo(() => {
     if (!rows) return null;
     return (
@@ -133,6 +165,36 @@ export default function DoctorQueuePage() {
               Yo‘llanmani ko‘rish
             </Link>
           </p>
+        </Card>
+      )}
+
+      {referralsError && <AError message={referralsError} />}
+      {pendingReferrals && pendingReferrals.length > 0 && (
+        <Card className="mb-6">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="font-display text-sm font-bold text-foreground">Sizga kelgan yo‘llanmalar ({pendingReferrals.length})</p>
+            <Link href="/doctor/referrals" className="text-sm font-medium text-pine hover:underline">
+              Barchasi
+            </Link>
+          </div>
+          <ul className="divide-y divide-hairline/70">
+            {pendingReferrals.slice(0, 5).map((r) => (
+              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                <div>
+                  <p className="font-medium text-foreground">{r.patientName ?? "—"}</p>
+                  <p className="text-xs text-ink-muted">
+                    {r.referringDoctor?.name ?? "—"} · {formatDateTime(r.createdAt)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  {r.priority === "urgent" && <ABadge tone="red">{REFERRAL_PRIORITY_LABELS.urgent}</ABadge>}
+                  <Link href={`/doctor/referrals/${r.id}`} className="font-medium text-pine hover:underline">
+                    Ko‘rish
+                  </Link>
+                </div>
+              </li>
+            ))}
+          </ul>
         </Card>
       )}
 
@@ -207,7 +269,7 @@ export default function DoctorQueuePage() {
 
       {referFor && (
         <ReferralDialog
-          appointmentId={referFor.id}
+          consultation={{ appointmentId: referFor.id, startAt: referFor.start_at, serviceName: referFor.services?.name ?? null }}
           patientName={referFor.patients?.full_name ?? "—"}
           onClose={() => setReferFor(null)}
           onCreated={(id) => {

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
@@ -144,6 +145,7 @@ describeDb("referral API (doctor portal + reception)", () => {
     return read(
       await createReferral(
         request("POST", "/api/doctor/referrals", {
+          idempotencyKey: randomUUID(),
           appointmentId: consultationId,
           referredToDoctorId: doctors.receiver,
           reason: `Suspected arrhythmia, please assess (${suffix})`,
@@ -270,6 +272,328 @@ describeDb("referral API (doctor portal + reception)", () => {
     for (const excluded of [doctors.referrer, doctors.inactive, doctors.clinicB]) expect(ids).not.toContain(excluded);
   });
 
+  describe("creating a referral", () => {
+    /** A consultation `doctor` held with a new patient, so no other referral is in the way. */
+    async function ownConsultation(status = "completed", doctor = doctors.referrer) {
+      const patient = await newPatient();
+      return { appointmentId: await consultation(doctor, status, patient), patientId: patient };
+    }
+
+    const valid = (appointmentId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+      idempotencyKey: randomUUID(),
+      appointmentId,
+      referredToDoctorId: doctors.receiver,
+      reason: `Palpitations on exertion, please assess (${suffix})`,
+      handoffNote: `Holter monitoring suggested (${suffix})`,
+      priority: "routine",
+      validForDays: 30,
+      ...overrides,
+    });
+
+    const post = async (name: string, role: string, body: Record<string, unknown>, clinicId?: string) => {
+      as(name, role, clinicId);
+      return read(await createReferral(request("POST", "/api/doctor/referrals", body)));
+    };
+
+    const createdId = (res: { body: Body }) => (res.body.data!.referral as { id: string }).id;
+
+    async function referralsFrom(appointmentId: string) {
+      const { data } = await admin.from("referrals").select("id").eq("originating_appointment_id", appointmentId);
+      return data ?? [];
+    }
+
+    async function creationAudit(referralId: string) {
+      const { data } = await admin
+        .from("audit_events")
+        .select("clinic_id, action, actor_id, actor_type, entity_type, old_values, new_values")
+        .eq("entity_id", referralId)
+        .eq("action", "referral_created");
+      return data ?? [];
+    }
+
+    it("a doctor creates a valid referral from their own consultation", async () => {
+      const { appointmentId, patientId: patient } = await ownConsultation();
+      const body = valid(appointmentId);
+      const before = Date.now();
+      const res = await post("referrer", "doctor", body);
+      expect(res).toMatchObject({ status: 201, body: { data: { referral: { replayed: false } } } });
+      const id = createdId(res);
+
+      const { data: row } = await admin
+        .from("referrals")
+        .select(
+          "clinic_id, patient_id, referring_doctor_id, referred_to_doctor_id, originating_appointment_id, status, priority, reason, handoff_note, created_by, creation_key, expires_at",
+        )
+        .eq("id", id)
+        .single();
+      expect(row).toMatchObject({
+        clinic_id: clinicA,
+        patient_id: patient,
+        referring_doctor_id: doctors.referrer,
+        referred_to_doctor_id: doctors.receiver,
+        originating_appointment_id: appointmentId,
+        status: "pending",
+        priority: "routine",
+        reason: body.reason,
+        handoff_note: body.handoffNote,
+        created_by: users.referrer,
+        creation_key: body.idempotencyKey,
+      });
+      const validFor = Date.parse(row!.expires_at) - before;
+      expect(validFor).toBeGreaterThan(29.9 * 86_400_000);
+      expect(validFor).toBeLessThan(30.1 * 86_400_000);
+
+      // The receiving doctor's dashboard lists it as pending (metadata only);
+      // no other doctor's does.
+      const pendingFor = async (name: string) => {
+        as(name, "doctor");
+        return read(await listReferrals(request("GET", "/api/doctor/referrals?box=incoming&status=pending")));
+      };
+      const dashboard = await pendingFor("receiver");
+      const listed = dashboard.body.data!.referrals as Array<Record<string, unknown>>;
+      expect(listed).toEqual(expect.arrayContaining([expect.objectContaining({ id, status: "pending", priority: "routine" })]));
+      expect(listed.every((r) => r.status === "pending")).toBe(true);
+      expect(JSON.stringify(listed)).not.toContain("Palpitations");
+      expect((await pendingFor("bystander")).body.data!.referrals).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id })]),
+      );
+
+      as("receiver", "doctor");
+      expect(await read(await listReferrals(request("GET", "/api/doctor/referrals?status=bogus")))).toMatchObject({
+        status: 400,
+        body: { code: "validation" },
+      });
+    });
+
+    it("an unauthorized doctor cannot create a referral", async () => {
+      const { appointmentId } = await ownConsultation();
+
+      // A colleague who did not hold the consultation — including the doctor
+      // it would be sent to.
+      expect(await post("bystander", "doctor", valid(appointmentId))).toMatchObject({
+        status: 404,
+        body: { code: "consultation_not_found" },
+      });
+      expect(await post("receiver", "doctor", valid(appointmentId, { referredToDoctorId: doctors.bystander }))).toMatchObject({
+        status: 404,
+        body: { code: "consultation_not_found" },
+      });
+      // Staff without the doctor role, an account with no doctor record, and
+      // a deactivated doctor record.
+      expect(await post("receptionist", "receptionist", valid(appointmentId))).toMatchObject({ status: 403 });
+      expect(await post("manager", "manager", valid(appointmentId))).toMatchObject({ status: 403 });
+      expect(await post("unlinked", "doctor", valid(appointmentId))).toMatchObject({
+        status: 403,
+        body: { code: "doctor_not_linked" },
+      });
+      expect(await post("sleeper", "doctor", valid(appointmentId))).toMatchObject({ status: 403 });
+
+      expect(await referralsFrom(appointmentId)).toEqual([]);
+    });
+
+    it("a doctor from another clinic can never be selected", async () => {
+      as("referrer", "doctor");
+      const offered = ((await read(await listRecipients())).body.data!.doctors as Array<{ id: string }>).map((d) => d.id);
+      expect(offered).not.toContain(doctors.clinicB);
+
+      const { appointmentId } = await ownConsultation();
+      expect(await post("referrer", "doctor", valid(appointmentId, { referredToDoctorId: doctors.clinicB }))).toMatchObject({
+        status: 404,
+        body: { code: "doctor_not_found" },
+      });
+      // Indistinguishable from an id that exists nowhere: other clinics' doctors are not revealed.
+      expect(await post("referrer", "doctor", valid(appointmentId, { referredToDoctorId: randomUUID() }))).toMatchObject({
+        status: 404,
+        body: { code: "doctor_not_found" },
+      });
+
+      // A clinic-B doctor is offered none of clinic A's doctors and cannot
+      // refer from clinic A's consultations.
+      as("doctorB", "doctor", clinicB);
+      const offeredToB = ((await read(await listRecipients())).body.data!.doctors as Array<{ id: string }>).map((d) => d.id);
+      for (const id of [doctors.referrer, doctors.receiver, doctors.bystander]) expect(offeredToB).not.toContain(id);
+      expect(await post("doctorB", "doctor", valid(appointmentId), clinicB)).toMatchObject({
+        status: 404,
+        body: { code: "consultation_not_found" },
+      });
+
+      expect(await referralsFrom(appointmentId)).toEqual([]);
+    });
+
+    it("only accepts an active colleague holding the doctor role as the receiving doctor", async () => {
+      const { appointmentId } = await ownConsultation();
+      // A doctor record linked to a receptionist's account is not a doctor.
+      if (!doctors.receptionLinked) await makeDoctor("receptionLinked", clinicA, users.receptionist);
+      as("referrer", "doctor");
+      const offered = ((await read(await listRecipients())).body.data!.doctors as Array<{ id: string }>).map((d) => d.id);
+      expect(offered).not.toContain(doctors.receptionLinked);
+
+      for (const referredToDoctorId of [doctors.receptionLinked, doctors.inactive]) {
+        expect(await post("referrer", "doctor", valid(appointmentId, { referredToDoctorId }))).toMatchObject({
+          status: 409,
+          body: { code: "receiving_doctor_unavailable" },
+        });
+      }
+      expect(await post("referrer", "doctor", valid(appointmentId, { referredToDoctorId: doctors.referrer }))).toMatchObject({
+        status: 400,
+        body: { code: "self_referral" },
+      });
+      expect(await referralsFrom(appointmentId)).toEqual([]);
+    });
+
+    it("rejects invalid patient access", async () => {
+      // Scheduled, cancelled or missed visits are no clinical contact to refer from.
+      for (const status of ["pending", "confirmed", "cancelled", "no_show"]) {
+        const { appointmentId } = await ownConsultation(status);
+        expect(await post("referrer", "doctor", valid(appointmentId))).toMatchObject({
+          status: 409,
+          body: { code: "consultation_not_attended" },
+        });
+        expect(await referralsFrom(appointmentId)).toEqual([]);
+      }
+
+      // Another doctor's patient, an unknown visit, and a visit in another clinic.
+      const colleagues = await ownConsultation("completed", doctors.bystander);
+      expect(await post("referrer", "doctor", valid(colleagues.appointmentId))).toMatchObject({
+        status: 404,
+        body: { code: "consultation_not_found" },
+      });
+      expect(await post("referrer", "doctor", valid(randomUUID()))).toMatchObject({ status: 404, body: { code: "consultation_not_found" } });
+
+      const { data: patientB } = await admin
+        .from("patients")
+        .insert({ clinic_id: clinicB, full_name: `Clinic B patient ${suffix}` })
+        .select("id")
+        .single();
+      const { data: serviceB } = await admin
+        .from("services")
+        .insert({ clinic_id: clinicB, name: `Clinic B consult ${suffix}`, duration_minutes: 30, price: 100000, active: true })
+        .select("id")
+        .single();
+      const start = new Date(Date.UTC(2026, 0, 5, 5, 0) + slot++ * 86_400_000);
+      const { data: visitB } = await admin
+        .from("appointments")
+        .insert({
+          clinic_id: clinicB,
+          patient_id: patientB!.id,
+          doctor_id: doctors.clinicB,
+          service_id: serviceB!.id,
+          start_at: start.toISOString(),
+          end_at: new Date(start.getTime() + 30 * 60_000).toISOString(),
+          status: "completed",
+          source: "walk_in",
+        })
+        .select("id")
+        .single();
+      expect(await post("referrer", "doctor", valid(visitB!.id))).toMatchObject({ status: 404, body: { code: "consultation_not_found" } });
+      expect(await referralsFrom(visitB!.id)).toEqual([]);
+
+      // Patient, clinic and referring doctor are taken from the consultation;
+      // values smuggled into the request are ignored.
+      const { appointmentId, patientId: patient } = await ownConsultation();
+      const res = await post(
+        "referrer",
+        "doctor",
+        valid(appointmentId, { patientId: colleagues.patientId, clinicId: clinicB, referringDoctorId: doctors.bystander }),
+      );
+      expect(res.status).toBe(201);
+      const { data: row } = await admin
+        .from("referrals")
+        .select("clinic_id, patient_id, referring_doctor_id")
+        .eq("id", createdId(res))
+        .single();
+      expect(row).toEqual({ clinic_id: clinicA, patient_id: patient, referring_doctor_id: doctors.referrer });
+    });
+
+    it("writes one audit event for the creation, attributed to the doctor, without clinical text", async () => {
+      const { appointmentId, patientId: patient } = await ownConsultation();
+      const body = valid(appointmentId);
+      const id = createdId(await post("referrer", "doctor", body));
+
+      const trail = await creationAudit(id);
+      expect(trail).toEqual([
+        expect.objectContaining({
+          clinic_id: clinicA,
+          action: "referral_created",
+          actor_id: users.referrer,
+          actor_type: "staff",
+          entity_type: "referrals",
+          old_values: null,
+        }),
+      ]);
+      expect(trail[0].new_values).toMatchObject({
+        status: "pending",
+        patient_id: patient,
+        referring_doctor_id: doctors.referrer,
+        referred_to_doctor_id: doctors.receiver,
+        originating_appointment_id: appointmentId,
+      });
+      const logged = JSON.stringify(trail);
+      for (const secret of [body.reason, body.handoffNote, body.idempotencyKey] as string[]) expect(logged).not.toContain(secret);
+    });
+
+    it("handles a duplicate submission safely", async () => {
+      const { appointmentId } = await ownConsultation();
+      const body = valid(appointmentId);
+
+      const first = await post("referrer", "doctor", body);
+      expect(first.status).toBe(201);
+      const id = createdId(first);
+
+      // Double click, or a retry after the response was lost: same answer,
+      // nothing written twice.
+      expect(await post("referrer", "doctor", body)).toMatchObject({
+        status: 200,
+        body: { data: { referral: { id, replayed: true } } },
+      });
+
+      // The key reused for different content is refused, never answered with the first referral.
+      expect(await post("referrer", "doctor", { ...body, reason: `Something else entirely (${suffix})` })).toMatchObject({
+        status: 409,
+        body: { code: "idempotency_key_reused" },
+      });
+      // A fresh submission of the same referral while it is open is a conflict, not a second referral.
+      expect(await post("referrer", "doctor", { ...body, idempotencyKey: randomUUID() })).toMatchObject({
+        status: 409,
+        body: { code: "referral_already_open" },
+      });
+      // Every submission must carry a key.
+      const keyless = { ...body };
+      delete keyless.idempotencyKey;
+      expect(await post("referrer", "doctor", keyless)).toMatchObject({ status: 400, body: { code: "validation" } });
+
+      expect(await referralsFrom(appointmentId)).toEqual([{ id }]);
+      expect(await creationAudit(id)).toHaveLength(1);
+    });
+
+    it("resolves concurrent copies of one submission to a single referral", async () => {
+      const { appointmentId } = await ownConsultation();
+      const body = valid(appointmentId);
+      as("referrer", "doctor");
+      const results = await Promise.all(
+        Array.from({ length: 4 }, async () => read(await createReferral(request("POST", "/api/doctor/referrals", body)))),
+      );
+
+      expect(results.map((r) => r.status).sort()).toEqual([200, 200, 200, 201]);
+      const ids = new Set(results.map(createdId));
+      expect(ids.size).toBe(1);
+      const [id] = [...ids];
+      expect(await referralsFrom(appointmentId)).toEqual([{ id }]);
+      expect(await creationAudit(id)).toHaveLength(1);
+    });
+
+    it("never resolves one doctor's key to another doctor's referral", async () => {
+      const mine = await ownConsultation();
+      const body = valid(mine.appointmentId);
+      const created = createdId(await post("referrer", "doctor", body));
+
+      const theirs = await ownConsultation("completed", doctors.bystander);
+      const res = await post("bystander", "doctor", { ...body, appointmentId: theirs.appointmentId });
+      expect(res).toMatchObject({ status: 201, body: { data: { referral: { replayed: false } } } });
+      expect(createdId(res)).not.toBe(created);
+    });
+  });
+
   it("creates a referral from the doctor's own consultation, visible only to the two doctors", async () => {
     const res = await refer();
     expect(res.status).toBe(201);
@@ -294,6 +618,7 @@ describeDb("referral API (doctor portal + reception)", () => {
     const notMine = await read(
       await createReferral(
         request("POST", "/api/doctor/referrals", {
+          idempotencyKey: randomUUID(),
           appointmentId: consultationId,
           referredToDoctorId: doctors.receiver,
           reason: "Not my patient",

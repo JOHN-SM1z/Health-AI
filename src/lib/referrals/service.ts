@@ -149,8 +149,15 @@ type SummaryRow = {
   referred_to: DoctorRef | null;
 };
 
-/** Incoming (sent to the caller) or outgoing (sent by the caller) referrals. */
-export async function listReferralsForDoctor(doctor: LinkedDoctor, box: "incoming" | "outgoing"): Promise<ReferralSummary[]> {
+/**
+ * Incoming (sent to the caller) or outgoing (sent by the caller) referrals,
+ * optionally only those in one (effective) status.
+ */
+export async function listReferralsForDoctor(
+  doctor: LinkedDoctor,
+  box: "incoming" | "outgoing",
+  status?: ReferralStatus,
+): Promise<ReferralSummary[]> {
   await expireDueReferrals(doctor.clinicId);
 
   let query = createAdminClient()
@@ -165,6 +172,9 @@ export async function listReferralsForDoctor(doctor: LinkedDoctor, box: "incomin
     box === "incoming"
       ? query.eq("referred_to_doctor_id", doctor.doctorId).in("status", ["pending", "accepted", "completed"])
       : query.eq("referring_doctor_id", doctor.doctorId);
+  // An open referral inside the sweep margin is still stored as open but is
+  // shown as expired, so "expired" is filtered after the effective status.
+  if (status && status !== "expired") query = query.eq("status", status);
 
   const { data, error } = await query;
   if (error) throw new ApiError(500, "Yo‘llanmalarni yuklab bo‘lmadi");
@@ -181,7 +191,8 @@ export async function listReferralsForDoctor(doctor: LinkedDoctor, box: "incomin
       referringDoctor: row.referring,
       referredToDoctor: row.referred_to,
     }))
-    .filter((r) => box === "outgoing" || visibleTo("receiver", r.status));
+    .filter((r) => box === "outgoing" || visibleTo("receiver", r.status))
+    .filter((r) => !status || r.status === status);
 }
 
 export type ReferralDetail = {
@@ -339,6 +350,8 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
 }
 
 export type CreateReferralInput = {
+  /** One random key per intended referral; a repeat of the request replays it. */
+  idempotencyKey: string;
   appointmentId: string;
   referredToDoctorId: string;
   reason: string;
@@ -347,8 +360,96 @@ export type CreateReferralInput = {
   validForDays?: number;
 };
 
-/** A referral from the calling doctor's own consultation. */
-export async function createReferral(doctor: LinkedDoctor, input: CreateReferralInput): Promise<{ id: string }> {
+export type CreatedReferral = { id: string; replayed: boolean };
+
+type KeyedReferral = {
+  id: string;
+  originating_appointment_id: string;
+  referred_to_doctor_id: string;
+  reason: string;
+  handoff_note: string | null;
+  priority: ReferralPriority;
+};
+
+/** The referral this doctor already created with this key, if any. */
+async function findByCreationKey(doctor: LinkedDoctor, key: string): Promise<KeyedReferral | null> {
+  const { data, error } = await createAdminClient()
+    .from("referrals")
+    .select("id, originating_appointment_id, referred_to_doctor_id, reason, handoff_note, priority")
+    .eq("clinic_id", doctor.clinicId)
+    .eq("referring_doctor_id", doctor.doctorId)
+    .eq("creation_key", key)
+    .maybeSingle();
+  if (error) throw new ApiError(500, "Yo‘llanmani tekshirib bo‘lmadi");
+  return data;
+}
+
+/**
+ * A repeated submission resolves to the referral it already created. A key
+ * reused for a different referral is refused rather than silently answered
+ * with someone else's result.
+ */
+function replay(previous: KeyedReferral, input: CreateReferralInput): CreatedReferral {
+  const same =
+    previous.originating_appointment_id === input.appointmentId &&
+    previous.referred_to_doctor_id === input.referredToDoctorId &&
+    previous.reason === input.reason &&
+    previous.handoff_note === (input.handoffNote || null) &&
+    previous.priority === input.priority;
+  if (!same) {
+    throw new ApiError(409, "Bu so‘rov boshqa ma‘lumotlar bilan allaqachon yuborilgan", "idempotency_key_reused");
+  }
+  return { id: previous.id, replayed: true };
+}
+
+/**
+ * The receiving doctor must be a colleague the caller may refer to: a doctor
+ * record in the caller's own clinic (anything else is "not found", so other
+ * clinics' doctors are never revealed), active, linked to a staff account
+ * that holds the doctor role, and not the caller. Same rule as
+ * listReferralRecipients, checked before anything is written; the database
+ * trigger and composite foreign key enforce it again on insert.
+ */
+async function assertReferralRecipient(doctor: LinkedDoctor, doctorId: string): Promise<void> {
+  if (doctorId === doctor.doctorId) throw new ApiError(400, "O‘zingizga yo‘llanma berib bo‘lmaydi", "self_referral");
+
+  const supabase = createAdminClient();
+  const { data: target, error } = await supabase
+    .from("doctors")
+    .select("id, active, profile_id")
+    .eq("id", doctorId)
+    .eq("clinic_id", doctor.clinicId)
+    .maybeSingle();
+  if (error) throw new ApiError(500, "Shifokorni tekshirib bo‘lmadi");
+  if (!target) throw new ApiError(404, "Shifokor topilmadi", "doctor_not_found");
+  if (target.profile_id === doctor.profileId) {
+    throw new ApiError(400, "O‘zingizga yo‘llanma berib bo‘lmaydi", "self_referral");
+  }
+
+  const unavailable = new ApiError(409, "Bu shifokorga hozir yo‘llanma berib bo‘lmaydi", "receiving_doctor_unavailable");
+  if (!target.active || !target.profile_id) throw unavailable;
+  const { data: role, error: roleError } = await supabase
+    .from("staff_roles")
+    .select("profile_id")
+    .eq("clinic_id", doctor.clinicId)
+    .eq("profile_id", target.profile_id)
+    .eq("role", "doctor")
+    .maybeSingle();
+  if (roleError) throw new ApiError(500, "Shifokorni tekshirib bo‘lmadi");
+  if (!role) throw unavailable;
+}
+
+/**
+ * A referral from the calling doctor's own consultation. The patient and
+ * clinic come from that consultation, never from the request. Idempotent per
+ * `idempotencyKey`: a repeat — sequential or concurrent — returns the
+ * referral already created (`replayed: true`) and writes nothing, so the
+ * audit trail records the creation exactly once.
+ */
+export async function createReferral(doctor: LinkedDoctor, input: CreateReferralInput): Promise<CreatedReferral> {
+  const previous = await findByCreationKey(doctor, input.idempotencyKey);
+  if (previous) return replay(previous, input);
+
   const supabase = createAdminClient();
   const { data: consultation, error } = await supabase
     .from("appointments")
@@ -359,6 +460,8 @@ export async function createReferral(doctor: LinkedDoctor, input: CreateReferral
     .maybeSingle();
   if (error) throw new ApiError(500, "Qabulni tekshirib bo‘lmadi");
   if (!consultation) throw new ApiError(404, "Qabul topilmadi", "consultation_not_found");
+
+  await assertReferralRecipient(doctor, input.referredToDoctorId);
 
   // An open referral that has quietly expired must not block a new one.
   await expireDueReferrals(doctor.clinicId);
@@ -375,14 +478,24 @@ export async function createReferral(doctor: LinkedDoctor, input: CreateReferral
       handoff_note: input.handoffNote || null,
       priority: input.priority,
       created_by: doctor.profileId,
+      creation_key: input.idempotencyKey,
       ...(input.validForDays
         ? { expires_at: new Date(Date.now() + input.validForDays * 86_400_000).toISOString() }
         : {}),
     })
     .select("id")
     .single();
-  if (insertError) throw referralError(insertError);
-  return { id: data.id };
+  if (insertError) {
+    // A concurrent copy of this request may have won the insert. The loser can
+    // trip any unique index the two rows share (the one-open-referral-per-pair
+    // index is checked before the key's), so look the key up on any conflict.
+    if (insertError.code === "23505") {
+      const winner = await findByCreationKey(doctor, input.idempotencyKey);
+      if (winner) return replay(winner, input);
+    }
+    throw referralError(insertError);
+  }
+  return { id: data.id, replayed: false };
 }
 
 type TransitionPatch = Database["public"]["Tables"]["referrals"]["Update"];
