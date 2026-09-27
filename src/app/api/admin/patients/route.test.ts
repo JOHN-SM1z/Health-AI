@@ -106,8 +106,28 @@ describe("admin patients list", () => {
         expect.objectContaining({ type: "eq", args: ["clinic_id", "clinic-a"] }),
         expect.objectContaining({ type: "eq", args: ["consent_given", false] }),
         expect.objectContaining({ type: "not", args: ["telegram_user_id", "is", null] }),
-        expect.objectContaining({ type: "or", args: ["full_name.ilike.%ali%,phone.ilike.%ali%,telegram_username.ilike.%ali%,telegram_first_name.ilike.%ali%"] }),
+        expect.objectContaining({
+          type: "or",
+          args: ['full_name.ilike."%ali%",phone.ilike."%ali%",telegram_username.ilike."%ali%",telegram_first_name.ilike."%ali%"'],
+        }),
       ]),
+    );
+  });
+
+  it("passes search punctuation as literal text, never as filter syntax", async () => {
+    const patients = chainBuilder([PATIENT_ROW], 1);
+    supabaseMock.from.mockReturnValue(patients);
+
+    const res = await GET(getReq(`/api/admin/patients?q=${encodeURIComponent("x%,phone.not.is.null")}`));
+    expect(res.status).toBe(200);
+    const value = '"%x\\\\%,phone.not.is.null%"';
+    expect(patients.conditions).toContainEqual(
+      expect.objectContaining({
+        type: "or",
+        args: [
+          `full_name.ilike.${value},phone.ilike.${value},telegram_username.ilike.${value},telegram_first_name.ilike.${value}`,
+        ],
+      }),
     );
   });
 

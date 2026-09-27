@@ -33,6 +33,7 @@ describeDb("admin patients directory (Phase 5)", () => {
   let clinicB: string;
   let patientAId: string;
   let patientBId: string;
+  let patientCId: string;
   let doctorId: string;
   const suffix = Date.now().toString(36);
 
@@ -83,6 +84,16 @@ describeDb("admin patients directory (Phase 5)", () => {
     patientAId = pa!.id;
     patientBId = pb!.id;
 
+    // Filter punctuation (, ( ) " .) in a real name, and a username one LIKE
+    // wildcard away from Nodira's, for the literal-search test.
+    const { data: pc, error: pcError } = await admin
+      .from("patients")
+      .insert({ clinic_id: SEED_CLINIC_ID, full_name: `Karimov, Aziz (Jr.) "AK" ${suffix}`, telegram_username: "nodiraxk" })
+      .select("id")
+      .single();
+    expect(pcError).toBeNull();
+    patientCId = pc!.id;
+
     // One appointment for the seed clinic's patient so counts are visible.
     // The doctor is this suite's OWN fixture (with working hours) so that
     // other suites' cleanup of shared seed-doctor rows can never interfere.
@@ -131,7 +142,7 @@ describeDb("admin patients directory (Phase 5)", () => {
 
   afterAll(async () => {
     if (!admin) return;
-    for (const id of [patientAId, patientBId]) {
+    for (const id of [patientAId, patientBId, patientCId]) {
       if (!id) continue;
       try {
         const { data: convs } = await admin.from("conversations").select("id").eq("patient_id", id);
@@ -186,6 +197,33 @@ describeDb("admin patients directory (Phase 5)", () => {
       expect(json.data.patients.map((p) => p.id)).toContain(patientAId);
       expect(json.data.patients.map((p) => p.id)).not.toContain(patientBId);
     }
+  });
+
+  it("treats search text as literal text, never as filter syntax", async () => {
+    const search = async (q: string) => {
+      const res = await GET(new NextRequest(`http://localhost/api/admin/patients?q=${encodeURIComponent(q)}`));
+      const json = (await res.json()) as { data?: { patients: Array<{ id: string }> } };
+      return { status: res.status, ids: json.data?.patients.map((p) => p.id) ?? [] };
+    };
+
+    // Commas, brackets and quotes in a real name neither break the query
+    // nor stop the name from matching.
+    for (const q of ["Karimov, Aziz", "(Jr.)", '"AK"']) {
+      const { status, ids } = await search(q);
+      expect(status).toBe(200);
+      expect(ids).toContain(patientCId);
+    }
+
+    // A comma can't smuggle in an extra condition: pasted raw, this ORs in
+    // `full_name.ilike.%Nodira%` and returns Nodira.
+    const injected = await search("zzz%,full_name.ilike.%Nodira");
+    expect(injected.status).toBe(200);
+    expect(injected.ids).not.toContain(patientAId);
+
+    // LIKE wildcards match literally: "_" is not "any one character".
+    const underscore = await search("nodira_k");
+    expect(underscore.ids).toContain(patientAId);
+    expect(underscore.ids).not.toContain(patientCId);
   });
 
   it("filters to Telegram-only and no-consent patients", async () => {

@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { ilikeAnyFilter } from "@/lib/supabase/filters";
 import { requireRoles } from "@/lib/auth/guards";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { parseBody, uuidSchema } from "@/lib/api/validate";
@@ -82,9 +83,7 @@ export async function GET(request: NextRequest) {
     if (noConsent) query = query.eq("consent_given", false);
 
     if (q) {
-      query = query.or(
-        `full_name.ilike.%${q}%,phone.ilike.%${q}%,telegram_username.ilike.%${q}%,telegram_first_name.ilike.%${q}%`,
-      );
+      query = query.or(ilikeAnyFilter(["full_name", "phone", "telegram_username", "telegram_first_name"], q));
     }
 
     const { data, error, count } = await query;
