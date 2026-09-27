@@ -62,6 +62,9 @@ Each row: expected behavior. Mark all green = go.
 - [ ] `audit_events` has `referral_created/accepted/follow_up_booked/viewed` rows without the reason/handoff text
 - [ ] With a doctor's own token, `GET /rest/v1/patients?id=eq.<X>` is empty for a same-clinic doctor with no relationship to X, and returns X for the receiving doctor only while the referral is pending/accepted and unexpired
 - [ ] `GET /api/doctor/patients/<X>`: 200 for X's own doctor and the receiving doctor (accepted → referring doctor's visits only); 404 for anyone else, after revoke, after completion, after expiry
+- [ ] Doctor queue → patient name opens the patient page (*Mening bemorim*, *Yo‘llanma* on own attended visits); referral → patient name opens it as *Yo‘llanma bo‘yicha* with only the handed-over visits
+- [ ] A doctor's own token cannot update or delete appointments via `/rest/v1/appointments`, nor read `voice-messages` storage objects
+- [ ] Deactivating a doctor record removes their patient access through the app and the REST API
 
 ## Notifications
 

@@ -52,7 +52,13 @@ const describeDb = describe.skipIf(unavailable !== null);
 
 type Tx = postgres.TransactionSql;
 type Values = Record<string, unknown>;
-type Access = { clinic_id: string; own_patient: boolean; active_referral_ids: string[]; history_doctor_ids: string[] };
+type Access = {
+  clinic_id: string;
+  own_patient: boolean;
+  active_referral_ids: string[];
+  history_doctor_ids: string[];
+  referral_appointment_ids: string[];
+};
 
 async function pgError(run: () => Promise<unknown>): Promise<postgres.PostgresError> {
   try {
@@ -239,9 +245,14 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     await asServer((tx) => tx`insert into public.payments ${tx({ clinic_id: clinicA, appointment_id: x.consultation, patient_id: x.id, amount: 100000 })}`);
     const referral = await refer(x.id, x.consultation);
 
-    // Pending: the patient record only, so Dr B can decide.
-    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: false, active_referral_ids: [referral], history_doctor_ids: [] });
-    expect(await seenBy(profiles.b, x.id)).toEqual({ patient: true, appointments: [], payments: 0 });
+    // Pending: the patient record and the consultation it came from, so Dr B can decide.
+    expect(await access(doctors.b, x.id)).toMatchObject({
+      own_patient: false,
+      active_referral_ids: [referral],
+      history_doctor_ids: [],
+      referral_appointment_ids: [x.consultation],
+    });
+    expect(await seenBy(profiles.b, x.id)).toEqual({ patient: true, appointments: [x.consultation], payments: 0 });
 
     // Accepted: also X's visits with the referring doctor — never Dr E's
     // visit, never payments.
@@ -406,11 +417,11 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     expect(await access(doctors.b, y)).toMatchObject({ own_patient: false, active_referral_ids: [], history_doctor_ids: [] });
     expect(await seenBy(profiles.b, y)).toEqual(nothing);
 
-    // Re-pointing Dr B's own appointment at Y to become "Y's doctor" is refused…
-    const swap = await pgError(() =>
-      asUser(profiles.b, (tx) => tx`update public.appointments set patient_id = ${y} where id = ${ownVisitOfB}`),
-    );
-    expect(swap.message).toMatch(/Doctors may only update the status/);
+    // Re-pointing Dr B's own appointment at Y to become "Y's doctor" changes nothing…
+    const swapped = await asUser(profiles.b, (tx) => tx`update public.appointments set patient_id = ${y} where id = ${ownVisitOfB} returning id`);
+    expect(swapped).toHaveLength(0);
+    const [{ patient_id: stillOwner }] = await sql<{ patient_id: string }[]>`select patient_id from public.appointments where id = ${ownVisitOfB}`;
+    expect(stillOwner).not.toBe(y);
     // …Dr A's appointments Dr B can read through the referral stay read-only…
     const touched = await asUser(profiles.b, (tx) => tx`update public.appointments set status = 'completed' where id = ${x.consultation} returning id`);
     expect(touched).toHaveLength(0);
@@ -474,5 +485,74 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
       expect(await asUser(doctor, (tx) => tx`select id from public.conversations where patient_id = ${x.id}`)).toHaveLength(0);
     }
     await sql`delete from public.conversations where patient_id = ${x.id}`;
+  });
+
+  // ---------- Hardening (20260927000004_clinical_access_hardening.sql) ----------
+
+  it("11. Voice recordings are readable only by operational staff, never by doctors", async () => {
+    const path = `${clinicA}/${randomUUID()}.ogg`;
+    await sql`insert into storage.objects (bucket_id, name) values ('voice-messages', ${path})`;
+    try {
+      const readable = (profileId: string) =>
+        asUser(profileId, async (tx) => (await tx`select name from storage.objects where name = ${path}`).length === 1);
+      expect(await readable(profiles.receptionist)).toBe(true);
+      expect(await readable(profiles.manager)).toBe(true);
+      for (const doctor of [profiles.a, profiles.b, profiles.c, profiles.k]) expect(await readable(doctor)).toBe(false);
+    } finally {
+      await sql`delete from storage.objects where name = ${path}`;
+    }
+  });
+
+  it("12. A deactivated doctor loses clinical access at the database, like at the API", async () => {
+    const x = await patientX();
+    await asServer((tx) => tx`insert into public.payments ${tx({ clinic_id: clinicA, appointment_id: x.consultation, patient_id: x.id, amount: 100000 })}`);
+    const referral = await refer(x.id, x.consultation);
+    await accept(referral);
+
+    await sql`update public.doctors set active = false where id in ${sql([doctors.a, doctors.b])}`;
+    try {
+      expect(await access(doctors.a, x.id)).toBeNull();
+      expect(await access(doctors.b, x.id)).toBeNull();
+      expect(await seenBy(profiles.a, x.id)).toEqual(nothing);
+      expect(await seenBy(profiles.b, x.id)).toEqual(nothing);
+    } finally {
+      await sql`update public.doctors set active = true where id in ${sql([doctors.a, doctors.b])}`;
+    }
+    expect(await seenBy(profiles.a, x.id)).toEqual({ patient: true, appointments: [...x.withA].sort(), payments: 1 });
+  });
+
+  it("13. Doctors cannot write appointments directly — status changes go through the server", async () => {
+    const x = await patientX();
+    for (const change of [
+      { status: "cancelled" },
+      { status: "pending" },
+      { status: "completed" },
+    ]) {
+      const rows = await asUser(profiles.a, (tx) => tx`update public.appointments set ${tx(change)} where id = ${x.consultation} returning id`);
+      expect(rows).toHaveLength(0);
+    }
+    const del = await asUser(profiles.a, (tx) => tx`delete from public.appointments where id = ${x.consultation} returning id`);
+    expect(del).toHaveLength(0);
+    const [{ status }] = await sql<{ status: string }[]>`select status from public.appointments where id = ${x.consultation}`;
+    expect(status).toBe("completed");
+  });
+
+  it("14. Referral-linked appointments: the receiver sees the consultation while active, the referrer sees the follow-up", async () => {
+    const x = await patientX();
+    const referral = await refer(x.id, x.consultation);
+    await accept(referral);
+    const followUp = await visit(x.id, doctors.b, clinicA, "confirmed");
+    await transition(referral, { follow_up_appointment_id: followUp });
+
+    // Dr A sees their own visits plus the follow-up with Dr B — not Dr E's visit.
+    expect(await access(doctors.a, x.id)).toMatchObject({ referral_appointment_ids: [followUp] });
+    expect(await seenBy(profiles.a, x.id)).toMatchObject({ appointments: [...x.withA, followUp].sort() });
+
+    // Once completed, Dr B keeps only their own visit.
+    await transition(referral, { status: "completed", completed_by: profiles.b });
+    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: true, referral_appointment_ids: [], history_doctor_ids: [] });
+    expect(await seenBy(profiles.b, x.id)).toMatchObject({ appointments: [followUp] });
+    // Dr E, who also saw X, gains nothing from any of this.
+    expect(await seenBy(profiles.e, x.id)).toMatchObject({ appointments: [x.withE] });
   });
 });

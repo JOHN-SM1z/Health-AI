@@ -214,11 +214,11 @@ describeDb("referral-based clinical access — server and API layers", () => {
     clinicA = clinics!.find((c) => c.slug.startsWith("access-api-a"))!.id;
     clinicB = clinics!.find((c) => c.slug.startsWith("access-api-b"))!.id;
 
-    for (const name of ["a", "b", "c", "e"]) await makeUser(name, clinicA, "doctor");
+    for (const name of ["a", "b", "c", "e", "f"]) await makeUser(name, clinicA, "doctor");
     await makeUser("k", clinicB, "doctor");
     await makeUser("receptionist", clinicA, "receptionist");
     await makeUser("manager", clinicA, "manager");
-    for (const name of ["a", "b", "c", "e"]) await makeDoctor(name, clinicA);
+    for (const name of ["a", "b", "c", "e", "f"]) await makeDoctor(name, clinicA);
     await makeDoctor("k", clinicB);
 
     const { data: services } = await admin
@@ -269,10 +269,11 @@ describeDb("referral-based clinical access — server and API layers", () => {
     const x = await patientX();
     const referral = await refer(x);
 
-    // Pending: the patient record, no visit history yet.
+    // Pending: the patient record and the consultation it came from — no history yet.
     const pending = await record("b", x.id);
     expect(pending.status).toBe(200);
-    expect(recordOf(pending)).toMatchObject({ relationship: "referred", activeReferralIds: [referral], appointments: [] });
+    expect(recordOf(pending)).toMatchObject({ relationship: "referred", activeReferralIds: [referral] });
+    expect(ids(recordOf(pending).appointments)).toEqual([x.consultation]);
 
     // Accepted: Dr A's visits with X — not Dr E's.
     await act("b", referral, { action: "accept" });
@@ -364,6 +365,7 @@ describeDb("referral-based clinical access — server and API layers", () => {
     expect(detail.body.data!.referral).toMatchObject({
       status: "completed",
       history: null,
+      consultation: null,
       patient: { fullName: `Access API patient ${suffix}`, phone: null, preferredLanguage: null },
     });
     // The referring doctor keeps their own patient.
@@ -488,5 +490,78 @@ describeDb("referral-based clinical access — server and API layers", () => {
     expect(await act("a", referral, { action: "revoke", reason: "Handled elsewhere" })).toMatchObject({ status: 200 });
     expect(await seen(b)).toEqual({ patient: false, appointments: [], referral: false });
     await Promise.all([a, b, c, k].map((client) => client.auth.signOut()));
+  });
+
+  // ---------- Hardening ----------
+
+  it("11. The server never shows a doctor an appointment their own token could not read", async () => {
+    const x = await patientX();
+    const referral = await refer(x);
+    const clients = Object.fromEntries(await Promise.all(["a", "b", "c", "e"].map(async (n) => [n, await signedIn(n)] as const)));
+
+    const viaApi = async (name: string) => {
+      const res = await record(name, x.id);
+      return res.status === 200 ? ids(recordOf(res).appointments) : [];
+    };
+    const viaRls = async (name: string) =>
+      ids((await clients[name].from("appointments").select("id").eq("patient_id", x.id)).data ?? []);
+    const detailAppointments = async (name: string) => {
+      const res = await referralDetail(name, referral);
+      if (res.status !== 200) return [];
+      const r = res.body.data!.referral as { consultation: { id: string } | null; followUp: { id: string } | null; history: Array<{ id: string }> | null };
+      return [r.consultation, r.followUp, ...(r.history ?? [])].filter((a): a is { id: string } => !!a).map((a) => a.id);
+    };
+    const expectParity = async () => {
+      for (const name of ["a", "b", "c", "e"]) {
+        const rls = await viaRls(name);
+        expect(await viaApi(name), `patient record of Dr ${name}`).toEqual(rls);
+        for (const id of await detailAppointments(name)) expect(rls, `referral detail of Dr ${name}`).toContain(id);
+      }
+    };
+
+    await expectParity(); // pending
+    await act("b", referral, { action: "accept" });
+    await expectParity(); // accepted
+    const followUp = await visit(x.id, doctors.b, clinicA, "confirmed");
+    await admin.from("referrals").update({ follow_up_appointment_id: followUp }).eq("id", referral);
+    await expectParity(); // follow-up booked: Dr A now sees it, through both layers
+    expect(await viaRls("a")).toContain(followUp);
+    await act("b", referral, { action: "complete" });
+    await expectParity(); // completed: Dr B keeps only their own visit
+    expect(await viaRls("b")).toEqual([followUp]);
+    await Promise.all(Object.values(clients).map((client) => client.auth.signOut()));
+  });
+
+  it("12. A deactivated doctor is refused at the API and at the database", async () => {
+    const { x } = await referredAndAccepted();
+    const b = await signedIn("b");
+    await admin.from("doctors").update({ active: false }).eq("id", doctors.b);
+    try {
+      expect(await record("b", x.id)).toMatchObject({ status: 403, body: { code: "doctor_not_linked" } });
+      expect((await b.from("patients").select("id").eq("id", x.id)).data).toEqual([]);
+      expect((await b.from("appointments").select("id").eq("patient_id", x.id)).data).toEqual([]);
+    } finally {
+      await admin.from("doctors").update({ active: true }).eq("id", doctors.b);
+    }
+    expect((await b.from("patients").select("id").eq("id", x.id)).data).toEqual([{ id: x.id }]);
+    await b.auth.signOut();
+  });
+
+  it("13. Doctors cannot change appointments directly, only through the status API", async () => {
+    const x = await patientX();
+    const a = await signedIn("a");
+    const direct = await a.from("appointments").update({ status: "cancelled" }).eq("id", x.consultation).select("id");
+    expect(direct.data ?? []).toEqual([]);
+    const { data: unchanged } = await admin.from("appointments").select("status").eq("id", x.consultation).single();
+    expect(unchanged!.status).toBe("completed");
+    await a.auth.signOut();
+  });
+
+  it("14. Patient lookups are rate limited per doctor", async () => {
+    let last = 0;
+    for (let i = 0; i < 61; i++) last = (await record("f", randomUUID())).status;
+    expect(last).toBe(429);
+    // Another doctor is unaffected.
+    expect((await record("c", randomUUID())).status).toBe(404);
   });
 });

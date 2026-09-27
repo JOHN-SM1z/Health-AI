@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/api/errors";
 import { recordAudit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import type { LinkedDoctor } from "@/lib/auth/guards";
-import { canDoctorAccessPatientClinicalData } from "@/lib/clinical-access/access";
+import { canDoctorAccessPatientClinicalData, canSeeAppointment } from "@/lib/clinical-access/access";
 import type { StaffContext } from "@/lib/auth/staff";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -213,6 +213,9 @@ export type ReferralDetail = {
   revokedAt: string | null;
   referringDoctor: DoctorRef | null;
   referredToDoctor: DoctorRef | null;
+  patientId: string;
+  /** Whether the caller may open the patient's record (clinical access). */
+  patientRecordAccessible: boolean;
   /** The name is part of the referral record; contact details need clinical access. */
   patient: { fullName: string | null; phone: string | null; preferredLanguage: string | null } | null;
   consultation: AppointmentRef | null;
@@ -285,6 +288,16 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
   const historyShared =
     role === "referrer" ? access.scope.ownAppointments : access.scope.sharedHistoryDoctorIds.includes(row.referring_doctor_id);
   const contactShared = access.scope.patientRecord;
+  // The linked appointments follow the same rule as the appointments RLS
+  // policy: the consultation belongs to the referring doctor, the follow-up
+  // (by foreign key) to the receiving doctor.
+  const consultationShown = canSeeAppointment(access, doctor.doctorId, {
+    id: row.originating_appointment_id,
+    doctorId: row.referring_doctor_id,
+  });
+  const followUpShown =
+    !!row.follow_up_appointment_id &&
+    canSeeAppointment(access, doctor.doctorId, { id: row.follow_up_appointment_id, doctorId: row.referred_to_doctor_id });
   const appointmentColumns = "id, start_at, status, services(name)";
 
   const [patientRes, consultationRes, followUpRes, historyRes] = await Promise.all([
@@ -294,13 +307,15 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
       .eq("id", row.patient_id)
       .eq("clinic_id", doctor.clinicId)
       .maybeSingle(),
-    supabase
-      .from("appointments")
-      .select(appointmentColumns)
-      .eq("id", row.originating_appointment_id)
-      .eq("clinic_id", doctor.clinicId)
-      .maybeSingle(),
-    row.follow_up_appointment_id
+    consultationShown
+      ? supabase
+          .from("appointments")
+          .select(appointmentColumns)
+          .eq("id", row.originating_appointment_id)
+          .eq("clinic_id", doctor.clinicId)
+          .maybeSingle()
+      : null,
+    followUpShown && row.follow_up_appointment_id
       ? supabase
           .from("appointments")
           .select(appointmentColumns)
@@ -319,7 +334,7 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
           .limit(20)
       : null,
   ]);
-  if (patientRes.error || consultationRes.error || followUpRes?.error || historyRes?.error) {
+  if (patientRes.error || consultationRes?.error || followUpRes?.error || historyRes?.error) {
     throw new ApiError(500, "Yo‘llanmani yuklab bo‘lmadi");
   }
 
@@ -350,6 +365,8 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
     revokedAt: row.revoked_at,
     referringDoctor: row.referring,
     referredToDoctor: row.referred_to,
+    patientId: row.patient_id,
+    patientRecordAccessible: contactShared,
     patient: patientRes.data
       ? {
           fullName: patientRes.data.full_name,
@@ -357,7 +374,7 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
           preferredLanguage: contactShared ? patientRes.data.preferred_language : null,
         }
       : null,
-    consultation: (consultationRes.data as AppointmentRef | null) ?? null,
+    consultation: (consultationRes?.data as AppointmentRef | null | undefined) ?? null,
     followUp: (followUpRes?.data as AppointmentRef | null | undefined) ?? null,
     history: historyShared ? ((historyRes?.data ?? []) as AppointmentRef[]) : null,
     allowedActions: allowedActions(role, status),

@@ -37,6 +37,8 @@ type Referral = {
   revokedAt: string | null;
   referringDoctor: Doctor;
   referredToDoctor: Doctor;
+  patientId: string;
+  patientRecordAccessible: boolean;
   patient: { fullName: string | null; phone: string | null; preferredLanguage: string | null } | null;
   consultation: Appointment | null;
   followUp: Appointment | null;
@@ -224,7 +226,15 @@ export default function DoctorReferralPage() {
         <div className="flex flex-col gap-4 lg:col-span-2">
           <Card>
             <p className="mb-2 font-display text-sm font-bold text-foreground">Bemor</p>
-            <Field label="Ism">{referral.patient?.fullName ?? "—"}</Field>
+            <Field label="Ism">
+              {referral.patientRecordAccessible ? (
+                <Link href={`/doctor/patients/${referral.patientId}`} className="text-pine hover:underline">
+                  {referral.patient?.fullName ?? "—"}
+                </Link>
+              ) : (
+                (referral.patient?.fullName ?? "—")
+              )}
+            </Field>
             <Field label="Telefon">{referral.patient?.phone ?? "—"}</Field>
             <Field label="Yo‘llanma berilgan qabul">
               {referral.consultation ? <AppointmentLine appointment={referral.consultation} /> : "—"}

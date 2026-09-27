@@ -61,10 +61,12 @@ Working in the same clinic gives a doctor no access to a patient. One decision,
 | Relationship | Condition | Patient record | Appointments |
 | --- | --- | --- | --- |
 | A — own | an appointment with the patient | yes | the doctor's own |
-| B — referred, pending | referral to the doctor, `pending`, `expires_at > now()` | yes | none yet |
+| B — referred, pending | referral to the doctor, `pending`, `expires_at > now()` | yes | the consultation the referral came from |
 | B — referred, accepted | referral to the doctor, `accepted`, `expires_at > now()` | yes | + the patient's visits with the referring doctor |
 | C — none | anything else: no relationship, another clinic, declined / revoked / completed / expired referral | no | no |
 
+- Only **active** doctor records backed by the doctor role count — at the database exactly as at the
+  API. A referring doctor also sees the follow-up appointment booked for their referral.
 - Expiry is compared with `now()` inside the decision, so access ends on time even before the lazy
   sweep marks the referral `expired`. Revoking, declining or completing a referral ends it at once.
 - Payments stay limited to the doctor's own appointments; conversations, messages and voice notes
@@ -83,9 +85,16 @@ Working in the same clinic gives a doctor no access to a patient. One decision,
   mode (`patient_clinical_record_viewed`) and every refusal (`patient_clinical_access_denied`).
   The referral detail shows the patient's contact details and visit history only while the
   decision allows them. The doctor is always resolved from the session (`requireLinkedDoctor`).
-- Unchanged protections this relies on: a doctor session may only change the `status` of its own
-  appointments (`appointments_doctor_status_only`), referrals are read-only for every signed-in
-  role, and there are no server actions — every mutation is a guarded route handler.
+- The server shows exactly what RLS allows: the referral detail's consultation/follow-up and the
+  patient record's appointments go through `canSeeAppointment()`, the same rule as
+  `doctor_can_read_appointment()` (a parity test compares both layers per doctor).
+- Doctors have **no direct write access** to appointments: status changes go through
+  `/api/doctor/appointments/[id]` only (forward-only, own appointments), so the REST API can't be
+  used to cancel or reopen visits. Referrals are read-only for every signed-in role, and there are
+  no server actions — every mutation is a guarded route handler.
+- Voice recordings in Storage (`voice-messages` bucket) are readable by operational roles only,
+  like the `voice_messages` rows — never by doctors.
+- `GET /api/doctor/patients/[id]` is rate limited per doctor (60/min) against id guessing.
 - Staff who also hold an operational role keep that role's clinic-wide operational access.
 
 ## Referrals

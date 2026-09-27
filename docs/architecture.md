@@ -92,7 +92,8 @@ foreign keys) enforces the same rules independently of the API.
 
 What a doctor may see of a patient — their own patient, or one actively referred to them — is one
 decision, `public.doctor_patient_access()`, used by the `patients`/`appointments` RLS policies and by
-the server (`src/lib/clinical-access/access.ts`, `GET /api/doctor/patients/[id]`). See
+the server (`src/lib/clinical-access/access.ts`, `GET /api/doctor/patients/[id]`, shown on the
+doctor's patient page `/doctor/patients/[id]`, reached from the queue and from a referral). See
 [security.md](security.md#clinical-access-doctors).
 
 ## Notifications

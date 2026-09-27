@@ -24,6 +24,7 @@ const MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avg
 
 type Row = {
   id: string;
+  patient_id: string;
   start_at: string;
   status: Database["public"]["Enums"]["appointment_status"];
   patients: { full_name: string | null; phone: string | null } | null;
@@ -88,7 +89,7 @@ export default function DoctorQueuePage() {
 
     const { data, error: err } = await supabase
       .from("appointments")
-      .select("id, start_at, status, doctors!inner(profile_id), patients(full_name, phone), services(name, price)")
+      .select("id, patient_id, start_at, status, doctors!inner(profile_id), patients(full_name, phone), services(name, price)")
       .eq("doctors.profile_id", uid ?? "")
       .gte("start_at", day.start)
       .lt("start_at", day.end)
@@ -242,7 +243,9 @@ export default function DoctorQueuePage() {
             <tr key={r.id} className={r.id === nextPatient?.id ? "bg-pine-tint/50" : "hover:bg-sand"}>
               <td className="px-4 py-3 font-semibold text-foreground">{formatTime(r.start_at)}</td>
               <td className="px-4 py-3">
-                <p className="font-medium text-foreground">{r.patients?.full_name ?? "—"}</p>
+                <Link href={`/doctor/patients/${r.patient_id}`} className="font-medium text-foreground hover:text-pine hover:underline">
+                  {r.patients?.full_name ?? "—"}
+                </Link>
                 {r.patients?.phone && <p className="text-xs text-ink-muted">{r.patients.phone}</p>}
               </td>
               <td className="px-4 py-3 text-foreground">{r.services?.name ?? "—"}</td>

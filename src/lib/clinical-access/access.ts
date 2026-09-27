@@ -14,12 +14,17 @@ import type { Database } from "@/lib/supabase/database.types";
  *   A. their own relationship — an appointment with the patient: the
  *      patient record and their own appointments with the patient;
  *   B. an active referral to them — pending or accepted and not past
- *      expires_at: the patient record, plus (once accepted) the patient's
- *      appointments with the referring doctor;
+ *      expires_at: the patient record and the consultation the referral
+ *      came from, plus (once accepted) the patient's appointments with the
+ *      referring doctor;
  *   C. otherwise nothing, and nothing ever in another clinic.
  *
+ * Only active doctor records count. A referring doctor also sees the
+ * follow-up appointment booked for their referral.
+ *
  * The decision itself is public.doctor_patient_access() (see
- * supabase/migrations/20260927000003_referral_clinical_access.sql), the same
+ * supabase/migrations/20260927000003_referral_clinical_access.sql and
+ * 20260927000004_clinical_access_hardening.sql), the same
  * function the patients/appointments RLS policies use, so the server and
  * direct database access can never disagree. Payments, conversations,
  * messages and voice notes are outside every doctor's clinical scope.
@@ -38,6 +43,8 @@ export type ClinicalAccess = {
     ownAppointments: boolean;
     /** Doctors whose appointments with the patient accepted referrals share. */
     sharedHistoryDoctorIds: string[];
+    /** Appointments a referral links to: its consultation (receiver), its follow-up (referrer). */
+    referralAppointmentIds: string[];
   };
   /** Active (pending or accepted, unexpired) referrals of the patient to this doctor. */
   activeReferralIds: string[];
@@ -48,7 +55,12 @@ type AccessRow = Database["public"]["Functions"]["doctor_patient_access"]["Retur
 export const NO_CLINICAL_ACCESS: ClinicalAccess = Object.freeze({
   relationship: "none",
   allowed: false,
-  scope: Object.freeze({ patientRecord: false, ownAppointments: false, sharedHistoryDoctorIds: [] as string[] }),
+  scope: Object.freeze({
+    patientRecord: false,
+    ownAppointments: false,
+    sharedHistoryDoctorIds: [] as string[],
+    referralAppointmentIds: [] as string[],
+  }),
   activeReferralIds: [] as string[],
 }) as ClinicalAccess;
 
@@ -65,9 +77,28 @@ export function toClinicalAccess(row: AccessRow | null | undefined): ClinicalAcc
       patientRecord: true,
       ownAppointments: row.own_patient,
       sharedHistoryDoctorIds: [...row.history_doctor_ids],
+      referralAppointmentIds: [...row.referral_appointment_ids],
     },
     activeReferralIds: [...row.active_referral_ids],
   };
+}
+
+/**
+ * Whether an appointment of the patient falls inside `access` for
+ * `doctorId` — the same rule as the appointments RLS policy
+ * (doctor_can_read_appointment).
+ */
+export function canSeeAppointment(
+  access: ClinicalAccess,
+  doctorId: string,
+  appointment: { id: string; doctorId: string },
+): boolean {
+  if (!access.allowed) return false;
+  return (
+    (access.scope.ownAppointments && appointment.doctorId === doctorId) ||
+    access.scope.sharedHistoryDoctorIds.includes(appointment.doctorId) ||
+    access.scope.referralAppointmentIds.includes(appointment.id)
+  );
 }
 
 /**
@@ -93,6 +124,8 @@ export type ClinicalAppointment = {
   startAt: string;
   endAt: string;
   status: string;
+  /** The calling doctor's own appointment (the ones they can refer from). */
+  mine: boolean;
   doctor: { id: string; name: string } | null;
   service: { name: string } | null;
 };
@@ -138,12 +171,16 @@ export async function getPatientClinicalRecord(doctor: LinkedDoctor, patientId: 
     throw new ApiError(404, "Bemor topilmadi", "patient_not_found");
   }
 
-  // The doctors whose appointments are shown come from the decision alone,
-  // never from the request.
+  // What is shown comes from the decision alone, never from the request:
+  // the doctors whose visits are covered, plus referral-linked appointments.
   const visibleDoctorIds = [
     ...(access.scope.ownAppointments ? [doctor.doctorId] : []),
     ...access.scope.sharedHistoryDoctorIds,
   ];
+  const coverage = [
+    visibleDoctorIds.length > 0 ? `doctor_id.in.(${visibleDoctorIds.join(",")})` : null,
+    access.scope.referralAppointmentIds.length > 0 ? `id.in.(${access.scope.referralAppointmentIds.join(",")})` : null,
+  ].filter(Boolean);
 
   const supabase = createAdminClient();
   const [patientRes, appointmentsRes] = await Promise.all([
@@ -153,13 +190,13 @@ export async function getPatientClinicalRecord(doctor: LinkedDoctor, patientId: 
       .eq("id", patientId)
       .eq("clinic_id", doctor.clinicId)
       .maybeSingle(),
-    visibleDoctorIds.length > 0
+    coverage.length > 0
       ? supabase
           .from("appointments")
           .select("id, start_at, end_at, status, doctor_id, services(name), doctors(name)")
           .eq("clinic_id", doctor.clinicId)
           .eq("patient_id", patientId)
-          .in("doctor_id", visibleDoctorIds)
+          .or(coverage.join(","))
           .order("start_at", { ascending: false })
           .limit(100)
       : null,
@@ -195,6 +232,7 @@ export async function getPatientClinicalRecord(doctor: LinkedDoctor, patientId: 
       startAt: a.start_at,
       endAt: a.end_at,
       status: a.status,
+      mine: a.doctor_id === doctor.doctorId,
       doctor: a.doctors ? { id: a.doctor_id, name: a.doctors.name } : null,
       service: a.services,
     })),

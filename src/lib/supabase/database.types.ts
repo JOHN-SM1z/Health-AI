@@ -1507,7 +1507,12 @@ export type Database = {
       }
       current_doctor_id: { Args: { p_clinic_id: string }; Returns: string }
       doctor_can_read_appointment: {
-        Args: { p_clinic_id: string; p_doctor_id: string; p_patient_id: string }
+        Args: {
+          p_appointment_id: string
+          p_clinic_id: string
+          p_doctor_id: string
+          p_patient_id: string
+        }
         Returns: boolean
       }
       doctor_can_read_patient: {
@@ -1521,6 +1526,7 @@ export type Database = {
           clinic_id: string
           history_doctor_ids: string[]
           own_patient: boolean
+          referral_appointment_ids: string[]
         }[]
       }
       finish_webhook_update: {
