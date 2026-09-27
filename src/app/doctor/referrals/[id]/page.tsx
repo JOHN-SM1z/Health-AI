@@ -37,7 +37,7 @@ type Referral = {
   revokedAt: string | null;
   referringDoctor: Doctor;
   referredToDoctor: Doctor;
-  patient: { fullName: string | null; phone: string | null; preferredLanguage: string } | null;
+  patient: { fullName: string | null; phone: string | null; preferredLanguage: string | null } | null;
   consultation: Appointment | null;
   followUp: Appointment | null;
   history: Appointment[] | null;
@@ -239,7 +239,11 @@ export default function DoctorReferralPage() {
               Qabullar tarixi {referral.referringDoctor?.name ? `(${referral.referringDoctor.name})` : ""}
             </p>
             {referral.history === null ? (
-              <p className="text-sm text-ink-muted">Tarix yo‘llanmani qabul qilganingizdan keyin ko‘rinadi.</p>
+              <p className="text-sm text-ink-muted">
+                {referral.status === "pending"
+                  ? "Tarix yo‘llanmani qabul qilganingizdan keyin ko‘rinadi."
+                  : "Yo‘llanma faol emas — qabullar tarixi endi ko‘rinmaydi."}
+              </p>
             ) : referral.history.length === 0 ? (
               <p className="text-sm text-ink-muted">Qabullar yo‘q</p>
             ) : (

@@ -20,6 +20,7 @@
   - doctor portal `/doctor/referrals` (refer, accept/decline/complete/revoke, history after accept), reception booking of the follow-up, management revoke
   - `requireLinkedDoctor` guard, strict access logging, server-only doctor account linking
   - review-before-send dialog, idempotent creation (`creation_key`), server-side recipient check, pending referrals on the doctor dashboard
+  - referral-based clinical access: `doctor_patient_access()` + doctor RLS policies, `canDoctorAccessPatientClinicalData`, `GET /api/doctor/patients/[id]`, security tests 1–10 at DB and API level
 
 - [x] ~~0. Audit~~ (2026-08-18)
   - `docs/architecture.md` + `docs/security.md`; threat model: cross-tenant, payment integrity, AI safety

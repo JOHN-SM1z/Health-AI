@@ -1505,6 +1505,24 @@ export type Database = {
         Args: { p_external_id: string; p_source: string }
         Returns: boolean
       }
+      current_doctor_id: { Args: { p_clinic_id: string }; Returns: string }
+      doctor_can_read_appointment: {
+        Args: { p_clinic_id: string; p_doctor_id: string; p_patient_id: string }
+        Returns: boolean
+      }
+      doctor_can_read_patient: {
+        Args: { p_clinic_id: string; p_patient_id: string }
+        Returns: boolean
+      }
+      doctor_patient_access: {
+        Args: { p_doctor_id: string; p_patient_id: string }
+        Returns: {
+          active_referral_ids: string[]
+          clinic_id: string
+          history_doctor_ids: string[]
+          own_patient: boolean
+        }[]
+      }
       finish_webhook_update: {
         Args: { p_external_id: string; p_source: string }
         Returns: undefined

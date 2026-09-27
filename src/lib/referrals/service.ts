@@ -4,6 +4,7 @@ import { ApiError } from "@/lib/api/errors";
 import { recordAudit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import type { LinkedDoctor } from "@/lib/auth/guards";
+import { canDoctorAccessPatientClinicalData } from "@/lib/clinical-access/access";
 import type { StaffContext } from "@/lib/auth/staff";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -212,10 +213,16 @@ export type ReferralDetail = {
   revokedAt: string | null;
   referringDoctor: DoctorRef | null;
   referredToDoctor: DoctorRef | null;
-  patient: { fullName: string | null; phone: string | null; preferredLanguage: string } | null;
+  /** The name is part of the referral record; contact details need clinical access. */
+  patient: { fullName: string | null; phone: string | null; preferredLanguage: string | null } | null;
   consultation: AppointmentRef | null;
   followUp: AppointmentRef | null;
-  /** The patient's visits with the referring doctor; null until the receiving doctor accepts. */
+  /**
+   * The patient's visits with the referring doctor, as far as the clinical
+   * access decision covers them: always for the referring doctor (their own
+   * visits); for the receiving doctor only while the referral is accepted
+   * and unexpired. Null otherwise.
+   */
   history: AppointmentRef[] | null;
   allowedActions: ReferralAction[];
 };
@@ -245,8 +252,13 @@ type DetailRow = {
 
 /**
  * One referral for a doctor on it (404 for anyone else, so existence is not
- * revealed). Every view is written to the access log before any patient data
- * is returned, and the request fails if that write fails.
+ * revealed). The referral record — reason, note, doctors, dates, the patient's
+ * name, the originating consultation and the follow-up — follows the
+ * referral's own visibility; the patient's contact details and visit history
+ * follow the clinical access decision (canDoctorAccessPatientClinicalData),
+ * so they end the moment the referral stops being active. Every view is
+ * written to the access log before any patient data is returned, and the
+ * request fails if that write fails.
  */
 export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: string): Promise<ReferralDetail> {
   const supabase = createAdminClient();
@@ -269,7 +281,10 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
     throw new ApiError(404, "Yo‘llanma topilmadi", "referral_not_found");
   }
 
-  const historyShared = role === "referrer" || status === "accepted" || status === "completed";
+  const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, row.patient_id);
+  const historyShared =
+    role === "referrer" ? access.scope.ownAppointments : access.scope.sharedHistoryDoctorIds.includes(row.referring_doctor_id);
+  const contactShared = access.scope.patientRecord;
   const appointmentColumns = "id, start_at, status, services(name)";
 
   const [patientRes, consultationRes, followUpRes, historyRes] = await Promise.all([
@@ -314,7 +329,7 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
     entityType: "referrals",
     entityId: row.id,
     actor: { actorId: doctor.profileId, actorType: "staff" },
-    metadata: { role, history_shared: historyShared },
+    metadata: { role, relationship: access.relationship, history_shared: historyShared },
     strict: true,
   });
 
@@ -338,8 +353,8 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
     patient: patientRes.data
       ? {
           fullName: patientRes.data.full_name,
-          phone: patientRes.data.phone,
-          preferredLanguage: patientRes.data.preferred_language,
+          phone: contactShared ? patientRes.data.phone : null,
+          preferredLanguage: contactShared ? patientRes.data.preferred_language : null,
         }
       : null,
     consultation: (consultationRes.data as AppointmentRef | null) ?? null,

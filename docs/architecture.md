@@ -90,6 +90,11 @@ Doctor A refers a patient to Doctor B in the same clinic:
 Server logic lives in `src/lib/referrals/service.ts`; the database (trigger + RLS + composite
 foreign keys) enforces the same rules independently of the API.
 
+What a doctor may see of a patient — their own patient, or one actively referred to them — is one
+decision, `public.doctor_patient_access()`, used by the `patients`/`appointments` RLS policies and by
+the server (`src/lib/clinical-access/access.ts`, `GET /api/doctor/patients/[id]`). See
+[security.md](security.md#clinical-access-doctors).
+
 ## Notifications
 
 - Telegram messages are sent immediately for confirmations and admin alerts.
