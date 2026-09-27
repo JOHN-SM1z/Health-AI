@@ -44,6 +44,7 @@ vi.mock("@/lib/referrals/service", async (importOriginal) => {
 import { GET as listReferrals, POST as createReferral } from "./route";
 import { GET as getReferral, PATCH as actOnReferral } from "./[id]/route";
 import { GET as listRecipients } from "./recipients/route";
+import { GET as pendingCount } from "./pending-count/route";
 import { POST as bookAppointment } from "@/app/api/admin/appointments/route";
 import { GET as getPatient } from "@/app/api/admin/patients/route";
 import { PATCH as revokeAsManagement } from "@/app/api/admin/referrals/[id]/route";
@@ -236,6 +237,31 @@ describeDb("referral API (doctor portal + reception)", () => {
       await admin.from("clinics").delete().eq("id", clinicId);
     }
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
+  });
+
+  it("the Yo‘llanmalar badge counts referrals awaiting the doctor's answer — a number only, no text, no audit", async () => {
+    const count = async (name: string) => {
+      as(name, "doctor");
+      const res = await pendingCount();
+      const body = (await res.json()) as { ok: boolean; data: Record<string, unknown> };
+      expect(Object.keys(body.data)).toEqual(["pending"]);
+      return body.data.pending as number;
+    };
+    const before = await count("receiver");
+    const sentBefore = await count("referrer");
+    const referral = await freshReferral();
+    expect(await count("receiver")).toBe(before + 1);
+    // The referring doctor's own outgoing referrals are not "awaiting" them.
+    expect(await count("referrer")).toBe(sentBefore);
+
+    const audits = async () =>
+      (await admin.from("audit_events").select("id", { count: "exact", head: true }).eq("referral_id", referral)).count ?? 0;
+    const auditsBefore = await audits();
+    await count("receiver");
+    expect(await audits()).toBe(auditsBefore);
+
+    expect((await act("receiver", referral, { action: "accept" })).status).toBe(200);
+    expect(await count("receiver")).toBe(before);
   });
 
   it("is only for doctors acting through their own active doctor record", async () => {

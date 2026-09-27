@@ -208,6 +208,16 @@ async function run() {
       check(booked.error !== null, `receptionist: booking around the booking engine over REST → refused (${booked.error?.code ?? "no error"})`);
       const renamed = await reception.from("patients").update({ full_name: "Renamed" }).eq("id", W).select("id");
       check(renamed.error !== null && (renamed.data ?? []).length === 0, `receptionist: editing a patient over REST → refused (${renamed.error?.code ?? "no error"})`);
+      // Patient communication is the server's: no forged operator reply, no redirected reminder.
+      const [conversation] = await db`insert into public.conversations (clinic_id, patient_id, channel) values (${clinic}, ${W}, 'telegram') returning id`;
+      const forged = await reception.from("messages").insert({ clinic_id: clinic, conversation_id: conversation.id, role: "admin", type: "text", content: "Forged reply" });
+      check(forged.error !== null, `receptionist: forging an operator reply over REST → refused (${forged.error?.code ?? "no error"})`);
+      const takeover = await reception.from("conversations").update({ status: "assigned" }).eq("id", conversation.id).select("id");
+      check(takeover.error !== null && (takeover.data ?? []).length === 0, `receptionist: taking over a conversation over REST → refused (${takeover.error?.code ?? "no error"})`);
+      const redirected = await manager.from("notification_jobs").update({ patient_telegram_user_id: 424242 }).eq("clinic_id", clinic).select("id");
+      check(redirected.error !== null && (redirected.data ?? []).length === 0, `manager: redirecting reminders to another Telegram user over REST → refused (${redirected.error?.code ?? "no error"})`);
+      const [{ messages }] = await db`select count(*)::int as messages from public.messages where conversation_id = ${conversation.id}`;
+      check(messages === 0, "no forged message was stored");
       for (const [fn, args] of [
         ["start_consultation", { p_clinic_id: clinic, p_appointment_id: receiverBooked, p_from_status: "checked_in", p_actor: receiver.profile_id, p_via: "doctor_queue" }],
         ["consume_rate_limit", { p_key: `doctor-patient-record:${receiver.profile_id}`, p_limit: 1, p_window_seconds: 60 }],

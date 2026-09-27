@@ -156,7 +156,7 @@ async function run() {
       check(true, "B sees pending referrals on the dashboard");
       await fitsWidth(page, "tablet: doctor dashboard");
       // Tablets (≥ 768px) get the sidebar; phones the navigation strip (checked below).
-      await page.getByRole("link", { name: "Yo‘llanmalar", exact: true }).first().click();
+      await page.getByRole("link", { name: /^Yo‘llanmalar/ }).first().click();
       await page.getByText(REASON).waitFor();
       check(true, "B's referral list shows A's referral");
       await fitsWidth(page, "tablet: referrals list");

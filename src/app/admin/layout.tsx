@@ -3,7 +3,7 @@ import Link from "next/link";
 import { adminWorkspaceRedirect, getStaffContext, hasRole, isCallCenterStaff, canViewPaymentDynamics } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
-import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet } from "lucide-react";
+import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound } from "lucide-react";
 
 export const metadata = { title: "Boshqaruv paneli" };
 
@@ -33,7 +33,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin/faqs", label: "Savol-javoblar", icon: <MessagesSquare className="h-4 w-4" />, show: isManagement },
     { href: "/admin/analytics", label: "Tahlillar", icon: <BarChart3 className="h-4 w-4" />, show: isManagement },
     { href: "/admin/finance", label: "Moliya", icon: <Wallet className="h-4 w-4" />, show: financeVisible },
+    { href: "/admin/staff", label: "Xodimlar", icon: <UserCog className="h-4 w-4" />, show: hasRole(ctx, "owner") },
     { href: "/admin/settings", label: "Sozlamalar", icon: <Settings className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/password", label: "Parolim", icon: <KeyRound className="h-4 w-4" />, show: true },
   ].filter((n) => n.show !== false);
 
   return (

@@ -14,6 +14,7 @@ export const DEMO = {
   receiver: "dr.nazarova@e2e.local",
   reception: "reception@e2e.local",
   manager: "manager@e2e.local",
+  owner: "owner@e2e.local",
 };
 export const DEMO_NAMES = {
   referrer: "Aliyev Jasur",
