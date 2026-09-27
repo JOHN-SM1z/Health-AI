@@ -309,7 +309,7 @@ describeDb("role-based authorization (Phase 2)", () => {
     expect(after.data!.status).toBe(before.data!.status);
   });
 
-  it("receptionist replies inside a conversation as admin", async () => {
+  it("receptionist cannot write a reply over REST — the server records replies after Telegram accepted them", async () => {
     const c = clients.get("receptionist")!;
     const { data, error } = await c
       .from("messages")
@@ -318,23 +318,21 @@ describeDb("role-based authorization (Phase 2)", () => {
         conversation_id: conversationId,
         role: "admin",
         type: "text",
-        content: "Test reply from receptionist",
+        content: "Forged reply that was never delivered",
       })
-      .select("id")
-      .single();
-    expect(error).toBeNull();
-    expect(data!.id).toBeTruthy();
+      .select("id");
+    expect(error?.code).toBe("42501");
+    expect(data).toBeNull();
   });
 
-  it("receptionist cannot take over conversations of another clinic (no cross-tenant rows)", async () => {
+  it("receptionist cannot take over a conversation over REST, even in their own clinic — takeover is the server's compare-and-set", async () => {
     const c = clients.get("receptionist")!;
-    const otherClinic = "99999999-9999-4999-8999-999999999999"; // does not exist
     const { error } = await c
       .from("conversations")
       .update({ status: "assigned", taken_over_by: "00000000-0000-0000-0000-000000000000" })
       .eq("id", conversationId)
-      .eq("clinic_id", otherClinic);
-    expect(error).toBeNull(); // zero rows affected — no error, but nothing changed
+      .eq("clinic_id", CLINIC);
+    expect(error?.code).toBe("42501");
   });
 
   // ---------- Manager: admin-equivalent powers ----------

@@ -69,10 +69,10 @@ export type Database = {
           },
           {
             foreignKeyName: "analytics_events_patient_id_fkey"
-            columns: ["patient_id"]
+            columns: ["patient_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "patients"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
         ]
       }
@@ -406,10 +406,10 @@ export type Database = {
           },
           {
             foreignKeyName: "clinical_records_corrects_record_id_fkey"
-            columns: ["corrects_record_id"]
+            columns: ["corrects_record_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "clinical_records"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
           {
             foreignKeyName: "clinical_records_created_by_fkey"
@@ -492,6 +492,7 @@ export type Database = {
           taken_over_at: string | null
           taken_over_by: string | null
           updated_at: string
+          urgent_at: string | null
         }
         Insert: {
           admin_seen_at?: string | null
@@ -509,6 +510,7 @@ export type Database = {
           taken_over_at?: string | null
           taken_over_by?: string | null
           updated_at?: string
+          urgent_at?: string | null
         }
         Update: {
           admin_seen_at?: string | null
@@ -526,6 +528,7 @@ export type Database = {
           taken_over_at?: string | null
           taken_over_by?: string | null
           updated_at?: string
+          urgent_at?: string | null
         }
         Relationships: [
           {
@@ -537,10 +540,10 @@ export type Database = {
           },
           {
             foreignKeyName: "conversations_patient_id_fkey"
-            columns: ["patient_id"]
+            columns: ["patient_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "patients"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
           {
             foreignKeyName: "conversations_taken_over_by_fkey"
@@ -638,10 +641,10 @@ export type Database = {
           },
           {
             foreignKeyName: "doctor_time_blocks_doctor_id_fkey"
-            columns: ["doctor_id"]
+            columns: ["doctor_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "doctors"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
         ]
       }
@@ -680,10 +683,10 @@ export type Database = {
           },
           {
             foreignKeyName: "doctor_working_hours_doctor_id_fkey"
-            columns: ["doctor_id"]
+            columns: ["doctor_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "doctors"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
         ]
       }
@@ -744,10 +747,10 @@ export type Database = {
           },
           {
             foreignKeyName: "doctors_specialty_id_fkey"
-            columns: ["specialty_id"]
+            columns: ["specialty_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "specialties"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
         ]
       }
@@ -842,17 +845,17 @@ export type Database = {
           },
           {
             foreignKeyName: "messages_conversation_id_fkey"
-            columns: ["conversation_id"]
+            columns: ["conversation_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "conversations"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
           {
             foreignKeyName: "messages_voice_message_id_fkey"
-            columns: ["voice_message_id"]
+            columns: ["voice_message_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "voice_messages"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
         ]
       }
@@ -920,10 +923,10 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "notification_jobs_appointment_id_fkey"
-            columns: ["appointment_id"]
+            columns: ["appointment_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "appointments"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
           {
             foreignKeyName: "notification_jobs_clinic_id_fkey"
@@ -934,10 +937,10 @@ export type Database = {
           },
           {
             foreignKeyName: "notification_jobs_conversation_id_fkey"
-            columns: ["conversation_id"]
+            columns: ["conversation_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "conversations"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
         ]
       }
@@ -1058,10 +1061,10 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "payments_appointment_id_fkey"
-            columns: ["appointment_id"]
+            columns: ["appointment_id", "clinic_id"]
             isOneToOne: true
             referencedRelation: "appointments"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
           {
             foreignKeyName: "payments_clinic_id_fkey"
@@ -1079,10 +1082,10 @@ export type Database = {
           },
           {
             foreignKeyName: "payments_patient_id_fkey"
-            columns: ["patient_id"]
+            columns: ["patient_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "patients"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
         ]
       }
@@ -1419,10 +1422,10 @@ export type Database = {
           },
           {
             foreignKeyName: "services_specialty_id_fkey"
-            columns: ["specialty_id"]
+            columns: ["specialty_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "specialties"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
         ]
       }
@@ -1514,6 +1517,7 @@ export type Database = {
           expires_at: string | null
           id: string
           mime_type: string | null
+          purged_at: string | null
           retention_days: number
           size_bytes: number | null
           storage_path: string | null
@@ -1535,6 +1539,7 @@ export type Database = {
           expires_at?: string | null
           id?: string
           mime_type?: string | null
+          purged_at?: string | null
           retention_days?: number
           size_bytes?: number | null
           storage_path?: string | null
@@ -1556,6 +1561,7 @@ export type Database = {
           expires_at?: string | null
           id?: string
           mime_type?: string | null
+          purged_at?: string | null
           retention_days?: number
           size_bytes?: number | null
           storage_path?: string | null
@@ -1577,10 +1583,10 @@ export type Database = {
           },
           {
             foreignKeyName: "voice_messages_conversation_id_fkey"
-            columns: ["conversation_id"]
+            columns: ["conversation_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "conversations"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "clinic_id"]
           },
         ]
       }
