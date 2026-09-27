@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
+import { asOnlyGlobalSweep } from "@/test/referral-sweep-lock";
 
 /**
  * The referral lifecycle at the DATABASE layer — every transition, what it
@@ -314,27 +315,29 @@ describeDb("referral lifecycle — transitions, access termination and audit (da
   });
 
   it("PENDING → EXPIRED: access ends at expires_at, before anything records it; the sweep records it once, as the system", async () => {
-    const x = await patientX();
-    const referral = await refer(x, "2 seconds");
-    expect((await reach(profiles.b, x.id, referral)).patient).toBe(true);
-    await wait(2_300);
+    await asOnlyGlobalSweep(async () => {
+      const x = await patientX();
+      const referral = await refer(x, "2 seconds");
+      expect((await reach(profiles.b, x.id, referral)).patient).toBe(true);
+      await wait(2_300);
 
-    expect(await status(referral)).toBe("pending");
-    expect(await access(doctors.b, x.id)).toMatchObject({ active_referral_ids: [], referral_appointment_ids: [] });
-    expect(await reach(profiles.b, x.id, referral)).toEqual(nothing);
+      expect(await status(referral)).toBe("pending");
+      expect(await access(doctors.b, x.id)).toMatchObject({ active_referral_ids: [], referral_appointment_ids: [] });
+      expect(await reach(profiles.b, x.id, referral)).toEqual(nothing);
 
-    // The sweep: scoped to another clinic it touches nothing; then it records the expiry exactly once.
-    await asServer((tx) => tx`select public.expire_due_referrals(${clinicB})`);
-    expect(await status(referral)).toBe("pending");
-    const [{ n }] = await asServer((tx) => tx<{ n: number }[]>`select public.expire_due_referrals(${clinicA}) as n`);
-    expect(n).toBeGreaterThanOrEqual(1);
-    expect(await status(referral)).toBe("expired");
-    const row = await lastAudit(referral);
-    expectWellFormed(row, x.id, referral, "referral_expired", null);
-    expect(row.metadata).toEqual({ cause: "validity_elapsed" });
-    await asServer((tx) => tx`select public.expire_due_referrals()`);
-    expect((await audits(referral)).filter((a) => a.action === "referral_expired")).toHaveLength(1);
-  });
+      // The sweep: scoped to another clinic it touches nothing; then it records the expiry exactly once.
+      await asServer((tx) => tx`select public.expire_due_referrals(${clinicB})`);
+      expect(await status(referral)).toBe("pending");
+      const [{ n }] = await asServer((tx) => tx<{ n: number }[]>`select public.expire_due_referrals(${clinicA}) as n`);
+      expect(n).toBeGreaterThanOrEqual(1);
+      expect(await status(referral)).toBe("expired");
+      const row = await lastAudit(referral);
+      expectWellFormed(row, x.id, referral, "referral_expired", null);
+      expect(row.metadata).toEqual({ cause: "validity_elapsed" });
+      await asServer((tx) => tx`select public.expire_due_referrals()`);
+      expect((await audits(referral)).filter((a) => a.action === "referral_expired")).toHaveLength(1);
+    });
+  }, 20_000);
 
   it("ACCEPTED → IN_PROGRESS: Dr B's consultation starts; Dr A sees it as the referral's follow-up", async () => {
     const x = await patientX();

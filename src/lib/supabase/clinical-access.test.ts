@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
+import { withoutGlobalSweeps } from "@/test/referral-sweep-lock";
 
 /**
  * Referral-based clinical access — the DATABASE layer
@@ -283,34 +284,36 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
   });
 
   it("4. Doctor B loses access after referral expiration", async () => {
-    const x = await patientX();
-    // Expires in two seconds (the DB clock), accepted before that.
-    const referral = await asServer(async (tx) => {
-      const [{ soon }] = await tx<{ soon: Date }[]>`select now() + interval '2 seconds' as soon`;
-      const [row] = await tx<{ id: string }[]>`insert into public.referrals ${tx({
-        clinic_id: clinicA,
-        patient_id: x.id,
-        referring_doctor_id: doctors.a,
-        referred_to_doctor_id: doctors.b,
-        originating_appointment_id: x.consultation,
-        reason: `Short-lived referral (${suffix})`,
-        priority: "routine",
-        created_by: profiles.a,
-        expires_at: soon,
-      })} returning id`;
-      return row.id;
+    await withoutGlobalSweeps(async () => {
+      const x = await patientX();
+      // Expires in two seconds (the DB clock), accepted before that.
+      const referral = await asServer(async (tx) => {
+        const [{ soon }] = await tx<{ soon: Date }[]>`select now() + interval '2 seconds' as soon`;
+        const [row] = await tx<{ id: string }[]>`insert into public.referrals ${tx({
+          clinic_id: clinicA,
+          patient_id: x.id,
+          referring_doctor_id: doctors.a,
+          referred_to_doctor_id: doctors.b,
+          originating_appointment_id: x.consultation,
+          reason: `Short-lived referral (${suffix})`,
+          priority: "routine",
+          created_by: profiles.a,
+          expires_at: soon,
+        })} returning id`;
+        return row.id;
+      });
+      await accept(referral);
+      expect((await seenBy(profiles.b, x.id)).appointments).toEqual([...x.withA].sort());
+
+      await new Promise((r) => setTimeout(r, 2_500));
+
+      // Still stored as accepted (no sweep has run), yet access has ended.
+      const [{ status }] = await sql<{ status: string }[]>`select status from public.referrals where id = ${referral}`;
+      expect(status).toBe("accepted");
+      expect(await access(doctors.b, x.id)).toMatchObject({ active_referral_ids: [], history_doctor_ids: [] });
+      expect(await seenBy(profiles.b, x.id)).toEqual(nothing);
     });
-    await accept(referral);
-    expect((await seenBy(profiles.b, x.id)).appointments).toEqual([...x.withA].sort());
-
-    await new Promise((r) => setTimeout(r, 2_500));
-
-    // Still stored as accepted (no sweep has run), yet access has ended.
-    const [{ status }] = await sql<{ status: string }[]>`select status from public.referrals where id = ${referral}`;
-    expect(status).toBe("accepted");
-    expect(await access(doctors.b, x.id)).toMatchObject({ active_referral_ids: [], history_doctor_ids: [] });
-    expect(await seenBy(profiles.b, x.id)).toEqual(nothing);
-  });
+  }, 20_000);
 
   it("5. Doctor B loses access after referral revocation", async () => {
     for (const revoker of [profiles.a, profiles.manager]) {

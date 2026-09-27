@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
+import { withoutGlobalSweeps } from "@/test/referral-sweep-lock";
 
 /**
  * Referral data model (Phase 1) — the database-level guarantees of
@@ -860,31 +861,33 @@ describeDb("referrals data model (Phase 1)", () => {
     it(
       "expiry: nothing is accepted after expires_at, expiring early is refused, and the receiving doctor loses access",
       async () => {
-        const visit = await consultation();
-        const referral = await asServer(async (tx) => {
-          const [{ soon }] = await tx<{ soon: Date }[]>`select now() + interval '2 seconds' as soon`;
-          const [row] = await tx<Referral[]>`insert into public.referrals ${tx(referralValues(visit, { expires_at: soon }))} returning *`;
-          return row;
+        await withoutGlobalSweeps(async () => {
+          const visit = await consultation();
+          const referral = await asServer(async (tx) => {
+            const [{ soon }] = await tx<{ soon: Date }[]>`select now() + interval '2 seconds' as soon`;
+            const [row] = await tx<Referral[]>`insert into public.referrals ${tx(referralValues(visit, { expires_at: soon }))} returning *`;
+            return row;
+          });
+
+          const early = await pgError(() => transition(referral.id, { status: "expired" }));
+          expect(early.message).toMatch(/does not expire until/);
+          expect(await visibleTo(profiles.receiver, referral.id)).toBe(true);
+
+          await new Promise((resolve) => setTimeout(resolve, 2_100));
+
+          expect(await visibleTo(profiles.receiver, referral.id)).toBe(false);
+          expect(await visibleTo(profiles.referrer, referral.id)).toBe(true);
+
+          const late = await pgError(() => transition(referral.id, { status: "accepted", accepted_by: profiles.receiver }));
+          expect(late.message).toMatch(/expired at/);
+
+          const expired = await transition(referral.id, { status: "expired" });
+          expect(expired.status).toBe("expired");
+          const trail = await auditTrail(referral.id);
+          expect(trail.at(-1)).toMatchObject({ action: "referral_expired", actor_id: null, actor_type: "system" });
         });
-
-        const early = await pgError(() => transition(referral.id, { status: "expired" }));
-        expect(early.message).toMatch(/does not expire until/);
-        expect(await visibleTo(profiles.receiver, referral.id)).toBe(true);
-
-        await new Promise((resolve) => setTimeout(resolve, 2_100));
-
-        expect(await visibleTo(profiles.receiver, referral.id)).toBe(false);
-        expect(await visibleTo(profiles.referrer, referral.id)).toBe(true);
-
-        const late = await pgError(() => transition(referral.id, { status: "accepted", accepted_by: profiles.receiver }));
-        expect(late.message).toMatch(/expired at/);
-
-        const expired = await transition(referral.id, { status: "expired" });
-        expect(expired.status).toBe("expired");
-        const trail = await auditTrail(referral.id);
-        expect(trail.at(-1)).toMatchObject({ action: "referral_expired", actor_id: null, actor_type: "system" });
       },
-      15_000,
+      20_000,
     );
   });
 

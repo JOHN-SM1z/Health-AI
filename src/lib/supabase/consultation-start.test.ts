@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
 import { daytimeTimezone } from "@/test/daytime-timezone";
+import { withoutGlobalSweeps } from "@/test/referral-sweep-lock";
 
 /**
  * Starting a consultation at the DATABASE layer
@@ -246,13 +247,15 @@ describeDb("consultation start — one transaction, exactly once (database layer
     expect(await referral(pending)).toMatchObject({ status: "pending", follow_up_appointment_id: null });
 
     // Accepted but expired by the database clock.
-    const p2 = await newPatient();
-    const expired = await acceptedReferral(p2, { validFor: "1 second" });
-    await new Promise((r) => setTimeout(r, 1200));
-    const late = await visit(p2, doctors.b);
-    expect(await start(late, "checked_in", profiles.b, "doctor_queue", true, doctors.b)).toEqual({ started: true, referral_id: null });
-    expect(await referral(expired)).toMatchObject({ status: "accepted", follow_up_appointment_id: null });
-  });
+    await withoutGlobalSweeps(async () => {
+      const p2 = await newPatient();
+      const expired = await acceptedReferral(p2, { validFor: "1 second" });
+      await new Promise((r) => setTimeout(r, 1200));
+      const late = await visit(p2, doctors.b);
+      expect(await start(late, "checked_in", profiles.b, "doctor_queue", true, doctors.b)).toEqual({ started: true, referral_id: null });
+      expect(await referral(expired)).toMatchObject({ status: "accepted", follow_up_appointment_id: null });
+    });
+  }, 20_000);
 
   it("is all or nothing: when the audit row cannot be written, the appointment does not start", async () => {
     const patient = await newPatient();

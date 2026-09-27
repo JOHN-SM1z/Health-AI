@@ -31,6 +31,7 @@ import { GET as getReferral, PATCH as actOnReferral } from "./[id]/route";
 import { GET as getWorkspace } from "../patients/[id]/route";
 import { PATCH as revokeAsManagement } from "@/app/api/admin/referrals/[id]/route";
 import { POST as expireJob } from "@/app/api/referrals/expire/route";
+import { asOnlyGlobalSweep } from "@/test/referral-sweep-lock";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
@@ -307,28 +308,30 @@ describeDb("referral lifecycle through the API — transitions, access terminati
   });
 
   it("expired: access ends at expires_at; the scheduled job records it (as the system) and requires the cron secret", async () => {
-    const x = await patientX();
-    const referral = await shortLived(x, 2_000);
-    await act("b", referral, { action: "accept" });
-    expect((await workspace("b", x.id)).status).toBe(200);
-    await new Promise((r) => setTimeout(r, 2_500));
+    await asOnlyGlobalSweep(async () => {
+      const x = await patientX();
+      const referral = await shortLived(x, 2_000);
+      await act("b", referral, { action: "accept" });
+      expect((await workspace("b", x.id)).status).toBe(200);
+      await new Promise((r) => setTimeout(r, 2_500));
 
-    // Ended before anything recorded it.
-    expect(await status(referral)).toBe("accepted");
-    expect(await workspace("b", x.id)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
+      // Ended before anything recorded it.
+      expect(await status(referral)).toBe("accepted");
+      expect(await workspace("b", x.id)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
 
-    // The job: no secret, a wrong one → 401 and nothing changes.
-    for (const auth of [undefined, "Bearer wrong-secret", `Bearer ${env.CRON_SECRET}x`]) {
-      const res = await expireJob(request("POST", "/api/referrals/expire", undefined, auth ? { authorization: auth } : {}));
-      expect(res.status).toBe(401);
-    }
-    expect(await status(referral)).toBe("accepted");
-    const res = await expireJob(request("POST", "/api/referrals/expire", undefined, { authorization: `Bearer ${env.CRON_SECRET}` }));
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as { expired: number }).expired).toBeGreaterThanOrEqual(1);
-    expect(await status(referral)).toBe("expired");
-    await expectLifecycleAudit(referral, x.id, "referral_expired", null);
-    expect(await detail("b", referral)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
+      // The job: no secret, a wrong one → 401 and nothing changes.
+      for (const auth of [undefined, "Bearer wrong-secret", `Bearer ${env.CRON_SECRET}x`]) {
+        const res = await expireJob(request("POST", "/api/referrals/expire", undefined, auth ? { authorization: auth } : {}));
+        expect(res.status).toBe(401);
+      }
+      expect(await status(referral)).toBe("accepted");
+      const res = await expireJob(request("POST", "/api/referrals/expire", undefined, { authorization: `Bearer ${env.CRON_SECRET}` }));
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { expired: number }).expired).toBeGreaterThanOrEqual(1);
+      expect(await status(referral)).toBe("expired");
+      await expectLifecycleAudit(referral, x.id, "referral_expired", null);
+      expect(await detail("b", referral)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
+    });
   }, 20_000); // waits for a real expiry (seconds) — generous under parallel load
 
   it("completed: no referral-based access for Dr B — and past expires_at neither doctor keeps anything of the other's", async () => {

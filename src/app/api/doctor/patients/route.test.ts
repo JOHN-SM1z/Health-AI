@@ -40,6 +40,7 @@ import { PATCH as setAppointmentStatus } from "../appointments/[id]/route";
 import { PATCH as revokeAsManagement } from "@/app/api/admin/referrals/[id]/route";
 import { GET as getAdminPatient } from "@/app/api/admin/patients/route";
 import { canDoctorAccessPatientClinicalData } from "@/lib/clinical-access/access";
+import { withoutGlobalSweeps } from "@/test/referral-sweep-lock";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
@@ -303,42 +304,44 @@ describeDb("referral-based clinical access — server and API layers", () => {
   });
 
   it("4. Doctor B loses access after referral expiration", async () => {
-    const x = await patientX();
-    // Valid for four seconds; accepted straight away.
-    const { data: short, error } = await admin
-      .from("referrals")
-      .insert({
-        clinic_id: clinicA,
-        patient_id: x.id,
-        referring_doctor_id: doctors.a,
-        referred_to_doctor_id: doctors.b,
-        originating_appointment_id: x.consultation,
-        reason: `Short-lived referral (${suffix})`,
-        created_by: users.a,
-        expires_at: new Date(Date.now() + 4_000).toISOString(),
-      })
-      .select("id")
-      .single();
-    expect(error).toBeNull();
-    expect(await act("b", short!.id, { action: "accept" })).toMatchObject({ status: 200 });
-    expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual(x.withA);
+    await withoutGlobalSweeps(async () => {
+      const x = await patientX();
+      // Valid for four seconds; accepted straight away.
+      const { data: short, error } = await admin
+        .from("referrals")
+        .insert({
+          clinic_id: clinicA,
+          patient_id: x.id,
+          referring_doctor_id: doctors.a,
+          referred_to_doctor_id: doctors.b,
+          originating_appointment_id: x.consultation,
+          reason: `Short-lived referral (${suffix})`,
+          created_by: users.a,
+          expires_at: new Date(Date.now() + 4_000).toISOString(),
+        })
+        .select("id")
+        .single();
+      expect(error).toBeNull();
+      expect(await act("b", short!.id, { action: "accept" })).toMatchObject({ status: 200 });
+      expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual(x.withA);
 
-    await new Promise((r) => setTimeout(r, 4_500));
+      await new Promise((r) => setTimeout(r, 4_500));
 
-    // Access ends at expires_at — nothing has to mark the referral expired first.
-    expect(await canDoctorAccessPatientClinicalData(doctors.b, x.id)).toMatchObject({ relationship: "none" });
-    expect(await record("b", x.id)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
-    expect(await referralStatus(short!.id)).toBe("accepted");
-    // Reading referrals records the expiry (by the system) — Dr B still gets nothing.
-    expect(await referralDetail("b", short!.id)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
-    expect(await referralStatus(short!.id)).toBe("expired");
-    const { data: expired } = await admin
-      .from("audit_events")
-      .select("actor_id, actor_type, clinic_id, patient_id, referral_id")
-      .eq("action", "referral_expired")
-      .eq("referral_id", short!.id);
-    expect(expired).toEqual([{ actor_id: null, actor_type: "system", clinic_id: clinicA, patient_id: x.id, referral_id: short!.id }]);
-  });
+      // Access ends at expires_at — nothing has to mark the referral expired first.
+      expect(await canDoctorAccessPatientClinicalData(doctors.b, x.id)).toMatchObject({ relationship: "none" });
+      expect(await record("b", x.id)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
+      expect(await referralStatus(short!.id)).toBe("accepted");
+      // Reading referrals records the expiry (by the system) — Dr B still gets nothing.
+      expect(await referralDetail("b", short!.id)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
+      expect(await referralStatus(short!.id)).toBe("expired");
+      const { data: expired } = await admin
+        .from("audit_events")
+        .select("actor_id, actor_type, clinic_id, patient_id, referral_id")
+        .eq("action", "referral_expired")
+        .eq("referral_id", short!.id);
+      expect(expired).toEqual([{ actor_id: null, actor_type: "system", clinic_id: clinicA, patient_id: x.id, referral_id: short!.id }]);
+    });
+  }, 20_000);
 
   it("5. Doctor B loses access after referral revocation", async () => {
     // By the referring doctor…
