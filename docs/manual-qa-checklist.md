@@ -84,6 +84,15 @@ Each row: expected behavior. Mark all green = go.
 - [ ] After revoke / expiry: the workspace shows *Yo‘llanma bekor qilingan* / *muddati tugagan* with no patient data; an unrelated patient id shows *Bemor topilmadi*
 - [ ] Reception, managers and owners never see clinical records (patient panel, REST API)
 
+## Referral lifecycle and audit
+
+- [ ] Workspace header of a referred patient shows *Yo‘llanma bo‘yicha kirish … da tugaydi*
+- [ ] A short-lived referral: at its expiry Doctor B gets *Yo‘llanma muddati tugagan* immediately; `POST /api/referrals/expire` without the bearer → 401, with it → `{ ok: true, expired: n }` and status `expired`
+- [ ] Revoke (Doctor A or a manager): Doctor B's next request is refused
+- [ ] Completed: Doctor B sees only their own consultation; after the referral's validity ends Doctor B no longer opens the referral and Doctor A no longer sees Doctor B's follow-up
+- [ ] With a doctor's own token, `GET /rest/v1/referrals` and `/rest/v1/clinical_records` → permission denied
+- [ ] `audit_events` rows for each step carry `patient_id`, `referral_id`, actor (or `system` for expiry); a manager of another clinic sees none of them; no UPDATE/DELETE possible
+
 ## Notifications
 
 - [ ] Cloud Scheduler runs; reminder arrives ~1h before a confirmed appointment

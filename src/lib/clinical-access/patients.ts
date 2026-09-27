@@ -4,9 +4,9 @@ import { ApiError } from "@/lib/api/errors";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 
 /**
- * The patients a doctor may open: their own (any appointment with them) and
- * those actively referred to them (pending, accepted or in progress,
- * unexpired) — the same
+ * The patients a doctor may open: their own (a live — not cancelled —
+ * appointment with them, or a record they wrote) and those actively referred
+ * to them (pending, accepted or in progress, unexpired) — the same
  * rule as public.doctor_patient_access(), so every patient listed here opens
  * in the workspace and no other patient of the clinic ever appears.
  */
@@ -41,13 +41,20 @@ function matches(p: { full_name: string | null; phone: string | null }, q: strin
 
 export async function listDoctorPatients(doctor: LinkedDoctor, query: string): Promise<DoctorPatientSummary[]> {
   const supabase = createAdminClient();
-  const [visitsRes, referralsRes] = await Promise.all([
+  const [visitsRes, authoredRes, referralsRes] = await Promise.all([
     supabase
       .from("appointments")
       .select("patient_id, start_at, status")
       .eq("clinic_id", doctor.clinicId)
       .eq("doctor_id", doctor.doctorId)
+      .neq("status", "cancelled")
       .order("start_at", { ascending: false })
+      .limit(MAX_VISITS_SCANNED),
+    supabase
+      .from("clinical_records")
+      .select("patient_id")
+      .eq("clinic_id", doctor.clinicId)
+      .eq("author_doctor_id", doctor.doctorId)
       .limit(MAX_VISITS_SCANNED),
     supabase
       .from("referrals")
@@ -58,10 +65,10 @@ export async function listDoctorPatients(doctor: LinkedDoctor, query: string): P
       .gt("expires_at", new Date().toISOString())
       .order("created_at", { ascending: false }),
   ]);
-  if (visitsRes.error || referralsRes.error) throw new ApiError(500, "Bemorlarni yuklab bo‘lmadi");
+  if (visitsRes.error || authoredRes.error || referralsRes.error) throw new ApiError(500, "Bemorlarni yuklab bo‘lmadi");
 
-  // Any appointment makes the patient the doctor's own (as in the decision).
-  const own = new Set<string>();
+  // A live appointment or an authored record makes the patient the doctor's own (as in the decision).
+  const own = new Set<string>((authoredRes.data ?? []).map((r) => r.patient_id));
   const lastVisit = new Map<string, string>();
   for (const v of visitsRes.data ?? []) {
     own.add(v.patient_id);

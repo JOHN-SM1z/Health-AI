@@ -70,6 +70,8 @@ type ConsultationRef = { appointmentId: string; startAt: string; serviceName: st
 type Workspace = {
   patient: { id: string; fullName: string | null; phone: string | null };
   relationship: "own" | "referred";
+  /** When referral-based access ends at the latest (null: none open). */
+  referralAccessUntil: string | null;
   appointments: Appointment[];
   records: ClinicalRecord[];
   referrals: Referral[];
@@ -311,6 +313,11 @@ export default function DoctorPatientWorkspacePage() {
         {workspace.relationship === "own" && <ABadge tone="green">Mening bemorim</ABadge>}
         {(workspace.relationship === "referred" || activeReferralToMe) && <ABadge tone="blue">Yo‘llanma bo‘yicha</ABadge>}
         <span className="text-ink-muted">Faqat sizga ruxsat etilgan ma‘lumotlar ko‘rsatiladi.</span>
+        {workspace.referralAccessUntil && (
+          <span className="text-ink-muted">
+            Yo‘llanma bo‘yicha kirish {formatDateTime(workspace.referralAccessUntil)} da tugaydi (yo‘llanma yopilsa — darhol).
+          </span>
+        )}
       </div>
 
       {workspace.referrals.length > 0 && (

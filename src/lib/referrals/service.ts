@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
-import { recordAudit } from "@/lib/audit";
+import { recordAudit, recordAudits } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 import { canDoctorAccessPatientClinicalData, canSeeAppointment } from "@/lib/clinical-access/access";
@@ -34,11 +34,6 @@ const INACTIVE_APPOINTMENT_STATUSES = ["cancelled", "no_show"];
 /** A booked follow-up that has not started yet: a consultation that took place may replace it. */
 const NOT_STARTED_APPOINTMENT_STATUSES = ["pending", "confirmed", "checked_in"];
 
-// Open referrals past their expiry are marked expired on the next read. The
-// database compares against its own now(), so only referrals expired for
-// longer than this margin are swept — the app's clock can never race it.
-const EXPIRY_SWEEP_MARGIN_MS = 60_000;
-
 const REFERRING = "referring:doctors!referrals_referring_doctor_same_clinic_fkey";
 const REFERRED_TO = "referred_to:doctors!referrals_referred_to_doctor_same_clinic_fkey";
 
@@ -67,10 +62,16 @@ function roleOf(doctor: LinkedDoctor, row: { referring_doctor_id: string; referr
   return null;
 }
 
-/** Same rule as the "referrals read for receiving doctor" RLS policy. */
-function visibleTo(role: ReferralRole | null, status: ReferralStatus): boolean {
+/**
+ * Same rule as the "referrals read for receiving doctor" RLS policy: the
+ * referring doctor always sees their referral; the receiving doctor while it
+ * is open or completed — and never past expires_at, so a completed referral
+ * does not stay readable forever. (An open one past expires_at is already
+ * reported as expired by effectiveStatus.)
+ */
+function visibleTo(role: ReferralRole | null, status: ReferralStatus, expiresAt: string, now = Date.now()): boolean {
   if (role === "referrer") return true;
-  return role === "receiver" && (OPEN_STATUSES.includes(status) || status === "completed");
+  return role === "receiver" && (OPEN_STATUSES.includes(status) || status === "completed") && Date.parse(expiresAt) > now;
 }
 
 /** Maps a database rule violation to an API error without logging row data. */
@@ -139,15 +140,20 @@ export function lapsedReferralError(status: ReferralStatus): ApiError {
   return lapsed ? new ApiError(410, lapsed[1], lapsed[0]) : new ApiError(404, "Yo‘llanma topilmadi", "referral_not_found");
 }
 
-/** Marks a clinic's open referrals whose expiry has passed as expired. */
-export async function expireDueReferrals(clinicId: string): Promise<void> {
-  const { error } = await createAdminClient()
-    .from("referrals")
-    .update({ status: "expired" })
-    .eq("clinic_id", clinicId)
-    .in("status", OPEN_STATUSES)
-    .lte("expires_at", new Date(Date.now() - EXPIRY_SWEEP_MARGIN_MS).toISOString());
-  if (error) logger.warn("referral expiry sweep failed", { clinicId, code: error.code });
+/**
+ * Records open referrals past expires_at as expired (audited by the database
+ * as 'referral_expired', actor: system) — one clinic, or every clinic when
+ * called by the scheduled job. Access already ended at expires_at: every
+ * decision compares with the database clock; this only records it. Returns
+ * how many were expired, or null if the sweep failed (reads carry on).
+ */
+export async function expireDueReferrals(clinicId?: string): Promise<number | null> {
+  const { data, error } = await createAdminClient().rpc("expire_due_referrals", clinicId ? { p_clinic_id: clinicId } : {});
+  if (error) {
+    logger.warn("referral expiry sweep failed", { clinicId, code: error.code });
+    return null;
+  }
+  return data ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +220,7 @@ export async function listReferralsForDoctor(
   if (error) throw new ApiError(500, "Yo‘llanmalarni yuklab bo‘lmadi");
 
   const now = Date.now();
-  return ((data ?? []) as unknown as SummaryRow[])
+  const shown = ((data ?? []) as unknown as SummaryRow[])
     .map((row) => ({
       id: row.id,
       status: effectiveStatus(row.status, row.expires_at, now),
@@ -228,8 +234,25 @@ export async function listReferralsForDoctor(
       referringDoctor: row.referring,
       referredToDoctor: row.referred_to,
     }))
-    .filter((r) => box === "outgoing" || visibleTo("receiver", r.status))
+    .filter((r) => box === "outgoing" || visibleTo("receiver", r.status, r.expiresAt, now))
     .filter((r) => !status || r.status === status);
+
+  // Each referral whose text is released is logged as viewed — before it is
+  // returned, and the request fails if that write fails.
+  await recordAudits(
+    shown.map((r) => ({
+      clinicId: doctor.clinicId,
+      action: "referral_viewed",
+      entityType: "referrals",
+      entityId: r.id,
+      patientId: r.patientId,
+      referralId: r.id,
+      actor: { actorId: doctor.profileId, actorType: "staff" as const },
+      metadata: { via: "list", box, role: box === "incoming" ? "receiver" : "referrer", status: r.status },
+    })),
+    { strict: true },
+  );
+  return shown;
 }
 
 export type ReferralDetail = {
@@ -321,7 +344,7 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
   const status = row ? effectiveStatus(row.status, row.expires_at) : null;
   if (!row || !status || !role) throw new ApiError(404, "Yo‘llanma topilmadi", "referral_not_found");
   // The receiving doctor may learn why a referral they had is gone — never its content.
-  if (!visibleTo(role, status)) throw lapsedReferralError(status);
+  if (!visibleTo(role, status, row.expires_at)) throw lapsedReferralError(status);
 
   const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, row.patient_id);
   const historyShared =
@@ -382,8 +405,10 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
     action: "referral_viewed",
     entityType: "referrals",
     entityId: row.id,
+    patientId: row.patient_id,
+    referralId: row.id,
     actor: { actorId: doctor.profileId, actorType: "staff" },
-    metadata: { role, relationship: access.relationship, history_shared: historyShared },
+    metadata: { via: "detail", role, status, relationship: access.relationship, history_shared: historyShared },
     strict: true,
   });
 
@@ -441,7 +466,7 @@ export type PatientReferral = {
 /**
  * The patient's referrals the calling doctor is on and may still see — the
  * same visibility as the referral pages (the referring doctor: all of theirs;
- * the receiving doctor: open ones while unexpired, and completed).
+ * the receiving doctor: open or completed ones, until expires_at).
  */
 export async function listPatientReferralsForDoctor(doctor: LinkedDoctor, patientId: string): Promise<PatientReferral[]> {
   const { data, error } = await createAdminClient()
@@ -477,7 +502,7 @@ export async function listPatientReferralsForDoctor(doctor: LinkedDoctor, patien
   return rows.flatMap((row) => {
     const role = roleOf(doctor, row);
     const status = effectiveStatus(row.status, row.expires_at, now);
-    if (!role || !visibleTo(role, status)) return [];
+    if (!role || !visibleTo(role, status, row.expires_at, now)) return [];
     return [
       {
         id: row.id,
@@ -503,17 +528,20 @@ export async function listPatientReferralsForDoctor(doctor: LinkedDoctor, patien
  * The receiving doctor's latest referral for a patient, for explaining a
  * refusal ("revoked", "expired"…). Null when there never was one.
  */
-export async function latestReferralToDoctor(doctor: LinkedDoctor, patientId: string): Promise<ReferralStatus | null> {
+export async function latestReferralToDoctor(
+  doctor: LinkedDoctor,
+  patientId: string,
+): Promise<{ id: string; status: ReferralStatus; expiresAt: string } | null> {
   const { data } = await createAdminClient()
     .from("referrals")
-    .select("status, expires_at")
+    .select("id, status, expires_at")
     .eq("clinic_id", doctor.clinicId)
     .eq("patient_id", patientId)
     .eq("referred_to_doctor_id", doctor.doctorId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  return data ? effectiveStatus(data.status, data.expires_at) : null;
+  return data ? { id: data.id, status: effectiveStatus(data.status, data.expires_at), expiresAt: data.expires_at } : null;
 }
 
 /**

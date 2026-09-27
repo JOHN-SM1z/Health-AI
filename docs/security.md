@@ -161,7 +161,8 @@ diagnoses, prescriptions, laboratory orders and results, medical history and fol
   same key with different content is refused (409 `idempotency_key_reused`). The key is never
   copied into `audit_events`.
 - Non-parties get 404 (not 403), so referral ids cannot be probed. The receiving doctor loses
-  access once a referral is declined, revoked or expired.
+  access once a referral is declined, revoked or expired, and a completed one at its
+  `expires_at` (see [Referral lifecycle and access termination](#referral-lifecycle-and-access-termination)).
 - The receiving doctor sees the patient's appointment history with the referring doctor
   (date, service, status — no clinical text) only after accepting.
 - Lifecycle (`20260928000002_clinical_handoff.sql`): `pending → accepted → in_progress →
@@ -190,6 +191,57 @@ diagnoses, prescriptions, laboratory orders and results, medical history and fol
   booked follow-up that has not started). If the link loses a race the new appointment
   is cancelled and the request fails (409).
 
+## Referral lifecycle and access termination
+
+`20260929000001_referral_lifecycle_hardening.sql`. One decision, `doctor_patient_access()`,
+answers every read (RLS and server); nothing is stored as a grant, so there is nothing to "clean
+up" — each read compares the referral's status and `expires_at` with the database clock.
+
+| Referral state | Receiving doctor (B), referral-based | Referring doctor (A), referral-based |
+| --- | --- | --- |
+| pending, before `expires_at` | patient record; the originating consultation and its records; the referral | — (A's own patient) |
+| accepted / in progress, before `expires_at` | + all of A's consultations with the patient and their records | + B's follow-up consultation and its records |
+| completed, before `expires_at` | the referral text only — nothing of A's | the outcome: B's follow-up consultation and its records |
+| completed, after `expires_at` | nothing | nothing |
+| declined / revoked / expired | nothing, from that moment (410 with the reason) | the follow-up ends |
+
+- **Expiry.** Access ends at `expires_at` even before the status says so. `expire_due_referrals()`
+  records it (`status = expired`, audit `referral_expired`, actor: system): hourly via
+  `POST /api/referrals/expire` (`Authorization: Bearer $CRON_SECRET`, fails closed) and lazily
+  whenever referrals are read. Validity is at most 180 days (DB check), 90 by default, and can
+  never be extended (the row is immutable outside its transitions).
+- **Revocation** (referring doctor, or owner/admin/manager) ends B's referral-based access on the
+  next request; there is no cache.
+- **Completion** is not a conversion into permanent access: B keeps only what the *own
+  relationship* gives any doctor — a live (not cancelled) appointment with the patient, or a
+  record they wrote: the patient record, their own appointments and their own records. A
+  cancelled booking alone grants nothing.
+- **Clinical text is server-only.** Signed-in roles have no SELECT on `referrals` or
+  `clinical_records`: every read goes through the API, which authorizes it and writes the access
+  log first. The RLS policies remain as a backstop and are tested with a rolled-back grant.
+
+### Referral audit trail
+
+Every event names **actor** (`actor_id`, or `actor_type = system` for expiry), **clinic**,
+**patient** (`patient_id`), **referral** (`referral_id`), **action** and **time** (`created_at`,
+stamped by the database):
+
+| Action | Written by | When |
+| --- | --- | --- |
+| `referral_created` / `_accepted` / `_declined` / `_in_progress` / `_completed` / `_revoked` / `_expired` / `_follow_up_booked` | DB trigger | every transition |
+| `referral_viewed` (`metadata.via` = `detail` / `list`) | server, strict | the referral's text is returned — one row per referral shown |
+| `patient_clinical_record_viewed` | server, strict | a workspace is returned — with the referral it rests on and `shared_record_ids` (records of other doctors released) |
+| `patient_clinical_access_denied` | server | a refused patient read — with the lapsed referral, if any |
+| `consultation_started` | server | a consultation starts — with the referral it belongs to |
+| `clinical_record_created` / `_corrected` | DB trigger | with the referral when written in its consultation |
+
+- **Tenant isolation of the log itself:** read only by the clinic's owner/admin/manager (RLS); a
+  row's patient and referral must belong to its clinic (and to each other) or the insert fails;
+  append-only — no INSERT/UPDATE/DELETE for signed-in roles, no UPDATE/DELETE for the service
+  role. Ids and statuses only, never clinical text.
+- Direct reads with a doctor's own token are limited to `patients`/`appointments` (operational
+  data, no clinical text) and are not logged per row; clinical text never takes that path.
+
 ## Medical safety (non-security but critical)
 
 `src/lib/safety/policy.ts`:
@@ -201,7 +253,8 @@ diagnoses, prescriptions, laboratory orders and results, medical history and fol
 
 ## Audit & monitoring
 
-- `audit_events` records staff mutations and payment transitions (who/what/when, immutable).
+- `audit_events` records staff mutations, payment transitions, the referral lifecycle and clinical
+  access (who/what/when; append-only; see [Referral audit trail](#referral-audit-trail)).
 - Structured JSON logs (Cloud Logging in production), `LOG_LEVEL` configurable.
 - `GET /api/health` for the load balancer.
 

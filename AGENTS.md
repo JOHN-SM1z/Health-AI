@@ -33,6 +33,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - Enable RLS on every exposed table. Enforce authorization in both database policies and server routes.
 - A doctor reaches a patient's clinical data only through `public.doctor_patient_access()` (RLS) and `canDoctorAccessPatientClinicalData()` (server): their own patient, or an active referral to them. Never grant doctors clinic-wide patient access.
+- Referral-based access is never permanent: it ends at decline, revocation or completion and, at the latest, at the referral's `expires_at` (≤ 180 days), checked against the database clock on every read. Clinical text (`referrals`, `clinical_records`) is read only through the server, which authorizes and audits each read — never grant signed-in roles SELECT on those tables. `audit_events` is append-only and tenant-checked.
 - Treat the Supabase service-role client as privileged: use it only in server-only code after explicit clinic/role/ownership authorization.
 - Every tenant-owned query and mutation must scope by `clinic_id`.
 - Never trust role, clinic ID, patient ID, payment status, or Telegram identity from the browser.

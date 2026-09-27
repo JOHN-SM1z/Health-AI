@@ -17,9 +17,13 @@ export async function patientAccessDenied(doctor: LinkedDoctor, patientId: strin
     action: "patient_clinical_access_denied",
     entityType: "patients",
     entityId: patientId,
+    // Only a referral proves the id is a patient of this clinic; a probed id
+    // stays in entity_id and never becomes a patient reference.
+    patientId: lapsed ? patientId : null,
+    referralId: lapsed?.id ?? null,
     actor: { actorId: doctor.profileId, actorType: "staff" },
-    metadata: { doctor_id: doctor.doctorId, referral_status: lapsed },
+    metadata: { doctor_id: doctor.doctorId, referral_status: lapsed?.status ?? null },
   });
-  const error = lapsed ? lapsedReferralError(lapsed) : null;
+  const error = lapsed ? lapsedReferralError(lapsed.status) : null;
   return error && error.status === 410 ? error : new ApiError(404, "Bemor topilmadi", "patient_not_found");
 }

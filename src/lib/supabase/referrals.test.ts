@@ -225,8 +225,27 @@ describeDb("referrals data model (Phase 1)", () => {
       order by created_at, action`;
   }
 
-  function visibleTo(profileId: string, referralId: string): Promise<boolean> {
-    return asStaff(profileId, async (tx) => (await tx`select id from public.referrals where id = ${referralId}`).length === 1);
+  /**
+   * Whether the RLS policy alone lets `profileId` read the referral. Signed-in
+   * roles have no SELECT on referrals (reads go through the audited API), so
+   * the grant is added inside a transaction that is always rolled back — the
+   * policy is checked as the backstop it is.
+   */
+  const ROLLBACK = Symbol("rollback");
+  async function visibleTo(profileId: string, referralId: string, role: "authenticated" | "anon" = "authenticated"): Promise<boolean> {
+    let visible = false;
+    await sql
+      .begin(async (tx) => {
+        await tx.unsafe(`grant select on public.referrals to ${role}`);
+        await tx.unsafe(`set local role ${role}`);
+        await tx`select set_config('request.jwt.claims', ${JSON.stringify(role === "anon" ? { role } : { sub: profileId, role })}, true)`;
+        visible = (await tx`select id from public.referrals where id = ${referralId}`).length === 1;
+        throw ROLLBACK;
+      })
+      .catch((e) => {
+        if (e !== ROLLBACK) throw e;
+      });
+    return visible;
   }
 
   async function setDoctorActive(doctorId: string, active: boolean) {
@@ -547,15 +566,21 @@ describeDb("referrals data model (Phase 1)", () => {
       expect(err.code).toBe("22P02");
     });
 
-    it("keeps the validity window in the future and at most a year long", async () => {
+    it("keeps the validity window in the future and at most 180 days long — no open-ended referral", async () => {
       const visit = await consultation();
-      for (const expiresAt of [new Date(Date.now() - 86_400_000), new Date(Date.now() + 366 * 86_400_000)]) {
+      for (const expiresAt of [new Date(Date.now() - 86_400_000), new Date(Date.now() + 181 * 86_400_000), new Date(Date.now() + 366 * 86_400_000)]) {
         const err = await pgError(() => insertReferral(referralValues(visit, { expires_at: expiresAt })));
         expect(err.code).toBe("23514");
         expect(err.constraint_name).toBe("referrals_expiry_window_check");
       }
-      const withinAYear = await openReferral({ expires_at: new Date(Date.now() + 364 * 86_400_000) });
-      expect(withinAYear.status).toBe("pending");
+      const longest = await openReferral({ expires_at: new Date(Date.now() + 179 * 86_400_000) });
+      expect(longest.status).toBe("pending");
+      // Without an explicit expiry it still ends: 90 days by default.
+      const byDefault = await openReferral();
+      expect(Math.round((byDefault.expires_at.getTime() - byDefault.created_at.getTime()) / 86_400_000)).toBe(90);
+      // …and it can never be moved later.
+      const extended = await pgError(() => transition(byDefault.id, { expires_at: new Date(Date.now() + 120 * 86_400_000) }));
+      expect(extended.message).toMatch(/cannot be edited/);
     });
 
     it("must start as pending", async () => {

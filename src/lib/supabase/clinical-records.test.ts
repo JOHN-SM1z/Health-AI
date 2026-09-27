@@ -147,10 +147,28 @@ describeDb("clinical records — database layer", () => {
   const transition = (id: string, patch: Values) => asServer((tx) => tx`update public.referrals set ${tx(patch)} where id = ${id}`);
 
   /** The record ids of `patient` that `profileId` can read with their own token. */
-  const readable = (profileId: string, patient: string) =>
-    asUser(profileId, async (tx) =>
-      (await tx<{ id: string }[]>`select id from public.clinical_records where patient_id = ${patient}`).map((r) => r.id).sort(),
-    );
+  /**
+   * What the RLS policy alone lets `profileId` read. Signed-in roles have no
+   * SELECT on clinical_records (reads go through the audited API), so the
+   * grant is added inside a transaction that is always rolled back — the
+   * policy is checked as the backstop it is.
+   */
+  const ROLLBACK = Symbol("rollback");
+  async function readable(profileId: string, patient: string): Promise<string[]> {
+    let ids: string[] = [];
+    await sql
+      .begin(async (tx) => {
+        await tx.unsafe("grant select on public.clinical_records to authenticated");
+        await tx.unsafe("set local role authenticated");
+        await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: profileId, role: "authenticated" })}, true)`;
+        ids = (await tx<{ id: string }[]>`select id from public.clinical_records where patient_id = ${patient}`).map((r) => r.id).sort();
+        throw ROLLBACK;
+      })
+      .catch((e) => {
+        if (e !== ROLLBACK) throw e;
+      });
+    return ids;
+  }
 
   /** Patient X: Dr A's two consultations (each with a record) and Dr E's (with one). */
   async function patientX() {
@@ -333,15 +351,27 @@ describeDb("clinical records — database layer", () => {
     expect(await readable(profiles.b, x.id)).toEqual([...aRecords, bRecord].sort());
     expect(await readable(profiles.e, x.id)).toEqual([x.recE]);
 
-    // Revoked: Dr B keeps only their own.
+    // Revoked: Dr B keeps only their own; Dr A no longer sees the follow-up.
     await transition(referral, { status: "revoked", revoked_by: profiles.a, revoked_reason: "Handled elsewhere" });
     expect(await readable(profiles.b, x.id)).toEqual([bRecord]);
+    expect(await readable(profiles.a, x.id)).toEqual(aRecords);
 
     // No relationship, another clinic, and every operational role: nothing.
     for (const profileId of [profiles.c, profiles.k, profiles.receptionist, profiles.manager, profiles.owner]) {
       expect(await readable(profileId, x.id)).toEqual([]);
     }
     expect((await pgError(() => as("anon", null, (tx) => tx`select id from public.clinical_records limit 1`))).code).toBe("42501");
+  });
+
+  it("are never read directly by a signed-in session — only through the audited API", async () => {
+    const x = await patientX();
+    for (const profileId of [profiles.a, profiles.e, profiles.b, profiles.owner, profiles.manager]) {
+      const err = await pgError(() => asUser(profileId, (tx) => tx`select id from public.clinical_records where patient_id = ${x.id}`));
+      expect(err.code).toBe("42501");
+    }
+    // The grant is gone for good — the policy check above ran in rolled-back transactions.
+    const [{ granted }] = await sql<{ granted: boolean }[]>`select has_table_privilege('authenticated', 'public.clinical_records', 'select') as granted`;
+    expect(granted).toBe(false);
   });
 
   it("stops showing a referral's records once it expires, without waiting for the sweep", async () => {

@@ -232,6 +232,8 @@ export type Database = {
           metadata: Json
           new_values: Json | null
           old_values: Json | null
+          patient_id: string | null
+          referral_id: string | null
         }
         Insert: {
           action: string
@@ -246,6 +248,8 @@ export type Database = {
           metadata?: Json
           new_values?: Json | null
           old_values?: Json | null
+          patient_id?: string | null
+          referral_id?: string | null
         }
         Update: {
           action?: string
@@ -260,6 +264,8 @@ export type Database = {
           metadata?: Json
           new_values?: Json | null
           old_values?: Json | null
+          patient_id?: string | null
+          referral_id?: string | null
         }
         Relationships: [
           {
@@ -1632,6 +1638,10 @@ export type Database = {
           own_patient: boolean
           referral_appointment_ids: string[]
         }[]
+      }
+      expire_due_referrals: {
+        Args: { p_clinic_id?: string }
+        Returns: number
       }
       finish_webhook_update: {
         Args: { p_external_id: string; p_source: string }

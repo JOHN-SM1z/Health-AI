@@ -47,6 +47,12 @@ export type PatientWorkspace = {
   patient: { id: string; fullName: string | null; phone: string | null; preferredLanguage: string };
   relationship: Exclude<ClinicalRelationship, "none">;
   activeReferralIds: string[];
+  /**
+   * When the referral-based part of this access ends at the latest (the open
+   * referrals' expires_at) — null when none is open. It ends earlier if the
+   * referral is declined, revoked or completed.
+   */
+  referralAccessUntil: string | null;
   /** Consultations the decision covers, newest first. */
   appointments: ClinicalAppointment[];
   /** Clinical records the decision covers, with provenance, newest first. */
@@ -75,6 +81,11 @@ type AppointmentRow = {
   services: { name: string } | null;
   doctors: { name: string } | null;
 };
+
+function referralAccessUntil(referrals: PatientReferral[]): string | null {
+  const open = referrals.filter((r) => r.role === "receiver" && ["pending", "accepted", "in_progress"].includes(r.status));
+  return open.length > 0 ? open.map((r) => r.expiresAt).sort().at(-1)! : null;
+}
 
 /** Whether `access` lets the doctor start a consultation (own patient or an accepted referral). */
 export function canStartConsultation(access: ClinicalAccess): boolean {
@@ -175,17 +186,24 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
       ) ?? null;
   const canStart = canStartConsultation(access);
 
+  // The access log names the patient, the referral the access rests on (when
+  // exactly one does), and every record of another doctor released — ids
+  // only, written before anything is returned.
   await recordAudit({
     clinicId: doctor.clinicId,
     action: "patient_clinical_record_viewed",
     entityType: "patients",
     entityId: patientId,
+    patientId,
+    referralId: access.activeReferralIds.length === 1 ? access.activeReferralIds[0] : null,
     actor: { actorId: doctor.profileId, actorType: "staff" },
     metadata: {
       relationship: access.relationship,
       referral_ids: access.activeReferralIds,
+      shown_referral_ids: referrals.map((r) => r.id),
       shared_history_doctor_ids: access.scope.sharedHistoryDoctorIds,
       record_count: records.length,
+      shared_record_ids: records.filter((r) => !r.mine).map((r) => r.id),
     },
     strict: true,
   });
@@ -199,6 +217,7 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
     },
     relationship: access.relationship,
     activeReferralIds: access.activeReferralIds,
+    referralAccessUntil: referralAccessUntil(referrals),
     appointments,
     records: records.map((r) => {
       const stage: RecordStage = current && r.appointmentId === current.id ? "current" : "historical";

@@ -24,6 +24,8 @@ export async function recordConsultationStarted(opts: {
     action: "consultation_started",
     entityType: "appointments",
     entityId: opts.appointmentId,
+    patientId: opts.patientId,
+    referralId,
     actor: { actorId: opts.actorId, actorType: "staff" },
     newValues: { status: "in_progress" },
     metadata: {

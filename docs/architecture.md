@@ -23,6 +23,7 @@ Patient (Telegram)                      Clinic staff (browser)
 │  /api/admin/...          staff mutations (role-checked)             │
 │  /api/doctor/...         doctor self-service                        │
 │  /api/notifications/process  Cloud Scheduler cron → send due jobs   │
+│  /api/referrals/expire   Cloud Scheduler cron → record expiries     │
 │                                                                     │
 │  lib/telegram · lib/ai · lib/booking · lib/payments · lib/safety   │
 └──────┬───────────────────────────┬─────────────────────────┬────────┘
@@ -99,8 +100,10 @@ Doctor A refers a patient to Doctor B in the same clinic:
    it belongs to the doctor's consultation under way).
 5. **Close** — Doctor B completes it (only once in progress); Doctor A (or owner/admin/manager
    via `PATCH /api/admin/referrals/[id]`) can revoke it while it is open. Open referrals
-   (pending, accepted, in progress) past `expires_at` are expired lazily whenever referrals are
-   listed or read. Afterwards Doctor B keeps their own consultation, and Doctor A sees it and its
+   (pending, accepted, in progress) lose all referral-based access at `expires_at` (≤ 180 days);
+   the hourly `POST /api/referrals/expire` job — and any read — records them as expired.
+   Every step is audited with actor, clinic, patient and referral; see
+   [security.md](security.md#referral-lifecycle-and-access-termination). Afterwards Doctor B keeps their own consultation, and Doctor A sees it and its
    records as the referral's follow-up.
 
 Server logic lives in `src/lib/referrals/service.ts`; the database (trigger + RLS + composite
@@ -147,7 +150,8 @@ the same interface (see [payment-provider.md](payment-provider.md)).
 - **Staff** — Supabase Auth email/password. Panels read via the browser client (RLS enforces
   role + clinic), mutations go through API routes guarded by `requireStaff(role)` which checks
   the JWT against `staff_roles` on every request.
-- **Cron** — `/api/notifications/process` requires `Authorization: Bearer <CRON_SECRET>`.
+- **Cron** — `/api/notifications/process` and `/api/referrals/expire` require
+  `Authorization: Bearer <CRON_SECRET>` (constant-time check, `src/lib/cron-auth.ts`).
 - **Webhook** — `/api/telegram/webhook` requires `X-Telegram-Bot-Api-Secret-Token` matching
   `TELEGRAM_WEBHOOK_SECRET`.
 

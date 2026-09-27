@@ -274,9 +274,10 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
 
     // Same clinic, doctor role, no relationship: the decision is empty…
     expect(await access(doctors.c, x.id)).toMatchObject({ own_patient: false, active_referral_ids: [], history_doctor_ids: [] });
-    // …and RLS shows nothing — not the patient, not a visit, not the referral.
+    // …and RLS shows nothing — not the patient, not a visit; the referral
+    // itself is never readable directly by any signed-in session.
     expect(await seenBy(profiles.c, x.id)).toEqual(nothing);
-    expect(await asUser(profiles.c, (tx) => tx`select id from public.referrals where id = ${referral}`)).toHaveLength(0);
+    expect((await pgError(() => asUser(profiles.c, (tx) => tx`select id from public.referrals where id = ${referral}`))).code).toBe("42501");
   });
 
   it("4. Doctor B loses access after referral expiration", async () => {

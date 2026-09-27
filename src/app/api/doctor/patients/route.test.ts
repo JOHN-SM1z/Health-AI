@@ -325,12 +325,19 @@ describeDb("referral-based clinical access — server and API layers", () => {
 
     await new Promise((r) => setTimeout(r, 4_500));
 
-    // Dr B is told the referral expired — and gets nothing of the patient.
-    expect(await record("b", x.id)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
-    expect(await referralDetail("b", short!.id)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
+    // Access ends at expires_at — nothing has to mark the referral expired first.
     expect(await canDoctorAccessPatientClinicalData(doctors.b, x.id)).toMatchObject({ relationship: "none" });
-    // Nothing had to mark it expired first.
+    expect(await record("b", x.id)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
     expect(await referralStatus(short!.id)).toBe("accepted");
+    // Reading referrals records the expiry (by the system) — Dr B still gets nothing.
+    expect(await referralDetail("b", short!.id)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
+    expect(await referralStatus(short!.id)).toBe("expired");
+    const { data: expired } = await admin
+      .from("audit_events")
+      .select("actor_id, actor_type, clinic_id, patient_id, referral_id")
+      .eq("action", "referral_expired")
+      .eq("referral_id", short!.id);
+    expect(expired).toEqual([{ actor_id: null, actor_type: "system", clinic_id: clinicA, patient_id: x.id, referral_id: short!.id }]);
   });
 
   it("5. Doctor B loses access after referral revocation", async () => {
@@ -479,12 +486,17 @@ describeDb("referral-based clinical access — server and API layers", () => {
     const seen = async (client: SupabaseClient) => ({
       patient: ((await client.from("patients").select("id").eq("id", x.id)).data ?? []).length === 1,
       appointments: ids((await client.from("appointments").select("id").eq("patient_id", x.id)).data ?? []),
-      referral: ((await client.from("referrals").select("id").eq("id", referral)).data ?? []).length === 1,
     });
 
-    expect(await seen(a)).toEqual({ patient: true, appointments: x.withA, referral: true });
-    expect(await seen(b)).toEqual({ patient: true, appointments: x.withA, referral: true });
-    for (const denied of [c, k]) expect(await seen(denied)).toEqual({ patient: false, appointments: [], referral: false });
+    expect(await seen(a)).toEqual({ patient: true, appointments: x.withA });
+    expect(await seen(b)).toEqual({ patient: true, appointments: x.withA });
+    for (const denied of [c, k]) expect(await seen(denied)).toEqual({ patient: false, appointments: [] });
+    // Clinical text is never read directly — not even by the two doctors on the
+    // referral: only through the API, which authorizes and audits every read.
+    for (const client of [a, b, c, k]) {
+      expect((await client.from("referrals").select("id").eq("id", referral)).error?.code).toBe("42501");
+      expect((await client.from("clinical_records").select("id").eq("patient_id", x.id)).error?.code).toBe("42501");
+    }
 
     // No doctor can ask the database about someone else's access.
     const probe = await c.rpc("doctor_patient_access", { p_doctor_id: doctors.b, p_patient_id: x.id });
@@ -495,7 +507,7 @@ describeDb("referral-based clinical access — server and API layers", () => {
 
     // Revocation reaches the database immediately.
     expect(await act("a", referral, { action: "revoke", reason: "Handled elsewhere" })).toMatchObject({ status: 200 });
-    expect(await seen(b)).toEqual({ patient: false, appointments: [], referral: false });
+    expect(await seen(b)).toEqual({ patient: false, appointments: [] });
     await Promise.all([a, b, c, k].map((client) => client.auth.signOut()));
   });
 

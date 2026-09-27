@@ -105,6 +105,15 @@ To automatically process reminders (24h and 2h before appointments), configure a
 - **Header:** `Authorization: Bearer <YOUR_CRON_SECRET>`
 - **Interval:** Every 15 minutes (`*/15 * * * *`)
 
+### E. Setup Referral Expiry Job (Hourly)
+Referral access already ends at each referral's `expires_at`; this job records the expiry
+(status and audit trail) for referrals nobody opens:
+
+- **Target URL:** `https://<YOUR_PRODUCTION_DOMAIN>/api/referrals/expire`
+- **Method:** `POST`
+- **Header:** `Authorization: Bearer <YOUR_CRON_SECRET>`
+- **Interval:** Hourly (`7 * * * *`)
+
 ---
 
 ## 6. Verification Checklist

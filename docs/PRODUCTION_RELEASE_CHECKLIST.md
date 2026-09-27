@@ -51,6 +51,7 @@ This operational checklist governs the deployment, verification, and rollback pr
 ### C. Background Jobs & Scheduler
 - [ ] Configure Cloud Scheduler (or cron daemon) to trigger `POST https://<PRODUCTION_DOMAIN>/api/notifications/process` every 15 minutes (`*/15 * * * *`).
 - [ ] Set Cloud Scheduler HTTP request header `Authorization: Bearer <CRON_SECRET>`.
+- [ ] Configure a second job: `POST https://<PRODUCTION_DOMAIN>/api/referrals/expire` hourly (`7 * * * *`), same header.
 
 ---
 
