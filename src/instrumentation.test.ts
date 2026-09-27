@@ -76,6 +76,17 @@ describe("instrumentation register() — production fail-closed checks", () => {
     expect(() => register()).toThrow(/CRON_SECRET/);
   });
 
+  it("fails closed on a short, placeholder or single-character CRON_SECRET or TELEGRAM_WEBHOOK_SECRET", () => {
+    for (const name of ["CRON_SECRET", "TELEGRAM_WEBHOOK_SECRET"]) {
+      for (const weak of ["short-secret", "your-random-secret", "a".repeat(64)]) {
+        vi.stubEnv(name, weak);
+        expect(() => register(), `${name}=${weak}`).toThrow(new RegExp(name));
+        vi.stubEnv(name, "0123456789abcdef0123456789abcdef");
+      }
+    }
+    expect(() => register()).not.toThrow();
+  });
+
   it("fails closed when PAYMENT_PROVIDER is not manual", () => {
     vi.stubEnv("PAYMENT_PROVIDER", "click");
     expect(() => register()).toThrow(/PAYMENT_PROVIDER/);

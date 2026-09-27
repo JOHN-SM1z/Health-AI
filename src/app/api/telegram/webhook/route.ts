@@ -13,6 +13,7 @@ import {
   handleVoiceWrong,
   requestHumanHandoff,
 } from "@/lib/telegram/handlers";
+import { answerCallbackQuery } from "@/lib/telegram/bot";
 
 export const dynamic = "force-dynamic";
 // 120s, not the 60s default: the voice-message pipeline (handleVoiceConsent)
@@ -188,20 +189,23 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
       username: rawFrom.username,
     };
 
+    // Stop the button's spinner first; the reply follows as a message.
+    if (callback.id) await answerCallbackQuery(callback.id, clinicId);
+
     if (data.startsWith("voice_consent_yes:")) {
-      await handleVoiceConsent({ clinicId, chatId, voiceMessageId: data.split(":")[1], consent: true });
+      await handleVoiceConsent({ clinicId, chatId, telegramUserId: from.id, voiceMessageId: data.split(":")[1], consent: true });
       return;
     }
     if (data.startsWith("voice_consent_no:")) {
-      await handleVoiceConsent({ clinicId, chatId, voiceMessageId: data.split(":")[1], consent: false });
+      await handleVoiceConsent({ clinicId, chatId, telegramUserId: from.id, voiceMessageId: data.split(":")[1], consent: false });
       return;
     }
     if (data.startsWith("voice_correct:")) {
-      await handleVoiceCorrect({ clinicId, chatId, voiceMessageId: data.split(":")[1] });
+      await handleVoiceCorrect({ clinicId, chatId, telegramUserId: from.id, voiceMessageId: data.split(":")[1] });
       return;
     }
     if (data.startsWith("voice_wrong:")) {
-      await handleVoiceWrong({ clinicId, chatId, voiceMessageId: data.split(":")[1] });
+      await handleVoiceWrong({ clinicId, chatId, telegramUserId: from.id, voiceMessageId: data.split(":")[1] });
       return;
     }
     if (data === "contact_operator") {

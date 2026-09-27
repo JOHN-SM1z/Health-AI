@@ -21,6 +21,9 @@ const integrationFixture = {
   validated_at: "2026-08-18T00:00:00Z",
 };
 
+const answerCallbackMock = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock("@/lib/telegram/bot", () => ({ answerCallbackQuery: answerCallbackMock }));
+
 vi.mock("@/lib/telegram/bots", () => ({
   resolveClinicByBotUsername: vi.fn(),
   botWebhookSecret: vi.fn(() => "derived-secret"),
@@ -253,6 +256,17 @@ describe("telegram webhook route (per-clinic bots)", () => {
 
     await post({ update_id: 62, callback_query: { id: "c3", from: { id: 42 }, data: "voice_wrong:vm-3", message: { chat: { id: 42 } } } });
     expect(wrongMock).toHaveBeenCalledWith(expect.objectContaining({ clinicId: "clinic-1", voiceMessageId: "vm-3" }));
+
+    // Each press names the Telegram user who pressed it (ownership is checked
+    // against them) and is acknowledged through the clinic's bot.
+    for (const m of [consentMock, correctMock, wrongMock]) {
+      expect(m).toHaveBeenCalledWith(expect.objectContaining({ telegramUserId: 42 }));
+    }
+    expect(answerCallbackMock.mock.calls.map((c) => (c as unknown[]).slice(0, 2))).toEqual([
+      ["c1", "clinic-1"],
+      ["c2", "clinic-1"],
+      ["c3", "clinic-1"],
+    ]);
   });
 
   it("rejects malformed (non-JSON) payloads with 400 before any dispatch", async () => {

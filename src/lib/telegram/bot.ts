@@ -163,6 +163,20 @@ export async function sendTelegramMessage(payload: TelegramMessagePayload, clini
   }
 }
 
+/**
+ * Acknowledges an inline-button press through the clinic's bot, so the
+ * patient's button stops spinning. Best effort: never throws.
+ */
+export async function answerCallbackQuery(callbackQueryId: string, clinicId: string, text?: string): Promise<void> {
+  if (telegramDevModeEnabled()) return;
+  try {
+    const target = await getClinicBot(clinicId);
+    await target.api.answerCallbackQuery(callbackQueryId, text ? { text } : undefined);
+  } catch (e) {
+    logger.warn("telegram answerCallbackQuery failed", { clinicId, error: e instanceof Error ? e.message : String(e) });
+  }
+}
+
 /** Fetches a Telegram file download URL (file_id -> file_path) using the
  * clinic's bot (the file belongs to that bot's chat). */
 export async function getTelegramFileUrl(fileId: string, clinicId: string): Promise<string | null> {

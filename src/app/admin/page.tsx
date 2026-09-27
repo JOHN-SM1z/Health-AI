@@ -30,6 +30,7 @@ type Dashboard = {
   upcoming_reminders: number | null;
   active_conversations: number;
   attention_conversations: number;
+  urgent_conversations: number;
 };
 
 const STATUS_KEYS = ["pending", "confirmed", "checked_in", "in_progress", "completed", "cancelled", "no_show"] as const;
@@ -162,6 +163,13 @@ export default function TodayPage() {
             label="Diqqat talab suhbatlar"
             value={(dashboard?.attention_conversations ?? 0).toLocaleString("uz-UZ")}
             tone="clay"
+          />
+        </Link>
+        <Link href="/admin/conversations">
+          <StatCard
+            label="Shoshilinch suhbatlar"
+            value={(dashboard?.urgent_conversations ?? 0).toLocaleString("uz-UZ")}
+            tone={(dashboard?.urgent_conversations ?? 0) > 0 ? "clay" : "neutral"}
           />
         </Link>
       </div>
