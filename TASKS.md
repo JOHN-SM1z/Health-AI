@@ -9,6 +9,8 @@
 - [ ] **Click / Payme payment adapters** - signature verification, idempotent webhooks, merchant credentials; only `manual` payment is production-usable
 - [ ] **Production Telegram setup** - real bot tokens via `/admin/settings` and `CRON_SECRET` env before go-live
 - [ ] **Referral notifications** - the receiving doctor is not notified (Telegram/e-mail) of a new referral; they see it under `/doctor/referrals`
+- [ ] **Clinical records legal review** - doctor-authored records (notes, diagnoses, prescriptions, lab results) now exist; confirm retention rules vs. the patient's deletion request (records are currently erased with the patient) and the privacy-page wording
+- [ ] **Lab integration** - lab results are typed in by doctors; no laboratory system feeds them
 - [ ] **Referral privacy wording review** - `/privacy` §3/§4 now describe doctor-to-doctor referrals; needs owner/legal sign-off
 - [ ] **Clinic deletion blocked by audit trigger** - `audit_track_changes()` logs cascaded child deletes against the clinic being deleted → `audit_events_clinic_id_fkey` violation (pre-existing)
 - [ ] **Production deploy (Phase 14)** - docs/go-live-checklist.md, docs/manual-qa-checklist.md, docs/deployment.md, docs/rollback.md ready; actual release + rollback drill not performed
@@ -21,6 +23,7 @@
   - `requireLinkedDoctor` guard, strict access logging, server-only doctor account linking
   - review-before-send dialog, idempotent creation (`creation_key`), server-side recipient check, pending referrals on the doctor dashboard
   - referral-based clinical access: `doctor_patient_access()` + doctor RLS policies, `canDoctorAccessPatientClinicalData`, `GET /api/doctor/patients/[id]`, security tests 1–10 at DB and API level
+  - clinical workspace: `clinical_records` (immutable, provenance, RLS = consultation access), referred-patients section, patient workspace with own consultation vs previous records, walk-in/booked consultation start, revoked/expired states
   - hardening: voice storage for operational roles only, no direct doctor writes to appointments, inactive doctors denied at every layer, server/RLS parity for referral-linked appointments, rate limit; doctor patient page `/doctor/patients/[id]`
 
 - [x] ~~0. Audit~~ (2026-08-18)

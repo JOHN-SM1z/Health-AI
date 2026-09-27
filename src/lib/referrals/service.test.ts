@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { logger } from "@/lib/logger";
-import { allowedActions, effectiveStatus, referralError } from "@/lib/referrals/service";
+import { allowedActions, effectiveStatus, lapsedReferralError, referralError } from "@/lib/referrals/service";
 
 describe("effectiveStatus", () => {
   const now = Date.parse("2026-09-27T12:00:00Z");
@@ -60,5 +60,24 @@ describe("referralError", () => {
     expect(err).toMatchObject({ status: 500, code: "referral_write_failed" });
     expect(vi.mocked(logger.error)).toHaveBeenCalledWith("referral write failed", { code: "XX000" });
     expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain("sensitive clinical text");
+  });
+});
+
+describe("lapsedReferralError", () => {
+  it("tells the receiving doctor why a referral no longer opens anything", () => {
+    for (const [status, code] of [
+      ["revoked", "referral_revoked"],
+      ["expired", "referral_expired"],
+      ["declined", "referral_declined"],
+      ["completed", "referral_completed"],
+    ] as const) {
+      expect(lapsedReferralError(status)).toMatchObject({ status: 410, code });
+    }
+  });
+
+  it("is a plain 404 for anything else", () => {
+    for (const status of ["pending", "accepted"] as const) {
+      expect(lapsedReferralError(status)).toMatchObject({ status: 404, code: "referral_not_found" });
+    }
   });
 });

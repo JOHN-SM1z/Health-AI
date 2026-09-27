@@ -97,6 +97,37 @@ Working in the same clinic gives a doctor no access to a patient. One decision,
 - `GET /api/doctor/patients/[id]` is rate limited per doctor (60/min) against id guessing.
 - Staff who also hold an operational role keep that role's clinic-wide operational access.
 
+## Clinical records
+
+`clinical_records` (`20260927000005_clinical_records.sql`) holds doctor-authored consultation notes,
+diagnoses, prescriptions, laboratory results and medical history.
+
+- **Provenance can't be forged.** A record belongs to one consultation, and the composite foreign key
+  `(appointment_id, clinic_id, patient_id, author_doctor_id) → appointments (id, clinic_id,
+  patient_id, doctor_id)` makes that the author's own appointment with this patient in this clinic.
+  The consultation must be in progress or completed; `created_by` must be the author's own active
+  doctor account; `created_at` is the database clock.
+- **Immutable.** No signed-in role may write; the server may only insert (no UPDATE/DELETE grant,
+  and a trigger refuses updates even by the table owner). Corrections are new records by the same
+  author, in the same consultation and type, one per record (`corrects_record_id`). Records are
+  erased only with the patient.
+- **Read access = the consultation's access.** RLS uses `doctor_can_read_appointment()`: the author;
+  the doctor a patient is referred to, for the referring doctor's records while the referral is
+  accepted and unexpired (and the originating consultation's records while it is active); the
+  referring doctor, for the records of the follow-up their referral led to. No operational role
+  (owner/admin/manager/receptionist) can read records; patient-facing and AI code never touches
+  them (guarded by `src/lib/ai/clinical-isolation.test.ts`).
+- **Audit without text.** Every insert writes `clinical_record_created` / `clinical_record_corrected`
+  with ids and type only; workspace views are logged in strict mode (`patient_clinical_record_viewed`).
+- **Server.** `POST /api/doctor/patients/[id]/records` re-checks access and that the consultation is
+  the caller's own with the patient in the URL; author, clinic and time are never taken from the
+  request; writes are idempotent per key. `POST /api/doctor/patients/[id]/consultations` starts the
+  doctor's booked visit for today or books a walk-in through `book_appointment` (own patient, or an
+  accepted referral — pending referrals must be accepted first).
+- **States.** A doctor whose referral for the patient lapsed gets 410 with the reason
+  (`referral_revoked`, `referral_expired`, `referral_declined`, `referral_completed`) and no data;
+  anyone else gets 404.
+
 ## Referrals
 
 - Doctor endpoints (`/api/doctor/referrals/...`) use `requireLinkedDoctor()`: the caller must

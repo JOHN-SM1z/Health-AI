@@ -325,8 +325,9 @@ describeDb("referral-based clinical access — server and API layers", () => {
 
     await new Promise((r) => setTimeout(r, 4_500));
 
-    expect(await record("b", x.id)).toMatchObject({ status: 404 });
-    expect(await referralDetail("b", short!.id)).toMatchObject({ status: 404 });
+    // Dr B is told the referral expired — and gets nothing of the patient.
+    expect(await record("b", x.id)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
+    expect(await referralDetail("b", short!.id)).toMatchObject({ status: 410, body: { code: "referral_expired" } });
     expect(await canDoctorAccessPatientClinicalData(doctors.b, x.id)).toMatchObject({ relationship: "none" });
     // Nothing had to mark it expired first.
     expect(await referralStatus(short!.id)).toBe("accepted");
@@ -337,8 +338,8 @@ describeDb("referral-based clinical access — server and API layers", () => {
     const first = await referredAndAccepted();
     expect((await record("b", first.x.id)).status).toBe(200);
     expect(await act("a", first.referral, { action: "revoke", reason: "Referred in error" })).toMatchObject({ status: 200 });
-    expect(await record("b", first.x.id)).toMatchObject({ status: 404 });
-    expect(await referralDetail("b", first.referral)).toMatchObject({ status: 404 });
+    expect(await record("b", first.x.id)).toMatchObject({ status: 410, body: { code: "referral_revoked" } });
+    expect(await referralDetail("b", first.referral)).toMatchObject({ status: 410, body: { code: "referral_revoked" } });
 
     // …or by clinic management.
     const second = await referredAndAccepted();
@@ -350,7 +351,7 @@ describeDb("referral-based clinical access — server and API layers", () => {
       ),
     );
     expect(revoked.status).toBe(200);
-    expect(await record("b", second.x.id)).toMatchObject({ status: 404 });
+    expect(await record("b", second.x.id)).toMatchObject({ status: 410, body: { code: "referral_revoked" } });
     expect(await canDoctorAccessPatientClinicalData(doctors.b, second.x.id)).toMatchObject({ relationship: "none" });
   });
 
@@ -358,7 +359,7 @@ describeDb("referral-based clinical access — server and API layers", () => {
     const { x, referral } = await referredAndAccepted();
     expect(await act("b", referral, { action: "complete" })).toMatchObject({ status: 200 });
 
-    expect(await record("b", x.id)).toMatchObject({ status: 404 });
+    expect(await record("b", x.id)).toMatchObject({ status: 410, body: { code: "referral_completed" } });
     // The referral stays on Dr B's record, without the patient's data.
     const detail = await referralDetail("b", referral);
     expect(detail.status).toBe(200);

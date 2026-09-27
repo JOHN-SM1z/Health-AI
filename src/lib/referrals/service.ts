@@ -113,6 +113,22 @@ export function referralError(error: { code?: string; message?: string }): ApiEr
   return new ApiError(500, "Yo‘llanmani saqlab bo‘lmadi", "referral_write_failed");
 }
 
+const LAPSED: Partial<Record<ReferralStatus, [string, string]>> = {
+  revoked: ["referral_revoked", "Yo‘llanma bekor qilingan"],
+  expired: ["referral_expired", "Yo‘llanma muddati tugagan"],
+  declined: ["referral_declined", "Yo‘llanma rad etilgan"],
+  completed: ["referral_completed", "Yo‘llanma yakunlangan"],
+};
+
+/**
+ * 410 for a referral that no longer gives its receiving doctor access (the
+ * doctor was on it, so its status is no secret to them); 404 otherwise.
+ */
+export function lapsedReferralError(status: ReferralStatus): ApiError {
+  const lapsed = LAPSED[status];
+  return lapsed ? new ApiError(410, lapsed[1], lapsed[0]) : new ApiError(404, "Yo‘llanma topilmadi", "referral_not_found");
+}
+
 /** Marks a clinic's open referrals whose expiry has passed as expired. */
 export async function expireDueReferrals(clinicId: string): Promise<void> {
   const { error } = await createAdminClient()
@@ -134,7 +150,11 @@ export type ReferralSummary = {
   priority: ReferralPriority;
   createdAt: string;
   expiresAt: string;
+  patientId: string;
   patientName: string | null;
+  /** The referral's own text — both doctors on it may read it. */
+  reason: string;
+  handoffNote: string | null;
   referringDoctor: DoctorRef | null;
   referredToDoctor: DoctorRef | null;
 };
@@ -145,6 +165,9 @@ type SummaryRow = {
   priority: ReferralPriority;
   created_at: string;
   expires_at: string;
+  patient_id: string;
+  reason: string;
+  handoff_note: string | null;
   patient: { full_name: string | null } | null;
   referring: DoctorRef | null;
   referred_to: DoctorRef | null;
@@ -164,7 +187,7 @@ export async function listReferralsForDoctor(
   let query = createAdminClient()
     .from("referrals")
     .select(
-      `id, status, priority, created_at, expires_at, patient:patients!referrals_patient_same_clinic_fkey(full_name), ${REFERRING}(id, name), ${REFERRED_TO}(id, name)`,
+      `id, status, priority, created_at, expires_at, patient_id, reason, handoff_note, patient:patients!referrals_patient_same_clinic_fkey(full_name), ${REFERRING}(id, name), ${REFERRED_TO}(id, name)`,
     )
     .eq("clinic_id", doctor.clinicId)
     .order("created_at", { ascending: false })
@@ -188,7 +211,10 @@ export async function listReferralsForDoctor(
       priority: row.priority,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
+      patientId: row.patient_id,
       patientName: row.patient?.full_name ?? null,
+      reason: row.reason,
+      handoffNote: row.handoff_note,
       referringDoctor: row.referring,
       referredToDoctor: row.referred_to,
     }))
@@ -280,9 +306,9 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
   const row = data as unknown as DetailRow | null;
   const role = row ? roleOf(doctor, row) : null;
   const status = row ? effectiveStatus(row.status, row.expires_at) : null;
-  if (!row || !status || !role || !visibleTo(role, status)) {
-    throw new ApiError(404, "Yo‘llanma topilmadi", "referral_not_found");
-  }
+  if (!row || !status || !role) throw new ApiError(404, "Yo‘llanma topilmadi", "referral_not_found");
+  // The receiving doctor may learn why a referral they had is gone — never its content.
+  if (!visibleTo(role, status)) throw lapsedReferralError(status);
 
   const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, row.patient_id);
   const historyShared =
@@ -379,6 +405,118 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
     history: historyShared ? ((historyRes?.data ?? []) as AppointmentRef[]) : null,
     allowedActions: allowedActions(role, status),
   };
+}
+
+export type PatientReferral = {
+  id: string;
+  role: ReferralRole;
+  status: ReferralStatus;
+  priority: ReferralPriority;
+  reason: string;
+  handoffNote: string | null;
+  createdAt: string;
+  expiresAt: string;
+  referringDoctor: DoctorRef | null;
+  referredToDoctor: DoctorRef | null;
+  followUpAppointmentId: string | null;
+};
+
+/**
+ * The patient's referrals the calling doctor is on and may still see — the
+ * same visibility as the referral pages (the referring doctor: all of theirs;
+ * the receiving doctor: pending/accepted while unexpired, and completed).
+ */
+export async function listPatientReferralsForDoctor(doctor: LinkedDoctor, patientId: string): Promise<PatientReferral[]> {
+  const { data, error } = await createAdminClient()
+    .from("referrals")
+    .select(
+      `id, status, priority, reason, handoff_note, created_at, expires_at, follow_up_appointment_id, referring_doctor_id, referred_to_doctor_id, ${REFERRING}(id, name), ${REFERRED_TO}(id, name)`,
+    )
+    .eq("clinic_id", doctor.clinicId)
+    .eq("patient_id", patientId)
+    .or(`referring_doctor_id.eq.${doctor.doctorId},referred_to_doctor_id.eq.${doctor.doctorId}`)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) throw new ApiError(500, "Yo‘llanmalarni yuklab bo‘lmadi");
+
+  const now = Date.now();
+  const rows = (data ?? []) as unknown as Array<{
+    id: string;
+    status: ReferralStatus;
+    priority: ReferralPriority;
+    reason: string;
+    handoff_note: string | null;
+    created_at: string;
+    expires_at: string;
+    follow_up_appointment_id: string | null;
+    referring_doctor_id: string;
+    referred_to_doctor_id: string;
+    referring: DoctorRef | null;
+    referred_to: DoctorRef | null;
+  }>;
+  return rows.flatMap((row) => {
+    const role = roleOf(doctor, row);
+    const status = effectiveStatus(row.status, row.expires_at, now);
+    if (!role || !visibleTo(role, status)) return [];
+    return [
+      {
+        id: row.id,
+        role,
+        status,
+        priority: row.priority,
+        reason: row.reason,
+        handoffNote: row.handoff_note,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at,
+        referringDoctor: row.referring,
+        referredToDoctor: row.referred_to,
+        followUpAppointmentId: row.follow_up_appointment_id,
+      },
+    ];
+  });
+}
+
+/**
+ * The receiving doctor's latest referral for a patient, for explaining a
+ * refusal ("revoked", "expired"…). Null when there never was one.
+ */
+export async function latestReferralToDoctor(doctor: LinkedDoctor, patientId: string): Promise<ReferralStatus | null> {
+  const { data } = await createAdminClient()
+    .from("referrals")
+    .select("status, expires_at")
+    .eq("clinic_id", doctor.clinicId)
+    .eq("patient_id", patientId)
+    .eq("referred_to_doctor_id", doctor.doctorId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data ? effectiveStatus(data.status, data.expires_at) : null;
+}
+
+/**
+ * Links a consultation the receiving doctor started to the accepted referral
+ * still waiting for its follow-up, if any. Best effort: the consultation
+ * stands on its own either way.
+ */
+export async function linkConsultationToReferral(doctor: LinkedDoctor, patientId: string, appointmentId: string): Promise<void> {
+  const { data } = await createAdminClient()
+    .from("referrals")
+    .select("id, follow_up_appointment_id, follow_up:appointments!referrals_follow_up_appointment_fkey(status)")
+    .eq("clinic_id", doctor.clinicId)
+    .eq("patient_id", patientId)
+    .eq("referred_to_doctor_id", doctor.doctorId)
+    .eq("status", "accepted")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: true });
+  const waiting = ((data ?? []) as unknown as Array<{ id: string; follow_up_appointment_id: string | null; follow_up: { status: string } | null }>).find(
+    (r) => !r.follow_up_appointment_id || (r.follow_up && INACTIVE_APPOINTMENT_STATUSES.includes(r.follow_up.status)),
+  );
+  if (!waiting || waiting.follow_up_appointment_id === appointmentId) return;
+  try {
+    await linkFollowUp(doctor.clinicId, waiting.id, appointmentId, waiting.follow_up_appointment_id);
+  } catch (e) {
+    logger.warn("consultation not linked to referral", { code: e instanceof ApiError ? e.code : undefined });
+  }
 }
 
 export type CreateReferralInput = {

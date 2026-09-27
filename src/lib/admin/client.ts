@@ -97,6 +97,23 @@ export const REFERRAL_PRIORITY_LABELS: Record<string, string> = {
   urgent: "Shoshilinch",
 };
 
+/** Doctor-authored clinical record types (public.clinical_record_type). */
+export const CLINICAL_RECORD_TYPE_LABELS: Record<string, string> = {
+  consultation_note: "Ko‘rik xulosasi",
+  diagnosis: "Tashxis",
+  prescription: "Retsept",
+  lab_result: "Tahlil natijasi",
+  medical_history: "Anamnez",
+};
+
+export const CLINICAL_RECORD_TYPE_TONES: Record<string, "neutral" | "green" | "red" | "amber" | "blue" | "purple"> = {
+  consultation_note: "neutral",
+  diagnosis: "purple",
+  prescription: "green",
+  lab_result: "blue",
+  medical_history: "amber",
+};
+
 export const SOURCE_LABELS: Record<string, string> = {
   telegram_mini_app: "Mini App",
   telegram_chat: "Telegram bot",

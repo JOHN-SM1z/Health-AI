@@ -327,6 +327,97 @@ export type Database = {
           },
         ]
       }
+      clinical_records: {
+        Row: {
+          appointment_id: string
+          author_doctor_id: string
+          clinic_id: string
+          code: string | null
+          corrects_record_id: string | null
+          created_at: string
+          created_by: string
+          creation_key: string | null
+          details: string | null
+          id: string
+          patient_id: string
+          record_type: Database["public"]["Enums"]["clinical_record_type"]
+          summary: string
+        }
+        Insert: {
+          appointment_id: string
+          author_doctor_id: string
+          clinic_id: string
+          code?: string | null
+          corrects_record_id?: string | null
+          created_at?: string
+          created_by: string
+          creation_key?: string | null
+          details?: string | null
+          id?: string
+          patient_id: string
+          record_type: Database["public"]["Enums"]["clinical_record_type"]
+          summary: string
+        }
+        Update: {
+          appointment_id?: string
+          author_doctor_id?: string
+          clinic_id?: string
+          code?: string | null
+          corrects_record_id?: string | null
+          created_at?: string
+          created_by?: string
+          creation_key?: string | null
+          details?: string | null
+          id?: string
+          patient_id?: string
+          record_type?: Database["public"]["Enums"]["clinical_record_type"]
+          summary?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clinical_records_author_same_clinic_fkey"
+            columns: ["author_doctor_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "doctors"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "clinical_records_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clinical_records_consultation_fkey"
+            columns: ["appointment_id", "clinic_id", "patient_id", "author_doctor_id"]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id", "clinic_id", "patient_id", "doctor_id"]
+          },
+          {
+            foreignKeyName: "clinical_records_corrects_record_id_fkey"
+            columns: ["corrects_record_id"]
+            isOneToOne: false
+            referencedRelation: "clinical_records"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clinical_records_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clinical_records_patient_same_clinic_fkey"
+            columns: ["patient_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
       clinics: {
         Row: {
           address: string | null
@@ -1557,6 +1648,12 @@ export type Database = {
     }
     Enums: {
       actor_type: "staff" | "system" | "patient" | "telegram"
+      clinical_record_type:
+        | "consultation_note"
+        | "diagnosis"
+        | "prescription"
+        | "lab_result"
+        | "medical_history"
       appointment_source:
         | "telegram_mini_app"
         | "telegram_chat"
@@ -1740,6 +1837,13 @@ export const Constants = {
   public: {
     Enums: {
       actor_type: ["staff", "system", "patient", "telegram"],
+      clinical_record_type: [
+        "consultation_note",
+        "diagnosis",
+        "prescription",
+        "lab_result",
+        "medical_history",
+      ],
       appointment_source: [
         "telegram_mini_app",
         "telegram_chat",

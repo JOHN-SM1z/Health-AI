@@ -353,7 +353,8 @@ describeDb("referral API (doctor portal + reception)", () => {
       const listed = dashboard.body.data!.referrals as Array<Record<string, unknown>>;
       expect(listed).toEqual(expect.arrayContaining([expect.objectContaining({ id, status: "pending", priority: "routine" })]));
       expect(listed.every((r) => r.status === "pending")).toBe(true);
-      expect(JSON.stringify(listed)).not.toContain("Palpitations");
+      // The referral's own text is for the two doctors on it — the receiver sees it.
+      expect(listed.find((r) => r.id === id)).toMatchObject({ reason: body.reason, handoffNote: body.handoffNote, patientId: patient });
       expect((await pendingFor("bystander")).body.data!.referrals).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ id })]),
       );
@@ -694,7 +695,9 @@ describeDb("referral API (doctor portal + reception)", () => {
       status: 200,
       body: { data: { status: "declined" } },
     });
-    expect(await detail("receiver", declined)).toMatchObject({ status: 404 });
+    // The receiving doctor learns why it is gone — nothing of its content.
+    expect(await detail("receiver", declined)).toMatchObject({ status: 410, body: { code: "referral_declined" } });
+    expect(JSON.stringify((await detail("receiver", declined)).body)).not.toContain("arrhythmia");
 
     const revoked = await freshReferral();
     expect(await act("referrer", revoked, { action: "revoke" })).toMatchObject({ status: 400, body: { code: "validation" } });
@@ -702,7 +705,7 @@ describeDb("referral API (doctor portal + reception)", () => {
       status: 200,
       body: { data: { status: "revoked" } },
     });
-    expect(await detail("receiver", revoked)).toMatchObject({ status: 404 });
+    expect(await detail("receiver", revoked)).toMatchObject({ status: 410, body: { code: "referral_revoked" } });
     expect(await detail("referrer", revoked)).toMatchObject({ status: 200 });
   });
 

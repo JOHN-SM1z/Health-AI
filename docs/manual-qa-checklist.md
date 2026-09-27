@@ -66,6 +66,16 @@ Each row: expected behavior. Mark all green = go.
 - [ ] A doctor's own token cannot update or delete appointments via `/rest/v1/appointments`, nor read `voice-messages` storage objects
 - [ ] Deactivating a doctor record removes their patient access through the app and the REST API
 
+## Clinical workspace
+
+- [ ] *Yo‘llanmalar → Menga yo‘llangan bemorlar* lists each referral with patient, referring doctor, reason, handoff note, status, sent and expiry dates, priority
+- [ ] Pending referral: workspace shows the patient and the consultation it came from; *Mening qabulim* asks to accept first
+- [ ] Accepted: the referring doctor's records appear with *Muallif: …* and date; none are marked *Siz yozgansiz*; another doctor's records never appear
+- [ ] *Hozir qabulni boshlash* starts a walk-in (or *Qabulni boshlash* for today's booked visit); records saved there show *Siz yozgansiz* under *Mening qabulim*, apart from *Oldingi yozuvlar*
+- [ ] A record can't be edited; *Tuzatish* adds a correction and marks the original *Tuzatilgan*
+- [ ] After revoke / expiry: the workspace shows *Yo‘llanma bekor qilingan* / *muddati tugagan* with no patient data; an unrelated patient id shows *Bemor topilmadi*
+- [ ] Reception, managers and owners never see clinical records (patient panel, REST API)
+
 ## Notifications
 
 - [ ] Cloud Scheduler runs; reminder arrives ~1h before a confirmed appointment

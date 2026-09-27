@@ -49,6 +49,10 @@ Patient (Telegram)                      Clinic staff (browser)
   `pending → accepted → completed` (or `declined` / `revoked` / `expired`) enforced by trigger for
   every writer; audited without its clinical text (reason, handoff note); optional link to the
   follow-up appointment booked with the receiving doctor
+- **clinical_records** — doctor-authored consultation notes, diagnoses, prescriptions, lab results
+  and medical history; each tied to the author's own consultation (composite FK), immutable
+  (corrections are new records), readable only where the consultation is (see
+  [security.md](security.md#clinical-records))
 - **conversations / messages / voice_messages** — chat history, admin takeover support
 - **faq_entries / app_settings** — clinic content and settings
 - **notification_jobs** — reminders/confirmations queue, sent by cron
@@ -93,7 +97,10 @@ foreign keys) enforces the same rules independently of the API.
 What a doctor may see of a patient — their own patient, or one actively referred to them — is one
 decision, `public.doctor_patient_access()`, used by the `patients`/`appointments` RLS policies and by
 the server (`src/lib/clinical-access/access.ts`, `GET /api/doctor/patients/[id]`, shown on the
-doctor's patient page `/doctor/patients/[id]`, reached from the queue and from a referral). See
+doctor's patient workspace `/doctor/patients/[id]`, reached from the queue, the referral and the
+referred-patients list). The workspace separates the doctor's own consultation ("Mening qabulim":
+start it, document it, finish it) from previous records, each shown with its author, time and
+type. See
 [security.md](security.md#clinical-access-doctors).
 
 ## Notifications

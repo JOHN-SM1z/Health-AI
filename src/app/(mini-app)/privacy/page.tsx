@@ -37,10 +37,17 @@ export default function PrivacyPage() {
             haqidagi qarorlar faqat shifokor bilan.
           </p>
           <p className="mt-1">
+            Qabul davomida shifokoringiz tibbiy yozuvlar (ko‘rik xulosasi, tashxis, retsept, tahlil
+            natijalari, anamnez) kiritishi mumkin. Har bir yozuvda uni kim va qachon yozgani saqlanadi,
+            yozuvlar keyin o‘zgartirilmaydi. Ularni faqat sizni davolayotgan shifokorlar ko‘radi —
+            qabulxona, boshqa xodimlar, bot va sun‘iy intellekt ko‘rmaydi.
+          </p>
+          <p className="mt-1">
             Shifokor sizni klinikadagi boshqa shifokorga yo‘llasa, yo‘llanma sababi va hamkasbi uchun
             izoh yozadi. Ularni faqat shu ikki shifokor ko‘radi; qabulxona faqat kimga yo‘llanganingizni
-            va yo‘llanma holatini ko‘radi. Qabul qiluvchi shifokor yo‘llanmani qabul qilgach, yo‘llagan
-            shifokor bilan bo‘lgan qabullaringiz ro‘yxatini (sana, xizmat, holat) ko‘radi.
+            va yo‘llanma holatini ko‘radi. Qabul qiluvchi shifokor yo‘llanmani qabul qilgach va u amal
+            qilayotgan paytda, yo‘llagan shifokor bilan bo‘lgan qabullaringizni va ular bo‘yicha yozilgan
+            tibbiy yozuvlarni ko‘radi.
           </p>
         </div>
         <div>

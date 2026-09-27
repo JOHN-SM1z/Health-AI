@@ -1,12 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { UserRound } from "lucide-react";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, LoadingRow } from "@/components/admin/ui";
-import { adminApi, AdminApiError, formatDateTime, STATUS_LABELS, STATUS_TONES } from "@/lib/admin/client";
+import { ClipboardList, Clock, ShieldOff, UserRound } from "lucide-react";
+import { PageHeader, Card, ABadge, AEmpty, AError, AButton, ASelect, LoadingRow } from "@/components/admin/ui";
+import {
+  adminApi,
+  AdminApiError,
+  formatDateTime,
+  formatTime,
+  CLINICAL_RECORD_TYPE_LABELS,
+  CLINICAL_RECORD_TYPE_TONES,
+  REFERRAL_PRIORITY_LABELS,
+  REFERRAL_STATUS_LABELS,
+  REFERRAL_STATUS_TONES,
+  STATUS_LABELS,
+  STATUS_TONES,
+} from "@/lib/admin/client";
 import { ReferralDialog } from "@/components/doctor/referral-dialog";
+import { ClinicalRecordForm, type RecordDraft } from "@/components/doctor/clinical-record-form";
 
 type Appointment = {
   id: string;
@@ -17,36 +30,157 @@ type Appointment = {
   service: { name: string } | null;
 };
 
-type PatientRecord = {
+type ClinicalRecord = {
+  id: string;
+  type: string;
+  summary: string;
+  details: string | null;
+  code: string | null;
+  createdAt: string;
+  appointmentId: string;
+  author: { id: string; name: string | null };
+  mine: boolean;
+  correctsRecordId: string | null;
+  correctedByRecordId: string | null;
+};
+
+type Referral = {
+  id: string;
+  role: "referrer" | "receiver";
+  status: string;
+  priority: string;
+  reason: string;
+  handoffNote: string | null;
+  createdAt: string;
+  expiresAt: string;
+  referringDoctor: { id: string; name: string } | null;
+  referredToDoctor: { id: string; name: string } | null;
+};
+
+type ConsultationRef = { appointmentId: string; startAt: string; serviceName: string | null };
+
+type Workspace = {
   patient: { id: string; fullName: string | null; phone: string | null };
   relationship: "own" | "referred";
-  activeReferralIds: string[];
   appointments: Appointment[];
+  records: ClinicalRecord[];
+  referrals: Referral[];
+  consultation: {
+    current: ConsultationRef | null;
+    booked: ConsultationRef | null;
+    canStartWalkIn: boolean;
+    blockedReason: "referral_pending" | null;
+    services: Array<{ id: string; name: string }>;
+  };
+};
+
+/** Why the workspace can't be shown — never with any of the patient's data. */
+type Blocked = { title: string; subtitle: string; icon: ReactNode };
+
+const BLOCKED: Record<string, Blocked> = {
+  referral_expired: {
+    title: "Yo‘llanma muddati tugagan",
+    subtitle: "Bu bemorning ma‘lumotlari endi sizga ko‘rinmaydi. Kerak bo‘lsa, yo‘llagan shifokordan yangi yo‘llanma so‘rang.",
+    icon: <Clock className="h-6 w-6" />,
+  },
+  referral_revoked: {
+    title: "Yo‘llanma bekor qilingan",
+    subtitle: "Yo‘llanma bekor qilindi, shuning uchun bemor ma‘lumotlari endi sizga ko‘rinmaydi.",
+    icon: <ShieldOff className="h-6 w-6" />,
+  },
+  referral_declined: {
+    title: "Yo‘llanma rad etilgan",
+    subtitle: "Siz bu yo‘llanmani rad etgansiz — bemor ma‘lumotlari sizga ko‘rinmaydi.",
+    icon: <ShieldOff className="h-6 w-6" />,
+  },
+  referral_completed: {
+    title: "Yo‘llanma yakunlangan",
+    subtitle: "Yo‘llanma yakunlandi. Bemor bilan o‘z qabulingiz bo‘lmasa, uning ma‘lumotlari endi sizga ko‘rinmaydi.",
+    icon: <ClipboardList className="h-6 w-6" />,
+  },
+  doctor_not_linked: {
+    title: "Shifokor hisobi ulanmagan",
+    subtitle: "Admin panelda shifokor kartasiga profilingizni bog‘lang.",
+    icon: <UserRound className="h-6 w-6" />,
+  },
+  patient_not_found: {
+    title: "Bemor topilmadi",
+    subtitle: "U mavjud emas yoki uni ko‘rishga ruxsatingiz yo‘q.",
+    icon: <UserRound className="h-6 w-6" />,
+  },
 };
 
 /** A doctor may refer from their own visit once the patient has been seen. */
 const REFERABLE = ["in_progress", "completed"];
+/** Visits that have not taken place yet. */
+const SCHEDULED = ["pending", "confirmed", "checked_in"];
 
-/**
- * A patient as the signed-in doctor may see them. The server decides what
- * that is (own patient, or one actively referred to this doctor) and answers
- * "not found" for anything else — this page only renders the answer.
- */
-export default function DoctorPatientPage() {
+function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
+  return (
+    <section className="mb-6" aria-label={title}>
+      <h2 className="font-display text-base font-bold text-foreground">{title}</h2>
+      {subtitle && <p className="mb-2 text-sm text-ink-muted">{subtitle}</p>}
+      <div className="mt-2 flex flex-col gap-3">{children}</div>
+    </section>
+  );
+}
+
+function RecordItem({
+  record,
+  onCorrect,
+}: {
+  record: ClinicalRecord;
+  onCorrect?: (r: ClinicalRecord) => void;
+}) {
+  return (
+    <li className="rounded-xl border border-hairline px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <ABadge tone={CLINICAL_RECORD_TYPE_TONES[record.type] ?? "neutral"}>{CLINICAL_RECORD_TYPE_LABELS[record.type] ?? record.type}</ABadge>
+        {record.correctsRecordId && <ABadge tone="blue">Tuzatish</ABadge>}
+        {record.correctedByRecordId && <ABadge tone="gray">Tuzatilgan</ABadge>}
+        {record.code && <span className="font-numeric text-xs text-ink-muted">{record.code}</span>}
+      </div>
+      <p className={`mt-1 text-sm font-medium ${record.correctedByRecordId ? "text-ink-muted line-through" : "text-foreground"}`}>
+        {record.summary}
+      </p>
+      {record.details && <p className="mt-0.5 whitespace-pre-wrap text-sm text-foreground">{record.details}</p>}
+      {/* Provenance: who wrote it and when — never implied to be the reader's. */}
+      <p className="mt-1 text-xs text-ink-muted">
+        {record.mine ? "Siz yozgansiz" : `Muallif: ${record.author.name ?? "—"}`} · {formatDateTime(record.createdAt)}
+        {onCorrect && record.mine && !record.correctedByRecordId && (
+          <>
+            {" · "}
+            <button type="button" className="text-pine hover:underline" onClick={() => onCorrect(record)}>
+              Tuzatish
+            </button>
+          </>
+        )}
+      </p>
+    </li>
+  );
+}
+
+export default function DoctorPatientWorkspacePage() {
   const { id } = useParams<{ id: string }>();
-  const [record, setRecord] = useState<PatientRecord | null>(null);
-  const [missing, setMissing] = useState(false);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [blocked, setBlocked] = useState<Blocked | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [serviceId, setServiceId] = useState("");
+  const [correcting, setCorrecting] = useState<RecordDraft & { appointmentId: string } | null>(null);
   const [referFrom, setReferFrom] = useState<Appointment | null>(null);
-  const [sentReferralId, setSentReferralId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<ReactNode | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await adminApi.get<{ record: PatientRecord }>(`/api/doctor/patients/${id}`);
-      setRecord(res.record);
-      setMissing(false);
+      const res = await adminApi.get<{ record: Workspace }>(`/api/doctor/patients/${id}`);
+      setWorkspace(res.record);
+      setBlocked(null);
     } catch (e) {
-      if (e instanceof AdminApiError && e.status === 404) setMissing(true);
+      setWorkspace(null);
+      const known = e instanceof AdminApiError && e.code ? BLOCKED[e.code] : undefined;
+      if (known) setBlocked(known);
+      else if (e instanceof AdminApiError && e.status === 404) setBlocked(BLOCKED.patient_not_found);
       else setError(e instanceof AdminApiError ? e.message : "Bemor ma‘lumotlarini yuklab bo‘lmadi");
     }
   }, [id]);
@@ -55,31 +189,56 @@ export default function DoctorPatientPage() {
     void load();
   }, [load]);
 
-  const back = (
-    <Link href="/doctor" className="text-sm font-medium text-pine hover:underline">
-      ← Bugungi navbat
-    </Link>
-  );
+  const act = async (run: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await run();
+      await load();
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Amalni bajarib bo‘lmadi");
+    } finally {
+      setBusy(false);
+    }
+  };
 
-  if (missing) {
+  const startConsultation = (body: { appointmentId: string } | { serviceId: string }) =>
+    act(() => adminApi.post(`/api/doctor/patients/${id}/consultations`, body));
+  const completeConsultation = (appointmentId: string) =>
+    act(() => adminApi.patch(`/api/doctor/appointments/${appointmentId}`, { status: "completed" }));
+
+  const recordsByAppointment = useMemo(() => {
+    const map = new Map<string, ClinicalRecord[]>();
+    for (const r of workspace?.records ?? []) map.set(r.appointmentId, [...(map.get(r.appointmentId) ?? []), r]);
+    return map;
+  }, [workspace]);
+
+  const back =
+    workspace?.relationship === "own" ? (
+      <Link href="/doctor" className="text-sm font-medium text-pine hover:underline">
+        ← Bugungi navbat
+      </Link>
+    ) : (
+      <Link href="/doctor/referrals" className="text-sm font-medium text-pine hover:underline">
+        ← Yo‘llanmalar
+      </Link>
+    );
+
+  if (blocked) {
     return (
       <div>
-        <PageHeader title="Bemor" action={back} />
+        <PageHeader title="Bemor kartasi" action={back} />
         <Card>
-          <AEmpty
-            title="Bemor topilmadi"
-            subtitle="U mavjud emas yoki uni ko‘rishga ruxsatingiz yo‘q"
-            icon={<UserRound className="h-6 w-6" />}
-          />
+          <AEmpty title={blocked.title} subtitle={blocked.subtitle} icon={blocked.icon} />
         </Card>
       </div>
     );
   }
 
-  if (!record) {
+  if (!workspace) {
     return (
       <div>
-        <PageHeader title="Bemor" action={back} />
+        <PageHeader title="Bemor kartasi" action={back} />
         {error && <AError message={error} />}
         <Card>
           <LoadingRow />
@@ -88,75 +247,250 @@ export default function DoctorPatientPage() {
     );
   }
 
+  const { consultation } = workspace;
+  const current = consultation.current;
+  const scheduled = workspace.appointments
+    .filter((a) => a.id !== current?.appointmentId && SCHEDULED.includes(a.status))
+    .sort((x, y) => x.startAt.localeCompare(y.startAt));
+  const previous = workspace.appointments.filter((a) => a.id !== current?.appointmentId && !SCHEDULED.includes(a.status));
+  const activeReferralToMe = workspace.referrals.some((r) => r.role === "receiver" && ["pending", "accepted"].includes(r.status));
+  const currentRecords = current ? (recordsByAppointment.get(current.appointmentId) ?? []) : [];
+  const referringDoctorIds = new Set(workspace.referrals.filter((r) => r.role === "receiver").map((r) => r.referringDoctor?.id));
+
   return (
     <div>
-      <PageHeader title={record.patient.fullName ?? "Bemor"} subtitle={record.patient.phone ?? undefined} action={back} />
+      <PageHeader title={workspace.patient.fullName ?? "Bemor"} subtitle={workspace.patient.phone ?? undefined} action={back} />
       {error && <AError message={error} />}
-      {sentReferralId && (
+      {notice && (
         <Card className="mb-4 border-pine/30 bg-pine-tint/60">
-          <p className="text-sm font-medium text-pine-deep">
-            Yo‘llanma yuborildi.{" "}
-            <Link href={`/doctor/referrals/${sentReferralId}`} className="underline">
-              Yo‘llanmani ko‘rish
-            </Link>
-          </p>
+          <p className="text-sm font-medium text-pine-deep">{notice}</p>
         </Card>
       )}
 
-      <Card className="mb-4">
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          {record.relationship === "own" ? (
-            <ABadge tone="green">Mening bemorim</ABadge>
-          ) : (
-            <ABadge tone="blue">Yo‘llanma bo‘yicha</ABadge>
-          )}
-          <span className="text-ink-muted">
-            {record.relationship === "own"
-              ? "Sizning qabullaringiz ko‘rsatilgan."
-              : "Yo‘llanma faol ekan, unga tegishli qabullar ko‘rsatiladi."}
-          </span>
-          {record.activeReferralIds.map((referralId) => (
-            <Link key={referralId} href={`/doctor/referrals/${referralId}`} className="font-medium text-pine hover:underline">
-              Yo‘llanmani ochish
-            </Link>
-          ))}
-        </div>
-      </Card>
+      <div className="mb-6 flex flex-wrap items-center gap-2 text-sm">
+        {workspace.relationship === "own" && <ABadge tone="green">Mening bemorim</ABadge>}
+        {(workspace.relationship === "referred" || activeReferralToMe) && <ABadge tone="blue">Yo‘llanma bo‘yicha</ABadge>}
+        <span className="text-ink-muted">Faqat sizga ruxsat etilgan ma‘lumotlar ko‘rsatiladi.</span>
+      </div>
 
-      {record.appointments.length === 0 ? (
-        <Card>
-          <AEmpty title="Ko‘rsatiladigan qabul yo‘q" icon={<UserRound className="h-6 w-6" />} />
-        </Card>
-      ) : (
-        <ATable headers={["Sana", "Shifokor", "Xizmat", "Holat", ""]}>
-          {record.appointments.map((a) => (
-            <tr key={a.id} className="hover:bg-sand">
-              <td className="px-4 py-3 text-foreground">{formatDateTime(a.startAt)}</td>
-              <td className="px-4 py-3 text-foreground">{a.mine ? "Siz" : (a.doctor?.name ?? "—")}</td>
-              <td className="px-4 py-3 text-foreground">{a.service?.name ?? "—"}</td>
-              <td className="px-4 py-3">
-                <ABadge tone={STATUS_TONES[a.status] ?? "neutral"}>{STATUS_LABELS[a.status] ?? a.status}</ABadge>
-              </td>
-              <td className="px-4 py-3">
-                {a.mine && REFERABLE.includes(a.status) && (
-                  <AButton size="sm" variant="outline" onClick={() => setReferFrom(a)}>
+      {workspace.referrals.length > 0 && (
+        <Section title="Yo‘llanmalar">
+          {workspace.referrals.map((r) => (
+            <Card key={r.id}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium text-foreground">
+                  {r.role === "receiver"
+                    ? `Sizga yo‘llagan: ${r.referringDoctor?.name ?? "—"}`
+                    : `Siz yo‘llagansiz: ${r.referredToDoctor?.name ?? "—"}`}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <ABadge tone={r.priority === "urgent" ? "red" : "neutral"}>{REFERRAL_PRIORITY_LABELS[r.priority] ?? r.priority}</ABadge>
+                  <ABadge tone={REFERRAL_STATUS_TONES[r.status] ?? "gray"}>{REFERRAL_STATUS_LABELS[r.status] ?? r.status}</ABadge>
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-ink-muted">Yo‘llanma sababi</p>
+              <p className="whitespace-pre-wrap text-sm text-foreground">{r.reason}</p>
+              {r.handoffNote && (
+                <>
+                  <p className="mt-2 text-xs text-ink-muted">Shifokor uchun izoh</p>
+                  <p className="whitespace-pre-wrap text-sm text-foreground">{r.handoffNote}</p>
+                </>
+              )}
+              <p className="mt-2 text-xs text-ink-muted">
+                Yuborilgan {formatDateTime(r.createdAt)} · Amal qiladi {formatDateTime(r.expiresAt)} ·{" "}
+                <Link href={`/doctor/referrals/${r.id}`} className="text-pine hover:underline">
+                  Yo‘llanmani ochish
+                </Link>
+              </p>
+            </Card>
+          ))}
+        </Section>
+      )}
+
+      <Section title="Mening qabulim" subtitle="Siz bu bemor uchun yozadigan yangi qabul — oldingi yozuvlardan alohida.">
+        <Card className={current ? "border-pine/40" : undefined}>
+          {current ? (
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-foreground">
+                  <ABadge tone="purple">Jarayonda</ABadge>{" "}
+                  <span className="ml-1">
+                    {formatDateTime(current.startAt)}
+                    {current.serviceName ? ` · ${current.serviceName}` : ""}
+                  </span>
+                </p>
+                <div className="flex gap-2">
+                  <AButton
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const visit = workspace.appointments.find((a) => a.id === current.appointmentId);
+                      if (visit) setReferFrom(visit);
+                    }}
+                  >
                     Yo‘llanma
                   </AButton>
-                )}
-              </td>
-            </tr>
-          ))}
-        </ATable>
+                  <AButton variant="outline" size="sm" loading={busy} onClick={() => void completeConsultation(current.appointmentId)}>
+                    Qabulni yakunlash
+                  </AButton>
+                </div>
+              </div>
+              {currentRecords.length > 0 && (
+                <ul className="flex flex-col gap-2" aria-label="Joriy qabul yozuvlari">
+                  {currentRecords.map((r) => (
+                    <RecordItem key={r.id} record={r} />
+                  ))}
+                </ul>
+              )}
+              <ClinicalRecordForm patientId={workspace.patient.id} appointmentId={current.appointmentId} onSaved={() => void load()} />
+            </div>
+          ) : consultation.blockedReason === "referral_pending" ? (
+            <p className="text-sm text-ink-muted">
+              Qabulni boshlash uchun avval yo‘llanmani qabul qiling.{" "}
+              {workspace.referrals.find((r) => r.role === "receiver" && r.status === "pending") && (
+                <Link
+                  href={`/doctor/referrals/${workspace.referrals.find((r) => r.role === "receiver" && r.status === "pending")!.id}`}
+                  className="font-medium text-pine hover:underline"
+                >
+                  Yo‘llanmani ochish
+                </Link>
+              )}
+            </p>
+          ) : consultation.booked ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-foreground">
+                Bugun {formatTime(consultation.booked.startAt)} ga yozilgan qabulingiz
+                {consultation.booked.serviceName ? ` · ${consultation.booked.serviceName}` : ""}
+              </p>
+              <AButton loading={busy} onClick={() => void startConsultation({ appointmentId: consultation.booked!.appointmentId })}>
+                Qabulni boshlash
+              </AButton>
+            </div>
+          ) : consultation.canStartWalkIn ? (
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-56 flex-1">
+                <p className="mb-1 text-xs font-medium text-ink-muted">Xizmat</p>
+                <ASelect
+                  value={serviceId}
+                  onChange={setServiceId}
+                  options={[{ value: "", label: "Xizmatni tanlang" }, ...consultation.services.map((s) => ({ value: s.id, label: s.name }))]}
+                  aria-label="Xizmat"
+                />
+              </div>
+              <AButton loading={busy} disabled={!serviceId} onClick={() => void startConsultation({ serviceId })}>
+                Hozir qabulni boshlash
+              </AButton>
+            </div>
+          ) : (
+            <p className="text-sm text-ink-muted">Bu bemor bilan qabul boshlay olmaysiz.</p>
+          )}
+        </Card>
+      </Section>
+
+      {scheduled.length > 0 && (
+        <Section title="Rejalashtirilgan qabullar">
+          <Card>
+            <ul className="divide-y divide-hairline/70">
+              {scheduled.map((a) => (
+                <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                  <span className="text-foreground">
+                    {formatDateTime(a.startAt)}
+                    {a.service?.name ? ` · ${a.service.name}` : ""}
+                    <span className="text-ink-muted"> · {a.mine ? "Siz" : (a.doctor?.name ?? "—")}</span>
+                  </span>
+                  <ABadge tone={STATUS_TONES[a.status] ?? "neutral"}>{STATUS_LABELS[a.status] ?? a.status}</ABadge>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </Section>
       )}
+
+      <Section
+        title="Oldingi yozuvlar"
+        subtitle="Qabullar va ularda yozilgan tibbiy yozuvlar — har birida muallif va vaqt ko‘rsatilgan."
+      >
+        {previous.length === 0 ? (
+          <Card>
+            <AEmpty title="Ko‘rsatiladigan oldingi yozuv yo‘q" icon={<ClipboardList className="h-6 w-6" />} />
+          </Card>
+        ) : (
+          previous.map((a) => {
+            const records = recordsByAppointment.get(a.id) ?? [];
+            return (
+              <Card key={a.id}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">
+                      {formatDateTime(a.startAt)}
+                      {a.service?.name ? ` · ${a.service.name}` : ""}
+                    </p>
+                    <p className="text-xs text-ink-muted">
+                      {a.mine
+                        ? "Sizning qabulingiz"
+                        : `${a.doctor?.name ?? "—"}${a.doctor && referringDoctorIds.has(a.doctor.id) ? " — yo‘llagan shifokor" : ""}`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <ABadge tone={STATUS_TONES[a.status] ?? "neutral"}>{STATUS_LABELS[a.status] ?? a.status}</ABadge>
+                    {a.mine && REFERABLE.includes(a.status) && (
+                      <AButton size="sm" variant="outline" onClick={() => setReferFrom(a)}>
+                        Yo‘llanma
+                      </AButton>
+                    )}
+                  </div>
+                </div>
+                {records.length > 0 ? (
+                  <ul className="mt-3 flex flex-col gap-2">
+                    {records.map((r) => (
+                      <RecordItem
+                        key={r.id}
+                        record={r}
+                        onCorrect={(rec) =>
+                          setCorrecting({ recordId: rec.id, type: rec.type, summary: rec.summary, details: rec.details, code: rec.code, appointmentId: rec.appointmentId })
+                        }
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-xs text-ink-muted">Bu qabulda tibbiy yozuv yo‘q.</p>
+                )}
+                {correcting && correcting.appointmentId === a.id && (
+                  <div className="mt-3 border-t border-hairline pt-3">
+                    <ClinicalRecordForm
+                      patientId={workspace.patient.id}
+                      appointmentId={a.id}
+                      correcting={correcting}
+                      onCancel={() => setCorrecting(null)}
+                      onSaved={() => {
+                        setCorrecting(null);
+                        void load();
+                      }}
+                    />
+                  </div>
+                )}
+              </Card>
+            );
+          })
+        )}
+      </Section>
 
       {referFrom && (
         <ReferralDialog
           consultation={{ appointmentId: referFrom.id, startAt: referFrom.startAt, serviceName: referFrom.service?.name ?? null }}
-          patientName={record.patient.fullName ?? "—"}
+          patientName={workspace.patient.fullName ?? "—"}
           onClose={() => setReferFrom(null)}
           onCreated={(referralId) => {
             setReferFrom(null);
-            setSentReferralId(referralId);
+            setNotice(
+              <>
+                Yo‘llanma yuborildi.{" "}
+                <Link href={`/doctor/referrals/${referralId}`} className="underline">
+                  Yo‘llanmani ko‘rish
+                </Link>
+              </>,
+            );
+            void load();
           }}
         />
       )}
