@@ -97,10 +97,12 @@ foreign keys) enforces the same rules independently of the API.
 What a doctor may see of a patient — their own patient, or one actively referred to them — is one
 decision, `public.doctor_patient_access()`, used by the `patients`/`appointments` RLS policies and by
 the server (`src/lib/clinical-access/access.ts`, `GET /api/doctor/patients/[id]`, shown on the
-doctor's patient workspace `/doctor/patients/[id]`, reached from the queue, the referral and the
-referred-patients list). The workspace separates the doctor's own consultation ("Mening qabulim":
-start it, document it, finish it) from previous records, each shown with its author, time and
-type. See
+doctor's patient workspace `/doctor/patients/[id]`, reached from the queue, the referral, the
+referred-patients list and *Bemorlarim* (`/doctor/patients`, the doctor's own and referred patients,
+searchable). The workspace separates the doctor's own consultation ("Mening qabulim": start it,
+document and correct it, finish it) from previous records, each shown with its author, time and
+type; a *Klinik xulosa* groups the records in force (diagnoses, history, prescriptions, lab results)
+with their authors, and the receiving doctor can accept or complete the referral in place. See
 [security.md](security.md#clinical-access-doctors).
 
 ## Notifications

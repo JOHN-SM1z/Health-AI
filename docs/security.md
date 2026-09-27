@@ -79,7 +79,7 @@ Working in the same clinic gives a doctor no access to a patient. One decision,
   a doctor cannot probe other doctors' access. Direct REST/SQL access with a doctor's own token
   therefore gets exactly this scope.
 - **Server layer:** `canDoctorAccessPatientClinicalData(doctorId, patientId)`
-  (`src/lib/clinical-access/access.ts`) calls the same function; `getPatientClinicalRecord()` and
+  (`src/lib/clinical-access/access.ts`) calls the same function; `getPatientWorkspace()` and
   `GET /api/doctor/patients/[id]` read only what the decision covers (query filters come from the
   decision, never from the request), answer 404 for everything else, audit every view in strict
   mode (`patient_clinical_record_viewed`) and every refusal (`patient_clinical_access_denied`).
@@ -95,6 +95,11 @@ Working in the same clinic gives a doctor no access to a patient. One decision,
 - Voice recordings in Storage (`voice-messages` bucket) are readable by operational roles only,
   like the `voice_messages` rows — never by doctors.
 - `GET /api/doctor/patients/[id]` is rate limited per doctor (60/min) against id guessing.
+- **Patient list.** `GET /api/doctor/patients` (`listDoctorPatients()`) lists the doctor's own
+  patients (any appointment with them) and those with a pending or accepted, unexpired referral to
+  them — the decision's own rule, so every listed patient opens and nobody else of the clinic is
+  listed. The `?q=` search filters that list in the server (name or phone digits); it never reaches
+  a database query.
 - Staff who also hold an operational role keep that role's clinic-wide operational access.
 
 ## Clinical records
@@ -124,6 +129,9 @@ diagnoses, prescriptions, laboratory results and medical history.
   request; writes are idempotent per key. `POST /api/doctor/patients/[id]/consultations` starts the
   doctor's booked visit for today or books a walk-in through `book_appointment` (own patient, or an
   accepted referral — pending referrals must be accepted first).
+- **Nothing silently dropped.** A visible record always arrives with its consultation, even one
+  older than the workspace's 100-visit window (fetched by id and re-checked with
+  `canSeeAppointment()`).
 - **States.** A doctor whose referral for the patient lapsed gets 410 with the reason
   (`referral_revoked`, `referral_expired`, `referral_declined`, `referral_completed`) and no data;
   anyone else gets 404.

@@ -4,7 +4,12 @@ import { ApiError } from "@/lib/api/errors";
 import { recordAudit } from "@/lib/audit";
 import { localDayWindow } from "@/lib/time/local";
 import type { LinkedDoctor } from "@/lib/auth/guards";
-import { canDoctorAccessPatientClinicalData, type ClinicalAccess, type ClinicalRelationship } from "@/lib/clinical-access/access";
+import {
+  canDoctorAccessPatientClinicalData,
+  canSeeAppointment,
+  type ClinicalAccess,
+  type ClinicalRelationship,
+} from "@/lib/clinical-access/access";
 import { listVisibleClinicalRecords, type ClinicalRecordView } from "@/lib/clinical-records/service";
 import { listPatientReferralsForDoctor, type PatientReferral } from "@/lib/referrals/service";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
@@ -118,7 +123,26 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
   if (patientRes.error || appointmentsRes?.error) throw new ApiError(500, "Bemor ma‘lumotlarini yuklab bo‘lmadi");
   if (!patientRes.data) throw new ApiError(404, "Bemor topilmadi", "patient_not_found");
 
-  const appointments = ((appointmentsRes?.data ?? []) as unknown as AppointmentRow[]).map((a) => ({
+  // A visible record always comes with its consultation, even one older than
+  // the visit window above (same decision, same coverage).
+  const rows = (appointmentsRes?.data ?? []) as unknown as AppointmentRow[];
+  const listed = new Set(rows.map((a) => a.id));
+  const missing = [...new Set(records.map((r) => r.appointmentId))].filter((id) => !listed.has(id));
+  for (let i = 0; i < missing.length; i += 150) {
+    const { data: older, error } = await supabase
+      .from("appointments")
+      .select("id, start_at, end_at, status, doctor_id, services(name), doctors(name)")
+      .eq("clinic_id", doctor.clinicId)
+      .eq("patient_id", patientId)
+      .in("id", missing.slice(i, i + 150));
+    if (error) throw new ApiError(500, "Bemor ma‘lumotlarini yuklab bo‘lmadi");
+    for (const a of (older ?? []) as unknown as AppointmentRow[]) {
+      if (canSeeAppointment(access, doctor.doctorId, { id: a.id, doctorId: a.doctor_id })) rows.push(a);
+    }
+  }
+  if (missing.length > 0) rows.sort((a, b) => b.start_at.localeCompare(a.start_at));
+
+  const appointments = rows.map((a) => ({
     id: a.id,
     startAt: a.start_at,
     endAt: a.end_at,

@@ -26,6 +26,7 @@ vi.mock("@/lib/auth/staff", async (importOriginal) => {
   return { ...actual, getStaffContext: async () => session.ctx };
 });
 
+import { GET as listPatients } from "./route";
 import { GET as getWorkspace } from "./[id]/route";
 import { POST as addRecord } from "./[id]/records/route";
 import { POST as startConsultation } from "./[id]/consultations/route";
@@ -95,6 +96,13 @@ describeDb("referred-patient clinical workspace", () => {
     as(name);
     return read(await startConsultation(request("POST", `/api/doctor/patients/${patientId}/consultations`, body), params(patientId)));
   };
+  type PatientRow = { id: string; fullName: string | null; relationship: string; lastVisitAt: string | null; referral: { id: string; status: string; referringDoctorName: string | null } | null };
+  const patients = async (name: string, q = "", role = "doctor") => {
+    as(name, role);
+    const res = await read(await listPatients(request("GET", `/api/doctor/patients?q=${encodeURIComponent(q)}`)));
+    return { status: res.status, body: res.body, rows: (res.body.data?.patients ?? []) as PatientRow[] };
+  };
+  const listed = async (name: string, q = "") => (await patients(name, q)).rows.map((p) => p.id);
   const incoming = async (name: string) => {
     as(name);
     return (await read(await listReferrals(request("GET", "/api/doctor/referrals?box=incoming")))).body.data!.referrals as Array<Record<string, unknown>>;
@@ -445,5 +453,117 @@ describeDb("referred-patient clinical workspace", () => {
     expect(res).toMatchObject({ status: 201, body: { data: { consultation: { appointmentId: booked, started: true } } } });
     const { data: started } = await admin.from("appointments").select("status").eq("id", booked).single();
     expect(started!.status).toBe("in_progress");
+  });
+
+  it("doctor patient list — own and actively referred patients only, gone once the referral lapses", async () => {
+    const x = await patientX();
+    const referral = await refer(x);
+
+    expect((await patients("a")).rows.find((p) => p.id === x.id)).toMatchObject({ relationship: "own", referral: null });
+    expect((await patients("b")).rows.find((p) => p.id === x.id)).toMatchObject({
+      relationship: "referred",
+      referral: { id: referral, status: "pending", referringDoctorName: `Dr A ${suffix}` },
+    });
+    // Same clinic, no relationship: never listed.
+    expect(await listed("c")).not.toContain(x.id);
+
+    // Every listed patient opens — the list and the workspace share one decision.
+    for (const id of await listed("b")) expect((await workspace("b", id)).status).toBe(200);
+
+    await act("b", referral, { action: "accept" });
+    expect((await patients("b")).rows.find((p) => p.id === x.id)?.referral?.status).toBe("accepted");
+    await act("a", referral, { action: "revoke", reason: "Patient transferred" });
+    expect(await listed("b")).not.toContain(x.id);
+
+    // Expired referrals drop out as well.
+    const y = await patientX();
+    const { error } = await admin.from("referrals").insert({
+      clinic_id: clinicA,
+      patient_id: y.id,
+      referring_doctor_id: doctors.a,
+      referred_to_doctor_id: doctors.b,
+      originating_appointment_id: y.consultation,
+      reason: `Short-lived (${suffix})`,
+      created_by: users.a,
+      expires_at: new Date(Date.now() + 3_000).toISOString(),
+    });
+    expect(error).toBeNull();
+    expect(await listed("b")).toContain(y.id);
+    await new Promise((r) => setTimeout(r, 3_500));
+    expect(await listed("b")).not.toContain(y.id);
+  });
+
+  it("doctor patient list — search by name or phone, and only for linked doctors", async () => {
+    const { data: named } = await admin
+      .from("patients")
+      .insert({ clinic_id: clinicA, full_name: `Zulfiya Karimova ${suffix}`, phone: "+998 90 123-45-67" })
+      .select("id")
+      .single();
+    await visit(named!.id, doctors.a);
+
+    // Last visit: the visit that took place — not a later booking or a later cancelled visit.
+    await visit(named!.id, doctors.a, "confirmed", new Date(Date.UTC(2030, 0, 7, 5, 0)));
+    await visit(named!.id, doctors.a, "cancelled", new Date(Date.UTC(2026, 7, 1, 5, 0)));
+    const { data: held } = await admin
+      .from("appointments")
+      .select("start_at")
+      .eq("patient_id", named!.id)
+      .eq("status", "completed")
+      .single();
+    const row = (await patients("a", `zulfiya karimova ${suffix}`)).rows[0];
+    expect(row).toMatchObject({ id: named!.id, relationship: "own" });
+    expect(Date.parse(row.lastVisitAt!)).toBe(Date.parse(held!.start_at));
+    // A booking alone still makes the patient the doctor's own.
+    const { data: booked } = await admin.from("patients").insert({ clinic_id: clinicA, full_name: `Booked only ${suffix}` }).select("id").single();
+    await visit(booked!.id, doctors.a, "confirmed", new Date(Date.UTC(2030, 0, 9, 5, 0)));
+    expect((await patients("a", `Booked only ${suffix}`)).rows).toMatchObject([{ id: booked!.id, relationship: "own", lastVisitAt: null }]);
+
+    expect(await listed("a", `zulfiya karimova ${suffix}`)).toEqual([named!.id]);
+    expect(await listed("a", "4567")).toContain(named!.id);
+    expect(await listed("a", `nobody-${suffix}`)).toEqual([]);
+    // A search never widens the list: Dr C finds nobody by that name.
+    expect(await listed("c", `Zulfiya Karimova ${suffix}`)).toEqual([]);
+    // Filter syntax is plain text, not a query.
+    expect(await listed("a", "id.neq.0,full_name.ilike.*")).toEqual([]);
+
+    expect(await patients("receptionist", "", "receptionist")).toMatchObject({ status: 403 });
+    await makeUser("unlinked", "doctor");
+    expect(await patients("unlinked")).toMatchObject({ status: 403, body: { code: "doctor_not_linked" } });
+    as(null);
+    expect((await read(await listPatients(request("GET", "/api/doctor/patients")))).status).toBe(401);
+  });
+
+  it("a record from a consultation older than the visit window still comes with its consultation", async () => {
+    const x = await patientX();
+    const old = await visit(x.id, doctors.a, "completed", new Date(Date.UTC(2024, 0, 10, 5, 0)));
+    const oldRecord = await writeRecord("a", x.id, old, { recordType: "medical_history", summary: "Appendectomy 2010" });
+    const { error } = await admin.from("appointments").insert(
+      Array.from({ length: 100 }, (_, i) => {
+        const startAt = new Date(Date.UTC(2025, 0, 1, 5, 0) + i * 86_400_000);
+        return {
+          clinic_id: clinicA,
+          patient_id: x.id,
+          doctor_id: doctors.a,
+          service_id: serviceA,
+          start_at: startAt.toISOString(),
+          end_at: new Date(startAt.getTime() + 30 * 60_000).toISOString(),
+          status: "completed",
+          source: "walk_in",
+        };
+      }),
+    );
+    expect(error).toBeNull();
+
+    const own = ws(await workspace("a", x.id));
+    expect(own.records.map((r) => r.id)).toContain(oldRecord);
+    expect(own.appointments.map((a) => a.id)).toContain(old);
+
+    // Dr B, once accepted, sees it too — Dr E's visit still stays out.
+    const referral = await refer(x);
+    await act("b", referral, { action: "accept" });
+    const referred = ws(await workspace("b", x.id));
+    expect(referred.appointments.map((a) => a.id)).toContain(old);
+    expect(referred.appointments.map((a) => a.id)).not.toContain(x.withE);
+    expect(referred.records.map((r) => r.id)).not.toContain(x.recE);
   });
 });

@@ -61,7 +61,7 @@ Each row: expected behavior. Mark all green = go.
 - [ ] Owner/manager account linked to a doctor record is refused on `/api/doctor/referrals` (403)
 - [ ] `audit_events` has `referral_created/accepted/follow_up_booked/viewed` rows without the reason/handoff text
 - [ ] With a doctor's own token, `GET /rest/v1/patients?id=eq.<X>` is empty for a same-clinic doctor with no relationship to X, and returns X for the receiving doctor only while the referral is pending/accepted and unexpired
-- [ ] `GET /api/doctor/patients/<X>`: 200 for X's own doctor and the receiving doctor (accepted → referring doctor's visits only); 404 for anyone else, after revoke, after completion, after expiry
+- [ ] `GET /api/doctor/patients/<X>`: 200 for X's own doctor and the receiving doctor (accepted → referring doctor's visits only); 404 for anyone else; 410 with the reason for the receiving doctor after revoke, decline, completion or expiry
 - [ ] Doctor queue → patient name opens the patient page (*Mening bemorim*, *Yo‘llanma* on own attended visits); referral → patient name opens it as *Yo‘llanma bo‘yicha* with only the handed-over visits
 - [ ] A doctor's own token cannot update or delete appointments via `/rest/v1/appointments`, nor read `voice-messages` storage objects
 - [ ] Deactivating a doctor record removes their patient access through the app and the REST API
@@ -72,7 +72,10 @@ Each row: expected behavior. Mark all green = go.
 - [ ] Pending referral: workspace shows the patient and the consultation it came from; *Mening qabulim* asks to accept first
 - [ ] Accepted: the referring doctor's records appear with *Muallif: …* and date; none are marked *Siz yozgansiz*; another doctor's records never appear
 - [ ] *Hozir qabulni boshlash* starts a walk-in (or *Qabulni boshlash* for today's booked visit); records saved there show *Siz yozgansiz* under *Mening qabulim*, apart from *Oldingi yozuvlar*
-- [ ] A record can't be edited; *Tuzatish* adds a correction and marks the original *Tuzatilgan*
+- [ ] A record can't be edited; *Tuzatish* (in the current or a previous consultation) adds a correction and marks the original *Tuzatilgan*
+- [ ] *Klinik xulosa* lists diagnoses, history, prescriptions and lab results in force — a corrected record gives way to its correction — each with author and date
+- [ ] Pending referral: *Yo‘llanmani qabul qilish* in the workspace unlocks *Hozir qabulni boshlash*; *Yo‘llanmani yakunlash* asks for confirmation, and without an own consultation the page then shows *Yo‘llanma yakunlangan*
+- [ ] *Bemorlarim* lists own patients (*Mening bemorim*, last visit that took place) and actively referred ones; revoked, expired and unrelated patients are absent; search by name or phone digits
 - [ ] After revoke / expiry: the workspace shows *Yo‘llanma bekor qilingan* / *muddati tugagan* with no patient data; an unrelated patient id shows *Bemor topilmadi*
 - [ ] Reception, managers and owners never see clinical records (patient panel, REST API)
 

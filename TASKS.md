@@ -25,6 +25,7 @@
   - referral-based clinical access: `doctor_patient_access()` + doctor RLS policies, `canDoctorAccessPatientClinicalData`, `GET /api/doctor/patients/[id]`, security tests 1–10 at DB and API level
   - clinical workspace: `clinical_records` (immutable, provenance, RLS = consultation access), referred-patients section, patient workspace with own consultation vs previous records, walk-in/booked consultation start, revoked/expired states
   - hardening: voice storage for operational roles only, no direct doctor writes to appointments, inactive doctors denied at every layer, server/RLS parity for referral-linked appointments, rate limit; doctor patient page `/doctor/patients/[id]`
+  - completeness: *Bemorlarim* patient list with search (`GET /api/doctor/patients`), corrections in the current consultation, clinical summary by record type, accept/complete referral from the workspace, records older than the visit window keep their consultation; `npm test` runs without `.env` files
 
 - [x] ~~0. Audit~~ (2026-08-18)
   - `docs/architecture.md` + `docs/security.md`; threat model: cross-tenant, payment integrity, AI safety
