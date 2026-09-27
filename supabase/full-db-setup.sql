@@ -3,6 +3,7 @@
 -- Auto-generated from supabase/migrations/ in order. Run ONCE on an
 -- EMPTY database via Supabase Dashboard > SQL Editor > New query.
 -- Seed data (supabase/seed.sql) is LOCAL-DEV-ONLY and is NOT included.
+-- Regenerate with: node scripts/build-full-db-setup.mjs
 -- =====================================================================
 
 -- =====================================================================
@@ -139,6 +140,7 @@ create table public.patients (
 
 create index patients_telegram_idx on public.patients (telegram_user_id) where telegram_user_id is not null;
 create index patients_clinic_idx on public.patients (clinic_id);
+
 -- =====================================================================
 -- FILE: 20260813000003_catalog.sql
 -- =====================================================================
@@ -200,6 +202,7 @@ create index services_clinic_active_idx on public.services (clinic_id, active);
 create index doctors_clinic_active_idx on public.doctors (clinic_id, active);
 create index doctors_specialty_idx on public.doctors (specialty_id);
 create index specialties_clinic_idx on public.specialties (clinic_id);
+
 -- =====================================================================
 -- FILE: 20260813000004_schedules.sql
 -- =====================================================================
@@ -235,6 +238,7 @@ create table public.doctor_time_blocks (
 create index doctor_working_hours_doctor_idx on public.doctor_working_hours (doctor_id);
 create index doctor_time_blocks_doctor_idx on public.doctor_time_blocks (doctor_id, starts_at, ends_at);
 create index doctor_time_blocks_clinic_idx on public.doctor_time_blocks (clinic_id);
+
 -- =====================================================================
 -- FILE: 20260813000005_appointments_payments.sql
 -- =====================================================================
@@ -296,6 +300,7 @@ create index appointments_status_idx on public.appointments (status);
 create index payments_clinic_status_idx on public.payments (clinic_id, status);
 create index payments_provider_ref_idx on public.payments (provider, provider_reference)
   where provider_reference is not null;
+
 -- =====================================================================
 -- FILE: 20260813000006_conversations.sql
 -- =====================================================================
@@ -366,6 +371,7 @@ create table public.messages (
 create index conversations_clinic_status_idx on public.conversations (clinic_id, status);
 create index messages_conversation_idx on public.messages (conversation_id, created_at);
 create index voice_messages_conversation_idx on public.voice_messages (conversation_id);
+
 -- =====================================================================
 -- FILE: 20260813000007_faqs_settings.sql
 -- =====================================================================
@@ -393,6 +399,7 @@ create table public.app_settings (
 );
 
 create index faq_entries_clinic_active_idx on public.faq_entries (clinic_id, active);
+
 -- =====================================================================
 -- FILE: 20260813000008_operations.sql
 -- =====================================================================
@@ -465,6 +472,7 @@ create table public.analytics_events (
 
 create index analytics_events_clinic_idx on public.analytics_events (clinic_id, created_at desc);
 create index analytics_events_type_idx on public.analytics_events (clinic_id, event_type);
+
 -- =====================================================================
 -- FILE: 20260813000009_functions_triggers.sql
 -- =====================================================================
@@ -871,6 +879,7 @@ end;
 $$;
 
 grant execute on function public.reschedule_appointment(uuid, timestamptz, uuid) to service_role, authenticated;
+
 -- =====================================================================
 -- FILE: 20260813000010_rls.sql
 -- =====================================================================
@@ -1193,6 +1202,7 @@ create policy "analytics read for admin owner"
 
 -- No policies exist for: processed_webhooks (server-side only), and no
 -- insert/delete policies exist on any table for anon or unauthenticated roles.
+
 -- =====================================================================
 -- FILE: 20260813000011_storage.sql
 -- =====================================================================
@@ -1227,6 +1237,7 @@ create policy "voice-messages staff read"
         and sr.clinic_id::text = (storage.foldername(name))[1]
     )
   );
+
 -- =====================================================================
 -- FILE: 20260813000012_conversation_state.sql
 -- =====================================================================
@@ -1234,6 +1245,7 @@ create policy "voice-messages staff read"
 
 alter table public.conversations
   add column if not exists state jsonb not null default '{}'::jsonb;
+
 -- =====================================================================
 -- FILE: 20260813000013_grants.sql
 -- =====================================================================
@@ -1258,6 +1270,7 @@ alter default privileges in schema public
 
 alter default privileges in schema public
   grant select, insert, update, delete on tables to authenticated;
+
 -- =====================================================================
 -- FILE: 20260813000014_release_blockers.sql
 -- =====================================================================
@@ -1329,12 +1342,6 @@ begin
 end;
 $$;
 
--- Server-only: granting service_role is not enough on its own. PostgreSQL
--- gives every new function EXECUTE to PUBLIC, and Supabase additionally grants
--- anon/authenticated on public functions, so without these revokes a fresh
--- install is reachable unauthenticated at /rest/v1/rpc/ with the publishable
--- anon key (see 20260912000001_server_only_rpc_grants.sql).
-revoke execute on function public.claim_due_notification_jobs(int) from public, anon, authenticated;
 grant execute on function public.claim_due_notification_jobs(int) to service_role;
 
 -- ---------- 4. Atomic webhook claim ----------
@@ -1383,14 +1390,13 @@ as $$
   where source = p_source and external_id = p_external_id and status = 'processing';
 $$;
 
--- Server-only: see the note on claim_due_notification_jobs above — the revokes
--- are what actually keep these off the public PostgREST surface.
-revoke execute on function public.claim_webhook_update(text, text) from public, anon, authenticated;
-revoke execute on function public.finish_webhook_update(text, text) from public, anon, authenticated;
-revoke execute on function public.release_webhook_update(text, text) from public, anon, authenticated;
 grant execute on function public.claim_webhook_update(text, text) to service_role;
 grant execute on function public.finish_webhook_update(text, text) to service_role;
 grant execute on function public.release_webhook_update(text, text) to service_role;
+
+-- New enum values must be committed before any later statement uses them.
+commit;
+
 -- =====================================================================
 -- FILE: 20260813000015_fixes.sql
 -- =====================================================================
@@ -1974,6 +1980,7 @@ create index doctor_working_hours_clinic_idx
 create index clinic_telegram_integrations_enabled_idx
   on public.clinic_telegram_integrations (enabled)
   where enabled;
+
 -- =====================================================================
 -- FILE: 20260818000023_role_based_authorization.sql
 -- =====================================================================
@@ -2041,6 +2048,9 @@ set search_path = public
 as $$
   select exists (select 1 from public.platform_admins where profile_id = auth.uid());
 $$;
+
+-- New enum values must be committed before any later statement uses them.
+commit;
 
 -- =====================================================================
 -- FILE: 20260818000024_role_based_rls.sql
@@ -2410,6 +2420,7 @@ begin
   return new;
 end;
 $$;
+
 -- =====================================================================
 -- FILE: 20260821000001_telegram_integration_constraint_and_seed_resilience.sql
 -- =====================================================================
@@ -2771,6 +2782,9 @@ comment on function public.claim_webhook_update(text, text) is
 
 alter type public.appointment_source add value if not exists 'web' after 'telegram_chat';
 
+-- New enum values must be committed before any later statement uses them.
+commit;
+
 -- =====================================================================
 -- FILE: 20260911000001_patient_operational_notes.sql
 -- =====================================================================
@@ -2786,6 +2800,60 @@ alter table public.patients
 alter table public.patients
   add constraint patients_operational_notes_length
   check (operational_notes is null or char_length(operational_notes) <= 1000);
+
+-- =====================================================================
+-- FILE: 20260912000001_server_only_rpc_grants.sql
+-- =====================================================================
+-- Server-only RPCs must not be callable from a browser.
+--
+-- claim_due_notification_jobs, claim_webhook_update, finish_webhook_update and
+-- release_webhook_update are SECURITY DEFINER job/idempotency primitives called
+-- exclusively by server code through the service-role client
+-- (src/lib/notifications/processor.ts, src/lib/telegram/idempotency.ts). They
+-- shipped with PostgreSQL's default PUBLIC EXECUTE plus Supabase's blanket
+-- anon/authenticated grants, which left them reachable UNAUTHENTICATED over
+-- PostgREST at /rest/v1/rpc/<name> with nothing but the publishable anon key.
+--
+-- Before this migration anyone on the internet could:
+--
+--   * claim_due_notification_jobs(p_limit) — claim pending reminder rows,
+--     both READING their patient-directed payload and flipping them to
+--     'in_progress' so the real worker skips them and the patient never gets
+--     the appointment reminder;
+--   * claim_webhook_update('telegram', <update_id>) — pre-claim update ids so
+--     genuine Telegram deliveries are discarded as duplicates and the bot
+--     silently stops answering patients;
+--   * release_/finish_webhook_update(...) — corrupt that same idempotency
+--     ledger, re-opening the double-send window the claim exists to close.
+--
+-- service_role keeps EXECUTE: it is the only caller anywhere in the codebase.
+--
+-- Deliberately NOT touched here (smallest safe change):
+--   * is_clinic_staff() / is_platform_admin() — read-only predicates about the
+--     CURRENT session that return false for an anonymous caller, so they leak
+--     nothing. RLS evaluates them as the invoking role, so `authenticated`
+--     MUST keep EXECUTE or every policy built on them starts erroring on
+--     legitimate traffic.
+--   * the trigger functions (appointments_validate_slot, payments_block_direct_write,
+--     audit_track_changes, …) — they return `trigger`, which PostgREST cannot
+--     expose as an RPC and which Postgres refuses to call directly
+--     ("trigger functions can only be called as triggers"), so the grant is
+--     not actually reachable. Revoking it would buy no measurable protection
+--     while putting the booking and payment write paths at risk, so it is
+--     left for a change that can be exercised against a disposable database
+--     first.
+
+revoke execute on function public.claim_due_notification_jobs(integer) from public, anon, authenticated;
+grant execute on function public.claim_due_notification_jobs(integer) to service_role;
+
+revoke execute on function public.claim_webhook_update(text, text) from public, anon, authenticated;
+grant execute on function public.claim_webhook_update(text, text) to service_role;
+
+revoke execute on function public.finish_webhook_update(text, text) from public, anon, authenticated;
+grant execute on function public.finish_webhook_update(text, text) to service_role;
+
+revoke execute on function public.release_webhook_update(text, text) from public, anon, authenticated;
+grant execute on function public.release_webhook_update(text, text) to service_role;
 
 -- =====================================================================
 -- FILE: 20260926000001_referrals.sql
@@ -4323,6 +4391,9 @@ alter type public.clinical_record_type add value if not exists 'assessment' befo
 alter type public.clinical_record_type add value if not exists 'lab_order' before 'lab_result';
 alter type public.clinical_record_type add value if not exists 'follow_up';
 
+-- New enum values must be committed before any later statement uses them.
+commit;
+
 -- =====================================================================
 -- FILE: 20260928000002_clinical_handoff.sql
 -- =====================================================================
@@ -5234,3 +5305,337 @@ begin
   return new;
 end;
 $$;
+
+-- =====================================================================
+-- FILE: 20260930000001_consultation_start.sql
+-- =====================================================================
+-- Starting a consultation is one database transaction.
+--
+-- Until now the server moved the appointment to in progress, then linked a
+-- waiting referral, then wrote the 'consultation_started' audit row — three
+-- requests. A failure between them left a started consultation with no audit
+-- row (or no referral link), and two concurrent starts could both write one.
+-- These functions do all three in one transaction, with a compare-and-swap
+-- on the appointment's status:
+--
+--   start_consultation(...)          an existing appointment → in progress
+--   start_walk_in_consultation(...)  a walk-in booked in progress through the
+--                                    booking engine (book_appointment)
+--
+-- Both write 'consultation_started' (ids only — never clinical text) with the
+-- acting staff member, and optionally link the consultation to the accepted
+-- referral waiting for it (the referral then moves to in progress through
+-- referrals_validate(), exactly as before). A link the referral trigger
+-- refuses never blocks the consultation: the referral simply stays accepted.
+--
+-- Server-only: EXECUTE for service_role alone. The server has already
+-- authorized the caller (the doctor's own appointment and access to the
+-- patient, or operational staff of the clinic); the functions re-check the
+-- tenant, the actor's staff role in the clinic and, when given, the doctor.
+--
+-- Rollback: drop function public.start_walk_in_consultation(uuid, uuid, uuid,
+-- uuid, timestamptz, uuid); drop function public.start_consultation(uuid,
+-- uuid, public.appointment_status, uuid, text, boolean, uuid); drop function
+-- public.consultation_started_effects(uuid, uuid, text, boolean, boolean).
+
+create or replace function public.consultation_started_effects(
+  p_appointment_id uuid,
+  p_actor uuid,
+  p_via text,
+  p_link_referral boolean,
+  p_walk_in boolean
+)
+returns uuid
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_appointment public.appointments%rowtype;
+  v_waiting uuid;
+  v_referral uuid;
+begin
+  select * into v_appointment from public.appointments where id = p_appointment_id;
+  if not found or v_appointment.status <> 'in_progress' then
+    raise exception 'consultation: the appointment is not in progress';
+  end if;
+
+  -- The accepted referral to this doctor for this patient that is waiting for
+  -- its consultation: none booked yet, or its booking was cancelled or has
+  -- not started (same rule as referrals_validate()).
+  if p_link_referral and not exists (
+    select 1 from public.referrals r
+     where r.follow_up_appointment_id = v_appointment.id
+       and r.status in ('accepted', 'in_progress', 'completed')
+  ) then
+    select r.id into v_waiting
+      from public.referrals r
+      left join public.appointments f on f.id = r.follow_up_appointment_id
+     where r.clinic_id = v_appointment.clinic_id
+       and r.patient_id = v_appointment.patient_id
+       and r.referred_to_doctor_id = v_appointment.doctor_id
+       and r.status = 'accepted'
+       and r.expires_at > now()
+       and (r.follow_up_appointment_id is null
+            or f.status in ('cancelled', 'no_show', 'pending', 'confirmed', 'checked_in'))
+     order by r.created_at
+     limit 1
+     for update of r;
+    if v_waiting is not null then
+      begin
+        update public.referrals set follow_up_appointment_id = v_appointment.id where id = v_waiting;
+      exception when others then
+        raise warning 'consultation not linked to referral (sqlstate %)', sqlstate;
+      end;
+    end if;
+  end if;
+
+  select r.id into v_referral
+    from public.referrals r
+   where r.clinic_id = v_appointment.clinic_id
+     and r.follow_up_appointment_id = v_appointment.id
+     and r.status in ('accepted', 'in_progress', 'completed')
+   order by r.created_at desc
+   limit 1;
+
+  insert into public.audit_events (
+    clinic_id, actor_id, actor_type, action, entity_type, entity_id,
+    patient_id, referral_id, new_values, metadata
+  ) values (
+    v_appointment.clinic_id, p_actor, 'staff', 'consultation_started', 'appointments', v_appointment.id::text,
+    v_appointment.patient_id, v_referral,
+    jsonb_build_object('status', 'in_progress'),
+    jsonb_build_object(
+      'patient_id', v_appointment.patient_id,
+      'doctor_id', v_appointment.doctor_id,
+      'referral_id', v_referral,
+      'via', p_via,
+      'walk_in', p_walk_in
+    )
+  );
+  return v_referral;
+end;
+$$;
+
+create or replace function public.start_consultation(
+  p_clinic_id uuid,
+  p_appointment_id uuid,
+  p_from_status public.appointment_status,
+  p_actor uuid,
+  p_via text,
+  p_link_referral boolean default false,
+  p_doctor_id uuid default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+begin
+  if p_via is null or p_via not in ('doctor_workspace', 'doctor_queue', 'front_desk') then
+    raise exception 'consultation: unknown start channel %', p_via;
+  end if;
+  if not exists (select 1 from public.staff_roles where profile_id = p_actor and clinic_id = p_clinic_id) then
+    raise exception 'consultation: the actor is not staff of this clinic';
+  end if;
+  if p_from_status = 'in_progress' then
+    return jsonb_build_object('started', false, 'referral_id', null);
+  end if;
+
+  -- Compare-and-swap: only the status the caller saw moves, so of two
+  -- concurrent starts exactly one starts (and audits) the consultation.
+  update public.appointments
+     set status = 'in_progress'
+   where id = p_appointment_id
+     and clinic_id = p_clinic_id
+     and status = p_from_status
+     and (p_doctor_id is null or doctor_id = p_doctor_id);
+  if not found then
+    return jsonb_build_object('started', false, 'referral_id', null);
+  end if;
+
+  return jsonb_build_object(
+    'started', true,
+    'referral_id', public.consultation_started_effects(p_appointment_id, p_actor, p_via, p_link_referral, false)
+  );
+end;
+$$;
+
+create or replace function public.start_walk_in_consultation(
+  p_clinic_id uuid,
+  p_patient_id uuid,
+  p_doctor_id uuid,
+  p_service_id uuid,
+  p_start_at timestamptz,
+  p_actor uuid
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_booking record;
+begin
+  if not exists (
+    select 1 from public.doctors d
+     where d.id = p_doctor_id and d.clinic_id = p_clinic_id and d.profile_id = p_actor
+  ) then
+    raise exception 'consultation: a walk-in is started by the doctor themselves';
+  end if;
+
+  -- The booking engine checks working hours, time blocks, the doctor's
+  -- services and overlaps, as for every other booking.
+  select * into v_booking
+    from public.book_appointment(
+      p_clinic_id, p_patient_id, p_doctor_id, p_service_id, p_start_at,
+      'in_progress'::public.appointment_status, 'walk_in'::public.appointment_source, null, p_actor
+    );
+  if v_booking.error_code is not null or v_booking.appointment_id is null then
+    return jsonb_build_object(
+      'appointment_id', null,
+      'error_code', coalesce(v_booking.error_code, 'booking_failed'),
+      'referral_id', null
+    );
+  end if;
+
+  return jsonb_build_object(
+    'appointment_id', v_booking.appointment_id,
+    'error_code', null,
+    'referral_id', public.consultation_started_effects(v_booking.appointment_id, p_actor, 'doctor_workspace', true, true)
+  );
+end;
+$$;
+
+revoke execute on function public.consultation_started_effects(uuid, uuid, text, boolean, boolean) from public, anon, authenticated;
+revoke execute on function public.start_consultation(uuid, uuid, public.appointment_status, uuid, text, boolean, uuid) from public, anon, authenticated;
+revoke execute on function public.start_walk_in_consultation(uuid, uuid, uuid, uuid, timestamptz, uuid) from public, anon, authenticated;
+grant execute on function public.consultation_started_effects(uuid, uuid, text, boolean, boolean) to service_role;
+grant execute on function public.start_consultation(uuid, uuid, public.appointment_status, uuid, text, boolean, uuid) to service_role;
+grant execute on function public.start_walk_in_consultation(uuid, uuid, uuid, uuid, timestamptz, uuid) to service_role;
+
+comment on function public.start_consultation(uuid, uuid, public.appointment_status, uuid, text, boolean, uuid) is
+  'Server-only. Moves an appointment from p_from_status to in_progress (compare-and-swap), optionally links the waiting accepted referral, and audits consultation_started — one transaction.';
+comment on function public.start_walk_in_consultation(uuid, uuid, uuid, uuid, timestamptz, uuid) is
+  'Server-only. Books a walk-in in progress through book_appointment, links the waiting accepted referral, and audits consultation_started — one transaction.';
+
+-- =====================================================================
+-- FILE: 20260930000002_server_only_booking_writes.sql
+-- =====================================================================
+-- Appointments, patients and payments are written by the server only.
+--
+-- Every write the product makes to these tables goes through a server route
+-- with the service-role client, after the route has authorized the caller:
+-- bookings and walk-ins through book_appointment(), rescheduling through
+-- reschedule_appointment(), cancellations and status changes through
+-- /api/admin/appointments/[id] (notifications, audit and analytics included),
+-- consultation starts through start_consultation(), payments through
+-- transitionPaymentStatus(), patients through /api/admin/appointments,
+-- /api/admin/patients and the Telegram identity code. No page writes them
+-- with the signed-in user's token.
+--
+-- The role-based policies from 20260818000024 still let a signed-in staff
+-- token write them directly over PostgREST (/rest/v1/...), bypassing all of
+-- that:
+--
+--   * a manager could INSERT a payment already marked 'paid' — the rule is
+--     that no browser request can mark a payment paid (payments_block_direct_write
+--     only covers UPDATE);
+--   * operational staff could INSERT appointments or move them (start_at,
+--     doctor, patient) outside the transactional booking engine, set any
+--     status with no notification to the patient, and write created_by /
+--     cancelled_by as someone else;
+--   * operational staff could create or edit patients outside the server's
+--     validation.
+--
+-- This migration removes those write policies and the table-level write
+-- grants for anon/authenticated. Reads are unchanged (RLS read policies stay),
+-- the doctor's own appointment-status path was already server-only
+-- (20260927000004), and the server's service-role writes are unaffected
+-- (service_role bypasses RLS and keeps its grants).
+--
+-- Rollback: re-create the six policies exactly as in
+-- 20260818000024_role_based_rls.sql and
+-- `grant insert, update on public.appointments, public.patients, public.payments to authenticated;`.
+
+drop policy if exists "appointments insert for operational staff" on public.appointments;
+drop policy if exists "appointments update for operational staff" on public.appointments;
+drop policy if exists "patients insert for operational staff" on public.patients;
+drop policy if exists "patients update for operational staff" on public.patients;
+drop policy if exists "payments insert for management" on public.payments;
+drop policy if exists "payments update for management" on public.payments;
+
+revoke insert, update, delete, truncate on public.appointments from anon, authenticated;
+revoke insert, update, delete, truncate on public.patients from anon, authenticated;
+revoke insert, update, delete, truncate on public.payments from anon, authenticated;
+
+-- =====================================================================
+-- FILE: 20260930000003_shared_rate_limits.sql
+-- =====================================================================
+-- A rate limit every server instance shares.
+--
+-- src/lib/rate-limit.ts counts requests in the memory of one server
+-- instance, so with N Cloud Run instances a caller gets up to N times the
+-- limit. That is acceptable for the public, IP-keyed limits (a load-balancer
+-- policy covers those), but not for the limit that guards clinical data: the
+-- per-doctor patient-record lookup limit, which slows down id guessing and
+-- bulk reading of patients' records. consume_rate_limit() keeps that count in
+-- Postgres, so it holds across instances.
+--
+-- One row per key (a doctor's account and what is limited), updated in place
+-- with an atomic upsert: fixed windows, the count capped at limit + 1. Keys
+-- are per staff account, so the table stays as small as the staff list.
+--
+-- Server-only: RLS on with no policies, no grants for anon/authenticated,
+-- EXECUTE for service_role alone.
+--
+-- Rollback: drop function public.consume_rate_limit(text, integer, integer);
+-- drop table public.rate_limit_buckets;
+
+create table public.rate_limit_buckets (
+  key text primary key check (length(key) between 1 and 200),
+  window_started_at timestamptz not null,
+  hits integer not null check (hits >= 0)
+);
+
+alter table public.rate_limit_buckets enable row level security;
+revoke all on public.rate_limit_buckets from public, anon, authenticated;
+grant select, insert, update, delete on public.rate_limit_buckets to service_role;
+
+comment on table public.rate_limit_buckets is
+  'Server-only request counters shared by every app instance (consume_rate_limit). No personal data: keys are an account id and a purpose.';
+
+create or replace function public.consume_rate_limit(p_key text, p_limit integer, p_window_seconds integer)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_window interval;
+  v_bucket public.rate_limit_buckets%rowtype;
+begin
+  if p_key is null or p_limit is null or p_limit < 1 or p_window_seconds is null or p_window_seconds < 1 then
+    raise exception 'rate limit: invalid key, limit or window';
+  end if;
+  v_window := make_interval(secs => p_window_seconds);
+
+  insert into public.rate_limit_buckets as b (key, window_started_at, hits)
+  values (p_key, clock_timestamp(), 1)
+  on conflict (key) do update
+    set window_started_at = case when b.window_started_at + v_window <= clock_timestamp() then clock_timestamp() else b.window_started_at end,
+        hits = case when b.window_started_at + v_window <= clock_timestamp() then 1 else least(b.hits + 1, p_limit + 1) end
+  returning * into v_bucket;
+
+  return jsonb_build_object(
+    'allowed', v_bucket.hits <= p_limit,
+    'retry_after_seconds', greatest(1, ceil(extract(epoch from (v_bucket.window_started_at + v_window - clock_timestamp())))::integer)
+  );
+end;
+$$;
+
+revoke execute on function public.consume_rate_limit(text, integer, integer) from public, anon, authenticated;
+grant execute on function public.consume_rate_limit(text, integer, integer) to service_role;
+
+comment on function public.consume_rate_limit(text, integer, integer) is
+  'Server-only. Counts one request against p_key (fixed window of p_window_seconds) and says whether it is within p_limit — shared by every app instance.';

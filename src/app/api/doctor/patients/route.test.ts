@@ -586,4 +586,16 @@ describeDb("referral-based clinical access — server and API layers", () => {
     // Another doctor is unaffected.
     expect((await record("c", randomUUID())).status).toBe(404);
   });
+
+  it("14b. The lookup limit holds across server instances — counted in the database, not one instance's memory", async () => {
+    let status = 0;
+    for (let i = 0; i < 61 && status !== 429; i++) status = (await record("e", randomUUID())).status;
+    expect(status).toBe(429);
+    // A fresh copy of the route module is what another instance runs: its in-memory limiter is empty.
+    vi.resetModules();
+    const { GET: otherInstance } = await import("./[id]/route");
+    const id = randomUUID();
+    as("e", "doctor");
+    expect((await otherInstance(request("GET", `/api/doctor/patients/${id}`), params(id))).status).toBe(429);
+  });
 });

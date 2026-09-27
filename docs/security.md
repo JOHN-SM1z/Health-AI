@@ -29,6 +29,15 @@
   a trigger rejects authenticated sessions that set or change it, and `(clinic_id, profile_id)`
   is unique, so a staff account maps to at most one doctor record per clinic.
 - Double-booking is prevented in Postgres (exclusion constraint + RPC), not in app code.
+- `appointments`, `patients` and `payments` are **written by the server only**
+  (`20260930000002_server_only_booking_writes.sql`): signed-in and anonymous tokens have no
+  INSERT/UPDATE/DELETE on them, whatever the role. Bookings and walk-ins go through
+  `book_appointment()`, rescheduling through `reschedule_appointment()`, consultation starts
+  through `start_consultation()`, status changes and cancellations through the admin API
+  (notification, audit), payments through `transitionPaymentStatus()`. Before this, a manager's
+  token could insert a payment already marked `paid` over `/rest/v1/payments`, and operational
+  staff could move appointments or forge `created_by`/`cancelled_by` outside the booking engine.
+  Reads with the user's token are unchanged (RLS).
 
 ## Secrets
 
@@ -45,8 +54,10 @@
 - `src/proxy.ts` protects `/admin` and `/doctor` routes.
 - All routes: input validation with zod (`parseBody` in `src/lib/api/validate`), centralized
   error handling (`handleApiError`) — no stack traces leaked.
-- Rate limiting: `src/lib/ratelimit` (in-memory token bucket + IP fallback) on booking and
-  auth-heavy endpoints; test suite covers it.
+- Rate limiting: `src/lib/rate-limit.ts` (in-memory fixed window, per server instance, keyed by
+  IP) on booking and auth-heavy public endpoints — pair it with a load-balancer policy for a
+  global cap; `src/lib/rate-limit-shared.ts` (counted in Postgres, shared by every instance) for
+  limits that guard clinical data; tests cover both.
 - Security headers on every response (HSTS, `X-Content-Type-Options`, `X-Frame-Options`,
   `Referrer-Policy`, `Permissions-Policy`), with `frame-ancestors` allowing only Telegram for
   the Mini App routes.
@@ -94,7 +105,9 @@ Working in the same clinic gives a doctor no access to a patient. One decision,
   no server actions — every mutation is a guarded route handler.
 - Voice recordings in Storage (`voice-messages` bucket) are readable by operational roles only,
   like the `voice_messages` rows — never by doctors.
-- `GET /api/doctor/patients/[id]` is rate limited per doctor (60/min) against id guessing.
+- `GET /api/doctor/patients/[id]` is rate limited per doctor (60/min) against id guessing and bulk
+  reading — counted in Postgres (`consume_rate_limit()`), so the limit holds across every server
+  instance (falls back to the instance's in-memory limit if the database cannot answer).
 - **Patient list.** `GET /api/doctor/patients` (`listDoctorPatients()`) lists the doctor's own
   patients (any appointment with them) and those with a pending or accepted, unexpired referral to
   them — the decision's own rule, so every listed patient opens and nobody else of the clinic is
@@ -174,9 +187,13 @@ diagnoses, prescriptions, laboratory orders and results, medical history and fol
   An in-progress referral shares the same history as an accepted one, until completed, revoked
   or expired, and counts as open for the one-open-referral-per-pair rule.
 - Audit: `referral_accepted`, `referral_declined`, `referral_in_progress`, `referral_completed`
-  (DB trigger, actor = the account on the transition) and `consultation_started` (server, actor
-  = whoever started it: doctor workspace, doctor queue or front desk; with the referral id) —
-  ids and statuses only, never the reason, note or record text.
+  (DB trigger, actor = the account on the transition) and `consultation_started` (actor =
+  whoever started it: doctor workspace, doctor queue or front desk; with the referral id) —
+  ids and statuses only, never the reason, note or record text. The start itself, the link to
+  the waiting referral and the `consultation_started` row are one database transaction
+  (`start_consultation()` / `start_walk_in_consultation()`, service-role only, compare-and-swap
+  on the appointment status): no start without its audit row, no audit row without a start,
+  and two concurrent starts start — and audit — once.
 - Every detail view is written to `audit_events` (`referral_viewed`, role + whether history was
   shown) in **strict** mode: if the access log cannot be written the view fails (503) instead
   of being served unlogged.
@@ -234,7 +251,7 @@ stamped by the database):
 | `referral_viewed` (`metadata.via` = `detail` / `list`) | server, strict | the referral's text is returned — one row per referral shown |
 | `patient_clinical_record_viewed` | server, strict | a workspace is returned — with the referral it rests on and `shared_record_ids` (records of other doctors released) |
 | `patient_clinical_access_denied` | server | a refused patient read — with the lapsed referral, if any |
-| `consultation_started` | server | a consultation starts — with the referral it belongs to |
+| `consultation_started` | DB function (`start_consultation`), same transaction as the start | a consultation starts — with the referral it belongs to |
 | `clinical_record_created` / `_corrected` | DB trigger | with the referral when written in its consultation |
 
 - **Tenant isolation of the log itself:** read only by the clinic's owner/admin/manager (RLS); a
@@ -248,8 +265,10 @@ stamped by the database):
 
 Attacks executed, not reviewed: `src/app/api/security/referral-redteam.test.ts` (real routes,
 services, decision, triggers and RLS; real signed-in sessions for direct REST/RPC attacks) plus an
-HTTP pass against the built app with real logins (37 requests: anonymous, forged cookie, default
-cron secret, receiver, receptionist, manager, referring doctor). Covered: another patient's,
+HTTP pass against the built app with real logins — `e2e/redteam-http.mjs`, run by CI on every push
+(anonymous, forged cookie, default cron secret, receiver, receptionist, manager, referring doctor;
+and each account's own token against the database API: clinical text, direct writes, server-only
+functions). Covered: another patient's,
 doctor's or clinic's id; expired, revoked, completed and declined referrals; forged body fields
 (`clinicId`, `patientId`, `authorDoctorId`, `referringDoctorId`, `createdBy`, `created_at`,
 `status`); malformed ids and PostgREST filter syntax in URLs; client-state bypasses; server-action
@@ -265,6 +284,9 @@ Found and fixed (each with a regression test that fails if the fix is reverted):
 | F2 | Referral actions were not checked against the referral's state before writing: a repeated accept/complete returned 200 as a silent no-op (also on a completed referral past its validity the receiver can no longer see); a repeated revoke/decline surfaced as HTTP 500 | `actOnReferral` / management revoke check the effective status, visibility and allowed actions first: 410 with the reason for a lapsed referral, 409 for a repeated or out-of-order action; DB refusals never map to 500 |
 | F3 | Another doctor's appointment id answered 403 `not_yours` on the queue route — confirming it exists | 404, identical to a missing id |
 | F4 | Reception's patient search interpolated `q` into a PostgREST `.or()` filter: `,` `(` `)` `.` let a caller inject filter conditions or crash the query (500) | the search text is a quoted literal (`src/lib/api/postgrest.ts`); quote, backslash and `%`/`*` wildcards dropped |
+| F5 | (pre-existing, found in the follow-up pass) A manager's own token could `POST /rest/v1/payments` with `status: 'paid'` — the direct-write guard only covered UPDATE | appointments, patients and payments are server-written only: no INSERT/UPDATE/DELETE for signed-in or anonymous roles (`20260930000002`) |
+| F6 | (pre-existing) Operational staff tokens could insert or move appointments and edit patients over `/rest/v1` — outside the booking engine, without notifications, with forged `created_by`/`cancelled_by` | same migration; the admin API (service role, after authorization) is the only write path |
+| F7 | A consultation's start, its referral link and its `consultation_started` audit row were three requests: a failure in between left a started consultation unaudited, and two concurrent starts audited twice | one transaction with a compare-and-swap on the status (`start_consultation()`, `20260930000001`) |
 
 ## Medical safety (non-security but critical)
 

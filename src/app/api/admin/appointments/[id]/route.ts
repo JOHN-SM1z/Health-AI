@@ -7,7 +7,7 @@ import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { enqueueCancellationNotification, enqueueRescheduleNotification } from "@/lib/notifications/jobs";
 import { trackAnalytics } from "@/lib/analytics";
 import { logger } from "@/lib/logger";
-import { recordConsultationStarted } from "@/lib/clinical-access/consultation-audit";
+import { startConsultationInDatabase } from "@/lib/clinical-access/consultation-start";
 
 export const dynamic = "force-dynamic";
 
@@ -95,6 +95,21 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
       const isCancel = body.status === "cancelled";
       const isNoShow = body.status === "no_show";
       const wasClosed = ["cancelled", "no_show", "completed"].includes(appointment.status);
+      if (body.status === "in_progress" && appointment.status !== "in_progress") {
+        // Starting the consultation and its 'consultation_started' audit row
+        // are one database transaction (a linked referral follow-up moves the
+        // referral to in progress there too).
+        const { started } = await startConsultationInDatabase({
+          clinicId: staff.clinicId,
+          appointmentId: appointment.id,
+          fromStatus: appointment.status,
+          actorId: staff.profileId,
+          via: "front_desk",
+          linkReferral: false,
+        });
+        if (!started) throw new ApiError(409, "Qabul holati o‘zgargan, sahifani yangilang", "appointment_changed");
+        return ok({ updated: true });
+      }
       const { error } = await supabase
         .from("appointments")
         .update({
@@ -108,19 +123,9 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
             : {}),
           ...(isNoShow ? { no_show_reason: body.noShowReason } : {}),
         })
-        .eq("id", id);
+        .eq("id", id)
+        .eq("clinic_id", staff.clinicId);
       if (error) throw new ApiError(500, "Holatni yangilab bo‘lmadi");
-
-      if (body.status === "in_progress" && appointment.status !== "in_progress") {
-        await recordConsultationStarted({
-          clinicId: staff.clinicId,
-          appointmentId: appointment.id,
-          patientId: appointment.patient_id,
-          doctorId: appointment.doctor_id,
-          actorId: staff.profileId,
-          via: "front_desk",
-        });
-      }
 
       if (isCancel && !wasClosed && appointment.patients?.telegram_user_id) {
         await enqueueCancellationNotification({

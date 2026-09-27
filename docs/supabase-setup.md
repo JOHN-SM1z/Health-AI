@@ -111,5 +111,7 @@ Provision a Supabase project; apply migrations with:
 npx supabase db push --db-url "$PROD_DB_URL"
 ```
 
-or via the Supabase dashboard (SQL editor). Then follow
-[deploy-cloud-run.md](deploy-cloud-run.md) for secrets.
+or, on an empty project, by running `supabase/full-db-setup.sql` once in the dashboard's SQL
+editor — every migration in order, regenerated with `npm run db:full-setup` whenever a migration
+is added (a test and CI fail while it is stale; it commits after enum additions so it runs as one
+query). Then follow [deploy-cloud-run.md](deploy-cloud-run.md) for secrets.

@@ -31,8 +31,6 @@ type AppointmentRef = { id: string; start_at: string; status: string; services?:
 /** Referrals still under way: PENDING → ACCEPTED → IN_PROGRESS, until completed, declined, revoked or expired. */
 const OPEN_STATUSES: ReferralStatus[] = ["pending", "accepted", "in_progress"];
 const INACTIVE_APPOINTMENT_STATUSES = ["cancelled", "no_show"];
-/** A booked follow-up that has not started yet: a consultation that took place may replace it. */
-const NOT_STARTED_APPOINTMENT_STATUSES = ["pending", "confirmed", "checked_in"];
 
 const REFERRING = "referring:doctors!referrals_referring_doctor_same_clinic_fkey";
 const REFERRED_TO = "referred_to:doctors!referrals_referred_to_doctor_same_clinic_fkey";
@@ -544,61 +542,6 @@ export async function latestReferralToDoctor(
     .limit(1)
     .maybeSingle();
   return data ? { id: data.id, status: effectiveStatus(data.status, data.expires_at), expiresAt: data.expires_at } : null;
-}
-
-/**
- * Links a consultation the receiving doctor started to the accepted referral
- * waiting for it — one with no follow-up yet, a cancelled/no-show one, or a
- * booked one that has not started (the doctor saw the patient earlier). The
- * database then moves the referral to in progress in the same statement; a
- * referral whose own booked follow-up is the consultation moves by itself.
- * Best effort: the consultation stands on its own either way. Returns the
- * referral the consultation belongs to, if any.
- */
-export async function linkConsultationToReferral(
-  doctor: LinkedDoctor,
-  patientId: string,
-  appointmentId: string,
-): Promise<string | null> {
-  const linked = await referralForConsultation(doctor.clinicId, appointmentId);
-  if (linked) return linked;
-
-  const { data } = await createAdminClient()
-    .from("referrals")
-    .select("id, follow_up_appointment_id, follow_up:appointments!referrals_follow_up_appointment_fkey(status)")
-    .eq("clinic_id", doctor.clinicId)
-    .eq("patient_id", patientId)
-    .eq("referred_to_doctor_id", doctor.doctorId)
-    .eq("status", "accepted")
-    .gt("expires_at", new Date().toISOString())
-    .order("created_at", { ascending: true });
-  const waiting = ((data ?? []) as unknown as Array<{ id: string; follow_up_appointment_id: string | null; follow_up: { status: string } | null }>).find(
-    (r) =>
-      !r.follow_up_appointment_id ||
-      (r.follow_up &&
-        (INACTIVE_APPOINTMENT_STATUSES.includes(r.follow_up.status) || NOT_STARTED_APPOINTMENT_STATUSES.includes(r.follow_up.status))),
-  );
-  if (!waiting) return null;
-  try {
-    return (await linkFollowUp(doctor.clinicId, waiting.id, appointmentId, waiting.follow_up_appointment_id)) ? waiting.id : null;
-  } catch (e) {
-    logger.warn("consultation not linked to referral", { code: e instanceof ApiError ? e.code : undefined });
-    return null;
-  }
-}
-
-/** The open or completed referral whose follow-up is this consultation, if any. */
-export async function referralForConsultation(clinicId: string, appointmentId: string): Promise<string | null> {
-  const { data } = await createAdminClient()
-    .from("referrals")
-    .select("id")
-    .eq("clinic_id", clinicId)
-    .eq("follow_up_appointment_id", appointmentId)
-    .in("status", ["accepted", "in_progress", "completed"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return data?.id ?? null;
 }
 
 export type CreateReferralInput = {

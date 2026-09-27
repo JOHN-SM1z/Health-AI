@@ -5,8 +5,7 @@ import { requireStaff } from "@/lib/auth/guards";
 import { parseBody } from "@/lib/api/validate";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { trackAnalytics } from "@/lib/analytics";
-import { linkConsultationToReferral } from "@/lib/referrals/service";
-import { recordConsultationStarted } from "@/lib/clinical-access/consultation-audit";
+import { startConsultationInDatabase } from "@/lib/clinical-access/consultation-start";
 
 export const dynamic = "force-dynamic";
 
@@ -20,8 +19,8 @@ type RouteContext = { params: Promise<{ id: string }> };
  * Doctor-only appointment status flow: checked_in → in_progress → completed.
  * Doctors can only act on their OWN appointments (verified server-side).
  * Starting a consultation (→ in_progress) links it to an accepted referral
- * waiting for it and is audited as 'consultation_started'; the referral then
- * moves to in progress in the database.
+ * waiting for it (the referral then moves to in progress) and is audited as
+ * 'consultation_started' — one database transaction (start_consultation).
  */
 export async function PATCH(request: NextRequest, ctx: RouteContext) {
   try {
@@ -62,26 +61,25 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
       throw new ApiError(409, "Noto‘g‘ri holat o‘tishi", "invalid_transition");
     }
 
-    const { error } = await supabase
-      .from("appointments")
-      .update({ status: body.status })
-      .eq("id", id);
-    if (error) throw new ApiError(500, "Holatni yangilab bo‘lmadi");
-
     if (body.status === "in_progress" && appointment.status !== "in_progress") {
-      await linkConsultationToReferral(
-        { ...staff, doctorId: doctor.id, doctorName: doctor.name },
-        appointment.patient_id,
-        appointment.id,
-      );
-      await recordConsultationStarted({
+      const { started } = await startConsultationInDatabase({
         clinicId: staff.clinicId,
         appointmentId: appointment.id,
-        patientId: appointment.patient_id,
-        doctorId: doctor.id,
+        fromStatus: appointment.status,
         actorId: staff.profileId,
         via: "doctor_queue",
+        linkReferral: true,
+        doctorId: doctor.id,
       });
+      // Someone else changed the visit in between (a concurrent start included).
+      if (!started) throw new ApiError(409, "Qabul holati o‘zgargan, sahifani yangilang", "consultation_changed");
+    } else {
+      const { error } = await supabase
+        .from("appointments")
+        .update({ status: body.status })
+        .eq("id", id)
+        .eq("clinic_id", staff.clinicId);
+      if (error) throw new ApiError(500, "Holatni yangilab bo‘lmadi");
     }
 
     await trackAnalytics({

@@ -1157,6 +1157,24 @@ export type Database = {
         }
         Relationships: []
       }
+      rate_limit_buckets: {
+        Row: {
+          hits: number
+          key: string
+          window_started_at: string
+        }
+        Insert: {
+          hits: number
+          key: string
+          window_started_at: string
+        }
+        Update: {
+          hits?: number
+          key?: string
+          window_started_at?: string
+        }
+        Relationships: []
+      }
       referrals: {
         Row: {
           accepted_at: string | null
@@ -1616,6 +1634,10 @@ export type Database = {
         Returns: boolean
       }
       current_doctor_id: { Args: { p_clinic_id: string }; Returns: string }
+      consume_rate_limit: {
+        Args: { p_key: string; p_limit: number; p_window_seconds: number }
+        Returns: Json
+      }
       doctor_can_read_appointment: {
         Args: {
           p_appointment_id: string
@@ -1667,6 +1689,29 @@ export type Database = {
           p_new_start_at: string
         }
         Returns: Record<string, unknown>
+      }
+      start_consultation: {
+        Args: {
+          p_actor: string
+          p_appointment_id: string
+          p_clinic_id: string
+          p_doctor_id?: string
+          p_from_status: Database["public"]["Enums"]["appointment_status"]
+          p_link_referral?: boolean
+          p_via: string
+        }
+        Returns: Json
+      }
+      start_walk_in_consultation: {
+        Args: {
+          p_actor: string
+          p_clinic_id: string
+          p_doctor_id: string
+          p_patient_id: string
+          p_service_id: string
+          p_start_at: string
+        }
+        Returns: Json
       }
     }
     Enums: {

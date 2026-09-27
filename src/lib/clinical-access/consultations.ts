@@ -1,14 +1,12 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
-import { logger } from "@/lib/logger";
 import { trackAnalytics } from "@/lib/analytics";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 import { canDoctorAccessPatientClinicalData } from "@/lib/clinical-access/access";
 import { canStartConsultation } from "@/lib/clinical-access/workspace";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
-import { linkConsultationToReferral } from "@/lib/referrals/service";
-import { recordConsultationStarted } from "@/lib/clinical-access/consultation-audit";
+import { startConsultationInDatabase, startWalkInInDatabase } from "@/lib/clinical-access/consultation-start";
 
 const STARTABLE = ["pending", "confirmed", "checked_in"];
 
@@ -43,7 +41,8 @@ const BOOKING_ERRORS: Record<string, [number, string]> = {
  * checked there). Allowed for the doctor's own patient or a patient referred
  * to them with an accepted referral; a started consultation of an accepted
  * referral becomes its follow-up and the referral moves to in progress
- * (enforced by the database). Audited as 'consultation_started'. Idempotent:
+ * (enforced by the database). The start, the referral link and the
+ * 'consultation_started' audit row are one database transaction. Idempotent:
  * an existing in-progress consultation with the patient is returned instead
  * of starting another.
  */
@@ -76,60 +75,45 @@ export async function startConsultation(
     if (error) throw new ApiError(500, "Qabulni tekshirib bo‘lmadi");
     if (!visit) throw new ApiError(404, "Qabul topilmadi", "consultation_not_found");
     if (!STARTABLE.includes(visit.status)) throw new ApiError(409, "Bu qabulni boshlab bo‘lmaydi", "invalid_transition");
-    const { data: started } = await supabase
-      .from("appointments")
-      .update({ status: "in_progress" })
-      .eq("id", visit.id)
-      .eq("status", visit.status)
-      .select("id")
-      .maybeSingle();
+    const { started } = await startConsultationInDatabase({
+      clinicId: doctor.clinicId,
+      appointmentId: visit.id,
+      fromStatus: visit.status,
+      actorId: doctor.profileId,
+      via: "doctor_workspace",
+      linkReferral: true,
+      doctorId: doctor.doctorId,
+    });
     if (!started) {
       const raced = await inProgressConsultation(doctor, patientId);
       if (raced) return { appointmentId: raced, started: false };
       throw new ApiError(409, "Qabul holati o‘zgargan, sahifani yangilang", "consultation_changed");
     }
-    appointmentId = started.id;
+    appointmentId = visit.id;
   } else {
     if (!input.serviceId) throw new ApiError(400, "Xizmatni tanlang", "validation");
     // The engine only books future slots: the next whole minute.
     const startAt = new Date(Math.floor(Date.now() / 60_000) * 60_000 + 60_000).toISOString();
-    const { data, error } = await supabase.rpc("book_appointment", {
-      p_clinic_id: doctor.clinicId,
-      p_patient_id: patientId,
-      p_doctor_id: doctor.doctorId,
-      p_service_id: input.serviceId,
-      p_start_at: startAt,
-      p_status: "in_progress",
-      p_source: "walk_in",
-      p_created_by: doctor.profileId,
+    const walkIn = await startWalkInInDatabase({
+      clinicId: doctor.clinicId,
+      patientId,
+      doctorId: doctor.doctorId,
+      serviceId: input.serviceId,
+      startAt,
+      actorId: doctor.profileId,
     });
-    if (error) {
-      logger.error("walk-in consultation booking failed", { code: error.code });
-      throw new ApiError(500, "Qabulni boshlab bo‘lmadi", "booking_failed");
-    }
-    const result = data as { appointment_id?: string; error_code?: string | null };
-    if (result.error_code || !result.appointment_id) {
+    if (walkIn.errorCode || !walkIn.appointmentId) {
       // A concurrent start of the same consultation wins the slot: answer with it.
-      if (result.error_code === "slot_taken") {
+      if (walkIn.errorCode === "slot_taken") {
         const raced = await inProgressConsultation(doctor, patientId);
         if (raced) return { appointmentId: raced, started: false };
       }
-      const [status, message] = BOOKING_ERRORS[result.error_code ?? ""] ?? [409, "Qabulni boshlab bo‘lmadi"];
-      throw new ApiError(status, message, result.error_code ?? "booking_failed");
+      const [status, message] = BOOKING_ERRORS[walkIn.errorCode ?? ""] ?? [409, "Qabulni boshlab bo‘lmadi"];
+      throw new ApiError(status, message, walkIn.errorCode ?? "booking_failed");
     }
-    appointmentId = result.appointment_id;
+    appointmentId = walkIn.appointmentId;
   }
 
-  await linkConsultationToReferral(doctor, patientId, appointmentId);
-  await recordConsultationStarted({
-    clinicId: doctor.clinicId,
-    appointmentId,
-    patientId,
-    doctorId: doctor.doctorId,
-    actorId: doctor.profileId,
-    via: "doctor_workspace",
-    walkIn: !input.appointmentId,
-  });
   await trackAnalytics({
     clinicId: doctor.clinicId,
     patientId,

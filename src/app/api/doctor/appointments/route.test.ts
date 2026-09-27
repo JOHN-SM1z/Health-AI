@@ -82,6 +82,9 @@ describeDb("doctor appointments routes (real DB, mocked session)", () => {
       .select("id")
       .single();
     otherClinicId = otherClinic!.id;
+    // The mocked session is a doctor of the clinic, as a real one would be.
+    const { error: roleError } = await admin.from("staff_roles").insert({ clinic_id: clinicId, profile_id: profileId, role: "doctor" });
+    expect(roleError).toBeNull();
 
     const { data: doc } = await admin
       .from("doctors")
@@ -154,6 +157,7 @@ describeDb("doctor appointments routes (real DB, mocked session)", () => {
     await admin.from("appointments").delete().eq("clinic_id", clinicId);
     await admin.from("appointments").delete().eq("clinic_id", otherClinicId);
     await admin.from("doctors").delete().eq("clinic_id", clinicId);
+    await admin.from("staff_roles").delete().eq("clinic_id", clinicId);
     await admin.from("patients").delete().eq("id", patientId);
     await admin.from("services").delete().eq("id", serviceId);
     await admin.from("clinics").delete().in("id", [clinicId, otherClinicId]);

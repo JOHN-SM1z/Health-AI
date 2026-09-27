@@ -93,7 +93,7 @@ Doctor A refers a patient to Doctor B in the same clinic:
 4. **Consult** — Doctor B starts their own consultation: the booked follow-up (workspace, queue
    or front desk) or a walk-in from the workspace. It becomes the referral's follow-up and the
    database moves the referral to **in progress** (`referral_in_progress`); the start is audited
-   as `consultation_started`. Doctor B documents it in `clinical_records` — current assessment,
+   as `consultation_started` — start, link and audit row in one transaction (`start_consultation()`). Doctor B documents it in `clinical_records` — current assessment,
    new diagnosis, clinical note, prescription, laboratory order, follow-up/onward referral — all
    authored by Doctor B; Doctor A's records are shown as history (*Oldingi tashxis* …), never
    changed. Categories come from `src/lib/clinical-records/categories.ts` (record type + whether

@@ -9,6 +9,10 @@ import { localDbAvailable } from "@/test/local-db";
  *   Receptionist: appointments, patients, conversations, takeover — NEVER
  *                 revenue analytics, catalog writes, or payment updates.
  *   Manager:      admin-equivalent powers — catalog, analytics, payments.
+ *   Appointments, patients and payments are READ with the user's token but
+ *   WRITTEN only by the server routes (service role, after authorization —
+ *   20260930000002_server_only_booking_writes.sql): a signed-in token cannot
+ *   write them directly, whatever the role.
  *   Doctor:       own appointments only — no catalog, no conversations,
  *                 no manual booking.
  *   Platform admin: platform-level only — zero clinic data via browser client.
@@ -225,21 +229,39 @@ describeDb("role-based authorization (Phase 2)", () => {
     expect(convs!.map((x) => x.id)).toContain(conversationId);
   });
 
-  it("receptionist creates walk-in patients (telegram_user_id null) and updates appointments", async () => {
+  it("receptionist cannot write patients or appointments directly — the server routes do (booking engine, notifications, audit)", async () => {
     const c = clients.get("receptionist")!;
     const { data: patient, error } = await c
       .from("patients")
       .insert({ clinic_id: CLINIC, full_name: `Walk-in ${suffix}`, phone: `+9989${suffix.slice(0, 6)}00` })
-      .select("id")
-      .single();
-    expect(error).toBeNull();
-    expect(patient!.id).toBeTruthy();
+      .select("id");
+    expect(error?.code).toBe("42501");
+    expect(patient).toBeNull();
 
-    const { error: statusError } = await c
+    const before = await admin.from("appointments").select("status, start_at, created_by").eq("id", appointmentId).single();
+    const { error: statusError } = await c.from("appointments").update({ status: "confirmed" }).eq("id", appointmentId);
+    expect(statusError?.code).toBe("42501");
+    const { error: moveError } = await c
       .from("appointments")
-      .update({ status: "confirmed" })
+      .update({ start_at: nextWeekdayAt10(5), created_by: null })
       .eq("id", appointmentId);
-    expect(statusError).toBeNull();
+    expect(moveError?.code).toBe("42501");
+    const { error: insertError } = await c.from("appointments").insert({
+      clinic_id: CLINIC,
+      patient_id: patientId,
+      doctor_id: doctorId,
+      service_id: serviceId,
+      start_at: nextWeekdayAt10(6),
+      end_at: new Date(new Date(nextWeekdayAt10(6)).getTime() + 30 * 60_000).toISOString(),
+      status: "confirmed",
+      source: "admin",
+    });
+    expect(insertError?.code).toBe("42501");
+    const after = await admin.from("appointments").select("status, start_at, created_by").eq("id", appointmentId).single();
+    expect(after.data).toEqual(before.data);
+
+    const { error: patientUpdateError } = await c.from("patients").update({ full_name: "Renamed" }).eq("id", patientId);
+    expect(patientUpdateError?.code).toBe("42501");
   });
 
   it("receptionist cannot create a Telegram patient (telegram_user_id must be null)", async () => {
@@ -278,9 +300,13 @@ describeDb("role-based authorization (Phase 2)", () => {
     expect(jobs ?? []).toHaveLength(0);
   });
 
-  it("receptionist cannot update payments (management-only)", async () => {
+  it("receptionist cannot update payments (server-managed)", async () => {
     const c = clients.get("receptionist")!;
-    await assertUpdateDenied(c, "payments", "status", paymentId);
+    const before = await admin.from("payments").select("status").eq("id", paymentId).single();
+    const { error } = await c.from("payments").update({ status: "paid" }).eq("id", paymentId);
+    expect(error?.code).toBe("42501");
+    const after = await admin.from("payments").select("status").eq("id", paymentId).single();
+    expect(after.data!.status).toBe(before.data!.status);
   });
 
   it("receptionist replies inside a conversation as admin", async () => {
@@ -329,14 +355,30 @@ describeDb("role-based authorization (Phase 2)", () => {
     expect(analytics!.length).toBeGreaterThan(0);
   });
 
-  it("manager creates walk-in patients", async () => {
+  it("manager cannot create patients directly — the server routes do", async () => {
     const c = clients.get("manager")!;
     const { error: patError } = await c.from("patients").insert({
       clinic_id: CLINIC,
       full_name: `Manager walk-in ${suffix}`,
       phone: `+9989${suffix.slice(0, 5)}77`,
     });
-    expect(patError).toBeNull();
+    expect(patError?.code).toBe("42501");
+  });
+
+  it("manager CANNOT insert a payment marked paid (or any payment) directly — payment status is server-controlled", async () => {
+    const c = clients.get("manager")!;
+    const { data: countBefore } = await admin.from("payments").select("id").eq("appointment_id", appointmentId);
+    const { error } = await c.from("payments").insert({
+      clinic_id: CLINIC,
+      appointment_id: appointmentId,
+      patient_id: patientId,
+      amount: 150000,
+      status: "paid",
+      provider: "manual",
+    });
+    expect(error?.code).toBe("42501");
+    const { data: countAfter } = await admin.from("payments").select("id").eq("appointment_id", appointmentId);
+    expect(countAfter!.length).toBe(countBefore!.length);
   });
 
   it("manager CANNOT update payments directly — server-managed (audit finding, closed by payments_block_direct_write)", async () => {

@@ -184,10 +184,12 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
     paymentB = payment!.id;
 
     // ---- Clinic B bot integration row (server-side only) ----
+    // A bot id of this run's own: a clinic with history cannot be deleted
+    // (its audit rows keep it), so an earlier run's row may still exist.
     const { error: integError } = await admin.from("clinic_telegram_integrations").insert({
       clinic_id: clinicB,
       telegram_bot_token: "123456789:SECRET_BOT_TOKEN_B",
-      telegram_bot_id: 123456789,
+      telegram_bot_id: 100_000_000 + Math.floor(Math.random() * 800_000_000),
       telegram_username: `tenant_b_bot_${suffix}`,
       status: "active",
       enabled: true,
@@ -442,7 +444,8 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
 
   it("Clinic A owner cannot delete Clinic B's patient", async () => {
     const { error } = await clientA.from("patients").delete().eq("id", patientB);
-    expect(error).toBeNull(); // RLS hides the row: 0 rows match, no error
+    // Signed-in tokens cannot write patients at all (server routes only).
+    expect(error?.code).toBe("42501");
     const { data } = await admin.from("patients").select("id").eq("id", patientB).maybeSingle();
     expect(data).not.toBeNull(); // still exists — the delete affected nothing
   });
@@ -450,7 +453,8 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
   it("Clinic A owner cannot update Clinic B's appointment status", async () => {
     const before = await admin.from("appointments").select("status").eq("id", appointmentB).single();
     const { error } = await clientA.from("appointments").update({ status: "cancelled" }).eq("id", appointmentB);
-    expect(error).toBeNull(); // RLS hides the row: 0 rows match, no error
+    // Signed-in tokens cannot write appointments at all (server routes only).
+    expect(error?.code).toBe("42501");
     const after = await admin.from("appointments").select("status").eq("id", appointmentB).single();
     expect(after.data!.status).toBe(before.data!.status);
   });

@@ -423,13 +423,14 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     expect(await seenBy(profiles.b, y)).toEqual(nothing);
 
     // Re-pointing Dr B's own appointment at Y to become "Y's doctor" changes nothing…
-    const swapped = await asUser(profiles.b, (tx) => tx`update public.appointments set patient_id = ${y} where id = ${ownVisitOfB} returning id`);
-    expect(swapped).toHaveLength(0);
+    // (No signed-in token writes appointments at all: 20260930000002_server_only_booking_writes.)
+    const swapped = await pgError(() => asUser(profiles.b, (tx) => tx`update public.appointments set patient_id = ${y} where id = ${ownVisitOfB} returning id`));
+    expect(swapped.code).toBe("42501");
     const [{ patient_id: stillOwner }] = await sql<{ patient_id: string }[]>`select patient_id from public.appointments where id = ${ownVisitOfB}`;
     expect(stillOwner).not.toBe(y);
     // …Dr A's appointments Dr B can read through the referral stay read-only…
-    const touched = await asUser(profiles.b, (tx) => tx`update public.appointments set status = 'completed' where id = ${x.consultation} returning id`);
-    expect(touched).toHaveLength(0);
+    const touched = await pgError(() => asUser(profiles.b, (tx) => tx`update public.appointments set status = 'completed' where id = ${x.consultation} returning id`));
+    expect(touched.code).toBe("42501");
     // …and the referral's own patient can't be rewritten to another patient.
     const repoint = await pgError(() => transition(referral, { patient_id: y }));
     expect(repoint.code).toMatch(/23503|P0001/);
@@ -533,11 +534,11 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
       { status: "pending" },
       { status: "completed" },
     ]) {
-      const rows = await asUser(profiles.a, (tx) => tx`update public.appointments set ${tx(change)} where id = ${x.consultation} returning id`);
-      expect(rows).toHaveLength(0);
+      const refused = await pgError(() => asUser(profiles.a, (tx) => tx`update public.appointments set ${tx(change)} where id = ${x.consultation} returning id`));
+      expect(refused.code).toBe("42501");
     }
-    const del = await asUser(profiles.a, (tx) => tx`delete from public.appointments where id = ${x.consultation} returning id`);
-    expect(del).toHaveLength(0);
+    const del = await pgError(() => asUser(profiles.a, (tx) => tx`delete from public.appointments where id = ${x.consultation} returning id`));
+    expect(del.code).toBe("42501");
     const [{ status }] = await sql<{ status: string }[]>`select status from public.appointments where id = ${x.consultation}`;
     expect(status).toBe("completed");
   });
