@@ -9,9 +9,10 @@
 - [ ] **Click / Payme payment adapters** - signature verification, idempotent webhooks, merchant credentials; only `manual` payment is production-usable
 - [ ] **Production Telegram setup** - real bot tokens via `/admin/settings` and `CRON_SECRET` env before go-live
 - [ ] **Referral notifications outside the app** - the receiving doctor sees a count of waiting referrals on *Yo‘llanmalar* (in-app); Telegram/e-mail delivery would need doctor accounts linked to a Telegram chat or a mail provider
-- [ ] **Clinical records legal review** - doctor-authored records (notes, diagnoses, prescriptions, lab results) now exist; confirm retention rules vs. the patient's deletion request (records are currently erased with the patient) and the privacy-page wording
+- [ ] **Clinical records legal review** - doctor-authored records (notes, diagnoses, prescriptions, lab results) exist and are no longer erased with the patient (a patient with records, referrals, bookings or payments cannot be deleted); confirm the retention period per data category (to be recorded in `retention_policies`, empty today), how a patient's deletion request is handled for each category, whether existing patients need new consent, and the `/privacy` §4–§7 wording
+- [ ] **Retention / erasure job** - nothing reads `retention_policies` yet; build the review/anonymise job once the policy is confirmed. Conversations still cascade on patient deletion and payments on appointment deletion (communications' and payments' retention to be decided with the policy). There is no anonymisation path for patient identity yet
 - [ ] **Lab integration** - lab results are typed in by doctors; no laboratory system feeds them
-- [ ] **Referral privacy wording review** - `/privacy` §3/§4 now describe doctor-to-doctor referrals; needs owner/legal sign-off
+- [ ] **Referral privacy wording review** - `/privacy` §3/§5 describe doctor-to-doctor referrals; needs owner/legal sign-off
 - [ ] **Production deploy (Phase 14)** - docs/go-live-checklist.md, docs/manual-qa-checklist.md, docs/deployment.md, docs/rollback.md ready; actual release + rollback drill not performed
 
 ## Done

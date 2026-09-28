@@ -381,10 +381,10 @@ describeDb("referred-patient clinical workspace", () => {
     expect(await record("b", y, { appointmentId: ownVisit })).toMatchObject({ status: 404 });
     // X's URL with Dr A's consultation, or with a visit of another patient.
     expect(await record("b", x.id, { appointmentId: x.consultation })).toMatchObject({ status: 404, body: { code: "consultation_not_found" } });
-    // Correcting Dr A's record.
+    // Correcting Dr A's record: Dr B may read it through the referral, but only its author may correct it.
     expect(await record("b", x.id, { appointmentId: ownVisit, recordType: "lab_result", correctsRecordId: x.recConsultation })).toMatchObject({
-      status: 409,
-      body: { code: "correction_not_allowed" },
+      status: 403,
+      body: { code: "CLINICAL_RECORD_NOT_OWNED" },
     });
     // Provenance smuggled into the body is ignored: the author is the session's doctor.
     const smuggled = await record("b", x.id, {

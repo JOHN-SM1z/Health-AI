@@ -154,10 +154,25 @@ diagnoses, prescriptions, laboratory orders and results, medical history and fol
   patient_id, doctor_id)` makes that the author's own appointment with this patient in this clinic.
   The consultation must be in progress or completed; `created_by` must be the author's own active
   doctor account; `created_at` is the database clock.
-- **Immutable.** No signed-in role may write; the server may only insert (no UPDATE/DELETE grant,
-  and a trigger refuses updates even by the table owner). Corrections are new records by the same
-  author, in the same consultation and type, one per record (`corrects_record_id`). Records are
-  erased only with the patient.
+- **Append-only, versioned, author-only** (`20261001000001_clinical_record_governance.sql`). No
+  signed-in role may write; the server may only insert (no UPDATE/DELETE grant, and a trigger
+  refuses updates even by the table owner). A correction is the record's next version: a new row
+  in the same consultation and type pointing at the version it replaces (`corrects_record_id`),
+  with `version` and the lineage (`root_record_id`) set by the database. Only the author may
+  correct — the same doctor record AND the same login (`created_by`), so re-linking a doctor
+  record to another account hands nothing over (SQLSTATE `CRNOT`) — and a doctor record holding records
+  another login wrote can't be re-linked at all (`CRLNK`; the admin route answers 409
+  `doctor_has_clinical_records`: a new doctor gets a new doctor record). Only the current version can be
+  corrected (`CRVER`; two concurrent corrections can't both land — unique indexes on
+  `corrects_record_id` and `(root_record_id, version)`). Earlier versions stay, superseded, in
+  `clinical_record_versions` (status `current` / `superseded`; service role only).
+- **Never erased with the patient.** The foreign keys from `clinical_records`, `referrals`,
+  `appointments` and `payments` to `patients` are NO ACTION: a patient who still has any of them
+  cannot be deleted, while deleting a whole clinic (which removes them in the same statement) still
+  works. (A payment still belongs to its appointment: deleting an appointment — which the application
+  never does — removes its payment; conversations still follow the patient.) There is no
+  anonymisation path for patient identity yet. Retention per data category is recorded in `retention_policies` (service role only),
+  which is empty — no period is assumed and nothing is deleted or anonymised on its basis yet.
 - **Read access = the consultation's access.** RLS uses `doctor_can_read_appointment()`: the author;
   the doctor a patient is referred to, for the referring doctor's records while the referral is
   accepted and unexpired (and the originating consultation's records while it is active); the
@@ -165,10 +180,19 @@ diagnoses, prescriptions, laboratory orders and results, medical history and fol
   (owner/admin/manager/receptionist) can read records; patient-facing and AI code never touches
   them (guarded by `src/lib/ai/clinical-isolation.test.ts`).
 - **Audit without text.** Every insert writes `clinical_record_created` / `clinical_record_corrected`
-  with ids and type only; workspace views are logged in strict mode (`patient_clinical_record_viewed`).
+  with ids, type and version only — a correction's `old_values` name the version it replaced and its
+  author. Workspace views are logged in strict mode (`patient_clinical_record_viewed`), other
+  doctors' records released through a referral additionally as `clinical_record_accessed_via_referral`,
+  history views as `clinical_record_history_viewed`, and refused corrections or history reads as
+  `clinical_record_access_denied` (reason `not_owned` / `not_visible` / `not_found`).
 - **Server.** `POST /api/doctor/patients/[id]/records` re-checks access and that the consultation is
   the caller's own with the patient in the URL; author, clinic and time are never taken from the
-  request; writes are idempotent per key. `POST /api/doctor/patients/[id]/consultations` starts the
+  request; writes are idempotent per key. `POST …/records/[recordId]/corrections` (or `correctsRecordId`
+  on the records route) checks, before the database does, that the record is visible (else 404
+  `record_not_found`), the caller's own (else 403 `CLINICAL_RECORD_NOT_OWNED`) and still the version
+  the doctor saw (`expectedVersion`; else 409 `VERSION_CONFLICT` with the current version) — no
+  reason is asked for. `GET …/records/[recordId]/history` returns every version, read-only. The
+  workspace lists only each record's current version. `POST /api/doctor/patients/[id]/consultations` starts the
   doctor's booked visit for today or books a walk-in through `book_appointment` (own patient, or an
   accepted referral — pending referrals must be accepted first).
 - **Nothing silently dropped.** A visible record always arrives with its consultation, even one
@@ -177,7 +201,7 @@ diagnoses, prescriptions, laboratory orders and results, medical history and fol
 - **Handoff never rewrites history.** A receiving doctor's assessment or new diagnosis is a new
   record in their own consultation; the referring doctor's diagnosis stays as written, attributed
   to its author and shown as a historical diagnosis. Only a record's own author can correct it
-  (the DB refuses anyone else, 409 `correction_not_allowed`).
+  (403 `CLINICAL_RECORD_NOT_OWNED`; the DB refuses anyone else too).
 - **States.** A doctor whose referral for the patient lapsed gets 410 with the reason
   (`referral_revoked`, `referral_expired`, `referral_declined`, `referral_completed`) and no data;
   anyone else gets 404.
@@ -280,7 +304,10 @@ stamped by the database):
 | `patient_clinical_record_viewed` | server, strict | a workspace is returned — with the referral it rests on and `shared_record_ids` (records of other doctors released) |
 | `patient_clinical_access_denied` | server | a refused patient read — with the lapsed referral, if any |
 | `consultation_started` | DB function (`start_consultation`), same transaction as the start | a consultation starts — with the referral it belongs to |
-| `clinical_record_created` / `_corrected` | DB trigger | with the referral when written in its consultation |
+| `clinical_record_created` / `_corrected` | DB trigger | with the referral when written in its consultation; a correction names the version it replaced |
+| `clinical_record_accessed_via_referral` | server, strict | another doctor's records are returned through a referral (workspace or history) — with their ids and the referral(s) that released them (`referral_id` when exactly one) |
+| `clinical_record_history_viewed` | server, strict | a record's version history is returned |
+| `clinical_record_access_denied` | server, strict | a refused correction or history read (`not_owned` / `not_visible` / `not_found`) |
 
 - **Tenant isolation of the log itself:** read only by the clinic's owner/admin/manager (RLS); a
   row's patient and referral must belong to its clinic (and to each other) or the insert fails;

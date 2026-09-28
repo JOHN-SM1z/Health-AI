@@ -393,13 +393,18 @@ describeDb("referrals data model (Phase 1)", () => {
 
   // ---------- Cross-clinic rejection ----------
 
+  const SAME_CLINIC_PATIENT_KEYS = ["referrals_patient_same_clinic_fkey", "referrals_originating_appointment_fkey"];
+
   describe("cross-clinic referral rejection", () => {
     it("rejects a patient from another clinic", async () => {
       const visit = await consultation();
       const foreignPatient = await newPatient(clinicB);
       const err = await pgError(() => insertReferral(referralValues(visit, { patient_id: foreignPatient })));
       expect(err.code).toBe("23503");
-      expect(err.constraint_name).toBe("referrals_patient_same_clinic_fkey");
+      // The patient key and the consultation key (which also pins the
+      // patient) both refuse it; which reports first depends on the order
+      // the constraints were created in.
+      expect(SAME_CLINIC_PATIENT_KEYS).toContain(err.constraint_name);
     });
 
     it("rejects a referring doctor from another clinic", async () => {
@@ -422,7 +427,7 @@ describeDb("referrals data model (Phase 1)", () => {
       const visit = await consultation();
       const err = await pgError(() => insertReferral(referralValues(visit, { clinic_id: clinicB })));
       expect(err.code).toBe("23503");
-      expect(err.constraint_name).toBe("referrals_patient_same_clinic_fkey");
+      expect(err.constraint_name).toMatch(/^referrals_.*(same_clinic|originating_appointment)_fkey$/);
     });
 
     it("rejects a consultation that took place in another clinic", async () => {
@@ -1113,14 +1118,17 @@ describeDb("referrals data model (Phase 1)", () => {
       for (const err of [insert, update, remove]) expect(err.code).toBe("42501");
     });
 
-    it("no one deletes a referral directly, but patient erasure still cascades", async () => {
+    it("no one deletes a referral directly, and deleting the patient does not take it along", async () => {
       const referral = await openReferral();
       const direct = await pgError(() => asServer((tx) => tx`delete from public.referrals where id = ${referral.id}`));
       expect(direct.code).toBe("42501");
 
-      await asServer((tx) => tx`delete from public.patients where id = ${referral.patient_id}`);
+      // A referral has its own lifecycle: the patient cannot be deleted from
+      // under it (20261001000001_clinical_record_governance.sql).
+      const erase = await pgError(() => asServer((tx) => tx`delete from public.patients where id = ${referral.patient_id}`));
+      expect(erase.code).toBe("23503");
       const [{ count }] = await sql<{ count: number }[]>`select count(*)::int as count from public.referrals where id = ${referral.id}`;
-      expect(count).toBe(0);
+      expect(count).toBe(1);
     });
 
     it("the originating consultation and the authoring account cannot be deleted from under a referral", async () => {

@@ -350,7 +350,9 @@ export type Database = {
           id: string
           patient_id: string
           record_type: Database["public"]["Enums"]["clinical_record_type"]
+          root_record_id: string
           summary: string
+          version: number
         }
         Insert: {
           appointment_id: string
@@ -365,7 +367,9 @@ export type Database = {
           id?: string
           patient_id: string
           record_type: Database["public"]["Enums"]["clinical_record_type"]
+          root_record_id?: string
           summary: string
+          version?: number
         }
         Update: {
           appointment_id?: string
@@ -380,7 +384,9 @@ export type Database = {
           id?: string
           patient_id?: string
           record_type?: Database["public"]["Enums"]["clinical_record_type"]
+          root_record_id?: string
           summary?: string
+          version?: number
         }
         Relationships: [
           {
@@ -423,6 +429,13 @@ export type Database = {
             columns: ["patient_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "patients"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "clinical_records_root_fkey"
+            columns: ["root_record_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinical_records"
             referencedColumns: ["id", "clinic_id"]
           },
         ]
@@ -1369,6 +1382,51 @@ export type Database = {
           },
         ]
       }
+      retention_policies: {
+        Row: {
+          clinic_id: string
+          confirmed_at: string
+          confirmed_by: string | null
+          data_category: Database["public"]["Enums"]["retention_data_category"]
+          on_expiry: Database["public"]["Enums"]["retention_action"]
+          policy_reference: string
+          retain_for: unknown
+        }
+        Insert: {
+          clinic_id: string
+          confirmed_at?: string
+          confirmed_by?: string | null
+          data_category: Database["public"]["Enums"]["retention_data_category"]
+          on_expiry?: Database["public"]["Enums"]["retention_action"]
+          policy_reference: string
+          retain_for?: unknown
+        }
+        Update: {
+          clinic_id?: string
+          confirmed_at?: string
+          confirmed_by?: string | null
+          data_category?: Database["public"]["Enums"]["retention_data_category"]
+          on_expiry?: Database["public"]["Enums"]["retention_action"]
+          policy_reference?: string
+          retain_for?: unknown
+        }
+        Relationships: [
+          {
+            foreignKeyName: "retention_policies_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "retention_policies_confirmed_by_fkey"
+            columns: ["confirmed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       services: {
         Row: {
           active: boolean
@@ -1592,7 +1650,28 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      clinical_record_versions: {
+        Row: {
+          appointment_id: string | null
+          author_doctor_id: string | null
+          clinic_id: string | null
+          code: string | null
+          corrects_record_id: string | null
+          created_at: string | null
+          created_by: string | null
+          details: string | null
+          id: string | null
+          patient_id: string | null
+          record_type: Database["public"]["Enums"]["clinical_record_type"] | null
+          root_record_id: string | null
+          status: string | null
+          summary: string | null
+          superseded_at: string | null
+          superseded_by_record_id: string | null
+          version: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       book_appointment: {
@@ -1785,6 +1864,14 @@ export type Database = {
         | "completed"
         | "revoked"
         | "expired"
+      retention_action: "review" | "anonymize" | "delete"
+      retention_data_category:
+        | "patient_identity"
+        | "bookings"
+        | "payments"
+        | "communications"
+        | "clinical_records"
+        | "audit_records"
       staff_role: "owner" | "manager" | "admin" | "receptionist" | "doctor"
       telegram_bot_status: "disabled" | "active" | "error"
       time_block_reason: "break" | "absence" | "reservation" | "admin_hold"
@@ -1984,6 +2071,15 @@ export const Constants = {
         "completed",
         "revoked",
         "expired",
+      ],
+      retention_action: ["review", "anonymize", "delete"],
+      retention_data_category: [
+        "patient_identity",
+        "bookings",
+        "payments",
+        "communications",
+        "clinical_records",
+        "audit_records",
       ],
       staff_role: ["owner", "manager", "admin", "receptionist", "doctor"],
       telegram_bot_status: ["disabled", "active", "error"],
