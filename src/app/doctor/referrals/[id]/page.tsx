@@ -177,7 +177,7 @@ export default function DoctorReferralPage() {
         </Card>
       )}
 
-      {incoming && referral.status === "accepted" && referral.patientRecordAccessible && (
+      {incoming && ["pending", "accepted"].includes(referral.status) && referral.patientRecordAccessible && (
         <Card className="mb-4">
           <p className="text-sm text-foreground">
             Keyingi qadam: bemor bilan o‘z qabulingizni bemor kartasida boshlang — yo‘llanma “Qabul boshlangan” holatiga o‘tadi, yakunlash
@@ -274,9 +274,7 @@ export default function DoctorReferralPage() {
             </p>
             {referral.history === null ? (
               <p className="text-sm text-ink-muted">
-                {referral.status === "pending"
-                  ? "Tarix yo‘llanmani qabul qilganingizdan keyin ko‘rinadi."
-                  : "Yo‘llanma faol emas — qabullar tarixi endi ko‘rinmaydi."}
+                Bu bemor bilan faol davolash aloqasi mavjud emas.
               </p>
             ) : referral.history.length === 0 ? (
               <p className="text-sm text-ink-muted">Qabullar yo‘q</p>

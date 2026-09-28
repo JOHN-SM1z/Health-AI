@@ -250,10 +250,7 @@ export async function getClinicalRecordHistory(doctor: LinkedDoctor, patientId: 
     supersededAt: v.superseded_at,
   }));
 
-  const viaReferral = target.author_doctor_id !== doctor.doctorId;
-  const releasedBy = viaReferral
-    ? await releasingReferralIds(doctor, patientId, [{ authorDoctorId: target.author_doctor_id, appointmentId: target.appointment_id }])
-    : [];
+  const viaReferral = access.relationship === "referred" && target.author_doctor_id !== doctor.doctorId;
   const events: AuditEvent[] = [
     {
       clinicId: doctor.clinicId,
@@ -262,69 +259,25 @@ export async function getClinicalRecordHistory(doctor: LinkedDoctor, patientId: 
       entityId: target.root_record_id,
       patientId,
       actor: { actorId: doctor.profileId, actorType: "staff" },
-      metadata: { record_ids: versions.map((v) => v.id), version_count: versions.length },
+      metadata: { relationship: access.relationship, record_ids: versions.map((v) => v.id), version_count: versions.length },
     },
   ];
-  if (viaReferral) events.push(referralAccessEvent(doctor, patientId, access, versions.map((v) => v.id), releasedBy, target.root_record_id));
+  if (viaReferral) events.push(referralAccessEvent(doctor, patientId, access, versions.map((v) => v.id), target.root_record_id));
   await recordAudits(events, { strict: true });
 
   return { rootRecordId: target.root_record_id, type: target.record_type!, appointmentId: target.appointment_id, versions };
 }
 
-/**
- * The referrals that release `records` — written by other doctors — to
- * `doctor`, by the same rules as public.doctor_patient_access(): a referral
- * to the doctor from the record's author (accepted or in progress), a
- * referral to the doctor raised from the record's consultation (open), or
- * the doctor's own referral whose follow-up the record was written in
- * (accepted, in progress or completed); unexpired in every case. Only for the
- * audit trail: access itself is decided by the database.
- */
-export async function releasingReferralIds(
-  doctor: LinkedDoctor,
-  patientId: string,
-  records: Array<{ authorDoctorId: string; appointmentId: string }>,
-): Promise<string[]> {
-  if (records.length === 0) return [];
-  const { data, error } = await createAdminClient()
-    .from("referrals")
-    .select("id, status, expires_at, referring_doctor_id, referred_to_doctor_id, originating_appointment_id, follow_up_appointment_id")
-    .eq("clinic_id", doctor.clinicId)
-    .eq("patient_id", patientId)
-    .or(`referred_to_doctor_id.eq.${doctor.doctorId},referring_doctor_id.eq.${doctor.doctorId}`);
-  if (error) throw new ApiError(500, "Yo‘llanmalarni tekshirib bo‘lmadi");
-
-  const now = Date.now();
-  const ids = new Set<string>();
-  for (const r of data ?? []) {
-    if (new Date(r.expires_at).getTime() <= now) continue;
-    const toMe = r.referred_to_doctor_id === doctor.doctorId;
-    const fromMe = r.referring_doctor_id === doctor.doctorId;
-    const releases = records.some(
-      (rec) =>
-        (toMe && r.referring_doctor_id === rec.authorDoctorId && ["accepted", "in_progress"].includes(r.status)) ||
-        (toMe && r.originating_appointment_id === rec.appointmentId && ["pending", "accepted", "in_progress"].includes(r.status)) ||
-        (fromMe && r.follow_up_appointment_id === rec.appointmentId && ["accepted", "in_progress", "completed"].includes(r.status)),
-    );
-    if (releases) ids.add(r.id);
-  }
-  return [...ids].sort();
-}
-
-/**
- * Another doctor's records released to `doctor` on the strength of a
- * referral — its own audit event, naming the referrals that released them
- * (releasingReferralIds), so referral-based access is never hidden behind
- * the doctor's own relationship with the patient.
- */
+/** Referral-only access is released by every active incoming handoff, regardless
+ * of who authored the historical record. Direct care has its own audit basis. */
 export function referralAccessEvent(
   doctor: LinkedDoctor,
   patientId: string,
   access: ClinicalAccess,
   recordIds: string[],
-  referralIds: string[],
   entityId?: string,
 ): AuditEvent {
+  const referralIds = access.activeReferralIds;
   return {
     clinicId: doctor.clinicId,
     action: "clinical_record_accessed_via_referral",
@@ -337,7 +290,6 @@ export function referralAccessEvent(
       record_ids: recordIds,
       referral_ids: referralIds,
       shared_history_doctor_ids: access.scope.sharedHistoryDoctorIds,
-      referral_appointment_ids: access.scope.referralAppointmentIds,
     },
   };
 }
@@ -381,6 +333,7 @@ async function findByCreationKey(doctor: LinkedDoctor, key: string): Promise<Key
     .select("id, patient_id, appointment_id, record_type, summary, details, code, corrects_record_id, version")
     .eq("clinic_id", doctor.clinicId)
     .eq("author_doctor_id", doctor.doctorId)
+    .eq("created_by", doctor.profileId)
     .eq("creation_key", key)
     .maybeSingle();
   if (error) throw new ApiError(500, "Yozuvni tekshirib bo‘lmadi");
@@ -484,11 +437,11 @@ export async function createClinicalRecord(
     });
   }
 
-  const previous = await findByCreationKey(doctor, input.idempotencyKey);
-  if (previous) return replay(previous, { ...input, patientId, correctsRecordId: null });
-
   const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, patientId);
   if (!access.allowed) throw await patientAccessDenied(doctor, patientId);
+
+  const previous = await findByCreationKey(doctor, input.idempotencyKey);
+  if (previous) return replay(previous, { ...input, patientId, correctsRecordId: null });
 
   // The doctor's own consultation with THIS patient — an appointment of any
   // other patient or doctor is simply not found.
@@ -545,12 +498,12 @@ export async function correctClinicalRecord(
   input: CorrectClinicalRecordInput,
   expected: { appointmentId?: string; recordType?: ClinicalRecordType } = {},
 ): Promise<{ id: string; version: number; replayed: boolean }> {
+  const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, patientId);
+  if (!access.allowed) throw await patientAccessDenied(doctor, patientId);
+
   const replayRequest = { ...input, ...expected, patientId, correctsRecordId: recordId };
   const previous = await findByCreationKey(doctor, input.idempotencyKey);
   if (previous) return replay(previous, replayRequest);
-
-  const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, patientId);
-  if (!access.allowed) throw await patientAccessDenied(doctor, patientId);
 
   const target = await findVersion(doctor, patientId, recordId);
   if (!target?.root_record_id || !target.appointment_id || !target.author_doctor_id || !target.record_type) {

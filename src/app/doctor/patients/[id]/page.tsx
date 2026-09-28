@@ -53,7 +53,7 @@ type ClinicalRecord = {
 
 type Referral = {
   id: string;
-  role: "referrer" | "receiver";
+  role: "referrer" | "receiver" | "care_team";
   status: string;
   priority: string;
   reason: string;
@@ -82,7 +82,7 @@ type Workspace = {
     current: ConsultationRef | null;
     booked: ConsultationRef | null;
     canStartWalkIn: boolean;
-    blockedReason: "referral_pending" | null;
+    blockedReason: null;
     services: Array<{ id: string; name: string }>;
   };
 };
@@ -93,7 +93,7 @@ type Blocked = { title: string; subtitle: string; icon: ReactNode };
 const BLOCKED: Record<string, Blocked> = {
   referral_expired: {
     title: "Yo‘llanma muddati tugagan",
-    subtitle: "Bu bemorning ma‘lumotlari endi sizga ko‘rinmaydi. Kerak bo‘lsa, yo‘llagan shifokordan yangi yo‘llanma so‘rang.",
+    subtitle: "Yo‘llanma muddati tugagan. Yangi davolash uchun qabulxona sizni bemorning mavjud kartasiga qabulga yozishi mumkin.",
     icon: <Clock className="h-6 w-6" />,
   },
   referral_revoked: {
@@ -345,7 +345,7 @@ export default function DoctorPatientWorkspacePage() {
         {workspace.relationship === "own" && <ABadge tone="green">Mening bemorim</ABadge>}
         {(workspace.relationship === "referred" || activeReferralToMe) && <ABadge tone="blue">Yo‘llanma bo‘yicha</ABadge>}
         <span className="text-ink-muted">Faqat sizga ruxsat etilgan ma‘lumotlar ko‘rsatiladi.</span>
-        {workspace.referralAccessUntil && (
+        {workspace.relationship === "referred" && workspace.referralAccessUntil && (
           <span className="text-ink-muted">
             Yo‘llanma bo‘yicha kirish {formatDateTime(workspace.referralAccessUntil)} da tugaydi (yo‘llanma yopilsa — darhol).
           </span>
@@ -360,7 +360,9 @@ export default function DoctorPatientWorkspacePage() {
                 <p className="text-sm font-medium text-foreground">
                   {r.role === "receiver"
                     ? `Sizga yo‘llagan: ${r.referringDoctor?.name ?? "—"}`
-                    : `Siz yo‘llagansiz: ${r.referredToDoctor?.name ?? "—"}`}
+                    : r.role === "referrer"
+                      ? `Siz yo‘llagansiz: ${r.referredToDoctor?.name ?? "—"}`
+                      : `${r.referringDoctor?.name ?? "—"} → ${r.referredToDoctor?.name ?? "—"}`}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <ABadge tone={r.priority === "urgent" ? "red" : "neutral"}>{REFERRAL_PRIORITY_LABELS[r.priority] ?? r.priority}</ABadge>
@@ -381,9 +383,11 @@ export default function DoctorPatientWorkspacePage() {
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-ink-muted">
                   Yuborilgan {formatDateTime(r.createdAt)} · Amal qiladi {formatDateTime(r.expiresAt)} ·{" "}
-                  <Link href={`/doctor/referrals/${r.id}`} className="text-pine hover:underline">
-                    Yo‘llanmani ochish
-                  </Link>
+                  {r.role !== "care_team" && (
+                    <Link href={`/doctor/referrals/${r.id}`} className="text-pine hover:underline">
+                      Yo‘llanmani ochish
+                    </Link>
+                  )}
                 </p>
                 {r.role === "receiver" && r.status === "pending" && declineFor !== r.id && (
                   <div className="flex gap-2">
@@ -401,9 +405,9 @@ export default function DoctorPatientWorkspacePage() {
                   </AButton>
                 )}
               </div>
-              {r.role === "receiver" && r.status === "accepted" && (
+              {r.role === "receiver" && ["pending", "accepted"].includes(r.status) && (
                 <p className="mt-2 text-sm text-ink-muted">
-                  Keyingi qadam: quyida o‘z qabulingizni boshlang — yo‘llanma “Qabul boshlangan” holatiga o‘tadi.
+                  Tarix hozirdan ko‘rinadi. Quyida qabulingizni boshlang — yo‘llanma “Qabul boshlangan” holatiga o‘tadi.
                 </p>
               )}
               {declineFor === r.id && (
@@ -423,7 +427,7 @@ export default function DoctorPatientWorkspacePage() {
               {confirmComplete === r.id && (
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-hairline pt-3">
                   <p className="text-sm text-foreground">
-                    Yakunlangach, o‘z qabullaringizdan boshqa yozuvlar sizga ko‘rinmay qoladi.
+                    Yo‘llanma yakunlanadi. Bemor bilan o‘z qabulingiz bo‘lsa, uning tibbiy tarixi ko‘rinishda qoladi.
                   </p>
                   <div className="flex gap-2">
                     <AButton size="sm" variant="outline" onClick={() => setConfirmComplete(null)}>
@@ -500,18 +504,6 @@ export default function DoctorPatientWorkspacePage() {
                 <ClinicalRecordForm patientId={workspace.patient.id} appointmentId={current.appointmentId} onSaved={() => void load()} />
               )}
             </div>
-          ) : consultation.blockedReason === "referral_pending" ? (
-            <p className="text-sm text-ink-muted">
-              Qabulni boshlash uchun avval yo‘llanmani qabul qiling.{" "}
-              {workspace.referrals.find((r) => r.role === "receiver" && r.status === "pending") && (
-                <Link
-                  href={`/doctor/referrals/${workspace.referrals.find((r) => r.role === "receiver" && r.status === "pending")!.id}`}
-                  className="font-medium text-pine hover:underline"
-                >
-                  Yo‘llanmani ochish
-                </Link>
-              )}
-            </p>
           ) : consultation.booked ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-foreground">

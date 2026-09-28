@@ -4,7 +4,7 @@
 //
 //   Dr A (desktop): opens their patient → documents history, diagnosis, lab
 //     result → Yo‘llanma → picks Dr B → reason + handoff → review → submit
-//   Dr B (tablet): sees the pending referral → accepts → opens the patient →
+//   Dr B (tablet): sees the pending referral → opens the patient immediately →
 //     reviews Dr A's diagnoses / labs / history (attributed) → starts a
 //     consultation → writes new records → completes the referral
 //   Dr A (phone): sees the outcome, attributed to Dr B; own records unchanged
@@ -162,12 +162,9 @@ async function run() {
       await fitsWidth(page, "tablet: referrals list");
       await page.goto(`${BASE}/doctor/referrals/${referralId}`);
       await page.getByRole("button", { name: "Qabul qilish" }).waitFor();
-      check(await page.getByText("Tarix yo‘llanmani qabul qilganingizdan keyin ko‘rinadi.").isVisible(), "before accepting, A's history is withheld");
-      await tappable(page.getByRole("button", { name: "Qabul qilish" }), "tablet: accept button");
-      await page.getByRole("button", { name: "Qabul qilish" }).click();
-      await page.getByText("Yo‘llanma qabul qilindi").waitFor();
-      const [accepted] = await db`select status, accepted_by from public.referrals where id = ${referralId}`;
-      check(accepted.status === "accepted" && accepted.accepted_by === B.profile_id, "accepted by B");
+      check((await page.getByText("Tarix yo‘llanmani qabul qilganingizdan keyin ko‘rinadi.").count()) === 0, "pending referrals already permit historical review");
+      const [pendingReferral] = await db`select status from public.referrals where id = ${referralId}`;
+      check(pendingReferral.status === "pending", "history opens before care acknowledgement");
       await fitsWidth(page, "tablet: referral detail");
 
       await page.getByRole("link", { name: "Bemor kartasini ochish" }).click();
@@ -317,7 +314,7 @@ async function run() {
       // A pending referral is accepted in place; completing waits for the consultation.
       await page.getByRole("link", { name: pending.name }).click();
       await page.getByRole("button", { name: "Yo‘llanmani qabul qilish" }).waitFor();
-      check((await page.getByRole("button", { name: "Hozir qabulni boshlash" }).count()) === 0, "no consultation before the referral is accepted");
+      check(await page.getByRole("button", { name: "Hozir qabulni boshlash" }).isVisible(), "pending handoff permits consultation start");
       await page.getByRole("button", { name: "Yo‘llanmani qabul qilish" }).click();
       await page.getByRole("button", { name: "Hozir qabulni boshlash" }).waitFor();
       check((await db`select status from public.referrals where id = ${pending.referral}`)[0].status === "accepted", "the pending referral is accepted from the workspace");

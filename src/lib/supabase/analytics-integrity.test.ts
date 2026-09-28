@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
@@ -81,7 +82,7 @@ describeDb("analytics integrity (real DB totals)", () => {
   });
 
   afterAll(async () => {
-    if (admin && clinicId) await admin.from("clinics").delete().eq("id", clinicId);
+    if (admin && clinicId) await cleanupTestClinics([clinicId]);
   });
 
   const insertAppt = (startAt: Date, status: string, source: string, reason: string | null = null, noShowReason: string | null = null) =>

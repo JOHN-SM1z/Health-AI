@@ -8,10 +8,11 @@ export default defineConfig({
       "server-only": path.resolve(__dirname, "src/test/server-only-stub.ts"),
     },
   },
+  oxc: { jsx: { runtime: "automatic" } },
   test: {
     environment: "node",
     setupFiles: ["src/test/setup.ts"],
     globalSetup: ["src/test/global-setup.ts"],
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
   },
 });

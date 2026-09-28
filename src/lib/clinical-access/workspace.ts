@@ -10,7 +10,7 @@ import {
   type ClinicalAccess,
   type ClinicalRelationship,
 } from "@/lib/clinical-access/access";
-import { listVisibleClinicalRecords, referralAccessEvent, releasingReferralIds, type ClinicalRecordView } from "@/lib/clinical-records/service";
+import { listVisibleClinicalRecords, referralAccessEvent, type ClinicalRecordView } from "@/lib/clinical-records/service";
 import { listPatientReferralsForDoctor, type PatientReferral } from "@/lib/referrals/service";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
 import { recordCategory, type RecordCategory, type RecordStage } from "@/lib/clinical-records/categories";
@@ -57,7 +57,7 @@ export type PatientWorkspace = {
   appointments: ClinicalAppointment[];
   /** Clinical records the decision covers, with provenance, newest first. */
   records: WorkspaceRecord[];
-  /** Referrals of this patient the doctor is on and may see, with their text. */
+  /** Patient referral history within the same authorized clinical workspace. */
   referrals: PatientReferral[];
   consultation: {
     /** The doctor's own consultation with the patient that is in progress. */
@@ -66,7 +66,7 @@ export type PatientWorkspace = {
     booked: ConsultationRef | null;
     /** Whether the doctor may start a walk-in consultation now. */
     canStartWalkIn: boolean;
-    blockedReason: "referral_pending" | null;
+    blockedReason: null;
     /** Services the doctor can see the patient for. */
     services: Array<{ id: string; name: string }>;
   };
@@ -87,9 +87,9 @@ function referralAccessUntil(referrals: PatientReferral[]): string | null {
   return open.length > 0 ? open.map((r) => r.expiresAt).sort().at(-1)! : null;
 }
 
-/** Whether `access` lets the doctor start a consultation (own patient or an accepted referral). */
+/** A legitimate care relationship permits treatment, including a pending referral. */
 export function canStartConsultation(access: ClinicalAccess): boolean {
-  return access.allowed && (access.scope.ownAppointments || access.scope.sharedHistoryDoctorIds.length > 0);
+  return access.allowed;
 }
 
 async function doctorServices(doctor: LinkedDoctor): Promise<Array<{ id: string; name: string }>> {
@@ -187,18 +187,10 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
   const canStart = canStartConsultation(access);
 
   // The access log names the patient, the referral the access rests on (when
-  // exactly one does), and every record of another doctor released — ids
-  // only, written before anything is returned. Records another doctor wrote
-  // are only ever released through a referral, so they get their own event
-  // too: referral-based access is never hidden behind the doctor's own
-  // relationship with the patient.
-  const shared = records.filter((r) => r.author.id !== doctor.doctorId);
-  const viaReferral = shared.map((r) => r.id);
-  const releasedBy = await releasingReferralIds(
-    doctor,
-    patientId,
-    shared.map((r) => ({ authorDoctorId: r.author.id, appointmentId: r.appointmentId })),
-  );
+  // exactly one does), with all released record ids and the actual care basis.
+  const viaReferral = access.relationship === "referred"
+    ? records.filter((r) => r.author.id !== doctor.doctorId).map((r) => r.id)
+    : [];
   await recordAudits(
     [
       {
@@ -215,10 +207,11 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
           shown_referral_ids: referrals.map((r) => r.id),
           shared_history_doctor_ids: access.scope.sharedHistoryDoctorIds,
           record_count: records.length,
+          record_ids: records.map((r) => r.id),
           shared_record_ids: records.filter((r) => !r.mine).map((r) => r.id),
         },
       },
-      ...(viaReferral.length > 0 ? [referralAccessEvent(doctor, patientId, access, viaReferral, releasedBy)] : []),
+      ...(viaReferral.length > 0 ? [referralAccessEvent(doctor, patientId, access, viaReferral)] : []),
     ],
     { strict: true },
   );
@@ -243,7 +236,7 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
       current: current ? asRef(current) : null,
       booked: booked ? asRef(booked) : null,
       canStartWalkIn: canStart,
-      blockedReason: !canStart && access.activeReferralIds.length > 0 ? "referral_pending" : null,
+      blockedReason: null,
       services,
     },
   };

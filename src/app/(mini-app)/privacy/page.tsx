@@ -12,7 +12,7 @@ export default function PrivacyPage() {
           <p className="font-medium text-[var(--tg-text,var(--foreground))]">1. Qanday ma‘lumotlar yig‘iladi</p>
           <p className="mt-1">
             Telegram foydalanuvchi identifikatori, ismingiz, telefon raqamingiz va qabul
-            ma‘lumotlari. Faqat qabul jarayonini tashkil qilish uchun.
+            ma‘lumotlari qabul jarayonini tashkil qilish uchun yig‘iladi. Shifokorlar davolash davomida tibbiy yozuvlar ham kiritishi mumkin.
           </p>
         </div>
         <div>
@@ -56,28 +56,27 @@ export default function PrivacyPage() {
           </p>
           <p className="mt-1">
             Shifokor sizni klinikadagi boshqa shifokorga yo‘llasa, yo‘llanma sababi va hamkasbi uchun
-            izohni faqat shu ikki shifokor ko‘radi; qabulxona esa faqat sizni kim kimga yo‘llaganini,
+            izohni bemorni davolashga vakolatli shifokorlar ko‘radi; qabulxona esa faqat sizni kim kimga yo‘llaganini,
             yo‘llanma holati, muhimligi va sanalarini hamda shu yo‘llanma bo‘yicha qabul vaqtini ko‘radi.
           </p>
           <p className="mt-1">
-            Qabul qiluvchi shifokor yo‘llanmani qabul qilish-qilmaslikni hal qilishi uchun yo‘llanma
-            yozilgan qabulni va unda yozilgan tibbiy yozuvlarni ko‘radi. Yo‘llanmani qabul qilgach,
-            u amal qilayotgan paytda yo‘llagan shifokor bilan bo‘lgan qabullaringizni va ularning
-            tibbiy yozuvlarini ko‘radi, lekin ularni o‘zgartira olmaydi. Yo‘llagan shifokor esa shu
-            yo‘llanma bo‘yicha qabulni va unda yozilgan yozuvlarni ko‘radi. Yo‘llanma sizning
-            to‘lovlaringiz va yozishmalaringizni ochib bermaydi.
+            Faol yo‘llanma yoki siz bilan belgilangan qabul mavjud bo‘lsa, shifokor shu klinikadagi
+            oldingi qabullar va tibbiy yozuvlaringizni darhol ko‘radi. Yo‘llanmani qabul qilish
+            alohida ruxsat olish sharti emas. Keyingi tashrifda boshqa shifokor ham mavjud
+            bemor kartangiz orqali tarixni ko‘radi; oldingi shifokordan qayta ruxsat talab etilmaydi.
+            Bu kirish to‘lovlaringiz va yozishmalaringizni ochib bermaydi.
           </p>
           <p className="mt-1">
-            Qabul qiluvchi shifokorning bu kirishi yo‘llanma rad etilganda, bekor qilinganda,
-            yakunlanganda yoki muddati tugaganda (ko‘pi bilan 180 kun) to‘xtaydi; yo‘llagan
-            shifokorniki — yo‘llanma bekor qilinganda yoki muddati tugaganda. Tibbiy yozuvlarni
-            ko‘rish kirish jurnalida qayd etiladi.
+            Faqat yo‘llanma bilan berilgan kirish yo‘llanma rad etilganda, bekor qilinganda,
+            yakunlanganda yoki muddati tugaganda (ko‘pi bilan 180 kun) to‘xtaydi. Mustaqil qabul
+            yoki davolash aloqasi mavjud bo‘lsa, tibbiy tarixga kirish saqlanadi.
+            Tibbiy yozuvlarni ko‘rish kirish jurnalida qayd etiladi.
           </p>
         </div>
         <div>
           <p className="font-medium text-[var(--tg-text,var(--foreground))]">6. Saqlash</p>
           <p className="mt-1">
-            Tibbiy yozuvlaringiz, qabullaringiz, to‘lovlaringiz yoki yo‘llanmalaringiz bor ekan,
+            Tibbiy yozuvlaringiz, qabullaringiz, to‘lovlaringiz, yozishmalaringiz yoki yo‘llanmalaringiz bor ekan,
             profilingiz ular bilan birga o‘chirib yuborilmaydi. Bu ma‘lumotlar va profilingizdagi
             ma‘lumotlar qancha muddat saqlanishi klinika tasdiqlagan tartib bilan belgilanadi; bunday
             tartib belgilanmaguncha ular saqlanib turadi. Kirish jurnali ham alohida saqlanadi.

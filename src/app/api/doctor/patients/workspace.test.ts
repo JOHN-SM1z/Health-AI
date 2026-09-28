@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -179,7 +180,7 @@ describeDb("referred-patient clinical workspace", () => {
     const recEarlier = await writeRecord("a", id, earlier, { recordType: "diagnosis", summary: "Essential hypertension", code: "I10" });
     const recConsultation = await writeRecord("a", id, consultation, { recordType: "lab_result", summary: "HbA1c 7.9%" });
     const recE = await writeRecord("e", id, withE, { recordType: "prescription", summary: "Amlodipine 5 mg daily" });
-    return { id, earlier, consultation, withE, recEarlier, recConsultation, recE, aRecords: [recEarlier, recConsultation].sort() };
+    return { id, earlier, consultation, withE, recEarlier, recConsultation, recE, aRecords: [recEarlier, recConsultation, recE].sort() };
   }
 
   async function refer(x: { consultation: string }) {
@@ -231,7 +232,7 @@ describeDb("referred-patient clinical workspace", () => {
     await admin.from("staff_roles").delete().eq("clinic_id", clinicA);
     await admin.from("doctors").delete().eq("clinic_id", clinicA);
     await admin.from("services").delete().eq("clinic_id", clinicA);
-    await admin.from("clinics").delete().eq("id", clinicA);
+    await cleanupTestClinics([clinicA]);
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });
 
@@ -258,7 +259,7 @@ describeDb("referred-patient clinical workspace", () => {
       relationship: "referred",
       patient: { id: x.id, phone: "+998907776655" },
       referrals: [{ id: referral, role: "receiver", status: "pending", reason: `Poorly controlled BP despite treatment (${suffix})` }],
-      consultation: { current: null, canStartWalkIn: false, blockedReason: "referral_pending" },
+      consultation: { current: null, canStartWalkIn: true, blockedReason: null },
     });
   });
 
@@ -325,22 +326,23 @@ describeDb("referred-patient clinical workspace", () => {
     await act("a", second, { action: "revoke", reason: "Patient transferred" });
     const own = ws(await workspace("b", y.id));
     expect(own.relationship).toBe("own");
-    expect(recordIds(own)).toEqual([ownRecord]);
+    expect(recordIds(own)).toEqual([...y.aRecords,ownRecord].sort());
   });
 
   it("clinical records are displayed according to authorization, with provenance", async () => {
     const x = await patientX();
     const referral = await refer(x);
 
-    // Pending: only the records of the consultation the referral came from.
-    expect(recordIds(ws(await workspace("b", x.id)))).toEqual([x.recConsultation]);
+    // Pending: immediate longitudinal history.
+    expect(recordIds(ws(await workspace("b", x.id)))).toEqual(x.aRecords);
 
-    // Accepted: Dr A's records, attributed to Dr A — never Dr E's.
+    // Accepted: all prior authors remain attributed to their own records.
     await act("b", referral, { action: "accept" });
     const accepted = ws(await workspace("b", x.id));
     expect(recordIds(accepted)).toEqual(x.aRecords);
     for (const r of accepted.records) {
-      expect(r).toMatchObject({ mine: false, author: { id: doctors.a, name: `Dr A ${suffix}` }, createdAt: expect.any(String) });
+      expect(r).toMatchObject({ mine: false, createdAt: expect.any(String) });
+      expect([doctors.a,doctors.e]).toContain(r.author.id);
     }
     expect(accepted.records.find((r) => r.id === x.recEarlier)).toMatchObject({ type: "diagnosis", summary: "Essential hypertension" });
 
@@ -352,13 +354,13 @@ describeDb("referred-patient clinical workspace", () => {
     expect(withOwn.consultation.current).toMatchObject({ appointmentId: followUp });
     expect(withOwn.records.find((r) => r.id === bRecord)).toMatchObject({ mine: true, author: { id: doctors.b }, appointmentId: followUp });
 
-    // Dr A reads Dr B's reply on the follow-up; Dr E still only their own.
+    // Every independently treating doctor sees the longitudinal outcome.
     expect(recordIds(ws(await workspace("a", x.id)))).toEqual([...x.aRecords, bRecord].sort());
-    expect(recordIds(ws(await workspace("e", x.id)))).toEqual([x.recE]);
+    expect(recordIds(ws(await workspace("e", x.id)))).toEqual([...x.aRecords,bRecord].sort());
 
-    // Completed: Dr B keeps their own record only.
+    // Completed: independent care keeps longitudinal history.
     await act("b", referral, { action: "complete" });
-    expect(recordIds(ws(await workspace("b", x.id)))).toEqual([bRecord]);
+    expect(recordIds(ws(await workspace("b", x.id)))).toEqual([...x.aRecords,bRecord].sort());
 
     // Reception's patient view never carries clinical records.
     as("receptionist", "receptionist");
@@ -408,11 +410,9 @@ describeDb("referred-patient clinical workspace", () => {
     expect(await record("b", "not-a-uuid", { appointmentId: ownVisit })).toMatchObject({ status: 404 });
   });
 
-  it("starts Dr B's own consultation — only once accepted, idempotently, linked to the referral", async () => {
+  it("starts Dr B's own consultation from a pending handoff, idempotently, linked to the referral", async () => {
     const x = await patientX();
     const referral = await refer(x);
-    expect(await start("b", x.id, { serviceId: quickService })).toMatchObject({ status: 409, body: { code: "referral_not_accepted" } });
-    await act("b", referral, { action: "accept" });
 
     if (minutesToClinicMidnight() < 15) {
       // A walk-in must end within today's working hours.

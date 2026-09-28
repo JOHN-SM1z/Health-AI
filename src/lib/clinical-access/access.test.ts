@@ -27,7 +27,7 @@ describe("toClinicalAccess", () => {
     expect(toClinicalAccess(row())).toMatchObject({ relationship: "none", allowed: false });
   });
 
-  it("A: own patient — record and own appointments", () => {
+  it("A: maps own relationship without inventing any additional scope", () => {
     expect(toClinicalAccess(row({ own_patient: true }))).toEqual({
       relationship: "own",
       allowed: true,
@@ -36,7 +36,7 @@ describe("toClinicalAccess", () => {
     });
   });
 
-  it("B: pending referral — record and its consultation; accepted — plus the referring doctor's visits", () => {
+  it("B: maps a referral decision; the database supplies longitudinal authors immediately", () => {
     expect(toClinicalAccess(row({ active_referral_ids: ["r1"], referral_appointment_ids: ["consult"] }))).toEqual({
       relationship: "referred",
       allowed: true,

@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -254,7 +255,7 @@ describeDb("clinical handoff workflow", () => {
     await admin.from("staff_roles").delete().eq("clinic_id", clinicA);
     await admin.from("doctors").delete().eq("clinic_id", clinicA);
     await admin.from("services").delete().eq("clinic_id", clinicA);
-    await admin.from("clinics").delete().eq("id", clinicA);
+    await cleanupTestClinics([clinicA]);
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });
 
@@ -263,24 +264,23 @@ describeDb("clinical handoff workflow", () => {
     const diagnosisBefore = (await admin.from("clinical_records").select("*").eq("id", x.diagnosis).single()).data;
     const referral = await refer(x);
 
-    // 1. Pending: Dr B reviews what the referral authorizes — the consultation it came from.
+    // 1. Pending: Dr B immediately reviews longitudinal history.
     const pending = await ws("b", x.id);
-    expect(pending).toMatchObject({ relationship: "referred", consultation: { current: null, canStartWalkIn: false, blockedReason: "referral_pending" } });
-    expect(pending.records.map((r) => r.id).sort()).toEqual([x.diagnosis, x.prescription].sort());
+    expect(pending).toMatchObject({ relationship: "referred", consultation: { current: null, canStartWalkIn: true, blockedReason: null } });
+    expect(pending.records.map((r) => r.id).sort()).toEqual([x.history,x.diagnosis,x.prescription,x.eRecord].sort());
     expect(pending.records.find((r) => r.id === x.diagnosis)).toMatchObject({
       author: { id: doctors.a },
       mine: false,
       stage: "historical",
       category: "historical_diagnosis",
     });
-    expect(await start("b", x.id, { serviceId: quickService })).toMatchObject({ status: 409, body: { code: "referral_not_accepted" } });
 
-    // 2. Accept (audited), then the authorized history: all of Dr A's records, as Dr A's — never Dr E's.
+    // 2. Explicit acknowledgement remains optional care tracking; history is already available.
     expect(await act("b", referral, { action: "accept" })).toMatchObject({ status: 200, body: { data: { status: "accepted" } } });
     const accepted = await ws("b", x.id);
-    expect(accepted.records.map((r) => r.id).sort()).toEqual([x.history, x.diagnosis, x.prescription].sort());
-    expect(accepted.records.every((r) => r.author.id === doctors.a && !r.mine && r.stage === "historical")).toBe(true);
-    expect(accepted.records.map((r) => r.id)).not.toContain(x.eRecord);
+    expect(accepted.records.map((r) => r.id).sort()).toEqual([x.history,x.diagnosis,x.prescription,x.eRecord].sort());
+    expect(accepted.records.every((r) => [doctors.a,doctors.e].includes(r.author.id) && !r.mine && r.stage === "historical")).toBe(true);
+    expect(accepted.records.map((r) => r.id)).toContain(x.eRecord);
     // Completing before seeing the patient is neither offered nor accepted.
     expect((await detail("b", referral)).body.data!.referral).toMatchObject({ status: "accepted", allowedActions: [] });
     expect(await act("b", referral, { action: "complete" })).toMatchObject({ status: 409, body: { code: "consultation_not_started" } });
@@ -338,10 +338,10 @@ describeDb("clinical handoff workflow", () => {
     expect(await queue("b", consultationId, "completed")).toMatchObject({ status: 200 });
     expect(await act("b", referral, { action: "complete" })).toMatchObject({ status: 200, body: { data: { status: "completed" } } });
 
-    // Afterwards Dr B keeps their own consultation only; its records are now history, still theirs.
+    // Afterwards direct care preserves full history; their own records remain authored by them.
     const after = await ws("b", x.id);
     expect(after.relationship).toBe("own");
-    expect(after.records.map((r) => r.id).sort()).toEqual(Object.values(mine).sort());
+    expect(after.records.map((r) => r.id).sort()).toEqual([...Object.values(mine),x.history,x.diagnosis,x.prescription,x.eRecord].sort());
     expect(after.records.find((r) => r.id === mine.diagnosis)).toMatchObject({ stage: "historical", category: "historical_diagnosis", mine: true });
     // Dr A sees the follow-up and its records — authored by Dr B — next to their own, unchanged.
     const referrer = await ws("a", x.id);
@@ -424,7 +424,7 @@ describeDb("clinical handoff workflow", () => {
     });
   });
 
-  it("an in-progress referral: listed as open, revocable by Dr A — Dr B then keeps only their own consultation", async () => {
+  it("an in-progress referral: listed as open, revocable by Dr A — Dr B keeps longitudinal history through independent care", async () => {
     const x = await patientX();
     const referral = await refer(x);
     await act("b", referral, { action: "accept" });
@@ -440,7 +440,7 @@ describeDb("clinical handoff workflow", () => {
     expect(await act("a", referral, { action: "revoke", reason: "Patient transferred" })).toMatchObject({ status: 200, body: { data: { status: "revoked" } } });
     const after = await ws("b", x.id);
     expect(after.relationship).toBe("own");
-    expect(after.records.map((r) => r.id)).toEqual([ownRecord]);
-    expect(after.records[0]).toMatchObject({ stage: "current", category: "current_assessment", mine: true });
+    expect(after.records.map((r) => r.id).sort()).toEqual([ownRecord,x.history,x.diagnosis,x.prescription,x.eRecord].sort());
+    expect(after.records.find((r) => r.id === ownRecord)).toMatchObject({ stage: "current", category: "current_assessment", mine: true });
   });
 });

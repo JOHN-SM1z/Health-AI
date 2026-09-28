@@ -27,7 +27,7 @@ const createSchema = z
     source: z.enum(["admin", "walk_in"]),
     patientId: uuidSchema.optional(),
     notes: z.string().max(500).optional(),
-    // Books the follow-up of an accepted referral: the referral fixes the
+    // Books the follow-up of an open referral: the referral fixes the
     // patient and the doctor, and the new appointment is linked to it.
     referralId: uuidSchema.optional(),
     /** One key per booking attempt, repeated on retries (double click, network retry). */

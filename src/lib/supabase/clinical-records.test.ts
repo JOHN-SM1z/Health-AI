@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -229,6 +230,7 @@ describeDb("clinical records — database layer", () => {
   afterAll(async () => {
     if (!sql) return;
     const clinics = [clinicA, clinicB];
+    await cleanupTestClinics(clinics);
     await sql`delete from public.clinical_records where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.referrals where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.appointments where clinic_id in ${sql(clinics)}`;
@@ -236,7 +238,6 @@ describeDb("clinical records — database layer", () => {
     await sql`delete from public.doctors where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.patients where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.services where clinic_id in ${sql(clinics)}`;
-    await sql`delete from public.clinics where id in ${sql(clinics)}`;
     await sql`delete from auth.users where id in ${sql(Object.values(profiles))}`;
     await sql.end({ timeout: 5 });
   });
@@ -446,17 +447,17 @@ describeDb("clinical records — database layer", () => {
 
   it("shows each record exactly where its consultation is visible", async () => {
     const x = await patientX();
-    const aRecords = [x.recEarlier, x.recConsultation].sort();
+    const aRecords = [x.recEarlier, x.recConsultation, x.recE].sort();
 
     expect(await readable(profiles.a, x.id)).toEqual(aRecords);
-    expect(await readable(profiles.e, x.id)).toEqual([x.recE]);
+    expect(await readable(profiles.e, x.id)).toEqual(aRecords);
     expect(await readable(profiles.b, x.id)).toEqual([]);
 
-    // Pending referral: only the records of the consultation it came from.
+    // Pending referral: longitudinal history is immediately available.
     const referral = await refer(x.id, x.consultation);
-    expect(await readable(profiles.b, x.id)).toEqual([x.recConsultation]);
+    expect(await readable(profiles.b, x.id)).toEqual(aRecords);
 
-    // Accepted: all of Dr A's records for X — never Dr E's.
+    // Acceptance tracks care without changing the history scope.
     await transition(referral, { status: "accepted", accepted_by: profiles.b });
     expect(await readable(profiles.b, x.id)).toEqual(aRecords);
 
@@ -466,12 +467,12 @@ describeDb("clinical records — database layer", () => {
     const bRecord = (await write(doctors.b, x.id, followUp, { record_type: "consultation_note", summary: "Seen for the referral", code: null })).id;
     expect(await readable(profiles.a, x.id)).toEqual([...aRecords, bRecord].sort());
     expect(await readable(profiles.b, x.id)).toEqual([...aRecords, bRecord].sort());
-    expect(await readable(profiles.e, x.id)).toEqual([x.recE]);
+    expect(await readable(profiles.e, x.id)).toEqual([...aRecords, bRecord].sort());
 
-    // Revoked: Dr B keeps only their own; Dr A no longer sees the follow-up.
+    // Revoked: independent care relationships preserve longitudinal history.
     await transition(referral, { status: "revoked", revoked_by: profiles.a, revoked_reason: "Handled elsewhere" });
-    expect(await readable(profiles.b, x.id)).toEqual([bRecord]);
-    expect(await readable(profiles.a, x.id)).toEqual(aRecords);
+    expect(await readable(profiles.b, x.id)).toEqual([...aRecords, bRecord].sort());
+    expect(await readable(profiles.a, x.id)).toEqual([...aRecords, bRecord].sort());
 
     // No relationship, another clinic, and every operational role: nothing.
     for (const profileId of [profiles.c, profiles.k, profiles.receptionist, profiles.manager, profiles.owner]) {
@@ -508,7 +509,7 @@ describeDb("clinical records — database layer", () => {
       return row.id;
     });
     await transition(referral, { status: "accepted", accepted_by: profiles.b });
-    expect(await readable(profiles.b, x.id)).toEqual([x.recEarlier, x.recConsultation].sort());
+    expect(await readable(profiles.b, x.id)).toEqual([x.recEarlier, x.recConsultation, x.recE].sort());
 
     await new Promise((r) => setTimeout(r, 2_500));
     expect(await readable(profiles.b, x.id)).toEqual([]);
