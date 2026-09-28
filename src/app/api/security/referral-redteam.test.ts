@@ -337,7 +337,7 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     denied(await writeRecord(X.id, { appointmentId: X.consultation }), [404]);
     // Correct Dr A's record.
     const own = await visit("A", X.id, doctors.b, "in_progress");
-    denied(await writeRecord(X.id, { appointmentId: own, recordType: "diagnosis", correctsRecordId: X.record }), [409]);
+    denied(await writeRecord(X.id, { appointmentId: own, recordType: "diagnosis", correctsRecordId: X.record }), [403]);
     // Start Dr A's appointment as Dr B's consultation (a patient Dr B may consult, no consultation yet).
     denied(await startConsultation(W.id, { appointmentId: W.consultation }), [404]);
     const { data: aVisit } = await admin.from("appointments").select("status, doctor_id").eq("id", W.consultation).single();

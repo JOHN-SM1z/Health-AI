@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
-import { recordAudit } from "@/lib/audit";
+import { recordAudits } from "@/lib/audit";
 import { localDayWindow } from "@/lib/time/local";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 import {
@@ -10,7 +10,7 @@ import {
   type ClinicalAccess,
   type ClinicalRelationship,
 } from "@/lib/clinical-access/access";
-import { listVisibleClinicalRecords, type ClinicalRecordView } from "@/lib/clinical-records/service";
+import { listVisibleClinicalRecords, referralAccessEvent, releasingReferralIds, type ClinicalRecordView } from "@/lib/clinical-records/service";
 import { listPatientReferralsForDoctor, type PatientReferral } from "@/lib/referrals/service";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
 import { recordCategory, type RecordCategory, type RecordStage } from "@/lib/clinical-records/categories";
@@ -188,25 +188,40 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
 
   // The access log names the patient, the referral the access rests on (when
   // exactly one does), and every record of another doctor released — ids
-  // only, written before anything is returned.
-  await recordAudit({
-    clinicId: doctor.clinicId,
-    action: "patient_clinical_record_viewed",
-    entityType: "patients",
-    entityId: patientId,
+  // only, written before anything is returned. Records another doctor wrote
+  // are only ever released through a referral, so they get their own event
+  // too: referral-based access is never hidden behind the doctor's own
+  // relationship with the patient.
+  const shared = records.filter((r) => r.author.id !== doctor.doctorId);
+  const viaReferral = shared.map((r) => r.id);
+  const releasedBy = await releasingReferralIds(
+    doctor,
     patientId,
-    referralId: access.activeReferralIds.length === 1 ? access.activeReferralIds[0] : null,
-    actor: { actorId: doctor.profileId, actorType: "staff" },
-    metadata: {
-      relationship: access.relationship,
-      referral_ids: access.activeReferralIds,
-      shown_referral_ids: referrals.map((r) => r.id),
-      shared_history_doctor_ids: access.scope.sharedHistoryDoctorIds,
-      record_count: records.length,
-      shared_record_ids: records.filter((r) => !r.mine).map((r) => r.id),
-    },
-    strict: true,
-  });
+    shared.map((r) => ({ authorDoctorId: r.author.id, appointmentId: r.appointmentId })),
+  );
+  await recordAudits(
+    [
+      {
+        clinicId: doctor.clinicId,
+        action: "patient_clinical_record_viewed",
+        entityType: "patients",
+        entityId: patientId,
+        patientId,
+        referralId: access.activeReferralIds.length === 1 ? access.activeReferralIds[0] : null,
+        actor: { actorId: doctor.profileId, actorType: "staff" },
+        metadata: {
+          relationship: access.relationship,
+          referral_ids: access.activeReferralIds,
+          shown_referral_ids: referrals.map((r) => r.id),
+          shared_history_doctor_ids: access.scope.sharedHistoryDoctorIds,
+          record_count: records.length,
+          shared_record_ids: records.filter((r) => !r.mine).map((r) => r.id),
+        },
+      },
+      ...(viaReferral.length > 0 ? [referralAccessEvent(doctor, patientId, access, viaReferral, releasedBy)] : []),
+    ],
+    { strict: true },
+  );
 
   return {
     patient: {

@@ -16,7 +16,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Never implement AI or automated diagnosis, treatment advice or prescriptions, or claims that AI output is medical advice.
 - Clinical text exists only where a doctor writes it:
   - `referrals`: the referring doctor's reason and handoff note — visible only to the two doctors on the referral.
-  - `clinical_records`: clinical notes, assessments, diagnoses, prescriptions, laboratory orders and results, medical history and follow-up plans, written by a doctor in their own consultation. Readable only by doctors that `doctor_can_read_appointment()` admits. Records are immutable (corrections are new records) and keep author, consultation, time and type.
+  - `clinical_records`: clinical notes, assessments, diagnoses, prescriptions, laboratory orders and results, medical history and follow-up plans, written by a doctor in their own consultation. Readable only by doctors that `doctor_can_read_appointment()` admits. Records keep author, consultation, time, type and version, and are append-only: only their author (the same doctor record AND login) corrects them, as the record's next version — the earlier version is kept, never updated or deleted. A doctor who disagrees with a colleague's record — including through a referral — writes their own record in their own consultation; never give one doctor a way to change another's record.
   - Never show clinical text to operational staff, patients, logs, audit rows, analytics, or the patient-facing bot.
   - AI must never write, read, or summarise clinical text.
 - AI must only provide clinic information or non-diagnostic booking navigation. Urgent wording must trigger the approved urgent-care message and human-admin escalation.
@@ -36,6 +36,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Referral-based access is never permanent: it ends at decline, revocation or completion and, at the latest, at the referral's `expires_at` (≤ 180 days), checked against the database clock on every read. Clinical text (`referrals`, `clinical_records`) is read only through the server, which authorizes and audits each read — never grant signed-in roles SELECT on those tables. `audit_events` is append-only and tenant-checked.
 - Treat the Supabase service-role client as privileged: use it only in server-only code after explicit clinic/role/ownership authorization.
 - Every tenant-owned query and mutation must scope by `clinic_id`.
+- Deleting a patient must never cascade into clinical records, referrals, appointments, payments or audit rows: each has its own retention, set by the clinic's confirmed policy (`retention_policies`). Never assume a retention period in code. A doctor record that holds another login's clinical records is never re-linked to a new login; a new doctor gets a new doctor record.
 - Never trust role, clinic ID, patient ID, payment status, or Telegram identity from the browser.
 - `SECURITY DEFINER` functions must use a safe `search_path`, have the minimum grants, and verify caller authorization internally. Do not grant privileged RPCs broadly to `authenticated`.
 - Add or update tests whenever modifying RLS, staff roles, RPCs, or tenant-scoped queries.

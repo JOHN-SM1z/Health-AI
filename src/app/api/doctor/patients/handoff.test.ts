@@ -50,8 +50,8 @@ type WsRecord = {
   mine: boolean;
   stage: "current" | "historical";
   category: string;
-  correctsRecordId: string | null;
-  correctedByRecordId: string | null;
+  version: number;
+  rootRecordId: string;
 };
 type Workspace = {
   relationship: string;
@@ -324,15 +324,15 @@ describeDb("clinical handoff workflow", () => {
 
     // 6–7. Dr A's records stay Dr A's, untouched: reviewing, a new diagnosis or an attempt to correct changes nothing.
     expect(await write("b", x.id, { appointmentId: consultationId, recordType: "diagnosis", summary: "Overwrite", correctsRecordId: x.diagnosis })).toMatchObject({
-      status: 409,
-      body: { code: "correction_not_allowed" },
+      status: 403,
+      body: { code: "CLINICAL_RECORD_NOT_OWNED" },
     });
     expect(await write("b", x.id, { appointmentId: x.consultation, recordType: "diagnosis", summary: "Into Dr A's visit" })).toMatchObject({
       status: 404,
       body: { code: "consultation_not_found" },
     });
     expect((await admin.from("clinical_records").select("*").eq("id", x.diagnosis).single()).data).toEqual(diagnosisBefore);
-    expect(during.records.find((r) => r.id === x.diagnosis)).toMatchObject({ author: { id: doctors.a }, correctedByRecordId: null });
+    expect(during.records.find((r) => r.id === x.diagnosis)).toMatchObject({ author: { id: doctors.a }, version: 1 });
 
     // Consultation and referral completed (audited).
     expect(await queue("b", consultationId, "completed")).toMatchObject({ status: 200 });
@@ -346,7 +346,7 @@ describeDb("clinical handoff workflow", () => {
     // Dr A sees the follow-up and its records — authored by Dr B — next to their own, unchanged.
     const referrer = await ws("a", x.id);
     expect(referrer.records.find((r) => r.id === mine.diagnosis)).toMatchObject({ author: { id: doctors.b }, mine: false });
-    expect(referrer.records.find((r) => r.id === x.diagnosis)).toMatchObject({ author: { id: doctors.a }, mine: true, correctedByRecordId: null });
+    expect(referrer.records.find((r) => r.id === x.diagnosis)).toMatchObject({ author: { id: doctors.a }, mine: true, version: 1 });
 
     // The audit trail: every step, with its actor — and no clinical text anywhere.
     expect((await audits(referral)).filter((a) => a.action.startsWith("referral_") && a.action !== "referral_viewed").map((a) => [a.action, a.actor_id])).toEqual([

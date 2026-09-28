@@ -6,15 +6,27 @@ import { adminApi, AdminApiError } from "@/lib/admin/client";
 import { WRITABLE_RECORD_TYPES } from "@/lib/clinical-records/categories";
 import { newIdempotencyKey } from "@/lib/idempotency-key";
 
-export type RecordDraft = { recordId: string; type: string; summary: string; details: string | null; code: string | null };
+/** The current version of one of the doctor's own records, being corrected. */
+export type RecordDraft = {
+  recordId: string;
+  rootRecordId: string;
+  version: number;
+  type: string;
+  summary: string;
+  details: string | null;
+  code: string | null;
+};
 
 const TYPES = WRITABLE_RECORD_TYPES.map(({ value, label }) => ({ value, label }));
 const SUMMARY_HINTS: Record<string, string> = Object.fromEntries(WRITABLE_RECORD_TYPES.map((t) => [t.value, t.hint]));
 
 /**
- * Adds a record to the doctor's own consultation (or corrects one of their
- * own records). The server sets the author, time and provenance and checks
- * the consultation is theirs with this patient; this form only sends text.
+ * Adds a record to the doctor's own consultation, or corrects one of their
+ * own records: edit and save — the server saves the correction as the
+ * record's next version and keeps the earlier one in its history, so no
+ * reason is asked for. The server sets the author, time and provenance and
+ * checks the consultation and the record are the doctor's own; this form
+ * only sends text.
  */
 export function ClinicalRecordForm({
   patientId,
@@ -22,12 +34,19 @@ export function ClinicalRecordForm({
   correcting,
   onSaved,
   onCancel,
+  onConflict,
 }: {
   patientId: string;
   appointmentId: string;
   correcting?: RecordDraft | null;
   onSaved: () => void;
   onCancel?: () => void;
+  /**
+   * The record changed since it was opened: nothing was saved. The parent
+   * shows the latest version and hands this form its new version; the
+   * doctor's text stays here to review and save again.
+   */
+  onConflict?: (rootRecordId: string) => void;
 }) {
   const [type, setType] = useState(correcting?.type ?? "assessment");
   const [summary, setSummary] = useState(correcting?.summary ?? "");
@@ -46,22 +65,34 @@ export function ClinicalRecordForm({
     setSaving(true);
     setError(null);
     try {
-      await adminApi.post(`/api/doctor/patients/${patientId}/records`, {
+      const text = {
         idempotencyKey: key,
-        appointmentId,
-        recordType: type,
         summary: summary.trim(),
         details: details.trim() || undefined,
         code: type === "diagnosis" && code.trim() ? code.trim() : undefined,
-        correctsRecordId: correcting?.recordId,
-      });
+      };
+      if (correcting) {
+        await adminApi.post(`/api/doctor/patients/${patientId}/records/${correcting.recordId}/corrections`, {
+          ...text,
+          expectedVersion: correcting.version,
+        });
+      } else {
+        await adminApi.post(`/api/doctor/patients/${patientId}/records`, { ...text, appointmentId, recordType: type });
+      }
       setSummary("");
       setDetails("");
       setCode("");
       setKey(newIdempotencyKey());
       onSaved();
     } catch (e) {
-      setError(e instanceof AdminApiError ? e.message : "Yozuvni saqlab bo‘lmadi");
+      if (correcting && e instanceof AdminApiError && e.code === "VERSION_CONFLICT") {
+        setError(
+          "Tahriringiz saqlanmadi: bu yozuv siz ochganingizdan keyin yangilangan. Oxirgi versiya ro‘yxatda ko‘rsatildi, matningiz shu yerda qoldi — tekshirib, qayta saqlang.",
+        );
+        onConflict?.(correcting.rootRecordId);
+      } else {
+        setError(e instanceof AdminApiError ? e.message : "Yozuvni saqlab bo‘lmadi");
+      }
     } finally {
       inFlight.current = false;
       setSaving(false);
@@ -69,12 +100,10 @@ export function ClinicalRecordForm({
   };
 
   return (
-    <div className="flex flex-col gap-3" aria-label={correcting ? "Yozuvni tuzatish" : "Yangi yozuv"}>
+    <div className="flex flex-col gap-3" aria-label={correcting ? "Yozuvni tahrirlash" : "Yangi yozuv"}>
       {error && <AError message={error} />}
       {correcting ? (
-        <p className="text-xs text-ink-muted">
-          Asl yozuv o‘zgarmaydi: tuzatish yangi yozuv sifatida saqlanadi va asl yozuv “Tuzatilgan” deb belgilanadi.
-        </p>
+        <p className="text-xs text-ink-muted">Saqlanganda yangi versiya bo‘ladi; oldingi matn yozuv tarixida qoladi.</p>
       ) : (
         <div>
           <p className="mb-1 text-xs font-medium text-ink-muted">Yozuv turi</p>
@@ -97,7 +126,7 @@ export function ClinicalRecordForm({
       </div>
       <div className="flex gap-2">
         <AButton loading={saving} disabled={!summary.trim()} onClick={() => void save()}>
-          {correcting ? "Tuzatishni saqlash" : "Yozuvni saqlash"}
+          {correcting ? "Saqlash" : "Yozuvni saqlash"}
         </AButton>
         {onCancel && (
           <AButton variant="ghost" onClick={onCancel} disabled={saving}>
