@@ -3,10 +3,13 @@
 export class AdminApiError extends Error {
   status: number;
   code?: string;
-  constructor(status: number, message: string, code?: string) {
+  /** Safe structured extras from the server (e.g. the matching patients of a possible duplicate). */
+  details?: Record<string, unknown>;
+  constructor(status: number, message: string, code?: string, details?: Record<string, unknown>) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -18,7 +21,7 @@ async function request<T>(path: string, method: string, body?: unknown): Promise
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new AdminApiError(res.status, data?.error ?? "Xatolik yuz berdi", data?.code);
+    throw new AdminApiError(res.status, data?.error ?? "Xatolik yuz berdi", data?.code, data?.details);
   }
   // Server responses are wrapped in { ok: true, data }; unwrap so callers
   // receive the payload directly.

@@ -14,7 +14,7 @@ export async function patientAccessDenied(doctor: LinkedDoctor, patientId: strin
   const lapsed = await latestReferralToDoctor(doctor, patientId);
   await recordAudit({
     clinicId: doctor.clinicId,
-    action: "patient_clinical_access_denied",
+    action: "unauthorized_clinical_access_attempt",
     entityType: "patients",
     entityId: patientId,
     // Only a referral proves the id is a patient of this clinic; a probed id
@@ -23,6 +23,7 @@ export async function patientAccessDenied(doctor: LinkedDoctor, patientId: strin
     referralId: lapsed?.id ?? null,
     actor: { actorId: doctor.profileId, actorType: "staff" },
     metadata: { doctor_id: doctor.doctorId, referral_status: lapsed?.status ?? null },
+    strict: true,
   });
   const error = lapsed ? lapsedReferralError(lapsed.status) : null;
   return error && error.status === 410 ? error : new ApiError(404, "Bemor topilmadi", "patient_not_found");

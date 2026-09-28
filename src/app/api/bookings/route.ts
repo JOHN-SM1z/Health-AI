@@ -71,17 +71,19 @@ export async function POST(request: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // A verified Telegram patient keeps their own record current (consent,
-    // name, phone). A website visitor's details were recorded above only on a
-    // record of their own — never written onto an existing one.
+    // A verified Telegram patient records their consent, and fills in a name
+    // and phone the record doesn't have yet — never overwrites them: the
+    // record may already hold a clinical history, and someone booking for a
+    // relative must not rename it. A website visitor's details were recorded
+    // above only on a record of their own — never written onto an existing one.
     if (body.initData) {
       const { error: patientUpdateError } = await supabase
         .from("patients")
         .update({
           consent_given: true,
           consent_given_at: new Date().toISOString(),
-          full_name: body.patientName,
-          phone: body.phone,
+          ...(patient.full_name?.trim() ? {} : { full_name: body.patientName }),
+          ...(patient.phone?.trim() ? {} : { phone: body.phone }),
         })
         .eq("id", patient.id)
         .eq("clinic_id", clinic.id);

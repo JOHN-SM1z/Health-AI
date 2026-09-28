@@ -60,7 +60,12 @@ export async function listDoctorPatients(doctor: LinkedDoctor, query: string): P
       .from("referrals")
       .select("id, patient_id, status, created_at, referring:doctors!referrals_referring_doctor_same_clinic_fkey(name)")
       .eq("clinic_id", doctor.clinicId)
-      .eq("referred_to_doctor_id", doctor.doctorId)
+      // To the doctor, or to their department while nobody has taken it.
+      .or(
+        doctor.specialtyId
+          ? `referred_to_doctor_id.eq.${doctor.doctorId},and(referred_to_doctor_id.is.null,referred_to_specialty_id.eq.${doctor.specialtyId},status.eq.pending)`
+          : `referred_to_doctor_id.eq.${doctor.doctorId}`,
+      )
       .in("status", ["pending", "accepted", "in_progress"])
       .gt("expires_at", new Date().toISOString())
       .order("created_at", { ascending: false }),

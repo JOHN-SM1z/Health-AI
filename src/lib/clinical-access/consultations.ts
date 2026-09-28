@@ -5,6 +5,7 @@ import { trackAnalytics } from "@/lib/analytics";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 import { canDoctorAccessPatientClinicalData } from "@/lib/clinical-access/access";
 import { canStartConsultation } from "@/lib/clinical-access/workspace";
+import { actOnReferral } from "@/lib/referrals/service";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
 import { startConsultationInDatabase, startWalkInInDatabase } from "@/lib/clinical-access/consultation-start";
 import { BookingError, bookingError } from "@/lib/booking/engine";
@@ -39,13 +40,44 @@ const WALK_IN_MESSAGES: Record<string, string> = {
 };
 
 /**
+ * Starting to treat a referred patient is taking the referral on: the oldest
+ * pending referral of this patient to the doctor (or, untaken, to their
+ * department) is accepted first, so the database links the consultation to
+ * it. A referral someone else just took or answered is simply left alone.
+ */
+async function acceptPendingReferral(doctor: LinkedDoctor, patientId: string): Promise<void> {
+  const supabase = createAdminClient();
+  let query = supabase
+    .from("referrals")
+    .select("id")
+    .eq("clinic_id", doctor.clinicId)
+    .eq("patient_id", patientId)
+    .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: true })
+    .limit(1);
+  query = doctor.specialtyId
+    ? query.or(`referred_to_doctor_id.eq.${doctor.doctorId},and(referred_to_doctor_id.is.null,referred_to_specialty_id.eq.${doctor.specialtyId})`)
+    : query.eq("referred_to_doctor_id", doctor.doctorId);
+  const { data: pending, error } = await query.maybeSingle();
+  if (error) throw new ApiError(500, "Yo‘llanmani tekshirib bo‘lmadi");
+  if (!pending) return;
+  try {
+    await actOnReferral(doctor, pending.id, "accept");
+  } catch (e) {
+    if (!(e instanceof ApiError) || e.status >= 500) throw e;
+  }
+}
+
+/**
  * The calling doctor starts their own consultation with `patientId`: either
  * the visit booked for them (moved to in progress), or a walk-in booked now
  * through the booking engine (working hours, time blocks and overlaps all
  * checked there). Allowed for the doctor's own patient or a patient referred
- * to them with an accepted referral; a started consultation of an accepted
- * referral becomes its follow-up and the referral moves to in progress
- * (enforced by the database). The start, the referral link and the
+ * to them (or to their department). A pending referral is not a gate: it is
+ * accepted as the consultation starts (a department referral is taken by
+ * this doctor), and the started consultation of an accepted referral becomes
+ * its follow-up with the referral in progress (enforced by the database). The start, the referral link and the
  * 'consultation_started' audit row are one database transaction. Idempotent:
  * an existing in-progress consultation with the patient is returned instead
  * of starting another.
@@ -58,11 +90,13 @@ export async function startConsultation(
   const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, patientId);
   if (!access.allowed) throw await patientAccessDenied(doctor, patientId);
   if (!canStartConsultation(access)) {
-    throw new ApiError(409, "Avval yo‘llanmani qabul qiling", "referral_not_accepted");
+    throw new ApiError(409, "Bu bemor bilan qabul boshlay olmaysiz", "consultation_not_allowed");
   }
 
   const existing = await inProgressConsultation(doctor, patientId);
   if (existing) return { appointmentId: existing, started: false };
+
+  await acceptPendingReferral(doctor, patientId);
 
   const supabase = createAdminClient();
   let appointmentId: string;

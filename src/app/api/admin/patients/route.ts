@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRoles } from "@/lib/auth/guards";
 import { anyColumnContains } from "@/lib/api/postgrest";
+import { normalizePhone } from "@/lib/patients/phone";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { parseBody, uuidSchema } from "@/lib/api/validate";
 import { listPatientReferrals } from "@/lib/referrals/service";
@@ -89,7 +90,17 @@ export async function GET(request: NextRequest) {
 
     if (q) {
       // The search text is always a quoted literal — never filter syntax.
-      query = query.or(anyColumnContains(["full_name", "phone", "telegram_username", "telegram_first_name"], q));
+      // A phone typed any way ("90 123 45 67", "+998901234567") finds the
+      // same patient through the normalized number.
+      const digits = normalizePhone(q);
+      query = query.or(
+        [
+          anyColumnContains(["full_name", "phone", "telegram_username", "telegram_first_name"], q),
+          digits && digits.length >= 5 ? anyColumnContains(["phone_normalized"], digits) : null,
+        ]
+          .filter(Boolean)
+          .join(","),
+      );
     }
 
     const { data, error, count } = await query;

@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { validateTelegramInitDataForClinic, type VerifiedInitData } from "@/lib/telegram/init-data";
 import { env, isProduction, telegramDevModeEnabled } from "@/lib/env";
 import { logger } from "@/lib/logger";
+import { normalizePhone } from "@/lib/patients/phone";
 
 export const DEV_TELEGRAM_USER_ID = 777000; // matches the dev seed patient
 
@@ -91,7 +92,8 @@ export async function getOrCreateWebPatient(opts: {
     .from("patients")
     .select("*")
     .eq("clinic_id", opts.clinicId)
-    .eq("phone", opts.phone)
+    // The same number however it was typed ("+998 90 …", "90…").
+    .eq("phone_normalized", normalizePhone(opts.phone) ?? "")
     .is("telegram_user_id", null)
     .order("created_at", { ascending: true })
     .limit(20);

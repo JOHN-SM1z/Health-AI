@@ -4,13 +4,16 @@ import { ApiError } from "@/lib/api/errors";
 import { recordAudit, recordAudits } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import type { LinkedDoctor } from "@/lib/auth/guards";
-import { canDoctorAccessPatientClinicalData, canSeeAppointment } from "@/lib/clinical-access/access";
+import { canDoctorAccessPatientClinicalData } from "@/lib/clinical-access/access";
 import type { StaffContext } from "@/lib/auth/staff";
 import type { Database } from "@/lib/supabase/database.types";
 
 /**
- * Referral workflow on top of public.referrals. The database is the
- * authority on every rule (same clinic, consultation actually took place,
+ * Referral workflow on top of public.referrals — a clinical handoff between
+ * doctors or to a department, never a permission request: the receiving
+ * doctor sees the patient's history from the moment the referral exists
+ * (see src/lib/clinical-access/access.ts). The database is the authority on
+ * every rule (same clinic, consultation actually took place,
  * status machine, who may act, immutability, audit trail — see
  * supabase/migrations/20260926000001_referrals.sql); this module resolves
  * which side of a referral the caller is on, shapes responses, logs access,
@@ -26,6 +29,7 @@ export type ReferralAction = "accept" | "decline" | "complete" | "revoke";
 
 type StaffInClinic = StaffContext & { clinicId: string };
 type DoctorRef = { id: string; name: string; title?: string | null };
+type DepartmentRef = { id: string; name: string };
 type AppointmentRef = { id: string; start_at: string; status: string; services?: { name: string } | null };
 
 /** Referrals still under way: PENDING → ACCEPTED → IN_PROGRESS, until completed, declined, revoked or expired. */
@@ -34,6 +38,12 @@ const INACTIVE_APPOINTMENT_STATUSES = ["cancelled", "no_show"];
 
 const REFERRING = "referring:doctors!referrals_referring_doctor_same_clinic_fkey";
 const REFERRED_TO = "referred_to:doctors!referrals_referred_to_doctor_same_clinic_fkey";
+const DEPARTMENT = "department:specialties!referrals_referred_to_specialty_fkey";
+
+type Recipient = { referred_to_doctor_id: string | null; referred_to_specialty_id: string | null };
+
+/** A department referral nobody has taken yet. */
+const unclaimed = (row: Recipient) => row.referred_to_doctor_id === null;
 
 /** Status as the user should see it: an open referral past expires_at is expired. */
 export function effectiveStatus(status: ReferralStatus, expiresAt: string, now = Date.now()): ReferralStatus {
@@ -45,18 +55,23 @@ export function effectiveStatus(status: ReferralStatus, expiresAt: string, now =
  * accepted referral moves on by the receiving doctor starting their
  * consultation (not an action here), and is completed once that started.
  */
-export function allowedActions(role: ReferralRole, status: ReferralStatus): ReferralAction[] {
+export function allowedActions(role: ReferralRole, status: ReferralStatus, departmentOnly = false): ReferralAction[] {
   if (role === "receiver") {
-    if (status === "pending") return ["accept", "decline"];
+    // A department referral waits for one of its doctors to take it: none of
+    // them can decline it for the others.
+    if (status === "pending") return departmentOnly ? ["accept"] : ["accept", "decline"];
     if (status === "in_progress") return ["complete"];
     return [];
   }
   return OPEN_STATUSES.includes(status) ? ["revoke"] : [];
 }
 
-function roleOf(doctor: LinkedDoctor, row: { referring_doctor_id: string; referred_to_doctor_id: string }): ReferralRole | null {
+function roleOf(doctor: LinkedDoctor, row: { referring_doctor_id: string } & Recipient): ReferralRole | null {
   if (row.referring_doctor_id === doctor.doctorId) return "referrer";
   if (row.referred_to_doctor_id === doctor.doctorId) return "receiver";
+  // Every doctor of the department receives a department referral until one
+  // of them takes it.
+  if (unclaimed(row) && doctor.specialtyId && row.referred_to_specialty_id === doctor.specialtyId) return "receiver";
   return null;
 }
 
@@ -72,16 +87,30 @@ function visibleTo(role: ReferralRole | null, status: ReferralStatus, expiresAt:
   return role === "receiver" && (OPEN_STATUSES.includes(status) || status === "completed") && Date.parse(expiresAt) > now;
 }
 
+/** Incoming for this doctor: addressed to them, or to their department while untaken. */
+function incomingFilter(doctor: LinkedDoctor): string {
+  return doctor.specialtyId
+    ? `referred_to_doctor_id.eq.${doctor.doctorId},and(referred_to_doctor_id.is.null,referred_to_specialty_id.eq.${doctor.specialtyId},status.eq.pending)`
+    : `referred_to_doctor_id.eq.${doctor.doctorId}`;
+}
+
 /** Maps a database rule violation to an API error without logging row data. */
 export function referralError(error: { code?: string; message?: string }): ApiError {
   const message = error.message ?? "";
   const has = (fragment: string) => message.includes(fragment);
 
-  if (error.code === "23505" && has("referrals_one_open_per_pair")) {
-    return new ApiError(409, "Bu bemor ushbu shifokorga allaqachon yo‘llangan", "referral_already_open");
+  if (error.code === "23505" && (has("referrals_one_open_per_pair") || has("referrals_one_open_per_department"))) {
+    return new ApiError(409, "Bu bemor u yerga allaqachon yo‘llangan", "referral_already_open");
+  }
+  if (has("does not belong to that department")) {
+    return new ApiError(400, "Shifokor tanlangan bo‘limga tegishli emas", "doctor_not_in_department");
+  }
+  if (has("department referral is taken by accepting")) {
+    return new ApiError(409, "Yo‘llanma holati buni ruxsat bermaydi", "invalid_transition");
   }
   if (error.code === "23503") {
     if (has("referrals_referred_to_doctor_same_clinic_fkey")) return new ApiError(404, "Shifokor topilmadi", "doctor_not_found");
+    if (has("referrals_referred_to_specialty_fkey")) return new ApiError(404, "Bo‘lim topilmadi", "department_not_found");
     if (has("referrals_originating_appointment_fkey")) return new ApiError(404, "Qabul topilmadi", "consultation_not_found");
     if (has("referrals_patient_same_clinic_fkey")) return new ApiError(404, "Bemor topilmadi", "patient_not_found");
     if (has("referrals_follow_up_appointment_fkey")) {
@@ -172,7 +201,10 @@ export type ReferralSummary = {
   reason: string;
   handoffNote: string | null;
   referringDoctor: DoctorRef | null;
+  /** Null for a department referral nobody has taken yet. */
   referredToDoctor: DoctorRef | null;
+  department: DepartmentRef | null;
+  allowedActions: ReferralAction[];
 };
 
 type SummaryRow = {
@@ -184,9 +216,13 @@ type SummaryRow = {
   patient_id: string;
   reason: string;
   handoff_note: string | null;
+  referring_doctor_id: string;
+  referred_to_doctor_id: string | null;
+  referred_to_specialty_id: string | null;
   patient: { full_name: string | null } | null;
   referring: DoctorRef | null;
   referred_to: DoctorRef | null;
+  department: DepartmentRef | null;
 };
 
 /**
@@ -203,14 +239,14 @@ export async function listReferralsForDoctor(
   let query = createAdminClient()
     .from("referrals")
     .select(
-      `id, status, priority, created_at, expires_at, patient_id, reason, handoff_note, patient:patients!referrals_patient_same_clinic_fkey(full_name), ${REFERRING}(id, name), ${REFERRED_TO}(id, name)`,
+      `id, status, priority, created_at, expires_at, patient_id, reason, handoff_note, referring_doctor_id, referred_to_doctor_id, referred_to_specialty_id, patient:patients!referrals_patient_same_clinic_fkey(full_name), ${REFERRING}(id, name), ${REFERRED_TO}(id, name), ${DEPARTMENT}(id, name)`,
     )
     .eq("clinic_id", doctor.clinicId)
     .order("created_at", { ascending: false })
     .limit(100);
   query =
     box === "incoming"
-      ? query.eq("referred_to_doctor_id", doctor.doctorId).in("status", [...OPEN_STATUSES, "completed"])
+      ? query.or(incomingFilter(doctor)).in("status", [...OPEN_STATUSES, "completed"])
       : query.eq("referring_doctor_id", doctor.doctorId);
   // An open referral inside the sweep margin is still stored as open but is
   // shown as expired, so "expired" is filtered after the effective status.
@@ -233,6 +269,8 @@ export async function listReferralsForDoctor(
       handoffNote: row.handoff_note,
       referringDoctor: row.referring,
       referredToDoctor: row.referred_to,
+      department: row.department,
+      allowedActions: allowedActions(box === "incoming" ? "receiver" : "referrer", effectiveStatus(row.status, row.expires_at, now), unclaimed(row)),
     }))
     .filter((r) => box === "outgoing" || visibleTo("receiver", r.status, r.expiresAt, now))
     .filter((r) => !status || r.status === status);
@@ -273,7 +311,9 @@ export type ReferralDetail = {
   completedAt: string | null;
   revokedAt: string | null;
   referringDoctor: DoctorRef | null;
+  /** Null for a department referral nobody has taken yet. */
   referredToDoctor: DoctorRef | null;
+  department: DepartmentRef | null;
   patientId: string;
   /** Whether the caller may open the patient's record (clinical access). */
   patientRecordAccessible: boolean;
@@ -282,10 +322,9 @@ export type ReferralDetail = {
   consultation: AppointmentRef | null;
   followUp: AppointmentRef | null;
   /**
-   * The patient's visits with the referring doctor, as far as the clinical
-   * access decision covers them: always for the referring doctor (their own
-   * visits); for the receiving doctor only while the referral is accepted or
-   * in progress, and unexpired. Null otherwise.
+   * The patient's recent visits in the clinic (every doctor's) — part of the
+   * history the referral hands over from the moment it exists. Null when
+   * the caller has no clinical access to the patient.
    */
   history: AppointmentRef[] | null;
   allowedActions: ReferralAction[];
@@ -295,7 +334,8 @@ type DetailRow = {
   id: string;
   patient_id: string;
   referring_doctor_id: string;
-  referred_to_doctor_id: string;
+  referred_to_doctor_id: string | null;
+  referred_to_specialty_id: string | null;
   originating_appointment_id: string;
   follow_up_appointment_id: string | null;
   reason: string;
@@ -313,6 +353,7 @@ type DetailRow = {
   revoked_reason: string | null;
   referring: DoctorRef | null;
   referred_to: DoctorRef | null;
+  department: DepartmentRef | null;
 };
 
 /**
@@ -332,7 +373,7 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
   const { data, error } = await supabase
     .from("referrals")
     .select(
-      `id, patient_id, referring_doctor_id, referred_to_doctor_id, originating_appointment_id, follow_up_appointment_id, reason, handoff_note, priority, status, expires_at, created_at, accepted_at, started_at, declined_at, declined_reason, completed_at, revoked_at, revoked_reason, ${REFERRING}(id, name, title), ${REFERRED_TO}(id, name, title)`,
+      `id, patient_id, referring_doctor_id, referred_to_doctor_id, referred_to_specialty_id, originating_appointment_id, follow_up_appointment_id, reason, handoff_note, priority, status, expires_at, created_at, accepted_at, started_at, declined_at, declined_reason, completed_at, revoked_at, revoked_reason, ${REFERRING}(id, name, title), ${REFERRED_TO}(id, name, title), ${DEPARTMENT}(id, name)`,
     )
     .eq("id", referralId)
     .eq("clinic_id", doctor.clinicId)
@@ -346,20 +387,13 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
   // The receiving doctor may learn why a referral they had is gone — never its content.
   if (!visibleTo(role, status, row.expires_at)) throw lapsedReferralError(status);
 
+  // The referral hands over the patient's history at once — no acceptance
+  // needed; everything below follows the one clinical access decision.
   const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, row.patient_id);
-  const historyShared =
-    role === "referrer" ? access.scope.ownAppointments : access.scope.sharedHistoryDoctorIds.includes(row.referring_doctor_id);
-  const contactShared = access.scope.patientRecord;
-  // The linked appointments follow the same rule as the appointments RLS
-  // policy: the consultation belongs to the referring doctor, the follow-up
-  // (by foreign key) to the receiving doctor.
-  const consultationShown = canSeeAppointment(access, doctor.doctorId, {
-    id: row.originating_appointment_id,
-    doctorId: row.referring_doctor_id,
-  });
-  const followUpShown =
-    !!row.follow_up_appointment_id &&
-    canSeeAppointment(access, doctor.doctorId, { id: row.follow_up_appointment_id, doctorId: row.referred_to_doctor_id });
+  const historyShared = access.fullHistory;
+  const contactShared = access.allowed;
+  const consultationShown = access.fullHistory;
+  const followUpShown = access.fullHistory && !!row.follow_up_appointment_id;
   const appointmentColumns = "id, start_at, status, services(name)";
 
   const [patientRes, consultationRes, followUpRes, historyRes] = await Promise.all([
@@ -391,7 +425,6 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
           .select(appointmentColumns)
           .eq("clinic_id", doctor.clinicId)
           .eq("patient_id", row.patient_id)
-          .eq("doctor_id", row.referring_doctor_id)
           .order("start_at", { ascending: false })
           .limit(20)
       : null,
@@ -402,7 +435,7 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
 
   await recordAudit({
     clinicId: doctor.clinicId,
-    action: "referral_viewed",
+    action: "referral_opened",
     entityType: "referrals",
     entityId: row.id,
     patientId: row.patient_id,
@@ -430,6 +463,7 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
     revokedAt: row.revoked_at,
     referringDoctor: row.referring,
     referredToDoctor: row.referred_to,
+    department: row.department,
     patientId: row.patient_id,
     patientRecordAccessible: contactShared,
     patient: patientRes.data
@@ -442,13 +476,14 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
     consultation: (consultationRes?.data as AppointmentRef | null | undefined) ?? null,
     followUp: (followUpRes?.data as AppointmentRef | null | undefined) ?? null,
     history: historyShared ? ((historyRes?.data ?? []) as AppointmentRef[]) : null,
-    allowedActions: allowedActions(role, status),
+    allowedActions: allowedActions(role, status, unclaimed(row)),
   };
 }
 
 export type PatientReferral = {
   id: string;
-  role: ReferralRole;
+  /** The caller's side of it — "observer" when they are on neither side (read-only). */
+  role: ReferralRole | "observer";
   status: ReferralStatus;
   priority: ReferralPriority;
   reason: string;
@@ -457,70 +492,73 @@ export type PatientReferral = {
   expiresAt: string;
   referringDoctor: DoctorRef | null;
   referredToDoctor: DoctorRef | null;
+  department: DepartmentRef | null;
   followUpAppointmentId: string | null;
   acceptedAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  allowedActions: ReferralAction[];
 };
 
 /**
- * The patient's referrals the calling doctor is on and may still see — the
- * same visibility as the referral pages (the referring doctor: all of theirs;
- * the receiving doctor: open or completed ones, until expires_at).
+ * All of the patient's referrals — part of their longitudinal clinic record —
+ * for a doctor the clinical access decision already gave the patient's
+ * history (call it only after that decision). Actions only where the doctor
+ * is on the referral.
  */
 export async function listPatientReferralsForDoctor(doctor: LinkedDoctor, patientId: string): Promise<PatientReferral[]> {
   const { data, error } = await createAdminClient()
     .from("referrals")
     .select(
-      `id, status, priority, reason, handoff_note, created_at, expires_at, accepted_at, started_at, completed_at, follow_up_appointment_id, referring_doctor_id, referred_to_doctor_id, ${REFERRING}(id, name), ${REFERRED_TO}(id, name)`,
+      `id, status, priority, reason, handoff_note, created_at, expires_at, accepted_at, started_at, completed_at, follow_up_appointment_id, referring_doctor_id, referred_to_doctor_id, referred_to_specialty_id, ${REFERRING}(id, name), ${REFERRED_TO}(id, name), ${DEPARTMENT}(id, name)`,
     )
     .eq("clinic_id", doctor.clinicId)
     .eq("patient_id", patientId)
-    .or(`referring_doctor_id.eq.${doctor.doctorId},referred_to_doctor_id.eq.${doctor.doctorId}`)
     .order("created_at", { ascending: false })
     .limit(50);
   if (error) throw new ApiError(500, "Yo‘llanmalarni yuklab bo‘lmadi");
 
   const now = Date.now();
-  const rows = (data ?? []) as unknown as Array<{
-    id: string;
-    status: ReferralStatus;
-    priority: ReferralPriority;
-    reason: string;
-    handoff_note: string | null;
-    created_at: string;
-    expires_at: string;
-    accepted_at: string | null;
-    started_at: string | null;
-    completed_at: string | null;
-    follow_up_appointment_id: string | null;
-    referring_doctor_id: string;
-    referred_to_doctor_id: string;
-    referring: DoctorRef | null;
-    referred_to: DoctorRef | null;
-  }>;
-  return rows.flatMap((row) => {
+  const rows = (data ?? []) as unknown as Array<
+    {
+      id: string;
+      status: ReferralStatus;
+      priority: ReferralPriority;
+      reason: string;
+      handoff_note: string | null;
+      created_at: string;
+      expires_at: string;
+      accepted_at: string | null;
+      started_at: string | null;
+      completed_at: string | null;
+      follow_up_appointment_id: string | null;
+      referring_doctor_id: string;
+      referring: DoctorRef | null;
+      referred_to: DoctorRef | null;
+      department: DepartmentRef | null;
+    } & Recipient
+  >;
+  return rows.map((row) => {
     const role = roleOf(doctor, row);
     const status = effectiveStatus(row.status, row.expires_at, now);
-    if (!role || !visibleTo(role, status, row.expires_at, now)) return [];
-    return [
-      {
-        id: row.id,
-        role,
-        status,
-        priority: row.priority,
-        reason: row.reason,
-        handoffNote: row.handoff_note,
-        createdAt: row.created_at,
-        expiresAt: row.expires_at,
-        referringDoctor: row.referring,
-        referredToDoctor: row.referred_to,
-        followUpAppointmentId: row.follow_up_appointment_id,
-        acceptedAt: row.accepted_at,
-        startedAt: row.started_at,
-        completedAt: row.completed_at,
-      },
-    ];
+    return {
+      id: row.id,
+      role: role ?? "observer",
+      status,
+      priority: row.priority,
+      reason: row.reason,
+      handoffNote: row.handoff_note,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      referringDoctor: row.referring,
+      referredToDoctor: row.referred_to,
+      department: row.department,
+      followUpAppointmentId: row.follow_up_appointment_id,
+      acceptedAt: row.accepted_at,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      allowedActions: role ? allowedActions(role, status, unclaimed(row)) : [],
+    };
   });
 }
 
@@ -548,7 +586,9 @@ export type CreateReferralInput = {
   /** One random key per intended referral; a repeat of the request replays it. */
   idempotencyKey: string;
   appointmentId: string;
-  referredToDoctorId: string;
+  /** A doctor, a department, or both (the doctor then from that department). */
+  referredToDoctorId?: string | null;
+  referredToSpecialtyId?: string | null;
   reason: string;
   handoffNote?: string | null;
   priority: ReferralPriority;
@@ -560,7 +600,8 @@ export type CreatedReferral = { id: string; replayed: boolean };
 type KeyedReferral = {
   id: string;
   originating_appointment_id: string;
-  referred_to_doctor_id: string;
+  referred_to_doctor_id: string | null;
+  referred_to_specialty_id: string | null;
   reason: string;
   handoff_note: string | null;
   priority: ReferralPriority;
@@ -570,7 +611,7 @@ type KeyedReferral = {
 async function findByCreationKey(doctor: LinkedDoctor, key: string): Promise<KeyedReferral | null> {
   const { data, error } = await createAdminClient()
     .from("referrals")
-    .select("id, originating_appointment_id, referred_to_doctor_id, reason, handoff_note, priority")
+    .select("id, originating_appointment_id, referred_to_doctor_id, referred_to_specialty_id, reason, handoff_note, priority")
     .eq("clinic_id", doctor.clinicId)
     .eq("referring_doctor_id", doctor.doctorId)
     .eq("creation_key", key)
@@ -587,7 +628,8 @@ async function findByCreationKey(doctor: LinkedDoctor, key: string): Promise<Key
 function replay(previous: KeyedReferral, input: CreateReferralInput): CreatedReferral {
   const same =
     previous.originating_appointment_id === input.appointmentId &&
-    previous.referred_to_doctor_id === input.referredToDoctorId &&
+    previous.referred_to_doctor_id === (input.referredToDoctorId || null) &&
+    previous.referred_to_specialty_id === (input.referredToSpecialtyId || null) &&
     previous.reason === input.reason &&
     previous.handoff_note === (input.handoffNote || null) &&
     previous.priority === input.priority;
@@ -605,13 +647,13 @@ function replay(previous: KeyedReferral, input: CreateReferralInput): CreatedRef
  * listReferralRecipients, checked before anything is written; the database
  * trigger and composite foreign key enforce it again on insert.
  */
-async function assertReferralRecipient(doctor: LinkedDoctor, doctorId: string): Promise<void> {
+async function assertReferralRecipient(doctor: LinkedDoctor, doctorId: string, specialtyId: string | null): Promise<void> {
   if (doctorId === doctor.doctorId) throw new ApiError(400, "O‘zingizga yo‘llanma berib bo‘lmaydi", "self_referral");
 
   const supabase = createAdminClient();
   const { data: target, error } = await supabase
     .from("doctors")
-    .select("id, active, profile_id")
+    .select("id, active, profile_id, specialty_id")
     .eq("id", doctorId)
     .eq("clinic_id", doctor.clinicId)
     .maybeSingle();
@@ -619,6 +661,10 @@ async function assertReferralRecipient(doctor: LinkedDoctor, doctorId: string): 
   if (!target) throw new ApiError(404, "Shifokor topilmadi", "doctor_not_found");
   if (target.profile_id === doctor.profileId) {
     throw new ApiError(400, "O‘zingizga yo‘llanma berib bo‘lmaydi", "self_referral");
+  }
+
+  if (specialtyId && target.specialty_id !== specialtyId) {
+    throw new ApiError(400, "Shifokor tanlangan bo‘limga tegishli emas", "doctor_not_in_department");
   }
 
   const unavailable = new ApiError(409, "Bu shifokorga hozir yo‘llanma berib bo‘lmaydi", "receiving_doctor_unavailable");
@@ -632,6 +678,12 @@ async function assertReferralRecipient(doctor: LinkedDoctor, doctorId: string): 
     .maybeSingle();
   if (roleError) throw new ApiError(500, "Shifokorni tekshirib bo‘lmadi");
   if (!role) throw unavailable;
+}
+
+/** A department of the caller's clinic that has a doctor (other than the caller) to take a referral. */
+async function assertDepartment(doctor: LinkedDoctor, specialtyId: string): Promise<void> {
+  const departments = await listReferralDepartments(doctor);
+  if (!departments.some((d) => d.id === specialtyId)) throw new ApiError(404, "Bo‘lim topilmadi", "department_not_found");
 }
 
 /**
@@ -656,7 +708,13 @@ export async function createReferral(doctor: LinkedDoctor, input: CreateReferral
   if (error) throw new ApiError(500, "Qabulni tekshirib bo‘lmadi");
   if (!consultation) throw new ApiError(404, "Qabul topilmadi", "consultation_not_found");
 
-  await assertReferralRecipient(doctor, input.referredToDoctorId);
+  const referredToDoctorId = input.referredToDoctorId || null;
+  const referredToSpecialtyId = input.referredToSpecialtyId || null;
+  if (!referredToDoctorId && !referredToSpecialtyId) {
+    throw new ApiError(400, "Bo‘lim yoki shifokorni tanlang", "validation");
+  }
+  if (referredToDoctorId) await assertReferralRecipient(doctor, referredToDoctorId, referredToSpecialtyId);
+  else await assertDepartment(doctor, referredToSpecialtyId!);
 
   // An open referral that has quietly expired must not block a new one.
   await expireDueReferrals(doctor.clinicId);
@@ -667,7 +725,8 @@ export async function createReferral(doctor: LinkedDoctor, input: CreateReferral
       clinic_id: doctor.clinicId,
       patient_id: consultation.patient_id,
       referring_doctor_id: doctor.doctorId,
-      referred_to_doctor_id: input.referredToDoctorId,
+      referred_to_doctor_id: referredToDoctorId,
+      referred_to_specialty_id: referredToSpecialtyId,
       originating_appointment_id: consultation.id,
       reason: input.reason,
       handoff_note: input.handoffNote || null,
@@ -731,7 +790,7 @@ export async function actOnReferral(
 ): Promise<{ status: ReferralStatus }> {
   const { data: row, error } = await createAdminClient()
     .from("referrals")
-    .select("id, status, expires_at, referring_doctor_id, referred_to_doctor_id")
+    .select("id, status, expires_at, referring_doctor_id, referred_to_doctor_id, referred_to_specialty_id")
     .eq("id", referralId)
     .eq("clinic_id", doctor.clinicId)
     .maybeSingle();
@@ -747,12 +806,13 @@ export async function actOnReferral(
   // repeated or out-of-order action is refused (409) — never a silent no-op.
   const status = effectiveStatus(row.status, row.expires_at);
   if (!visibleTo(role, status, row.expires_at)) throw lapsedReferralError(status);
-  if (!allowedActions(role, status).includes(action)) throw transitionRefused(role, status, action);
+  if (!allowedActions(role, status, unclaimed(row)).includes(action)) throw transitionRefused(role, status, action);
 
   const actor = doctor.profileId;
   const patch: TransitionPatch =
     action === "accept"
-      ? { status: "accepted", accepted_by: actor }
+      ? // Accepting a department referral nobody has taken makes the caller its receiving doctor.
+        { status: "accepted", accepted_by: actor, ...(unclaimed(row) ? { referred_to_doctor_id: doctor.doctorId } : {}) }
       : action === "decline"
         ? { status: "declined", declined_by: actor, declined_reason: reason || null }
         : action === "complete"
@@ -761,13 +821,13 @@ export async function actOnReferral(
   return applyTransition(doctor.clinicId, row.id, row.status, patch);
 }
 
-/** Referral-eligible colleagues: active, with a doctor account, not the caller. */
+/** Referral-eligible colleagues: active, with a doctor account, not the caller — with their department. */
 export async function listReferralRecipients(doctor: LinkedDoctor) {
   const supabase = createAdminClient();
   const [doctorsRes, rolesRes] = await Promise.all([
     supabase
       .from("doctors")
-      .select("id, name, title, profile_id, specialties(name)")
+      .select("id, name, title, profile_id, specialty_id, specialties(name)")
       .eq("clinic_id", doctor.clinicId)
       .eq("active", true)
       .not("profile_id", "is", null)
@@ -779,7 +839,22 @@ export async function listReferralRecipients(doctor: LinkedDoctor) {
   const doctorAccounts = new Set((rolesRes.data ?? []).map((r) => r.profile_id));
   return (doctorsRes.data ?? [])
     .filter((d) => d.id !== doctor.doctorId && d.profile_id !== doctor.profileId && doctorAccounts.has(d.profile_id!))
-    .map((d) => ({ id: d.id, name: d.name, title: d.title, specialty: d.specialties?.name ?? null }));
+    .map((d) => ({
+      id: d.id,
+      name: d.name,
+      title: d.title,
+      specialtyId: d.specialty_id,
+      specialty: d.specialties?.name ?? null,
+    }));
+}
+
+/** Departments (specialties) with at least one doctor the caller could refer to. */
+export async function listReferralDepartments(doctor: LinkedDoctor): Promise<DepartmentRef[]> {
+  const byId = new Map<string, DepartmentRef>();
+  for (const d of await listReferralRecipients(doctor)) {
+    if (d.specialtyId && d.specialty) byId.set(d.specialtyId, { id: d.specialtyId, name: d.specialty });
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // ---------------------------------------------------------------------------
@@ -794,6 +869,7 @@ export type PatientReferralSummary = {
   expiresAt: string;
   referringDoctor: string | null;
   referredToDoctor: { id: string; name: string } | null;
+  department: string | null;
   followUp: { id: string; startAt: string; status: string } | null;
   canBookFollowUp: boolean;
 };
@@ -807,6 +883,7 @@ type PatientReferralRow = {
   follow_up_appointment_id: string | null;
   referring: { name: string } | null;
   referred_to: { id: string; name: string } | null;
+  department: { name: string } | null;
   follow_up: { start_at: string; status: string } | null;
 };
 
@@ -815,7 +892,7 @@ export async function listPatientReferrals(clinicId: string, patientId: string):
   const { data, error } = await createAdminClient()
     .from("referrals")
     .select(
-      `id, status, priority, created_at, expires_at, follow_up_appointment_id, ${REFERRING}(name), ${REFERRED_TO}(id, name), follow_up:appointments!referrals_follow_up_appointment_fkey(start_at, status)`,
+      `id, status, priority, created_at, expires_at, follow_up_appointment_id, ${REFERRING}(name), ${REFERRED_TO}(id, name), ${DEPARTMENT}(name), follow_up:appointments!referrals_follow_up_appointment_fkey(start_at, status)`,
     )
     .eq("clinic_id", clinicId)
     .eq("patient_id", patientId)
@@ -838,6 +915,7 @@ export async function listPatientReferrals(clinicId: string, patientId: string):
       expiresAt: row.expires_at,
       referringDoctor: row.referring?.name ?? null,
       referredToDoctor: row.referred_to,
+      department: row.department?.name ?? null,
       followUp,
       canBookFollowUp:
         status === "accepted" && (!followUp || INACTIVE_APPOINTMENT_STATUSES.includes(followUp.status)),
@@ -870,7 +948,7 @@ export async function assertFollowUpBookable(
         status: ReferralStatus;
         expires_at: string;
         patient_id: string;
-        referred_to_doctor_id: string;
+        referred_to_doctor_id: string | null;
         follow_up_appointment_id: string | null;
         follow_up: { status: string } | null;
       }
