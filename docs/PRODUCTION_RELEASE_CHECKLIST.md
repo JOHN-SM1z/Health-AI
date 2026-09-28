@@ -17,7 +17,7 @@ This operational checklist governs the deployment, verification, and rollback pr
 - [ ] Provision all server secrets in cloud Secret Manager (or hosting platform secret store).
 
 ### B. Database & Schema Verification
-- [ ] Apply all 25 database migrations (`supabase/migrations/20260813000001_*.sql` through `20260818000025_*.sql`) to the production Supabase PostgreSQL database.
+- [ ] Apply every database migration in `supabase/migrations/` (in filename order) to the production Supabase PostgreSQL database — `npx supabase db push`, or `supabase/full-db-setup.sql` once in the SQL editor on an empty project.
 - [ ] Verify Row Level Security (RLS) is enabled on 100% of tables in the production database schema.
 - [ ] Verify `is_clinic_staff` security definer function exists with `search_path = public`.
 - [ ] Verify partial exclusion constraint `no_overlapping_active_appointments` is active on `public.appointments`.
@@ -26,12 +26,15 @@ This operational checklist governs the deployment, verification, and rollback pr
 ### C. Initial Data & Staff Bootstrapping
 - [ ] Run owner creation bootstrap script (`npm run create-owner`) with production credentials to create the primary clinic and owner profile.
 - [ ] Log into `/admin/login` using owner credentials and configure clinic settings, services, doctors, working hours, and FAQs.
+- [ ] Add staff under *Xodimlar* (one-time password per new account, replaced by the member under *Parolim*); link doctor accounts under *Shifokorlar*.
 
 ### D. Automated Quality & Build Gates
 - [ ] Run static type check (`npm run typecheck`) and confirm **0 errors**.
 - [ ] Run linter (`npm run lint`) and confirm **0 errors**.
 - [ ] Run test suite (`npm test`) and verify all active tests pass cleanly.
 - [ ] Run production standalone build (`npm run build`) and confirm clean compilation.
+- [ ] CI (`.github/workflows/ci.yml`) is green on the release commit — including the database suites and the end-to-end workflow + HTTP red team (`npm run test:e2e`) against a Supabase stack built from every migration.
+- [ ] `supabase/full-db-setup.sql` is current (`node scripts/build-full-db-setup.mjs --check`) if the schema is applied through the SQL editor.
 
 ---
 
@@ -49,8 +52,9 @@ This operational checklist governs the deployment, verification, and rollback pr
 - [ ] Configure Telegram Mini App URL in @BotFather setting `https://<PRODUCTION_DOMAIN>/book`.
 
 ### C. Background Jobs & Scheduler
-- [ ] Configure Cloud Scheduler (or cron daemon) to trigger `POST https://<PRODUCTION_DOMAIN>/api/notifications/process` every 15 minutes (`*/15 * * * *`).
+- [ ] Configure Cloud Scheduler (or cron daemon) to trigger `POST https://<PRODUCTION_DOMAIN>/api/notifications/process` every 15 minutes (`*/15 * * * *`). The same run deletes voice messages past their retention (privacy page §2) — the response reports `voicePurged` / `voicePurgeFailed`.
 - [ ] Set Cloud Scheduler HTTP request header `Authorization: Bearer <CRON_SECRET>`.
+- [ ] Configure a second job: `POST https://<PRODUCTION_DOMAIN>/api/referrals/expire` hourly (`7 * * * *`), same header.
 
 ---
 

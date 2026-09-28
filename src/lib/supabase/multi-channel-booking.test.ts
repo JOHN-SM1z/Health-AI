@@ -38,8 +38,11 @@ function nextWeekdayAt10(weekday: number, minDaysAhead: number): string {
   const day = new Date(`${localDate}T00:00:00Z`);
   const localWeekday = day.getUTCDay() === 0 ? 7 : day.getUTCDay();
   const diff = ((weekday - localWeekday) % 7 + 7) % 7;
-  target.setUTCDate(target.getUTCDate() + diff);
-  return new Date(target.toISOString().slice(0, 10) + "T05:00:00Z").toISOString();
+  // 10:00 Tashkent (05:00 UTC) on the Tashkent calendar day — from 19:00 UTC
+  // Tashkent is already on the next date.
+  day.setUTCDate(day.getUTCDate() + diff);
+  day.setUTCHours(5, 0, 0, 0);
+  return day.toISOString();
 }
 
 const SOURCES = ["telegram_mini_app", "telegram_chat", "web", "admin", "walk_in"] as const;

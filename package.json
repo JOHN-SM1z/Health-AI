@@ -8,9 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --env-file=.env --env-file=.env.local ./node_modules/vitest/vitest.mjs run",
+    "test": "node --env-file-if-exists=.env --env-file-if-exists=.env.local ./node_modules/vitest/vitest.mjs run",
     "db:reset-local": "npx supabase db reset --local",
-    "create-owner": "node --env-file=.env scripts/create-owner.ts"
+    "db:full-setup": "node scripts/build-full-db-setup.mjs",
+    "create-owner": "node --env-file=.env scripts/create-owner.ts",
+    "e2e:seed": "node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/seed-demo.mjs",
+    "test:e2e": "node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/referral-workflow.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/booking-channels.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/staff-and-safety.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/redteam-http.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
@@ -35,6 +38,8 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
+    "playwright": "1.56.1",
+    "postgres": "^3.4.9",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.10"

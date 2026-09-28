@@ -82,6 +82,9 @@ describeDb("doctor appointments routes (real DB, mocked session)", () => {
       .select("id")
       .single();
     otherClinicId = otherClinic!.id;
+    // The mocked session is a doctor of the clinic, as a real one would be.
+    const { error: roleError } = await admin.from("staff_roles").insert({ clinic_id: clinicId, profile_id: profileId, role: "doctor" });
+    expect(roleError).toBeNull();
 
     const { data: doc } = await admin
       .from("doctors")
@@ -154,6 +157,7 @@ describeDb("doctor appointments routes (real DB, mocked session)", () => {
     await admin.from("appointments").delete().eq("clinic_id", clinicId);
     await admin.from("appointments").delete().eq("clinic_id", otherClinicId);
     await admin.from("doctors").delete().eq("clinic_id", clinicId);
+    await admin.from("staff_roles").delete().eq("clinic_id", clinicId);
     await admin.from("patients").delete().eq("id", patientId);
     await admin.from("services").delete().eq("id", serviceId);
     await admin.from("clinics").delete().in("id", [clinicId, otherClinicId]);
@@ -168,7 +172,10 @@ describeDb("doctor appointments routes (real DB, mocked session)", () => {
   });
 
   async function insertAppointment(over: Partial<{ doctor: string; clinic: string; status: string; start: string }> = {}) {
-    const start = over.start ?? new Date(Date.now() + 3 * 86400000 + seq++ * 60 * 60000).toISOString();
+    // 10:00 Tashkent on successive days: always inside one local day's working hours.
+    const day = new Date(Date.now() + (3 + seq++) * 86400000);
+    day.setUTCHours(5, 0, 0, 0);
+    const start = over.start ?? day.toISOString();
     const { data, error } = await admin
       .from("appointments")
       .insert({
@@ -205,12 +212,23 @@ describeDb("doctor appointments routes (real DB, mocked session)", () => {
       expect(res.status).toBe(404);
     });
 
-    it("rejects someone else's appointment with 403", async () => {
+    it("answers someone else's appointment exactly like a missing one (404), and leaves it untouched", async () => {
       const appt = await insertAppointment({ doctor: otherDoctorId });
       const res = await patch(appt.id, { status: "checked_in" });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
       const body = (await res.json()) as { code?: string };
-      expect(body.code).toBe("not_yours");
+      expect(body.code).toBe("appointment_not_found");
+      const { data } = await admin.from("appointments").select("status").eq("id", appt.id).single();
+      expect(data!.status).not.toBe("checked_in");
+    });
+
+    it("refuses a management account that is linked to a doctor record but lacks the doctor role", async () => {
+      staffMock.impl = async () => ({ ...staffCtx(), roles: ["manager"] as const });
+      const appt = await insertAppointment();
+      const res = await patch(appt.id, { status: "checked_in" });
+      expect(res.status).toBe(403);
+      const { data } = await admin.from("appointments").select("status").eq("id", appt.id).single();
+      expect(data!.status).not.toBe("checked_in");
     });
 
     it("rejects a backwards transition with 409", async () => {
@@ -225,6 +243,25 @@ describeDb("doctor appointments routes (real DB, mocked session)", () => {
       const appt = await insertAppointment();
       const res = await patch(appt.id, { status: "cancelled" });
       expect(res.status).toBe(400);
+    });
+
+    it("never revives a cancelled visit or reopens a completed one — both are refused and left as they were", async () => {
+      for (const status of ["cancelled", "completed"]) {
+        const appt = await insertAppointment({ status });
+        for (const to of ["checked_in", "in_progress", "completed"].filter((s) => s !== status)) {
+          const res = await patch(appt.id, { status: to });
+          expect(res.status, `${status} → ${to}`).toBe(409);
+        }
+        const { data } = await admin.from("appointments").select("status").eq("id", appt.id).single();
+        expect(data!.status).toBe(status);
+      }
+    });
+
+    it("a repeated tap on the current status changes nothing", async () => {
+      const appt = await insertAppointment({ status: "checked_in" });
+      const res = await patch(appt.id, { status: "checked_in" });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { data?: { updated?: boolean } }).data?.updated).toBe(false);
     });
 
     it("advances a doctor's own appointment forward", async () => {

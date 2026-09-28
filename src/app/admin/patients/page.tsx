@@ -1,9 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ATextArea, LoadingRow } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, AModal, ATextArea, LoadingRow } from "@/components/admin/ui";
+import { QuickBookingModal, type FollowUpPreset } from "@/components/admin/quick-booking-modal";
 import { Users } from "lucide-react";
-import { adminApi, AdminApiError, formatDateTime, STATUS_LABELS, STATUS_TONES, CHANNEL_LABELS } from "@/lib/admin/client";
+import {
+  adminApi,
+  AdminApiError,
+  formatDateTime,
+  STATUS_LABELS,
+  STATUS_TONES,
+  CHANNEL_LABELS,
+  REFERRAL_PRIORITY_LABELS,
+  REFERRAL_STATUS_LABELS,
+  REFERRAL_STATUS_TONES,
+} from "@/lib/admin/client";
 
 type PatientRow = {
   id: string;
@@ -50,6 +61,19 @@ type ConversationLite = {
   updated_at: string;
 };
 
+/** Scheduling metadata only — the clinical text stays with the doctors. */
+type PatientReferral = {
+  id: string;
+  status: string;
+  priority: string;
+  createdAt: string;
+  expiresAt: string;
+  referringDoctor: string | null;
+  referredToDoctor: { id: string; name: string } | null;
+  followUp: { id: string; startAt: string; status: string } | null;
+  canBookFollowUp: boolean;
+};
+
 type ListResponse = {
   patients: PatientRow[];
   total: number;
@@ -61,7 +85,10 @@ type DetailResponse = {
   patient: PatientDetail | null;
   appointments: AppointmentLite[];
   conversations: ConversationLite[];
+  referrals: PatientReferral[];
 };
+
+const MANAGEMENT_ROLES = ["owner", "admin", "manager"];
 
 export default function PatientsPage() {
   const [rows, setRows] = useState<PatientRow[] | null>(null);
@@ -78,6 +105,18 @@ export default function PatientsPage() {
   const [notesDraft, setNotesDraft] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
+  const [isManagement, setIsManagement] = useState(false);
+  const [bookingFor, setBookingFor] = useState<FollowUpPreset | null>(null);
+  const [revokeFor, setRevokeFor] = useState<PatientReferral | null>(null);
+  const [revokeReason, setRevokeReason] = useState("");
+  const [revoking, setRevoking] = useState(false);
+
+  useEffect(() => {
+    adminApi
+      .get<{ roles: string[] }>("/api/admin/me")
+      .then((me) => setIsManagement(me.roles.some((r) => MANAGEMENT_ROLES.includes(r))))
+      .catch(() => setIsManagement(false));
+  }, []);
 
   const load = useCallback(async (pageNum: number, term: string, tg: boolean, nc: boolean) => {
     const params = new URLSearchParams({ page: String(pageNum) });
@@ -138,6 +177,33 @@ export default function PatientsPage() {
     }
   };
 
+  const bookFollowUp = (referral: PatientReferral) => {
+    const patient = detail?.patient;
+    if (!patient || !referral.referredToDoctor) return;
+    setBookingFor({
+      referralId: referral.id,
+      patientId: patient.id,
+      patientName:
+        patient.full_name ?? ([patient.telegram_first_name, patient.telegram_last_name].filter(Boolean).join(" ") || "Bemor"),
+      doctor: referral.referredToDoctor,
+    });
+  };
+
+  const revokeReferral = async () => {
+    if (!revokeFor || !detailId) return;
+    setRevoking(true);
+    try {
+      await adminApi.patch(`/api/admin/referrals/${revokeFor.id}`, { action: "revoke", reason: revokeReason.trim() });
+      setRevokeFor(null);
+      setRevokeReason("");
+      await openDetail(detailId);
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Yo‘llanmani bekor qilib bo‘lmadi");
+    } finally {
+      setRevoking(false);
+    }
+  };
+
   const pageCount = Math.max(1, Math.ceil(total / 25));
   const selected = detail?.patient ?? null;
   const notesDirty = notesDraft.trim() !== (selected?.operational_notes ?? "").trim();
@@ -176,7 +242,7 @@ export default function PatientsPage() {
         </AButton>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         <div className="lg:col-span-3">
           {rows === null ? (
             <Card><LoadingRow /></Card>
@@ -316,6 +382,48 @@ export default function PatientsPage() {
               </div>
 
               <div>
+                <p className="mb-2 font-display text-sm font-bold text-foreground">Yo‘llanmalar ({detail.referrals.length})</p>
+                {detail.referrals.length === 0 ? (
+                  <p className="text-sm text-ink-muted">Yo‘llanmalar yo‘q</p>
+                ) : (
+                  <div className="space-y-2">
+                    {detail.referrals.map((r) => (
+                      <div key={r.id} className="rounded-xl border border-hairline px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-medium text-foreground">
+                            {r.referringDoctor ?? "Shifokor"} → {r.referredToDoctor?.name ?? "Shifokor"}
+                          </p>
+                          <ABadge tone={REFERRAL_STATUS_TONES[r.status] ?? "gray"}>{REFERRAL_STATUS_LABELS[r.status] ?? r.status}</ABadge>
+                        </div>
+                        <p className="text-xs text-ink-muted">
+                          {formatDateTime(r.createdAt)} · {REFERRAL_PRIORITY_LABELS[r.priority] ?? r.priority}
+                        </p>
+                        {r.followUp && (
+                          <p className="mt-1 text-xs text-ink-muted">
+                            Qabul: {formatDateTime(r.followUp.startAt)} · {STATUS_LABELS[r.followUp.status] ?? r.followUp.status}
+                          </p>
+                        )}
+                        {(r.canBookFollowUp || (isManagement && ["pending", "accepted", "in_progress"].includes(r.status))) && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {r.canBookFollowUp && r.referredToDoctor && (
+                              <AButton size="sm" onClick={() => bookFollowUp(r)}>
+                                Qabulga yozish
+                              </AButton>
+                            )}
+                            {isManagement && ["pending", "accepted", "in_progress"].includes(r.status) && (
+                              <AButton size="sm" variant="ghost" onClick={() => setRevokeFor(r)}>
+                                Bekor qilish
+                              </AButton>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
                 <p className="mb-2 font-display text-sm font-bold text-foreground">Suhbatlar ({detail.conversations.length})</p>
                 {detail.conversations.length === 0 ? (
                   <p className="text-sm text-ink-muted">Suhbatlar yo‘q</p>
@@ -343,6 +451,41 @@ export default function PatientsPage() {
           )}
         </div>
       </div>
+
+      {bookingFor && (
+        <QuickBookingModal
+          followUp={bookingFor}
+          onClose={() => setBookingFor(null)}
+          onCreated={() => {
+            setBookingFor(null);
+            if (detailId) void openDetail(detailId);
+          }}
+          onError={setError}
+        />
+      )}
+
+      {revokeFor && (
+        <AModal
+          title="Yo‘llanmani bekor qilish"
+          onClose={() => setRevokeFor(null)}
+          footer={
+            <>
+              <AButton variant="ghost" onClick={() => setRevokeFor(null)} disabled={revoking}>
+                Orqaga
+              </AButton>
+              <AButton variant="danger" loading={revoking} disabled={revokeReason.trim().length < 3} onClick={() => void revokeReferral()}>
+                Bekor qilish
+              </AButton>
+            </>
+          }
+        >
+          <p className="text-sm text-ink-muted">
+            {revokeFor.referringDoctor ?? "Shifokor"} → {revokeFor.referredToDoctor?.name ?? "Shifokor"}. Sababni yozing — qabul
+            qiluvchi shifokor yo‘llanmani boshqa ko‘rmaydi.
+          </p>
+          <ATextArea value={revokeReason} onChange={setRevokeReason} rows={3} aria-label="Bekor qilish sababi" />
+        </AModal>
+      )}
     </div>
   );
 }

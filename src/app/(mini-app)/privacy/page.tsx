@@ -26,14 +26,28 @@ export default function PrivacyPage() {
           <p className="font-medium text-[var(--tg-text,var(--foreground))]">3. Kimga beriladi</p>
           <p className="mt-1">
             Ma‘lumotlar faqat klinika xodimlariga (qabul tashkil qilish uchun) ko‘rsatiladi.
-            Uchinchi shaxslarga berilmaydi.
+            Shifokoringiz sizni klinikadagi boshqa shifokorga yo‘llasa, qabul qiluvchi shifokor
+            ham ularni ko‘radi. Uchinchi shaxslarga berilmaydi.
           </p>
         </div>
         <div>
           <p className="font-medium text-[var(--tg-text,var(--foreground))]">4. Tibbiy ma‘lumotlar</p>
           <p className="mt-1">
-            Bu tizim tibbiy tashxis qo‘ymaydi va klinik hujjatlar yuritmaydi. Sog‘lig‘ingiz
+            Bu tizim tibbiy tashxis qo‘ymaydi, bot esa tibbiy maslahat bermaydi. Sog‘lig‘ingiz
             haqidagi qarorlar faqat shifokor bilan.
+          </p>
+          <p className="mt-1">
+            Qabul davomida shifokoringiz tibbiy yozuvlar (klinik qayd va baho, tashxis, retsept,
+            tahlilga yo‘llanma va tahlil natijalari, anamnez, keyingi qadamlar) kiritishi mumkin. Har bir yozuvda uni kim va qachon yozgani saqlanadi,
+            yozuvlar keyin o‘zgartirilmaydi. Ularni faqat sizni davolayotgan shifokorlar ko‘radi —
+            qabulxona, boshqa xodimlar, bot va sun‘iy intellekt ko‘rmaydi.
+          </p>
+          <p className="mt-1">
+            Shifokor sizni klinikadagi boshqa shifokorga yo‘llasa, yo‘llanma sababi va hamkasbi uchun
+            izoh yozadi. Ularni faqat shu ikki shifokor ko‘radi; qabulxona faqat kimga yo‘llanganingizni
+            va yo‘llanma holatini ko‘radi. Qabul qiluvchi shifokor yo‘llanmani qabul qilgach va u amal
+            qilayotgan paytda, yo‘llagan shifokor bilan bo‘lgan qabullaringizni va ular bo‘yicha yozilgan
+            tibbiy yozuvlarni ko‘radi.
           </p>
         </div>
         <div>

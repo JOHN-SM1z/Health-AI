@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { adminWorkspaceRedirect, getStaffContext, hasRole, isCallCenterStaff, canViewPaymentDynamics } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
-import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet } from "lucide-react";
+import { NavStrip } from "@/components/admin/nav-strip";
+import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound } from "lucide-react";
 
 export const metadata = { title: "Boshqaruv paneli" };
 
@@ -21,7 +22,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const financeVisible = canViewPaymentDynamics(ctx);
 
   const nav = [
-    { href: "/admin", label: "Bugun", icon: <LayoutDashboard className="h-4 w-4" />, show: true },
+    { href: "/admin", label: "Bugun", icon: <LayoutDashboard className="h-4 w-4" />, show: true, exact: true },
     { href: "/admin/appointments", label: "Qabullar", icon: <ClipboardList className="h-4 w-4" />, show: true },
     { href: "/admin/calendar", label: "Kalendar", icon: <CalendarDays className="h-4 w-4" />, show: true },
     { href: "/admin/conversations", label: "Suhbatlar", icon: <MessagesSquare className="h-4 w-4" />, show: true },
@@ -32,7 +33,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin/faqs", label: "Savol-javoblar", icon: <MessagesSquare className="h-4 w-4" />, show: isManagement },
     { href: "/admin/analytics", label: "Tahlillar", icon: <BarChart3 className="h-4 w-4" />, show: isManagement },
     { href: "/admin/finance", label: "Moliya", icon: <Wallet className="h-4 w-4" />, show: financeVisible },
+    { href: "/admin/staff", label: "Xodimlar", icon: <UserCog className="h-4 w-4" />, show: hasRole(ctx, "owner") },
     { href: "/admin/settings", label: "Sozlamalar", icon: <Settings className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/password", label: "Parolim", icon: <KeyRound className="h-4 w-4" />, show: true },
   ].filter((n) => n.show !== false);
 
   return (
@@ -52,7 +55,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             {callCenter ? "Call Center" : "Klinika boshqaruvi"}
           </p>
           {nav.map((n) => (
-            <NavLink key={n.href} href={n.href} icon={n.icon}>
+            <NavLink key={n.href} href={n.href} icon={n.icon} exact={n.exact}>
               {n.label}
             </NavLink>
           ))}
@@ -73,6 +76,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </Link>
           <span className="pulse-dot" title="Jonli" />
         </header>
+        {/* Phones and small tablets: the sidebar is hidden, so its sections sit in a scrollable strip. */}
+        <NavStrip label="Boshqaruv bo‘limlari">
+          {nav.map((n) => (
+            <NavLink key={n.href} href={n.href} icon={n.icon} exact={n.exact}>
+              {n.label}
+            </NavLink>
+          ))}
+        </NavStrip>
         <div className="flex-1 overflow-x-hidden p-4 md:p-8">{children}</div>
       </div>
     </div>

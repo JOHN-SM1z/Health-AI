@@ -2,16 +2,18 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getClinicFromRequest } from "@/lib/clinics/context";
-import { resolvePatientFromInitData, devIdentityAllowed, getOrCreatePatientByContact } from "@/lib/patients/identity";
+import { resolvePatientFromInitData, devIdentityAllowed, getOrCreateWebPatient } from "@/lib/patients/identity";
 import { handleApiError, ApiError, ok, fail } from "@/lib/api/errors";
 import { parseBody } from "@/lib/api/validate";
 import { phoneSchema, nameSchema, uuidSchema } from "@/lib/api/validate";
-import { rateLimit, keyFromIp } from "@/lib/rate-limit";
+import { keyFromIp } from "@/lib/rate-limit";
+import { sharedRateLimit } from "@/lib/rate-limit-shared";
 import { trackAnalytics } from "@/lib/analytics";
 import { enqueueBookingNotifications } from "@/lib/notifications/jobs";
 import { getPaymentProvider } from "@/lib/payments/provider";
 import { transitionPaymentStatus } from "@/lib/payments/status";
 import { logger } from "@/lib/logger";
+import { BookingError, IDEMPOTENCY_KEY_PATTERN, createAppointment } from "@/lib/booking/engine";
 
 export const dynamic = "force-dynamic";
 
@@ -25,12 +27,14 @@ const createBookingSchema = z.object({
   consent: z.boolean().refine((v) => v === true, "Shaxsiy ma‘lumotlarga rozilik talab qilinadi"),
   notes: z.string().trim().max(300).optional(),
   source: z.enum(["telegram_mini_app", "telegram_chat"]).optional(),
+  /** One key per booking attempt, repeated on retries: a retry returns the first attempt's appointment. */
+  idempotencyKey: z.string().regex(IDEMPOTENCY_KEY_PATTERN).optional(),
 });
 
 export async function POST(request: NextRequest) {
   try {
     const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-    const limit = rateLimit({ key: keyFromIp(ip, "bookings"), limit: 10, windowMs: 60_000 });
+    const limit = await sharedRateLimit({ key: keyFromIp(ip, "bookings"), limit: 10, windowMs: 60_000 });
     if (!limit.ok) return fail("Juda ko‘p so‘rov", 429, "rate_limited");
 
     const body = await parseBody(request, createBookingSchema);
@@ -57,7 +61,7 @@ export async function POST(request: NextRequest) {
       // Direct website booking — a genuine self-service booking with no
       // staff involved, distinct from a reception-entered 'walk_in'
       // (api/admin/appointments) even though both have no Telegram identity.
-      patient = await getOrCreatePatientByContact({
+      patient = await getOrCreateWebPatient({
         clinicId: clinic.id,
         phone: body.phone,
         fullName: body.patientName,
@@ -67,57 +71,49 @@ export async function POST(request: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // Record consent + contact details on the patient.
-    const { error: patientUpdateError } = await supabase
-      .from("patients")
-      .update({
-        consent_given: true,
-        consent_given_at: new Date().toISOString(),
-        full_name: body.patientName,
-        phone: body.phone,
-      })
-      .eq("id", patient.id);
-    if (patientUpdateError) throw new ApiError(500, "Bemor ma‘lumotlarini saqlab bo‘lmadi");
+    // A verified Telegram patient keeps their own record current (consent,
+    // name, phone). A website visitor's details were recorded above only on a
+    // record of their own — never written onto an existing one.
+    if (body.initData) {
+      const { error: patientUpdateError } = await supabase
+        .from("patients")
+        .update({
+          consent_given: true,
+          consent_given_at: new Date().toISOString(),
+          full_name: body.patientName,
+          phone: body.phone,
+        })
+        .eq("id", patient.id)
+        .eq("clinic_id", clinic.id);
+      if (patientUpdateError) throw new ApiError(500, "Bemor ma‘lumotlarini saqlab bo‘lmadi");
+    }
 
     await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "booking_attempt", payload: { serviceId: body.serviceId } });
 
-    // Transactional creation via the RPC: availability re-check, advisory
-    // lock, and the exclusion constraint all run in the database.
-    const { data: rpcResult, error: rpcError } = await supabase.rpc("book_appointment", {
-      p_clinic_id: clinic.id,
-      p_patient_id: patient.id,
-      p_doctor_id: body.doctorId,
-      p_service_id: body.serviceId,
-      p_start_at: body.startAt,
-      p_status: "pending",
-      p_source: source,
-      p_notes: body.notes || undefined,
-      p_created_by: undefined,
-    });
-
-    if (rpcError) {
-      logger.error("book_appointment rpc failed", { error: rpcError.message });
-      throw new ApiError(500, "Qabul yaratishda xatolik yuz berdi", "booking_failed");
-    }
-
-    const result = rpcResult as {
-      appointment_id?: string;
-      amount?: number;
-      error_code?: string | null;
-      error_message?: string | null;
-    };
-
-    if (result.error_code || !result.appointment_id) {
-      if (result.error_code === "slot_taken") {
+    // The one booking operation: the database validates the doctor, service,
+    // time and working hours, serializes per doctor and inserts — the
+    // exclusion constraint decides any race. Availability shown earlier was a
+    // hint; a slot taken meanwhile answers SLOT_UNAVAILABLE.
+    let booking;
+    try {
+      booking = await createAppointment({
+        clinicId: clinic.id,
+        patientId: patient.id,
+        doctorId: body.doctorId,
+        serviceId: body.serviceId,
+        startAt: body.startAt,
+        status: "pending",
+        source,
+        notes: body.notes || null,
+        idempotencyKey: body.idempotencyKey ?? null,
+      });
+    } catch (e) {
+      if (e instanceof BookingError && e.bookingCode === "SLOT_UNAVAILABLE") {
         await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "booking_slot_taken" });
-        return fail(result.error_message ?? "Bu vaqt band qilingan", 409, "slot_taken");
       }
-      throw new ApiError(
-        409,
-        result.error_message ?? "Bu vaqtga yozib bo‘lmadi",
-        result.error_code ?? "booking_conflict",
-      );
+      throw e;
     }
+    const result = { appointment_id: booking.appointmentId, amount: booking.amount };
 
     // Fetch the created appointment for the response.
     const { data: appointment } = await supabase
@@ -125,6 +121,28 @@ export async function POST(request: NextRequest) {
       .select("*, doctors(name), services(name, price), payments(status, amount, currency, provider)")
       .eq("id", result.appointment_id)
       .single();
+
+    // A retried attempt: the first one already initiated payment and
+    // notifications — answer with what it created.
+    if (booking.replayed) {
+      const { data: payment } = await supabase
+        .from("payments")
+        .select("status, amount, provider, payment_url")
+        .eq("appointment_id", result.appointment_id)
+        .maybeSingle();
+      return ok({
+        appointment,
+        replayed: true,
+        payment: {
+          status: payment?.status ?? "unpaid",
+          amount: Number(payment?.amount ?? result.amount),
+          currency: clinic.currency,
+          provider: payment?.provider ?? "manual",
+          paymentUrl: payment?.payment_url ?? null,
+          manualConfirmationRequired: (payment?.provider ?? "manual") === "manual",
+        },
+      });
+    }
 
     // Payment initiation. The RPC created the payment row (unpaid/manual).
     // A configured provider (Click) creates the invoice server-side; the

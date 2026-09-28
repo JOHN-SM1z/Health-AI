@@ -64,10 +64,11 @@ function nextWeekdayAt10(weekday: number, minDaysAhead = 2): string {
   const day = new Date(`${localDate}T00:00:00Z`);
   const localWeekday = day.getUTCDay() === 0 ? 7 : day.getUTCDay(); // Sun=7
   const diff = ((weekday - localWeekday) % 7 + 7) % 7;
-  target.setUTCDate(target.getUTCDate() + diff);
-  // 10:00 Tashkent == 05:00 UTC.
-  const startUtc = new Date(target.toISOString().slice(0, 10) + "T05:00:00Z");
-  return startUtc.toISOString();
+  // 10:00 Tashkent == 05:00 UTC, on the Tashkent calendar day (not the UTC one:
+  // from 19:00 UTC Tashkent is already on the next date).
+  day.setUTCDate(day.getUTCDate() + diff);
+  day.setUTCHours(5, 0, 0, 0);
+  return day.toISOString();
 }
 
 describeDb("local Supabase booking engine", () => {
@@ -224,11 +225,12 @@ describeDb("local Supabase booking engine", () => {
 
     // A fresh patient tries to book slot2 while the first appointment is
     // rescheduled onto slot2 — serialized by the per-doctor advisory lock.
-    await Promise.all([
+    const [moved, fresh] = await Promise.all([
       admin.rpc("reschedule_appointment", {
+        p_clinic_id: CLINIC_ID,
         p_appointment_id: booked.appointment_id!,
         p_new_start_at: slot2,
-        p_actor: null,
+        p_actor: undefined,
       }),
       admin.rpc("book_appointment", {
         p_clinic_id: CLINIC_ID,
@@ -243,6 +245,15 @@ describeDb("local Supabase booking engine", () => {
       }),
     ]);
 
+    // Both calls ran (no RPC error) and exactly one of them got slot2.
+    expect(moved.error).toBeNull();
+    expect(fresh.error).toBeNull();
+    const outcomes = [
+      (moved.data as { error_code: string | null }).error_code,
+      (fresh.data as { error_code: string | null }).error_code,
+    ];
+    expect(outcomes.filter((c) => c === null)).toHaveLength(1);
+    expect(outcomes.filter((c) => c === "slot_taken")).toHaveLength(1);
     // Exactly one pending appointment may occupy slot2 (the rescheduled one
     // or the new one — never both, never zero with two successes).
     const { data: onSlot2 } = await admin
@@ -574,16 +585,19 @@ describeDb("RPC authorization + tenant isolation", () => {
       p_status: "pending",
       p_source: "telegram_mini_app",
     });
-    expect(error).not.toBeNull();
+    // Refused for lack of EXECUTE, not for a missing function.
+    expect(error?.code).toBe("42501");
     expect(data).toBeNull();
   });
 
   it("denies reschedule_appointment to an authenticated non-staff user", async () => {
     const { data, error } = await userClient.rpc("reschedule_appointment", {
+      p_clinic_id: CLINIC_ID,
       p_appointment_id: "00000000-0000-0000-0000-000000000000",
       p_new_start_at: new Date(Date.now() + 2 * 86400000).toISOString(),
     });
-    expect(error).not.toBeNull();
+    // Refused for lack of EXECUTE, not for a missing function.
+    expect(error?.code).toBe("42501");
     expect(data).toBeNull();
   });
 

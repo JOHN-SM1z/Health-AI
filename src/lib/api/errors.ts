@@ -7,6 +7,8 @@ export class ApiError extends Error {
     public status: number,
     message: string,
     public code?: string,
+    /** Safe, structured extras for the client (never internals). */
+    public details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ApiError";
@@ -17,8 +19,8 @@ export function ok<T>(data: T, init?: ResponseInit): NextResponse {
   return NextResponse.json({ ok: true, data }, init);
 }
 
-export function fail(message: string, status = 400, code?: string): NextResponse {
-  return NextResponse.json({ ok: false, error: message, code }, { status });
+export function fail(message: string, status = 400, code?: string, details?: Record<string, unknown>): NextResponse {
+  return NextResponse.json({ ok: false, error: message, code, ...(details ? { details } : {}) }, { status });
 }
 
 /**
@@ -27,7 +29,7 @@ export function fail(message: string, status = 400, code?: string): NextResponse
  */
 export function handleApiError(e: unknown): NextResponse {
   if (e instanceof ApiError) {
-    return fail(e.message, e.status, e.code);
+    return fail(e.message, e.status, e.code, e.details);
   }
   if (e instanceof ZodError) {
     // Never a 500: a malformed body is the caller's mistake. Pick the first

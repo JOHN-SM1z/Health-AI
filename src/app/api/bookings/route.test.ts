@@ -16,13 +16,14 @@ const getOrCreateMock = vi.fn();
 vi.mock("@/lib/patients/identity", () => ({
   resolvePatientFromInitData: (...args: unknown[]) => resolveMock(...args),
   devIdentityAllowed: () => true,
-  getOrCreatePatientByContact: () => getOrCreateMock(),
+  getOrCreateWebPatient: () => getOrCreateMock(),
 }));
 
 vi.mock("@/lib/rate-limit", () => ({
   rateLimit: () => ({ ok: true }),
   keyFromIp: () => "test-ip",
 }));
+vi.mock("@/lib/rate-limit-shared", () => ({ sharedRateLimit: async () => ({ ok: true, retryAfterSeconds: 0 }) }));
 
 vi.mock("@/lib/analytics", () => ({ trackAnalytics: vi.fn(async () => {}) }));
 vi.mock("@/lib/notifications/jobs", () => ({ enqueueBookingNotifications: vi.fn(async () => {}) }));
@@ -53,7 +54,7 @@ function stubSuccess() {
   supabaseMock.from.mockImplementation((table: string) => {
     if (table === "patients") {
       return {
-        update: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })),
+        update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })) })),
       };
     }
     return {
@@ -147,7 +148,7 @@ describe("POST /api/bookings", () => {
     supabaseMock.from.mockImplementation((table: string) => {
       if (table === "patients") {
         return {
-          update: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })),
+          update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })) })),
         };
       }
       return {
@@ -240,7 +241,7 @@ describe("POST /api/bookings — appointment source attribution (audit finding)"
     supabaseMock.from.mockImplementation((table: string) => {
       if (table === "patients") {
         return {
-          update: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })),
+          update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })) })),
         };
       }
       return {

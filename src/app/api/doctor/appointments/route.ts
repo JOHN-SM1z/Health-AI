@@ -21,6 +21,10 @@ const breakSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const staff = await requireStaff("doctor");
+    // The doctor role itself: requireStaff ranks owner/admin/manager above
+    // doctor, and a management account linked to a doctor record is still
+    // not a doctor for the doctor portal (same rule as requireLinkedDoctor).
+    if (!staff.roles.includes("doctor")) throw new ApiError(403, "Bu amal faqat shifokorlar uchun", "forbidden");
     const body = await parseBody(request, breakSchema);
     const supabase = createAdminClient();
 
@@ -61,6 +65,10 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const staff = await requireStaff("doctor");
+    // The doctor role itself: requireStaff ranks owner/admin/manager above
+    // doctor, and a management account linked to a doctor record is still
+    // not a doctor for the doctor portal (same rule as requireLinkedDoctor).
+    if (!staff.roles.includes("doctor")) throw new ApiError(403, "Bu amal faqat shifokorlar uchun", "forbidden");
     const blockId = request.nextUrl.searchParams.get("blockId");
     if (!blockId) throw new ApiError(400, "blockId parametri kerak", "missing_id");
     const supabase = createAdminClient();

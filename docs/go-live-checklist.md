@@ -49,7 +49,9 @@ Server-side (`src/lib/env.ts` validates):
    — required for any clinic bot to work, see telegram-setup.md §2); Cloud Scheduler (§5).
 5. `npm run create-owner` with `OWNER_EMAIL`/`OWNER_PASSWORD` in `.env` (production-safe;
    it runs against whatever `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` point to).
-6. Create staff accounts for admins/doctors; assign roles via SQL/panel.
+6. Sign in as the owner and add the staff under *Xodimlar* (email, name, role): each new
+   account gets a one-time password shown once — hand it over; the member replaces it under
+   *Parolim* at first sign-in. Link doctor accounts to their doctor records under *Shifokorlar*.
 7. Add clinic content in the admin panel: services, doctors, hours, FAQs, settings.
    For each clinic, also activate its Telegram bot from the dashboard's bot panel
    (telegram-setup.md §1) — this is a per-clinic, self-service, repeatable step, not
@@ -72,6 +74,7 @@ remind → attend → complete → pay) has been performed by the team.
 - Keep `PAYMENT_PROVIDER=manual` until the Click/PayMe adapter is validated —
   selecting `click`/`payme` now fails at startup by design (payment-provider.md).
 - Watch for startup crashes caused by the fail-closed checks
-  (`src/instrumentation.ts`): `CRON_SECRET` must be set and not the default, and
-  `TELEGRAM_WEBHOOK_SECRET` must always be set — required unconditionally, not only
-  when the legacy `TELEGRAM_BOT_TOKEN` is also set.
+  (`src/instrumentation.ts`): `CRON_SECRET` and `TELEGRAM_WEBHOOK_SECRET` must both be set,
+  at least 32 random characters and not a documented placeholder (`openssl rand -hex 32`) —
+  the webhook secret is required unconditionally, not only when the legacy
+  `TELEGRAM_BOT_TOKEN` is also set.

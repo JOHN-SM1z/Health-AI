@@ -3,6 +3,7 @@
 -- Auto-generated from supabase/migrations/ in order. Run ONCE on an
 -- EMPTY database via Supabase Dashboard > SQL Editor > New query.
 -- Seed data (supabase/seed.sql) is LOCAL-DEV-ONLY and is NOT included.
+-- Regenerate with: node scripts/build-full-db-setup.mjs
 -- =====================================================================
 
 -- =====================================================================
@@ -139,6 +140,7 @@ create table public.patients (
 
 create index patients_telegram_idx on public.patients (telegram_user_id) where telegram_user_id is not null;
 create index patients_clinic_idx on public.patients (clinic_id);
+
 -- =====================================================================
 -- FILE: 20260813000003_catalog.sql
 -- =====================================================================
@@ -200,6 +202,7 @@ create index services_clinic_active_idx on public.services (clinic_id, active);
 create index doctors_clinic_active_idx on public.doctors (clinic_id, active);
 create index doctors_specialty_idx on public.doctors (specialty_id);
 create index specialties_clinic_idx on public.specialties (clinic_id);
+
 -- =====================================================================
 -- FILE: 20260813000004_schedules.sql
 -- =====================================================================
@@ -235,6 +238,7 @@ create table public.doctor_time_blocks (
 create index doctor_working_hours_doctor_idx on public.doctor_working_hours (doctor_id);
 create index doctor_time_blocks_doctor_idx on public.doctor_time_blocks (doctor_id, starts_at, ends_at);
 create index doctor_time_blocks_clinic_idx on public.doctor_time_blocks (clinic_id);
+
 -- =====================================================================
 -- FILE: 20260813000005_appointments_payments.sql
 -- =====================================================================
@@ -296,6 +300,7 @@ create index appointments_status_idx on public.appointments (status);
 create index payments_clinic_status_idx on public.payments (clinic_id, status);
 create index payments_provider_ref_idx on public.payments (provider, provider_reference)
   where provider_reference is not null;
+
 -- =====================================================================
 -- FILE: 20260813000006_conversations.sql
 -- =====================================================================
@@ -366,6 +371,7 @@ create table public.messages (
 create index conversations_clinic_status_idx on public.conversations (clinic_id, status);
 create index messages_conversation_idx on public.messages (conversation_id, created_at);
 create index voice_messages_conversation_idx on public.voice_messages (conversation_id);
+
 -- =====================================================================
 -- FILE: 20260813000007_faqs_settings.sql
 -- =====================================================================
@@ -393,6 +399,7 @@ create table public.app_settings (
 );
 
 create index faq_entries_clinic_active_idx on public.faq_entries (clinic_id, active);
+
 -- =====================================================================
 -- FILE: 20260813000008_operations.sql
 -- =====================================================================
@@ -465,6 +472,7 @@ create table public.analytics_events (
 
 create index analytics_events_clinic_idx on public.analytics_events (clinic_id, created_at desc);
 create index analytics_events_type_idx on public.analytics_events (clinic_id, event_type);
+
 -- =====================================================================
 -- FILE: 20260813000009_functions_triggers.sql
 -- =====================================================================
@@ -871,6 +879,7 @@ end;
 $$;
 
 grant execute on function public.reschedule_appointment(uuid, timestamptz, uuid) to service_role, authenticated;
+
 -- =====================================================================
 -- FILE: 20260813000010_rls.sql
 -- =====================================================================
@@ -1193,6 +1202,7 @@ create policy "analytics read for admin owner"
 
 -- No policies exist for: processed_webhooks (server-side only), and no
 -- insert/delete policies exist on any table for anon or unauthenticated roles.
+
 -- =====================================================================
 -- FILE: 20260813000011_storage.sql
 -- =====================================================================
@@ -1227,6 +1237,7 @@ create policy "voice-messages staff read"
         and sr.clinic_id::text = (storage.foldername(name))[1]
     )
   );
+
 -- =====================================================================
 -- FILE: 20260813000012_conversation_state.sql
 -- =====================================================================
@@ -1234,6 +1245,7 @@ create policy "voice-messages staff read"
 
 alter table public.conversations
   add column if not exists state jsonb not null default '{}'::jsonb;
+
 -- =====================================================================
 -- FILE: 20260813000013_grants.sql
 -- =====================================================================
@@ -1258,6 +1270,7 @@ alter default privileges in schema public
 
 alter default privileges in schema public
   grant select, insert, update, delete on tables to authenticated;
+
 -- =====================================================================
 -- FILE: 20260813000014_release_blockers.sql
 -- =====================================================================
@@ -1329,12 +1342,6 @@ begin
 end;
 $$;
 
--- Server-only: granting service_role is not enough on its own. PostgreSQL
--- gives every new function EXECUTE to PUBLIC, and Supabase additionally grants
--- anon/authenticated on public functions, so without these revokes a fresh
--- install is reachable unauthenticated at /rest/v1/rpc/ with the publishable
--- anon key (see 20260912000001_server_only_rpc_grants.sql).
-revoke execute on function public.claim_due_notification_jobs(int) from public, anon, authenticated;
 grant execute on function public.claim_due_notification_jobs(int) to service_role;
 
 -- ---------- 4. Atomic webhook claim ----------
@@ -1383,14 +1390,13 @@ as $$
   where source = p_source and external_id = p_external_id and status = 'processing';
 $$;
 
--- Server-only: see the note on claim_due_notification_jobs above — the revokes
--- are what actually keep these off the public PostgREST surface.
-revoke execute on function public.claim_webhook_update(text, text) from public, anon, authenticated;
-revoke execute on function public.finish_webhook_update(text, text) from public, anon, authenticated;
-revoke execute on function public.release_webhook_update(text, text) from public, anon, authenticated;
 grant execute on function public.claim_webhook_update(text, text) to service_role;
 grant execute on function public.finish_webhook_update(text, text) to service_role;
 grant execute on function public.release_webhook_update(text, text) to service_role;
+
+-- New enum values must be committed before any later statement uses them.
+commit;
+
 -- =====================================================================
 -- FILE: 20260813000015_fixes.sql
 -- =====================================================================
@@ -1974,6 +1980,7 @@ create index doctor_working_hours_clinic_idx
 create index clinic_telegram_integrations_enabled_idx
   on public.clinic_telegram_integrations (enabled)
   where enabled;
+
 -- =====================================================================
 -- FILE: 20260818000023_role_based_authorization.sql
 -- =====================================================================
@@ -2041,6 +2048,9 @@ set search_path = public
 as $$
   select exists (select 1 from public.platform_admins where profile_id = auth.uid());
 $$;
+
+-- New enum values must be committed before any later statement uses them.
+commit;
 
 -- =====================================================================
 -- FILE: 20260818000024_role_based_rls.sql
@@ -2410,6 +2420,7 @@ begin
   return new;
 end;
 $$;
+
 -- =====================================================================
 -- FILE: 20260821000001_telegram_integration_constraint_and_seed_resilience.sql
 -- =====================================================================
@@ -2771,6 +2782,9 @@ comment on function public.claim_webhook_update(text, text) is
 
 alter type public.appointment_source add value if not exists 'web' after 'telegram_chat';
 
+-- New enum values must be committed before any later statement uses them.
+commit;
+
 -- =====================================================================
 -- FILE: 20260911000001_patient_operational_notes.sql
 -- =====================================================================
@@ -2786,3 +2800,3787 @@ alter table public.patients
 alter table public.patients
   add constraint patients_operational_notes_length
   check (operational_notes is null or char_length(operational_notes) <= 1000);
+
+-- =====================================================================
+-- FILE: 20260912000001_server_only_rpc_grants.sql
+-- =====================================================================
+-- Server-only RPCs must not be callable from a browser.
+--
+-- claim_due_notification_jobs, claim_webhook_update, finish_webhook_update and
+-- release_webhook_update are SECURITY DEFINER job/idempotency primitives called
+-- exclusively by server code through the service-role client
+-- (src/lib/notifications/processor.ts, src/lib/telegram/idempotency.ts). They
+-- shipped with PostgreSQL's default PUBLIC EXECUTE plus Supabase's blanket
+-- anon/authenticated grants, which left them reachable UNAUTHENTICATED over
+-- PostgREST at /rest/v1/rpc/<name> with nothing but the publishable anon key.
+--
+-- Before this migration anyone on the internet could:
+--
+--   * claim_due_notification_jobs(p_limit) — claim pending reminder rows,
+--     both READING their patient-directed payload and flipping them to
+--     'in_progress' so the real worker skips them and the patient never gets
+--     the appointment reminder;
+--   * claim_webhook_update('telegram', <update_id>) — pre-claim update ids so
+--     genuine Telegram deliveries are discarded as duplicates and the bot
+--     silently stops answering patients;
+--   * release_/finish_webhook_update(...) — corrupt that same idempotency
+--     ledger, re-opening the double-send window the claim exists to close.
+--
+-- service_role keeps EXECUTE: it is the only caller anywhere in the codebase.
+--
+-- Deliberately NOT touched here (smallest safe change):
+--   * is_clinic_staff() / is_platform_admin() — read-only predicates about the
+--     CURRENT session that return false for an anonymous caller, so they leak
+--     nothing. RLS evaluates them as the invoking role, so `authenticated`
+--     MUST keep EXECUTE or every policy built on them starts erroring on
+--     legitimate traffic.
+--   * the trigger functions (appointments_validate_slot, payments_block_direct_write,
+--     audit_track_changes, …) — they return `trigger`, which PostgREST cannot
+--     expose as an RPC and which Postgres refuses to call directly
+--     ("trigger functions can only be called as triggers"), so the grant is
+--     not actually reachable. Revoking it would buy no measurable protection
+--     while putting the booking and payment write paths at risk, so it is
+--     left for a change that can be exercised against a disposable database
+--     first.
+
+revoke execute on function public.claim_due_notification_jobs(integer) from public, anon, authenticated;
+grant execute on function public.claim_due_notification_jobs(integer) to service_role;
+
+revoke execute on function public.claim_webhook_update(text, text) from public, anon, authenticated;
+grant execute on function public.claim_webhook_update(text, text) to service_role;
+
+revoke execute on function public.finish_webhook_update(text, text) from public, anon, authenticated;
+grant execute on function public.finish_webhook_update(text, text) to service_role;
+
+revoke execute on function public.release_webhook_update(text, text) from public, anon, authenticated;
+grant execute on function public.release_webhook_update(text, text) to service_role;
+
+-- =====================================================================
+-- FILE: 20260926000001_referrals.sql
+-- =====================================================================
+-- Clinical referrals, Phase 1: the data model only.
+--
+-- Doctor A refers a patient to Doctor B inside one clinic. This migration adds
+-- the referral record and its database-level guarantees. It deliberately does
+-- NOT widen access to the patient's history (patients/appointments RLS is
+-- unchanged) and adds no API or UI.
+--
+-- Reuses the existing model — no new patient, doctor, clinic, consultation or
+-- diagnosis tables:
+--   * clinic, patient and both doctors are the existing clinics, patients and
+--     doctors rows;
+--   * there is no separate consultation entity: the consultation is the
+--     appointments row in which the referring doctor saw the patient
+--     (originating_appointment_id).
+--
+-- Tenant isolation is declarative. Composite foreign keys pin the patient,
+-- both doctors and the originating appointment to the referral's own
+-- clinic_id; the appointment key also pins it to THIS patient and THIS
+-- referring doctor, so every referral stems from a real consultation between
+-- them. The UNIQUE constraints added to patients/doctors/appointments exist
+-- only as targets for those keys; each is implied by the table's primary key,
+-- so no existing row can violate them.
+--
+-- Rules a constraint cannot express live in referrals_validate():
+--   * created 'pending', from an in-progress or completed consultation, by the
+--     referring doctor's own active doctor account, to a different active
+--     doctor who has a doctor account (no self-referral, even across two
+--     doctor records linked to the same account);
+--   * pending -> accepted | declined | revoked | expired;
+--     accepted -> completed | revoked | expired; everything else is terminal;
+--   * accept/decline/complete only by the receiving doctor; revoke only by the
+--     referring doctor or clinic management (owner/admin/manager); accept and
+--     complete only before expires_at; expire only after it;
+--   * transition timestamps are set by the database, never by the caller;
+--   * the clinical content, parties and provenance never change after
+--     creation — a mistaken referral is revoked and re-issued.
+--
+-- Auditability:
+--   * referrals_audit() records every creation and status transition in
+--     audit_events with the acting staff profile. It is taken from the
+--     provenance column the validator just checked, because server writes use
+--     the service role, where auth.uid() is NULL;
+--   * audit rows carry ids and status only — never the reason, handoff note or
+--     decline/revocation text: audit_events is readable by non-clinical
+--     management;
+--   * nobody but the table owner may DELETE a referral; rows only disappear
+--     through the existing patient/clinic erasure cascades.
+--
+-- Access: browser sessions may only SELECT, and only the two doctors on the
+-- referral — the receiving doctor while it is open and unexpired, or after
+-- they completed it. Every write is server-side (service role).
+--
+-- Reversible: drop table public.referrals; drop functions
+-- public.referrals_validate(), public.referrals_audit() and
+-- public.is_linked_doctor(uuid); drop types public.referral_status and
+-- public.referral_priority; drop constraints patients_id_clinic_id_key,
+-- doctors_id_clinic_id_key and
+-- appointments_id_clinic_id_patient_id_doctor_id_key.
+
+-- ---------- 1. Types ----------
+
+create type public.referral_status as enum (
+  'pending',
+  'accepted',
+  'declined',
+  'completed',
+  'revoked',
+  'expired'
+);
+
+create type public.referral_priority as enum ('routine', 'urgent');
+
+-- ---------- 2. Same-clinic reference keys on existing tables ----------
+
+alter table public.patients
+  add constraint patients_id_clinic_id_key unique (id, clinic_id);
+
+alter table public.doctors
+  add constraint doctors_id_clinic_id_key unique (id, clinic_id);
+
+alter table public.appointments
+  add constraint appointments_id_clinic_id_patient_id_doctor_id_key
+  unique (id, clinic_id, patient_id, doctor_id);
+
+-- ---------- 3. referrals ----------
+
+create table public.referrals (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  patient_id uuid not null,
+  referring_doctor_id uuid not null,
+  referred_to_doctor_id uuid not null,
+  originating_appointment_id uuid not null,
+  reason text not null,
+  handoff_note text,
+  priority public.referral_priority not null default 'routine',
+  status public.referral_status not null default 'pending',
+  expires_at timestamptz not null default (now() + interval '90 days'),
+  created_by uuid not null references public.profiles(id),
+  accepted_at timestamptz,
+  accepted_by uuid references public.profiles(id),
+  declined_at timestamptz,
+  declined_by uuid references public.profiles(id),
+  declined_reason text,
+  completed_at timestamptz,
+  completed_by uuid references public.profiles(id),
+  revoked_at timestamptz,
+  revoked_by uuid references public.profiles(id),
+  revoked_reason text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  constraint referrals_patient_same_clinic_fkey
+    foreign key (patient_id, clinic_id)
+    references public.patients (id, clinic_id) on delete cascade,
+  constraint referrals_referring_doctor_same_clinic_fkey
+    foreign key (referring_doctor_id, clinic_id)
+    references public.doctors (id, clinic_id),
+  constraint referrals_referred_to_doctor_same_clinic_fkey
+    foreign key (referred_to_doctor_id, clinic_id)
+    references public.doctors (id, clinic_id),
+  constraint referrals_originating_appointment_fkey
+    foreign key (originating_appointment_id, clinic_id, patient_id, referring_doctor_id)
+    references public.appointments (id, clinic_id, patient_id, doctor_id),
+
+  constraint referrals_not_self_referral
+    check (referring_doctor_id <> referred_to_doctor_id),
+  -- Free text must contain something other than whitespace.
+  constraint referrals_reason_check
+    check (reason ~ '\S' and char_length(reason) <= 2000),
+  constraint referrals_handoff_note_check
+    check (handoff_note is null or (handoff_note ~ '\S' and char_length(handoff_note) <= 4000)),
+  constraint referrals_declined_reason_check
+    check (declined_reason is null or (declined_reason ~ '\S' and char_length(declined_reason) <= 1000)),
+  constraint referrals_revoked_reason_check
+    check (revoked_reason is null or (revoked_reason ~ '\S' and char_length(revoked_reason) <= 1000)),
+  -- A referral can never grant open-ended access.
+  constraint referrals_expiry_window_check
+    check (expires_at > created_at and expires_at <= created_at + interval '365 days'),
+
+  -- Each lifecycle field is set exactly when its status is reached, together
+  -- with the acting profile.
+  constraint referrals_accepted_state_check
+    check (
+      (accepted_at is null) = (accepted_by is null)
+      and case status
+        when 'pending' then accepted_at is null
+        when 'declined' then accepted_at is null
+        when 'accepted' then accepted_at is not null
+        when 'completed' then accepted_at is not null
+        else true
+      end
+    ),
+  constraint referrals_declined_state_check
+    check (
+      (status = 'declined') = (declined_at is not null)
+      and (declined_at is null) = (declined_by is null)
+      and (declined_reason is null or declined_at is not null)
+    ),
+  constraint referrals_completed_state_check
+    check (
+      (status = 'completed') = (completed_at is not null)
+      and (completed_at is null) = (completed_by is null)
+    ),
+  constraint referrals_revoked_state_check
+    check (
+      (status = 'revoked') = (revoked_at is not null)
+      and (revoked_at is null) = (revoked_by is null)
+      and (revoked_at is null) = (revoked_reason is null)
+    ),
+  constraint referrals_timeline_check
+    check (
+      (accepted_at is null or accepted_at >= created_at)
+      and (declined_at is null or declined_at >= created_at)
+      and (completed_at is null or completed_at >= accepted_at)
+      and (revoked_at is null or revoked_at >= created_at)
+    )
+);
+
+comment on table public.referrals is
+  'Doctor-to-doctor referral within one clinic. reason and handoff_note are clinical free text: never log them, copy them into audit_events or analytics, send them over Telegram, or pass them to the AI layer.';
+
+comment on column public.referrals.originating_appointment_id is
+  'The consultation (appointment) in which the referring doctor saw the patient; in progress or completed when the referral is created.';
+
+comment on column public.referrals.expires_at is
+  'End of the referral''s validity (at most 365 days after creation). After it the referral can no longer be accepted or completed, and the receiving doctor can no longer read it unless they completed it.';
+
+create index referrals_clinic_status_idx
+  on public.referrals (clinic_id, status, created_at desc);
+
+create index referrals_patient_idx
+  on public.referrals (patient_id, created_at desc);
+
+create index referrals_referring_doctor_idx
+  on public.referrals (referring_doctor_id, status, created_at desc);
+
+create index referrals_referred_to_doctor_idx
+  on public.referrals (referred_to_doctor_id, status, created_at desc);
+
+create index referrals_status_expires_idx
+  on public.referrals (status, expires_at);
+
+create index referrals_originating_appointment_idx
+  on public.referrals (originating_appointment_id);
+
+-- One open referral per patient, referring doctor and receiving doctor:
+-- blocks accidental double submission; a new one is possible once the
+-- previous one is closed.
+create unique index referrals_one_open_per_pair
+  on public.referrals (patient_id, referring_doctor_id, referred_to_doctor_id)
+  where status in ('pending', 'accepted');
+
+drop trigger if exists referrals_set_updated_at on public.referrals;
+create trigger referrals_set_updated_at
+  before update on public.referrals
+  for each row execute function public.set_updated_at();
+
+-- ---------- 4. Validation and status machine ----------
+
+create or replace function public.referrals_validate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_referring_found boolean;
+  v_referring_active boolean;
+  v_referring_profile uuid;
+  v_referring_is_doctor boolean;
+  v_target_found boolean;
+  v_target_active boolean;
+  v_target_profile uuid;
+  v_target_is_doctor boolean;
+  v_appointment_status public.appointment_status;
+  v_mutable text[];
+  v_actor uuid;
+begin
+  -- Doctor records are only looked up inside the referral's own clinic. A
+  -- missing or cross-clinic record is left to the composite foreign keys to
+  -- reject, rather than reported here with a misleading message.
+  select d.active,
+         d.profile_id,
+         exists (
+           select 1 from public.staff_roles sr
+           where sr.profile_id = d.profile_id
+             and sr.clinic_id = d.clinic_id
+             and sr.role = 'doctor'::public.staff_role
+         )
+    into v_referring_active, v_referring_profile, v_referring_is_doctor
+    from public.doctors d
+   where d.id = new.referring_doctor_id
+     and d.clinic_id = new.clinic_id;
+  v_referring_found := found;
+
+  select d.active,
+         d.profile_id,
+         exists (
+           select 1 from public.staff_roles sr
+           where sr.profile_id = d.profile_id
+             and sr.clinic_id = d.clinic_id
+             and sr.role = 'doctor'::public.staff_role
+         )
+    into v_target_active, v_target_profile, v_target_is_doctor
+    from public.doctors d
+   where d.id = new.referred_to_doctor_id
+     and d.clinic_id = new.clinic_id;
+  v_target_found := found;
+
+  if tg_op = 'INSERT' then
+    if new.status is distinct from 'pending'::public.referral_status then
+      raise exception 'referral: a referral must be created as pending';
+    end if;
+
+    new.created_at := now();
+    new.updated_at := now();
+
+    if v_referring_found and new.created_by is not null then
+      if not v_referring_active then
+        raise exception 'referral: the referring doctor is inactive';
+      end if;
+      if new.created_by is distinct from v_referring_profile or not v_referring_is_doctor then
+        raise exception 'referral: created_by must be the referring doctor''s own doctor account';
+      end if;
+    end if;
+
+    -- Same doctor record on both sides is left to referrals_not_self_referral.
+    if v_target_found and new.referred_to_doctor_id <> new.referring_doctor_id then
+      if not v_target_active then
+        raise exception 'referral: the receiving doctor is inactive';
+      end if;
+      if v_target_profile is null or not v_target_is_doctor then
+        raise exception 'referral: the receiving doctor has no linked doctor account';
+      end if;
+      if v_target_profile = v_referring_profile then
+        raise exception 'referral: self-referral (both doctor records belong to the same account)';
+      end if;
+    end if;
+
+    select a.status
+      into v_appointment_status
+      from public.appointments a
+     where a.id = new.originating_appointment_id
+       and a.clinic_id = new.clinic_id
+       and a.patient_id = new.patient_id
+       and a.doctor_id = new.referring_doctor_id;
+    if found and v_appointment_status not in ('in_progress', 'completed') then
+      raise exception 'referral: the originating consultation must be in progress or completed (it is %)', v_appointment_status;
+    end if;
+
+    return new;
+  end if;
+
+  -- UPDATE: status transitions are the only permitted change.
+  if new.status = old.status then
+    v_mutable := array['updated_at'];
+  elsif (old.status = 'pending' and new.status in ('accepted', 'declined', 'revoked', 'expired'))
+     or (old.status = 'accepted' and new.status in ('completed', 'revoked', 'expired')) then
+    v_mutable := case new.status
+      when 'accepted' then array['status', 'accepted_at', 'accepted_by', 'updated_at']
+      when 'declined' then array['status', 'declined_at', 'declined_by', 'declined_reason', 'updated_at']
+      when 'completed' then array['status', 'completed_at', 'completed_by', 'updated_at']
+      when 'revoked' then array['status', 'revoked_at', 'revoked_by', 'revoked_reason', 'updated_at']
+      else array['status', 'updated_at']
+    end;
+  else
+    raise exception 'referral: invalid status transition % -> %', old.status, new.status;
+  end if;
+
+  if (to_jsonb(new) - v_mutable) is distinct from (to_jsonb(old) - v_mutable) then
+    if new.status = old.status then
+      raise exception 'referral: a referral cannot be edited, only moved through its status transitions';
+    end if;
+    raise exception 'referral: the % transition may only set its own fields', new.status;
+  end if;
+
+  if new.status = old.status then
+    return new;
+  end if;
+
+  if new.status in ('accepted', 'completed') and old.expires_at <= now() then
+    raise exception 'referral: the referral expired at %', old.expires_at;
+  end if;
+  if new.status = 'expired' and old.expires_at > now() then
+    raise exception 'referral: the referral does not expire until %', old.expires_at;
+  end if;
+
+  if new.status in ('accepted', 'declined', 'completed') then
+    v_actor := case new.status
+      when 'accepted' then new.accepted_by
+      when 'declined' then new.declined_by
+      else new.completed_by
+    end;
+    if v_actor is null
+       or v_actor is distinct from v_target_profile
+       or not v_target_active
+       or not v_target_is_doctor then
+      raise exception 'referral: only the receiving doctor can mark the referral %', new.status;
+    end if;
+  elsif new.status = 'revoked' then
+    if new.revoked_by is null or not (
+         (new.revoked_by = v_referring_profile and v_referring_active and v_referring_is_doctor)
+         or exists (
+           select 1 from public.staff_roles sr
+           where sr.profile_id = new.revoked_by
+             and sr.clinic_id = new.clinic_id
+             and sr.role in ('owner', 'admin', 'manager')
+         )
+       ) then
+      raise exception 'referral: only the referring doctor or clinic management can revoke a referral';
+    end if;
+  end if;
+
+  case new.status
+    when 'accepted' then new.accepted_at := now();
+    when 'declined' then new.declined_at := now();
+    when 'completed' then new.completed_at := now();
+    when 'revoked' then new.revoked_at := now();
+    else null;
+  end case;
+
+  return new;
+end;
+$$;
+
+comment on function public.referrals_validate() is
+  'Referral business rules and status machine (see migration 20260926000001_referrals.sql); applies to every writer, including the service role.';
+
+drop trigger if exists referrals_validate on public.referrals;
+create trigger referrals_validate
+  before insert or update on public.referrals
+  for each row execute function public.referrals_validate();
+
+-- ---------- 5. Audit (ids and status only, never clinical text) ----------
+
+create or replace function public.referrals_audit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_action text;
+  v_actor uuid;
+begin
+  if tg_op = 'INSERT' then
+    v_action := 'referral_created';
+    v_actor := new.created_by;
+  elsif new.status is distinct from old.status then
+    v_action := 'referral_' || new.status::text;
+    v_actor := case new.status
+      when 'accepted' then new.accepted_by
+      when 'declined' then new.declined_by
+      when 'completed' then new.completed_by
+      when 'revoked' then new.revoked_by
+      else null
+    end;
+  else
+    return null;
+  end if;
+
+  insert into public.audit_events (
+    clinic_id, actor_id, actor_type, action, entity_type, entity_id,
+    old_values, new_values, ip_address
+  ) values (
+    new.clinic_id,
+    v_actor,
+    case when v_actor is null then 'system'::public.actor_type else 'staff'::public.actor_type end,
+    v_action,
+    'referrals',
+    new.id::text,
+    case when tg_op = 'UPDATE' then jsonb_build_object('status', old.status) end,
+    jsonb_build_object(
+      'status', new.status,
+      'priority', new.priority,
+      'patient_id', new.patient_id,
+      'referring_doctor_id', new.referring_doctor_id,
+      'referred_to_doctor_id', new.referred_to_doctor_id,
+      'originating_appointment_id', new.originating_appointment_id,
+      'expires_at', new.expires_at
+    ),
+    nullif(current_setting('request.ip', true), '')
+  );
+  return null;
+end;
+$$;
+
+drop trigger if exists referrals_audit on public.referrals;
+create trigger referrals_audit
+  after insert or update on public.referrals
+  for each row execute function public.referrals_audit();
+
+-- ---------- 6. Access ----------
+
+-- True when the signed-in user is the active, doctor-role account linked to
+-- this doctor record (in the doctor record's own clinic).
+create or replace function public.is_linked_doctor(p_doctor_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.doctors d
+    join public.staff_roles sr
+      on sr.profile_id = d.profile_id
+     and sr.clinic_id = d.clinic_id
+     and sr.role = 'doctor'::public.staff_role
+    where d.id = p_doctor_id
+      and d.active
+      and d.profile_id = auth.uid()
+  );
+$$;
+
+-- Only answers about the caller themselves; RLS evaluates it as
+-- `authenticated`, so that role keeps EXECUTE.
+revoke execute on function public.is_linked_doctor(uuid) from public, anon;
+grant execute on function public.is_linked_doctor(uuid) to authenticated, service_role;
+
+alter table public.referrals enable row level security;
+
+create policy "referrals read for referring doctor"
+  on public.referrals for select
+  to authenticated
+  using (public.is_linked_doctor(referring_doctor_id));
+
+create policy "referrals read for receiving doctor"
+  on public.referrals for select
+  to authenticated
+  using (
+    public.is_linked_doctor(referred_to_doctor_id)
+    and (
+      status = 'completed'
+      or (status in ('pending', 'accepted') and expires_at > now())
+    )
+  );
+
+-- No INSERT/UPDATE/DELETE policies, and no such privileges either: browser
+-- sessions only read, the server writes through the service role, and no
+-- one deletes (withdraw a referral with status 'revoked'). Explicit, so the
+-- table does not inherit the blanket grants from 20260813000013_grants.sql.
+revoke all on table public.referrals from public, anon, authenticated, service_role;
+grant select on table public.referrals to authenticated;
+grant select, insert, update on table public.referrals to service_role;
+
+-- =====================================================================
+-- FILE: 20260927000001_referral_follow_up_and_doctor_accounts.sql
+-- =====================================================================
+-- Referral follow-up booking + doctor account hardening (referrals Phase 1,
+-- API/UI step; builds on 20260926000001_referrals.sql).
+--
+-- 1. referrals.follow_up_appointment_id — the appointment reception books
+--    with the receiving doctor once the referral is accepted. A composite
+--    foreign key pins it to the referral's clinic, patient and RECEIVING
+--    doctor (reusing appointments_id_clinic_id_patient_id_doctor_id_key).
+--    referrals_validate() now also enforces: only while the referral is
+--    accepted and unexpired; never on a cancelled/no-show appointment; once —
+--    replaceable only after the linked appointment was cancelled or marked
+--    no-show; never unlinked. referrals_audit() records the booking as
+--    'referral_follow_up_booked', attributed to the staff member who created
+--    the appointment (appointments.created_by).
+--
+-- 2. Doctor accounts (Phase 0 audit gap G3). Referral authority is keyed to
+--    the account linked to a doctor record, so that link must be trustworthy:
+--      * one doctor record per account per clinic (the admin API already
+--        enforces this; the index makes it hold for every writer). Added
+--        defensively: skipped with a notice if duplicates already exist;
+--      * linking an account (doctors.profile_id) is server-side only. The
+--        "doctors write for management" RLS policy has no column limit, so a
+--        manager's browser session could link its own account to a doctor
+--        record — bypassing assertDoctorProfileAvailable() in
+--        src/app/api/admin/doctors/route.ts — and pass doctor-only routes.
+--        Same pattern as patients_telegram_identity_server_only.
+--
+-- Reversible: drop column referrals.follow_up_appointment_id; restore
+-- referrals_validate()/referrals_audit() from 20260926000001_referrals.sql;
+-- drop trigger doctors_account_link_server_only, function
+-- doctors_account_link_server_only() and index doctors_clinic_profile_key.
+
+-- ---------- 1. Follow-up appointment ----------
+
+alter table public.referrals
+  add column follow_up_appointment_id uuid;
+
+alter table public.referrals
+  add constraint referrals_follow_up_appointment_fkey
+  foreign key (follow_up_appointment_id, clinic_id, patient_id, referred_to_doctor_id)
+  references public.appointments (id, clinic_id, patient_id, doctor_id);
+
+create index referrals_follow_up_appointment_idx
+  on public.referrals (follow_up_appointment_id)
+  where follow_up_appointment_id is not null;
+
+comment on column public.referrals.follow_up_appointment_id is
+  'The appointment booked with the receiving doctor for this referral; set by reception once the referral is accepted.';
+
+create or replace function public.referrals_validate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_referring_found boolean;
+  v_referring_active boolean;
+  v_referring_profile uuid;
+  v_referring_is_doctor boolean;
+  v_target_found boolean;
+  v_target_active boolean;
+  v_target_profile uuid;
+  v_target_is_doctor boolean;
+  v_appointment_status public.appointment_status;
+  v_mutable text[];
+  v_actor uuid;
+begin
+  -- Doctor records are only looked up inside the referral's own clinic. A
+  -- missing or cross-clinic record is left to the composite foreign keys to
+  -- reject, rather than reported here with a misleading message.
+  select d.active,
+         d.profile_id,
+         exists (
+           select 1 from public.staff_roles sr
+           where sr.profile_id = d.profile_id
+             and sr.clinic_id = d.clinic_id
+             and sr.role = 'doctor'::public.staff_role
+         )
+    into v_referring_active, v_referring_profile, v_referring_is_doctor
+    from public.doctors d
+   where d.id = new.referring_doctor_id
+     and d.clinic_id = new.clinic_id;
+  v_referring_found := found;
+
+  select d.active,
+         d.profile_id,
+         exists (
+           select 1 from public.staff_roles sr
+           where sr.profile_id = d.profile_id
+             and sr.clinic_id = d.clinic_id
+             and sr.role = 'doctor'::public.staff_role
+         )
+    into v_target_active, v_target_profile, v_target_is_doctor
+    from public.doctors d
+   where d.id = new.referred_to_doctor_id
+     and d.clinic_id = new.clinic_id;
+  v_target_found := found;
+
+  if tg_op = 'INSERT' then
+    if new.status is distinct from 'pending'::public.referral_status then
+      raise exception 'referral: a referral must be created as pending';
+    end if;
+    if new.follow_up_appointment_id is not null then
+      raise exception 'referral: a follow-up can only be booked once the referral is accepted';
+    end if;
+
+    new.created_at := now();
+    new.updated_at := now();
+
+    if v_referring_found and new.created_by is not null then
+      if not v_referring_active then
+        raise exception 'referral: the referring doctor is inactive';
+      end if;
+      if new.created_by is distinct from v_referring_profile or not v_referring_is_doctor then
+        raise exception 'referral: created_by must be the referring doctor''s own doctor account';
+      end if;
+    end if;
+
+    -- Same doctor record on both sides is left to referrals_not_self_referral.
+    if v_target_found and new.referred_to_doctor_id <> new.referring_doctor_id then
+      if not v_target_active then
+        raise exception 'referral: the receiving doctor is inactive';
+      end if;
+      if v_target_profile is null or not v_target_is_doctor then
+        raise exception 'referral: the receiving doctor has no linked doctor account';
+      end if;
+      if v_target_profile = v_referring_profile then
+        raise exception 'referral: self-referral (both doctor records belong to the same account)';
+      end if;
+    end if;
+
+    select a.status
+      into v_appointment_status
+      from public.appointments a
+     where a.id = new.originating_appointment_id
+       and a.clinic_id = new.clinic_id
+       and a.patient_id = new.patient_id
+       and a.doctor_id = new.referring_doctor_id;
+    if found and v_appointment_status not in ('in_progress', 'completed') then
+      raise exception 'referral: the originating consultation must be in progress or completed (it is %)', v_appointment_status;
+    end if;
+
+    return new;
+  end if;
+
+  -- UPDATE: status transitions, plus booking the follow-up while accepted.
+  if new.status = old.status then
+    if new.follow_up_appointment_id is distinct from old.follow_up_appointment_id
+       and old.status <> 'accepted' then
+      raise exception 'referral: a follow-up can only be booked once the referral is accepted';
+    end if;
+    v_mutable := array['follow_up_appointment_id', 'updated_at'];
+  elsif (old.status = 'pending' and new.status in ('accepted', 'declined', 'revoked', 'expired'))
+     or (old.status = 'accepted' and new.status in ('completed', 'revoked', 'expired')) then
+    v_mutable := case new.status
+      when 'accepted' then array['status', 'accepted_at', 'accepted_by', 'updated_at']
+      when 'declined' then array['status', 'declined_at', 'declined_by', 'declined_reason', 'updated_at']
+      when 'completed' then array['status', 'completed_at', 'completed_by', 'updated_at']
+      when 'revoked' then array['status', 'revoked_at', 'revoked_by', 'revoked_reason', 'updated_at']
+      else array['status', 'updated_at']
+    end;
+  else
+    raise exception 'referral: invalid status transition % -> %', old.status, new.status;
+  end if;
+
+  if (to_jsonb(new) - v_mutable) is distinct from (to_jsonb(old) - v_mutable) then
+    if new.status = old.status then
+      raise exception 'referral: a referral cannot be edited, only moved through its status transitions';
+    end if;
+    raise exception 'referral: the % transition may only set its own fields', new.status;
+  end if;
+
+  if new.status = old.status then
+    if new.follow_up_appointment_id is distinct from old.follow_up_appointment_id then
+      if new.follow_up_appointment_id is null then
+        raise exception 'referral: a booked follow-up cannot be unlinked';
+      end if;
+      if old.expires_at <= now() then
+        raise exception 'referral: the referral expired at %', old.expires_at;
+      end if;
+      if old.follow_up_appointment_id is not null and exists (
+           select 1 from public.appointments a
+           where a.id = old.follow_up_appointment_id
+             and a.status not in ('cancelled', 'no_show')
+         ) then
+        raise exception 'referral: a follow-up appointment is already booked';
+      end if;
+      if exists (
+           select 1 from public.appointments a
+           where a.id = new.follow_up_appointment_id
+             and a.status in ('cancelled', 'no_show')
+         ) then
+        raise exception 'referral: the follow-up appointment is cancelled';
+      end if;
+    end if;
+    return new;
+  end if;
+
+  if new.status in ('accepted', 'completed') and old.expires_at <= now() then
+    raise exception 'referral: the referral expired at %', old.expires_at;
+  end if;
+  if new.status = 'expired' and old.expires_at > now() then
+    raise exception 'referral: the referral does not expire until %', old.expires_at;
+  end if;
+
+  if new.status in ('accepted', 'declined', 'completed') then
+    v_actor := case new.status
+      when 'accepted' then new.accepted_by
+      when 'declined' then new.declined_by
+      else new.completed_by
+    end;
+    if v_actor is null
+       or v_actor is distinct from v_target_profile
+       or not v_target_active
+       or not v_target_is_doctor then
+      raise exception 'referral: only the receiving doctor can mark the referral %', new.status;
+    end if;
+  elsif new.status = 'revoked' then
+    if new.revoked_by is null or not (
+         (new.revoked_by = v_referring_profile and v_referring_active and v_referring_is_doctor)
+         or exists (
+           select 1 from public.staff_roles sr
+           where sr.profile_id = new.revoked_by
+             and sr.clinic_id = new.clinic_id
+             and sr.role in ('owner', 'admin', 'manager')
+         )
+       ) then
+      raise exception 'referral: only the referring doctor or clinic management can revoke a referral';
+    end if;
+  end if;
+
+  case new.status
+    when 'accepted' then new.accepted_at := now();
+    when 'declined' then new.declined_at := now();
+    when 'completed' then new.completed_at := now();
+    when 'revoked' then new.revoked_at := now();
+    else null;
+  end case;
+
+  return new;
+end;
+$$;
+
+create or replace function public.referrals_audit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_action text;
+  v_actor uuid;
+  v_old jsonb;
+begin
+  if tg_op = 'INSERT' then
+    v_action := 'referral_created';
+    v_actor := new.created_by;
+  elsif new.status is distinct from old.status then
+    v_action := 'referral_' || new.status::text;
+    v_actor := case new.status
+      when 'accepted' then new.accepted_by
+      when 'declined' then new.declined_by
+      when 'completed' then new.completed_by
+      when 'revoked' then new.revoked_by
+      else null
+    end;
+    v_old := jsonb_build_object('status', old.status);
+  elsif new.follow_up_appointment_id is distinct from old.follow_up_appointment_id then
+    v_action := 'referral_follow_up_booked';
+    select a.created_by into v_actor
+      from public.appointments a
+     where a.id = new.follow_up_appointment_id;
+    v_old := jsonb_build_object('follow_up_appointment_id', old.follow_up_appointment_id);
+  else
+    return null;
+  end if;
+
+  insert into public.audit_events (
+    clinic_id, actor_id, actor_type, action, entity_type, entity_id,
+    old_values, new_values, ip_address
+  ) values (
+    new.clinic_id,
+    v_actor,
+    case when v_actor is null then 'system'::public.actor_type else 'staff'::public.actor_type end,
+    v_action,
+    'referrals',
+    new.id::text,
+    v_old,
+    jsonb_build_object(
+      'status', new.status,
+      'priority', new.priority,
+      'patient_id', new.patient_id,
+      'referring_doctor_id', new.referring_doctor_id,
+      'referred_to_doctor_id', new.referred_to_doctor_id,
+      'originating_appointment_id', new.originating_appointment_id,
+      'follow_up_appointment_id', new.follow_up_appointment_id,
+      'expires_at', new.expires_at
+    ),
+    nullif(current_setting('request.ip', true), '')
+  );
+  return null;
+end;
+$$;
+
+-- ---------- 2. Doctor accounts ----------
+
+do $$
+declare
+  v_dup_count int;
+begin
+  select count(*) into v_dup_count from (
+    select 1 from public.doctors
+    where profile_id is not null
+    group by clinic_id, profile_id having count(*) > 1
+  ) d;
+  if v_dup_count > 0 then
+    raise notice 'Skipping UNIQUE(clinic_id, profile_id) on doctors: % account(s) are linked to several doctor records — resolve manually, then add doctors_clinic_profile_key in a follow-up migration', v_dup_count;
+  elsif not exists (select 1 from pg_indexes where indexname = 'doctors_clinic_profile_key') then
+    create unique index doctors_clinic_profile_key
+      on public.doctors (clinic_id, profile_id)
+      where profile_id is not null;
+  end if;
+end $$;
+
+create or replace function public.doctors_account_link_server_only()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- Server-side code (service role, no JWT) links accounts after the admin
+  -- API has checked the account is a doctor of this clinic; browser
+  -- sessions may edit a doctor record but never who it belongs to.
+  if coalesce(auth.role(), '') <> 'authenticated' then
+    return new;
+  end if;
+
+  if (tg_op = 'INSERT' and new.profile_id is not null)
+     or (tg_op = 'UPDATE' and new.profile_id is distinct from old.profile_id) then
+    raise exception 'doctors: linking a doctor account is server-side only';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists doctors_account_link_server_only on public.doctors;
+create trigger doctors_account_link_server_only
+  before insert or update on public.doctors
+  for each row execute function public.doctors_account_link_server_only();
+
+-- =====================================================================
+-- FILE: 20260927000002_referral_creation_idempotency.sql
+-- =====================================================================
+-- Referral creation idempotency.
+--
+-- A doctor's accidental repeat of the same submission (double click, a
+-- request retried after its response was lost) must not create a second
+-- referral or a second audit event. The client sends one random key per
+-- intended referral; the key is stored with the referral and is unique per
+-- referring doctor, so a repeat of the request resolves to the referral it
+-- already created (see createReferral in src/lib/referrals/service.ts).
+--
+-- The key is set once on insert: referrals_validate() treats every column
+-- outside its per-transition allow-list as immutable, so it can never be
+-- changed or cleared afterwards. It is not written to audit_events.
+
+alter table public.referrals add column creation_key uuid;
+
+comment on column public.referrals.creation_key is
+  'Client-generated idempotency key of the request that created the referral; unique per referring doctor, immutable.';
+
+-- Scoped to the referring doctor: one doctor's key can never resolve to, or
+-- collide with, another doctor's referral.
+create unique index referrals_creation_key_key
+  on public.referrals (clinic_id, referring_doctor_id, creation_key)
+  where creation_key is not null;
+
+-- =====================================================================
+-- FILE: 20260927000003_referral_clinical_access.sql
+-- =====================================================================
+-- Referral-based clinical access: the authorization layer for doctors.
+--
+-- A doctor never gets a patient's clinical data merely by working in the
+-- same clinic. public.doctor_patient_access() is the single definition of
+-- what one doctor may see of one patient. The RLS policies below use it for
+-- direct database/API access with the doctor's own token, and the server
+-- (src/lib/clinical-access, through the service role) uses it before it
+-- reads anything, so both layers make the same decision.
+--
+--   own       the doctor has an appointment with the patient (the rule the
+--             existing policies already applied): the patient record and
+--             the doctor's own appointments with the patient.
+--   referred  an active referral to the doctor: status pending or accepted
+--             AND expires_at still in the future (compared with now(), so
+--             access ends on time even before the lazy expiry sweep marks
+--             the row expired). Declined, revoked, completed and expired
+--             referrals grant nothing.
+--               pending  -> the patient record only (to decide on it),
+--               accepted -> also the patient's appointments with the
+--                           referring doctor (the handed-over history).
+--   none      nothing - including every patient of another clinic.
+--
+-- Unchanged and deliberately so: payments stay limited to the doctor's own
+-- appointments; conversations, messages and voice notes stay closed to
+-- doctors; a doctor session may only change the status of its own
+-- appointments (appointments_doctor_status_only); referrals are read-only
+-- for every signed-in role. Staff who also hold an operational role
+-- (owner/admin/manager/receptionist) keep that role's clinic-wide access.
+
+-- ---------------------------------------------------------------------------
+-- The decision
+-- ---------------------------------------------------------------------------
+
+-- One row when the doctor record belongs to an account holding the doctor
+-- role and the patient is in the same clinic; no row otherwise (unknown ids,
+-- another clinic, a doctor record nobody signs in as).
+create or replace function public.doctor_patient_access(p_doctor_id uuid, p_patient_id uuid)
+returns table (
+  clinic_id uuid,
+  own_patient boolean,
+  active_referral_ids uuid[],
+  history_doctor_ids uuid[]
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    d.clinic_id,
+    exists (
+      select 1
+      from public.appointments a
+      where a.clinic_id = d.clinic_id
+        and a.patient_id = p.id
+        and a.doctor_id = d.id
+    ),
+    array(
+      select r.id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referred_to_doctor_id = d.id
+        and r.status in ('pending', 'accepted')
+        and r.expires_at > now()
+      order by r.created_at
+    ),
+    array(
+      select distinct r.referring_doctor_id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referred_to_doctor_id = d.id
+        and r.status = 'accepted'
+        and r.expires_at > now()
+    )
+  from public.doctors d
+  join public.patients p
+    on p.id = p_patient_id
+   and p.clinic_id = d.clinic_id
+  where d.id = p_doctor_id
+    and exists (
+      select 1
+      from public.staff_roles sr
+      where sr.profile_id = d.profile_id
+        and sr.clinic_id = d.clinic_id
+        and sr.role = 'doctor'
+    );
+$$;
+
+comment on function public.doctor_patient_access(uuid, uuid) is
+  'What a doctor may see of a patient: own relationship, active referrals (pending/accepted, unexpired) and the referring doctors whose visits are shared (accepted). No row = no access. Server-only: it answers for any doctor id.';
+
+-- It answers for any doctor id, so only the server may call it directly.
+revoke all on function public.doctor_patient_access(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.doctor_patient_access(uuid, uuid) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- The signed-in doctor (for RLS)
+-- ---------------------------------------------------------------------------
+
+-- The caller's doctor record in a clinic: linked to auth.uid() and backed by
+-- the doctor role there. At most one (doctors_clinic_profile_key).
+create or replace function public.current_doctor_id(p_clinic_id uuid)
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select d.id
+  from public.doctors d
+  join public.staff_roles sr
+    on sr.profile_id = d.profile_id
+   and sr.clinic_id = d.clinic_id
+   and sr.role = 'doctor'
+  where d.profile_id = auth.uid()
+    and d.clinic_id = p_clinic_id
+  limit 1;
+$$;
+
+-- Whether the caller, as a doctor, may read this patient's record.
+create or replace function public.doctor_can_read_patient(p_clinic_id uuid, p_patient_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.doctor_patient_access(public.current_doctor_id(p_clinic_id), p_patient_id) x
+    where x.own_patient or cardinality(x.active_referral_ids) > 0
+  );
+$$;
+
+-- Whether the caller, as a doctor, may read an appointment: their own, or
+-- one of the patient's visits with a doctor who referred the patient to
+-- them (accepted, unexpired referral).
+create or replace function public.doctor_can_read_appointment(p_clinic_id uuid, p_patient_id uuid, p_doctor_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.doctor_patient_access(public.current_doctor_id(p_clinic_id), p_patient_id) x
+    where p_doctor_id = public.current_doctor_id(p_clinic_id)
+       or p_doctor_id = any (x.history_doctor_ids)
+  );
+$$;
+
+-- These only ever answer about the caller, so RLS may call them for any
+-- signed-in user; anonymous callers never reach them.
+revoke all on function public.current_doctor_id(uuid) from public, anon;
+revoke all on function public.doctor_can_read_patient(uuid, uuid) from public, anon;
+revoke all on function public.doctor_can_read_appointment(uuid, uuid, uuid) from public, anon;
+grant execute on function public.current_doctor_id(uuid) to authenticated, service_role;
+grant execute on function public.doctor_can_read_patient(uuid, uuid) to authenticated, service_role;
+grant execute on function public.doctor_can_read_appointment(uuid, uuid, uuid) to authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- RLS: operational staff and doctors as separate policies
+-- ---------------------------------------------------------------------------
+
+drop policy if exists "patients read for operational staff" on public.patients;
+create policy "patients read for operational staff" on public.patients
+  for select to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner', 'admin', 'manager', 'receptionist']::public.staff_role[]));
+create policy "patients read for authorized doctors" on public.patients
+  for select to authenticated
+  using (public.doctor_can_read_patient(clinic_id, id));
+
+drop policy if exists "appointments read for staff" on public.appointments;
+create policy "appointments read for operational staff" on public.appointments
+  for select to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner', 'admin', 'manager', 'receptionist']::public.staff_role[]));
+create policy "appointments read for authorized doctors" on public.appointments
+  for select to authenticated
+  using (public.doctor_can_read_appointment(clinic_id, patient_id, doctor_id));
+
+-- =====================================================================
+-- FILE: 20260927000004_clinical_access_hardening.sql
+-- =====================================================================
+-- Clinical access hardening: closes the gaps found reviewing the doctor
+-- authorization layer (20260927000003_referral_clinical_access.sql).
+--
+-- 1. Voice recordings: any staff member of a clinic — doctors included —
+--    could download every patient's voice note straight from Supabase
+--    Storage, although the voice_messages rows are operational-staff only.
+--    The bucket's read policy now matches the table's.
+-- 2. Doctors could still UPDATE their own appointments directly through the
+--    REST API (any status: cancel, no-show, back to pending), bypassing the
+--    server's forward-only checked_in -> in_progress -> completed rule. The
+--    app only ever changes status through /api/doctor/appointments (service
+--    role), so doctors lose direct write access to appointments entirely.
+-- 3. A deactivated doctor record kept clinical access through RLS while the
+--    API, the referral policies (is_linked_doctor) and the booking engine
+--    all treat it as not practising. The decision now requires an active
+--    doctor record, so every layer agrees.
+-- 4. The server showed the receiving doctor the referral's originating
+--    consultation and the referring doctor the follow-up appointment, which
+--    RLS denied. The decision now names these referral-linked appointments
+--    (referral_appointment_ids), and RLS and server both use it:
+--      - the originating consultation of an active (pending/accepted,
+--        unexpired) referral, for the doctor it is referred to;
+--      - the follow-up appointment of a referral, for the referring doctor.
+--    A completed, declined, revoked or expired referral no longer shows the
+--    receiving doctor the consultation.
+
+-- ---------------------------------------------------------------------------
+-- 1. Voice recordings: operational roles only
+-- ---------------------------------------------------------------------------
+
+drop policy if exists "voice-messages staff read" on storage.objects;
+create policy "voice-messages staff read"
+  on storage.objects
+  for select
+  to authenticated
+  using (
+    bucket_id = 'voice-messages'
+    and exists (
+      select 1
+      from public.staff_roles sr
+      where sr.profile_id = auth.uid()
+        and sr.clinic_id::text = (storage.foldername(name))[1]
+        and sr.role = any (array['owner', 'admin', 'manager', 'receptionist']::public.staff_role[])
+    )
+  );
+
+-- ---------------------------------------------------------------------------
+-- 2. Doctors write appointments only through the server
+-- ---------------------------------------------------------------------------
+
+drop policy if exists "appointments status update for own doctor" on public.appointments;
+
+-- ---------------------------------------------------------------------------
+-- 3 + 4. The decision: active doctors, referral-linked appointments
+-- ---------------------------------------------------------------------------
+
+-- The appointments policy depends on the old doctor_can_read_appointment
+-- signature, and doctor_patient_access gains a column: drop and recreate.
+drop policy if exists "appointments read for authorized doctors" on public.appointments;
+drop function if exists public.doctor_can_read_appointment(uuid, uuid, uuid);
+drop function if exists public.doctor_patient_access(uuid, uuid);
+
+create function public.doctor_patient_access(p_doctor_id uuid, p_patient_id uuid)
+returns table (
+  clinic_id uuid,
+  own_patient boolean,
+  active_referral_ids uuid[],
+  history_doctor_ids uuid[],
+  referral_appointment_ids uuid[]
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    d.clinic_id,
+    exists (
+      select 1
+      from public.appointments a
+      where a.clinic_id = d.clinic_id
+        and a.patient_id = p.id
+        and a.doctor_id = d.id
+    ),
+    array(
+      select r.id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referred_to_doctor_id = d.id
+        and r.status in ('pending', 'accepted')
+        and r.expires_at > now()
+      order by r.created_at
+    ),
+    array(
+      select distinct r.referring_doctor_id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referred_to_doctor_id = d.id
+        and r.status = 'accepted'
+        and r.expires_at > now()
+    ),
+    array(
+      -- The consultation an active referral to this doctor was raised from…
+      select r.originating_appointment_id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referred_to_doctor_id = d.id
+        and r.status in ('pending', 'accepted')
+        and r.expires_at > now()
+      union
+      -- …and the follow-up booked for a referral this doctor made.
+      select r.follow_up_appointment_id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referring_doctor_id = d.id
+        and r.follow_up_appointment_id is not null
+    )
+  from public.doctors d
+  join public.patients p
+    on p.id = p_patient_id
+   and p.clinic_id = d.clinic_id
+  where d.id = p_doctor_id
+    and d.active
+    and exists (
+      select 1
+      from public.staff_roles sr
+      where sr.profile_id = d.profile_id
+        and sr.clinic_id = d.clinic_id
+        and sr.role = 'doctor'
+    );
+$$;
+
+comment on function public.doctor_patient_access(uuid, uuid) is
+  'What an active doctor may see of a patient: own relationship, active referrals (pending/accepted, unexpired), referring doctors whose visits are shared (accepted) and referral-linked appointments. No row = no access. Server-only: it answers for any doctor id.';
+
+revoke all on function public.doctor_patient_access(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.doctor_patient_access(uuid, uuid) to service_role;
+
+create or replace function public.current_doctor_id(p_clinic_id uuid)
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select d.id
+  from public.doctors d
+  join public.staff_roles sr
+    on sr.profile_id = d.profile_id
+   and sr.clinic_id = d.clinic_id
+   and sr.role = 'doctor'
+  where d.profile_id = auth.uid()
+    and d.clinic_id = p_clinic_id
+    and d.active
+  limit 1;
+$$;
+
+-- Whether the caller, as a doctor, may read an appointment: their own, a
+-- visit with a doctor who referred the patient to them (accepted,
+-- unexpired), or an appointment a referral links them to.
+create function public.doctor_can_read_appointment(
+  p_clinic_id uuid,
+  p_patient_id uuid,
+  p_doctor_id uuid,
+  p_appointment_id uuid
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.doctor_patient_access(public.current_doctor_id(p_clinic_id), p_patient_id) x
+    where p_doctor_id = public.current_doctor_id(p_clinic_id)
+       or p_doctor_id = any (x.history_doctor_ids)
+       or p_appointment_id = any (x.referral_appointment_ids)
+  );
+$$;
+
+revoke all on function public.doctor_can_read_appointment(uuid, uuid, uuid, uuid) from public, anon;
+grant execute on function public.doctor_can_read_appointment(uuid, uuid, uuid, uuid) to authenticated, service_role;
+
+create policy "appointments read for authorized doctors" on public.appointments
+  for select to authenticated
+  using (public.doctor_can_read_appointment(clinic_id, patient_id, doctor_id, id));
+
+-- Payments: a doctor still sees only the payments of their own appointments,
+-- now through the same notion of "the signed-in, active doctor".
+drop policy if exists "payments read for operational staff" on public.payments;
+create policy "payments read for operational staff" on public.payments
+  for select to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner', 'admin', 'manager', 'receptionist']::public.staff_role[]));
+create policy "payments read for own doctor" on public.payments
+  for select to authenticated
+  using (
+    exists (
+      select 1
+      from public.appointments a
+      where a.id = payments.appointment_id
+        and a.clinic_id = payments.clinic_id
+        and a.doctor_id = public.current_doctor_id(payments.clinic_id)
+    )
+  );
+
+-- =====================================================================
+-- FILE: 20260927000005_clinical_records.sql
+-- =====================================================================
+-- Doctor-authored clinical records.
+--
+-- Doctors document their own consultations: consultation notes, diagnoses,
+-- prescriptions, laboratory results and medical history. Every record keeps
+-- its provenance — the authoring doctor, the consultation (appointment) it
+-- was written in, the time and the record type — and none of it can come
+-- from the browser:
+--
+--   * a record belongs to exactly one consultation, and the composite
+--     foreign key makes that the AUTHOR'S OWN appointment with THIS patient
+--     in THIS clinic, so a doctor can never file a record under another
+--     doctor's name, another patient or another clinic;
+--   * the consultation must be in progress or completed;
+--   * created_by must be the author's own doctor account (active, doctor
+--     role) and created_at is the database's clock;
+--   * records are immutable: no signed-in role may write at all, and even
+--     the server may only insert. A mistake is fixed by a correction — a new
+--     record by the same author, in the same consultation, pointing at the
+--     one it corrects (at most one correction per record);
+--   * every insert is audited WITHOUT its clinical text.
+--
+-- Who may read a record is exactly who may read the consultation it belongs
+-- to — public.doctor_can_read_appointment(), i.e. the Phase 3 decision
+-- public.doctor_patient_access(): the author (their own patient); a doctor
+-- the patient is referred to, for the referring doctor's records while the
+-- referral is accepted and unexpired (and the records of the consultation it
+-- was raised from while it is active); the referring doctor, for the
+-- records of the follow-up visit their referral led to. Nobody else: no
+-- operational staff role, no other doctor, no patient-facing path, no AI.
+
+create type public.clinical_record_type as enum (
+  'consultation_note',
+  'diagnosis',
+  'prescription',
+  'lab_result',
+  'medical_history'
+);
+
+create table public.clinical_records (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  patient_id uuid not null,
+  author_doctor_id uuid not null,
+  -- The consultation the record was written in.
+  appointment_id uuid not null,
+  record_type public.clinical_record_type not null,
+  -- Diagnosis, medication and dose, test and result, history item, or the
+  -- note's headline.
+  summary text not null,
+  details text,
+  -- Optional classification code, e.g. ICD-10 for a diagnosis.
+  code text,
+  corrects_record_id uuid references public.clinical_records(id),
+  created_by uuid not null references public.profiles(id),
+  -- Client idempotency key: a repeated submission resolves to this record.
+  creation_key uuid,
+  created_at timestamptz not null default now(),
+
+  constraint clinical_records_patient_same_clinic_fkey
+    foreign key (patient_id, clinic_id) references public.patients (id, clinic_id) on delete cascade,
+  constraint clinical_records_author_same_clinic_fkey
+    foreign key (author_doctor_id, clinic_id) references public.doctors (id, clinic_id),
+  -- The author's own consultation with this patient in this clinic.
+  constraint clinical_records_consultation_fkey
+    foreign key (appointment_id, clinic_id, patient_id, author_doctor_id)
+    references public.appointments (id, clinic_id, patient_id, doctor_id),
+  constraint clinical_records_summary_check
+    check (summary ~ '\S' and char_length(summary) <= 300),
+  constraint clinical_records_details_check
+    check (details is null or (details ~ '\S' and char_length(details) <= 4000)),
+  constraint clinical_records_code_check
+    check (code is null or code ~ '^[A-Za-z0-9.\-]{1,16}$'),
+  constraint clinical_records_not_self_correction
+    check (corrects_record_id is null or corrects_record_id <> id)
+);
+
+comment on table public.clinical_records is
+  'Doctor-authored clinical records with provenance (author, consultation, time, type). Immutable; corrections are new records. Readable only by doctors doctor_can_read_appointment() admits; never by operational staff, patients or AI.';
+
+create index clinical_records_patient_idx on public.clinical_records (clinic_id, patient_id, created_at desc);
+create index clinical_records_author_idx on public.clinical_records (author_doctor_id, created_at desc);
+create index clinical_records_appointment_idx on public.clinical_records (appointment_id);
+create unique index clinical_records_one_correction on public.clinical_records (corrects_record_id)
+  where corrects_record_id is not null;
+create unique index clinical_records_creation_key_key on public.clinical_records (clinic_id, author_doctor_id, creation_key)
+  where creation_key is not null;
+
+-- ---------------------------------------------------------------------------
+-- Validation: provenance, consultation state, immutability
+-- ---------------------------------------------------------------------------
+
+create or replace function public.clinical_records_validate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_profile uuid;
+  v_active boolean;
+  v_status public.appointment_status;
+  v_target public.clinical_records;
+begin
+  if tg_op = 'UPDATE' then
+    raise exception 'clinical record: records cannot be edited; add a correction instead';
+  end if;
+
+  new.created_at := now();
+
+  select d.profile_id, d.active
+    into v_profile, v_active
+  from public.doctors d
+  where d.id = new.author_doctor_id
+    and d.clinic_id = new.clinic_id;
+  if not found or not v_active then
+    raise exception 'clinical record: the author must be an active doctor of the clinic';
+  end if;
+  if v_profile is null or new.created_by is distinct from v_profile then
+    raise exception 'clinical record: created_by must be the author''s own doctor account';
+  end if;
+  if not exists (
+    select 1
+    from public.staff_roles sr
+    where sr.profile_id = v_profile
+      and sr.clinic_id = new.clinic_id
+      and sr.role = 'doctor'
+  ) then
+    raise exception 'clinical record: the author does not hold the doctor role';
+  end if;
+
+  -- The foreign key pins the consultation to the author and the patient;
+  -- here it must also actually be taking or have taken place.
+  select a.status into v_status
+  from public.appointments a
+  where a.id = new.appointment_id
+    and a.clinic_id = new.clinic_id
+    and a.patient_id = new.patient_id
+    and a.doctor_id = new.author_doctor_id;
+  if found and v_status not in ('in_progress', 'completed') then
+    raise exception 'clinical record: the consultation must be in progress or completed (it is %)', v_status;
+  end if;
+
+  if new.corrects_record_id is not null then
+    select * into v_target from public.clinical_records where id = new.corrects_record_id;
+    if not found
+       or v_target.clinic_id <> new.clinic_id
+       or v_target.patient_id <> new.patient_id
+       or v_target.author_doctor_id <> new.author_doctor_id then
+      raise exception 'clinical record: only the author can correct their own record of the same patient';
+    end if;
+    if v_target.appointment_id <> new.appointment_id or v_target.record_type <> new.record_type then
+      raise exception 'clinical record: a correction keeps the consultation and the record type of the record it corrects';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger clinical_records_validate
+  before insert or update on public.clinical_records
+  for each row execute function public.clinical_records_validate();
+
+-- ---------------------------------------------------------------------------
+-- Audit: ids and type only — never the clinical text
+-- ---------------------------------------------------------------------------
+
+create or replace function public.clinical_records_audit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.audit_events (
+    clinic_id, actor_id, actor_type, action, entity_type, entity_id, old_values, new_values
+  ) values (
+    new.clinic_id,
+    new.created_by,
+    'staff'::public.actor_type,
+    case when new.corrects_record_id is null then 'clinical_record_created' else 'clinical_record_corrected' end,
+    'clinical_records',
+    new.id::text,
+    null,
+    jsonb_build_object(
+      'record_type', new.record_type,
+      'patient_id', new.patient_id,
+      'author_doctor_id', new.author_doctor_id,
+      'appointment_id', new.appointment_id,
+      'corrects_record_id', new.corrects_record_id
+    )
+  );
+  return new;
+end;
+$$;
+
+create trigger clinical_records_audit
+  after insert on public.clinical_records
+  for each row execute function public.clinical_records_audit();
+
+-- ---------------------------------------------------------------------------
+-- Access: authorized doctors read; only the server inserts
+-- ---------------------------------------------------------------------------
+
+alter table public.clinical_records enable row level security;
+
+create policy "clinical records read for authorized doctors" on public.clinical_records
+  for select to authenticated
+  using (public.doctor_can_read_appointment(clinic_id, patient_id, author_doctor_id, appointment_id));
+
+revoke all on table public.clinical_records from public, anon, authenticated, service_role;
+grant select on table public.clinical_records to authenticated;
+grant select, insert on table public.clinical_records to service_role;
+
+-- =====================================================================
+-- FILE: 20260928000001_clinical_handoff_types.sql
+-- =====================================================================
+-- Clinical handoff (1 of 2): new enum values.
+--
+-- Kept in a migration of their own: a value added with ALTER TYPE … ADD VALUE
+-- cannot be used in the transaction that added it, and
+-- 20260928000002_clinical_handoff.sql uses them.
+--
+--   referral_status 'in_progress'  — the receiving doctor's consultation for
+--     the referral has started (PENDING → ACCEPTED → IN_PROGRESS → COMPLETED).
+--   clinical_record_type 'assessment' — the doctor's current assessment in
+--     this consultation (distinct from a diagnosis).
+--   clinical_record_type 'lab_order'  — a laboratory test ordered (distinct
+--     from 'lab_result').
+--   clinical_record_type 'follow_up'  — the follow-up plan / onward referral
+--     note of the consultation.
+--
+-- Reversible only by recreating the types (Postgres cannot drop enum values);
+-- nothing else depends on the new values until 20260928000002.
+
+alter type public.referral_status add value if not exists 'in_progress' after 'accepted';
+
+alter type public.clinical_record_type add value if not exists 'assessment' before 'diagnosis';
+alter type public.clinical_record_type add value if not exists 'lab_order' before 'lab_result';
+alter type public.clinical_record_type add value if not exists 'follow_up';
+
+-- New enum values must be committed before any later statement uses them.
+commit;
+
+-- =====================================================================
+-- FILE: 20260928000002_clinical_handoff.sql
+-- =====================================================================
+-- Clinical handoff (2 of 2): the referral lifecycle
+--
+--   PENDING → ACCEPTED → IN_PROGRESS → COMPLETED   (PENDING → DECLINED;
+--   REVOKED by the referring doctor or management and EXPIRED at expires_at
+--   while open)
+--
+-- 1. referrals.started_at / started_by — when the receiving doctor's
+--    consultation for the referral started, and whose account it was.
+-- 2. referrals_validate():
+--      * accepted → in_progress only once the referral's follow-up
+--        consultation (follow_up_appointment_id, the receiving doctor's own
+--        appointment by foreign key) is in progress or completed, and only
+--        for the receiving doctor's account;
+--      * completed only from in_progress — a referral is completed after the
+--        receiving doctor saw the patient, not instead of it;
+--      * linking a consultation that has already started makes the referral
+--        in progress in the same statement;
+--      * a consultation that took place may replace a booked follow-up that
+--        has not started yet (the doctor saw the patient earlier).
+-- 3. appointments_referral_follow_up_started: when a linked follow-up
+--    appointment starts (in progress or completed), whoever moved it, the
+--    accepted referral becomes in progress. It never blocks the visit itself.
+-- 4. referrals_audit(): 'referral_in_progress' is attributed to started_by
+--    (referral_accepted / _declined / _completed already are).
+-- 5. The open states now include in_progress everywhere "open" is used: the
+--    one-open-referral-per-pair index, the receiving doctor's read policy, and
+--    public.doctor_patient_access() — an in-progress referral gives the
+--    receiving doctor the same history as an accepted one, until it is
+--    completed, revoked or expires.
+--
+-- Clinical records need no change beyond the new types (20260928000001): a
+-- handoff consultation is documented in the existing clinical_records table,
+-- authored by the receiving doctor by foreign key, and the referring
+-- doctor's records stay theirs and immutable.
+--
+-- Reversible: restore referrals_validate()/referrals_audit() from
+-- 20260927000001, doctor_patient_access() from 20260927000004, the policy and
+-- index from 20260926000001; drop trigger appointments_referral_follow_up_started,
+-- function referral_follow_up_started(), constraint referrals_started_state_check
+-- and columns referrals.started_at/started_by (after moving in_progress rows
+-- back to accepted).
+
+-- ---------- 1. Columns ----------
+
+alter table public.referrals
+  add column started_at timestamptz,
+  add column started_by uuid references public.profiles(id);
+
+alter table public.referrals
+  add constraint referrals_started_state_check
+  check (
+    (started_at is null) = (started_by is null)
+    and (status <> 'in_progress' or started_at is not null)
+    and (started_at is null or (accepted_at is not null and started_at >= accepted_at))
+    and (started_at is null or completed_at is null or completed_at >= started_at)
+  );
+
+comment on column public.referrals.started_at is
+  'When the receiving doctor''s consultation for this referral (follow_up_appointment_id) started; set with the in_progress transition.';
+
+comment on column public.referrals.follow_up_appointment_id is
+  'The receiving doctor''s consultation for this referral: booked by reception once accepted, or the consultation the receiving doctor started. Once it has started the referral is in progress.';
+
+comment on column public.referrals.expires_at is
+  'End of the referral''s validity (at most 365 days after creation). After it an open referral (pending, accepted, in progress) can no longer be accepted, started or completed, and the receiving doctor can no longer read it unless they completed it.';
+
+-- ---------- 2. Status machine ----------
+
+create or replace function public.referrals_validate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_referring_found boolean;
+  v_referring_active boolean;
+  v_referring_profile uuid;
+  v_referring_is_doctor boolean;
+  v_target_found boolean;
+  v_target_active boolean;
+  v_target_profile uuid;
+  v_target_is_doctor boolean;
+  v_appointment_status public.appointment_status;
+  v_old_follow_up_status public.appointment_status;
+  v_new_follow_up_status public.appointment_status;
+  v_mutable text[];
+  v_actor uuid;
+begin
+  -- Doctor records are only looked up inside the referral's own clinic. A
+  -- missing or cross-clinic record is left to the composite foreign keys to
+  -- reject, rather than reported here with a misleading message.
+  select d.active,
+         d.profile_id,
+         exists (
+           select 1 from public.staff_roles sr
+           where sr.profile_id = d.profile_id
+             and sr.clinic_id = d.clinic_id
+             and sr.role = 'doctor'::public.staff_role
+         )
+    into v_referring_active, v_referring_profile, v_referring_is_doctor
+    from public.doctors d
+   where d.id = new.referring_doctor_id
+     and d.clinic_id = new.clinic_id;
+  v_referring_found := found;
+
+  select d.active,
+         d.profile_id,
+         exists (
+           select 1 from public.staff_roles sr
+           where sr.profile_id = d.profile_id
+             and sr.clinic_id = d.clinic_id
+             and sr.role = 'doctor'::public.staff_role
+         )
+    into v_target_active, v_target_profile, v_target_is_doctor
+    from public.doctors d
+   where d.id = new.referred_to_doctor_id
+     and d.clinic_id = new.clinic_id;
+  v_target_found := found;
+
+  if tg_op = 'INSERT' then
+    if new.status is distinct from 'pending'::public.referral_status then
+      raise exception 'referral: a referral must be created as pending';
+    end if;
+    if new.follow_up_appointment_id is not null then
+      raise exception 'referral: a follow-up can only be booked once the referral is accepted';
+    end if;
+
+    new.created_at := now();
+    new.updated_at := now();
+
+    if v_referring_found and new.created_by is not null then
+      if not v_referring_active then
+        raise exception 'referral: the referring doctor is inactive';
+      end if;
+      if new.created_by is distinct from v_referring_profile or not v_referring_is_doctor then
+        raise exception 'referral: created_by must be the referring doctor''s own doctor account';
+      end if;
+    end if;
+
+    -- Same doctor record on both sides is left to referrals_not_self_referral.
+    if v_target_found and new.referred_to_doctor_id <> new.referring_doctor_id then
+      if not v_target_active then
+        raise exception 'referral: the receiving doctor is inactive';
+      end if;
+      if v_target_profile is null or not v_target_is_doctor then
+        raise exception 'referral: the receiving doctor has no linked doctor account';
+      end if;
+      if v_target_profile = v_referring_profile then
+        raise exception 'referral: self-referral (both doctor records belong to the same account)';
+      end if;
+    end if;
+
+    select a.status
+      into v_appointment_status
+      from public.appointments a
+     where a.id = new.originating_appointment_id
+       and a.clinic_id = new.clinic_id
+       and a.patient_id = new.patient_id
+       and a.doctor_id = new.referring_doctor_id;
+    if found and v_appointment_status not in ('in_progress', 'completed') then
+      raise exception 'referral: the originating consultation must be in progress or completed (it is %)', v_appointment_status;
+    end if;
+
+    return new;
+  end if;
+
+  -- UPDATE: status transitions, plus linking the follow-up while accepted.
+  if new.status = old.status then
+    if new.follow_up_appointment_id is distinct from old.follow_up_appointment_id
+       and old.status <> 'accepted' then
+      raise exception 'referral: a follow-up can only be booked once the referral is accepted';
+    end if;
+    v_mutable := array['follow_up_appointment_id', 'updated_at'];
+  elsif (old.status = 'pending' and new.status in ('accepted', 'declined', 'revoked', 'expired'))
+     or (old.status = 'accepted' and new.status in ('in_progress', 'revoked', 'expired'))
+     or (old.status = 'in_progress' and new.status in ('completed', 'revoked', 'expired')) then
+    v_mutable := case new.status
+      when 'accepted' then array['status', 'accepted_at', 'accepted_by', 'updated_at']
+      when 'in_progress' then array['status', 'started_at', 'started_by', 'updated_at']
+      when 'declined' then array['status', 'declined_at', 'declined_by', 'declined_reason', 'updated_at']
+      when 'completed' then array['status', 'completed_at', 'completed_by', 'updated_at']
+      when 'revoked' then array['status', 'revoked_at', 'revoked_by', 'revoked_reason', 'updated_at']
+      else array['status', 'updated_at']
+    end;
+  else
+    raise exception 'referral: invalid status transition % -> %', old.status, new.status;
+  end if;
+
+  if (to_jsonb(new) - v_mutable) is distinct from (to_jsonb(old) - v_mutable) then
+    if new.status = old.status then
+      raise exception 'referral: a referral cannot be edited, only moved through its status transitions';
+    end if;
+    raise exception 'referral: the % transition may only set its own fields', new.status;
+  end if;
+
+  if new.status = old.status then
+    if new.follow_up_appointment_id is distinct from old.follow_up_appointment_id then
+      if new.follow_up_appointment_id is null then
+        raise exception 'referral: a booked follow-up cannot be unlinked';
+      end if;
+      if old.expires_at <= now() then
+        raise exception 'referral: the referral expired at %', old.expires_at;
+      end if;
+      select a.status into v_new_follow_up_status
+        from public.appointments a
+       where a.id = new.follow_up_appointment_id;
+      if v_new_follow_up_status in ('cancelled', 'no_show') then
+        raise exception 'referral: the follow-up appointment is cancelled';
+      end if;
+      if old.follow_up_appointment_id is not null then
+        select a.status into v_old_follow_up_status
+          from public.appointments a
+         where a.id = old.follow_up_appointment_id;
+        -- A cancelled/no-show booking may be replaced; so may one that has
+        -- not started when the receiving doctor saw the patient before it.
+        if v_old_follow_up_status not in ('cancelled', 'no_show')
+           and not (
+             v_old_follow_up_status in ('pending', 'confirmed', 'checked_in')
+             and v_new_follow_up_status in ('in_progress', 'completed')
+           ) then
+          raise exception 'referral: a follow-up appointment is already booked';
+        end if;
+      end if;
+
+      -- Linking a consultation that has already started: the referral is in
+      -- progress from this statement on.
+      if v_new_follow_up_status in ('in_progress', 'completed') then
+        if v_target_profile is null or not v_target_active or not v_target_is_doctor then
+          raise exception 'referral: only the receiving doctor can mark the referral in_progress';
+        end if;
+        new.status := 'in_progress';
+        new.started_at := now();
+        new.started_by := v_target_profile;
+      end if;
+    end if;
+    return new;
+  end if;
+
+  if new.status in ('accepted', 'in_progress', 'completed') and old.expires_at <= now() then
+    raise exception 'referral: the referral expired at %', old.expires_at;
+  end if;
+  if new.status = 'expired' and old.expires_at > now() then
+    raise exception 'referral: the referral does not expire until %', old.expires_at;
+  end if;
+
+  if new.status = 'in_progress' and not exists (
+       select 1 from public.appointments a
+       where a.id = old.follow_up_appointment_id
+         and a.status in ('in_progress', 'completed')
+     ) then
+    raise exception 'referral: a referral is in progress only once its follow-up consultation has started';
+  end if;
+
+  if new.status in ('accepted', 'in_progress', 'declined', 'completed') then
+    v_actor := case new.status
+      when 'accepted' then new.accepted_by
+      when 'in_progress' then new.started_by
+      when 'declined' then new.declined_by
+      else new.completed_by
+    end;
+    if v_actor is null
+       or v_actor is distinct from v_target_profile
+       or not v_target_active
+       or not v_target_is_doctor then
+      raise exception 'referral: only the receiving doctor can mark the referral %', new.status;
+    end if;
+  elsif new.status = 'revoked' then
+    if new.revoked_by is null or not (
+         (new.revoked_by = v_referring_profile and v_referring_active and v_referring_is_doctor)
+         or exists (
+           select 1 from public.staff_roles sr
+           where sr.profile_id = new.revoked_by
+             and sr.clinic_id = new.clinic_id
+             and sr.role in ('owner', 'admin', 'manager')
+         )
+       ) then
+      raise exception 'referral: only the referring doctor or clinic management can revoke a referral';
+    end if;
+  end if;
+
+  case new.status
+    when 'accepted' then new.accepted_at := now();
+    when 'in_progress' then new.started_at := now();
+    when 'declined' then new.declined_at := now();
+    when 'completed' then new.completed_at := now();
+    when 'revoked' then new.revoked_at := now();
+    else null;
+  end case;
+
+  return new;
+end;
+$$;
+
+create or replace function public.referrals_audit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_action text;
+  v_actor uuid;
+  v_old jsonb;
+begin
+  if tg_op = 'INSERT' then
+    v_action := 'referral_created';
+    v_actor := new.created_by;
+  elsif new.status is distinct from old.status then
+    v_action := 'referral_' || new.status::text;
+    v_actor := case new.status
+      when 'accepted' then new.accepted_by
+      when 'in_progress' then new.started_by
+      when 'declined' then new.declined_by
+      when 'completed' then new.completed_by
+      when 'revoked' then new.revoked_by
+      else null
+    end;
+    v_old := jsonb_build_object('status', old.status);
+    -- A consultation linked in the same statement (see referrals_validate).
+    if new.follow_up_appointment_id is distinct from old.follow_up_appointment_id then
+      v_old := v_old || jsonb_build_object('follow_up_appointment_id', old.follow_up_appointment_id);
+    end if;
+  elsif new.follow_up_appointment_id is distinct from old.follow_up_appointment_id then
+    v_action := 'referral_follow_up_booked';
+    select a.created_by into v_actor
+      from public.appointments a
+     where a.id = new.follow_up_appointment_id;
+    v_old := jsonb_build_object('follow_up_appointment_id', old.follow_up_appointment_id);
+  else
+    return null;
+  end if;
+
+  -- Ids, status and dates only: never the reason, handoff note or any other
+  -- clinical text.
+  insert into public.audit_events (
+    clinic_id, actor_id, actor_type, action, entity_type, entity_id,
+    old_values, new_values, ip_address
+  ) values (
+    new.clinic_id,
+    v_actor,
+    case when v_actor is null then 'system'::public.actor_type else 'staff'::public.actor_type end,
+    v_action,
+    'referrals',
+    new.id::text,
+    v_old,
+    jsonb_build_object(
+      'status', new.status,
+      'priority', new.priority,
+      'patient_id', new.patient_id,
+      'referring_doctor_id', new.referring_doctor_id,
+      'referred_to_doctor_id', new.referred_to_doctor_id,
+      'originating_appointment_id', new.originating_appointment_id,
+      'follow_up_appointment_id', new.follow_up_appointment_id,
+      'expires_at', new.expires_at
+    ),
+    nullif(current_setting('request.ip', true), '')
+  );
+  return null;
+end;
+$$;
+
+-- ---------- 3. A linked follow-up starting moves the referral ----------
+
+create or replace function public.referral_follow_up_started()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.status in ('in_progress', 'completed') and old.status not in ('in_progress', 'completed') then
+    begin
+      -- The consultation is the receiving doctor's own appointment (foreign
+      -- key), so the transition is theirs. Rows that referrals_validate()
+      -- would refuse are not selected in the first place.
+      update public.referrals r
+         set status = 'in_progress',
+             started_by = d.profile_id
+        from public.doctors d
+       where r.follow_up_appointment_id = new.id
+         and r.clinic_id = new.clinic_id
+         and r.status = 'accepted'
+         and r.expires_at > now()
+         and d.id = r.referred_to_doctor_id
+         and d.clinic_id = r.clinic_id
+         and d.active
+         and d.profile_id is not null
+         and exists (
+           select 1 from public.staff_roles sr
+           where sr.profile_id = d.profile_id
+             and sr.clinic_id = d.clinic_id
+             and sr.role = 'doctor'::public.staff_role
+         );
+    exception when others then
+      -- Never block the visit itself; the referral simply stays accepted.
+      raise warning 'referral follow-up start not recorded (sqlstate %)', sqlstate;
+    end;
+  end if;
+  return null;
+end;
+$$;
+
+revoke execute on function public.referral_follow_up_started() from public, anon, authenticated;
+
+drop trigger if exists appointments_referral_follow_up_started on public.appointments;
+create trigger appointments_referral_follow_up_started
+  after update of status on public.appointments
+  for each row execute function public.referral_follow_up_started();
+
+-- ---------- 4. Open = pending, accepted or in progress ----------
+
+drop index if exists public.referrals_one_open_per_pair;
+create unique index referrals_one_open_per_pair
+  on public.referrals (patient_id, referring_doctor_id, referred_to_doctor_id)
+  where status in ('pending', 'accepted', 'in_progress');
+
+drop policy if exists "referrals read for receiving doctor" on public.referrals;
+create policy "referrals read for receiving doctor"
+  on public.referrals for select
+  to authenticated
+  using (
+    public.is_linked_doctor(referred_to_doctor_id)
+    and (
+      status = 'completed'
+      or (status in ('pending', 'accepted', 'in_progress') and expires_at > now())
+    )
+  );
+
+-- Same signature and columns as 20260927000004: the policies built on it
+-- keep working. Only the referral states change: an in-progress referral
+-- counts wherever an accepted one does.
+create or replace function public.doctor_patient_access(p_doctor_id uuid, p_patient_id uuid)
+returns table (
+  clinic_id uuid,
+  own_patient boolean,
+  active_referral_ids uuid[],
+  history_doctor_ids uuid[],
+  referral_appointment_ids uuid[]
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    d.clinic_id,
+    exists (
+      select 1
+      from public.appointments a
+      where a.clinic_id = d.clinic_id
+        and a.patient_id = p.id
+        and a.doctor_id = d.id
+    ),
+    array(
+      select r.id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referred_to_doctor_id = d.id
+        and r.status in ('pending', 'accepted', 'in_progress')
+        and r.expires_at > now()
+      order by r.created_at
+    ),
+    array(
+      select distinct r.referring_doctor_id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referred_to_doctor_id = d.id
+        and r.status in ('accepted', 'in_progress')
+        and r.expires_at > now()
+    ),
+    array(
+      -- The consultation an active referral to this doctor was raised from…
+      select r.originating_appointment_id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referred_to_doctor_id = d.id
+        and r.status in ('pending', 'accepted', 'in_progress')
+        and r.expires_at > now()
+      union
+      -- …and the follow-up booked for a referral this doctor made.
+      select r.follow_up_appointment_id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referring_doctor_id = d.id
+        and r.follow_up_appointment_id is not null
+    )
+  from public.doctors d
+  join public.patients p
+    on p.id = p_patient_id
+   and p.clinic_id = d.clinic_id
+  where d.id = p_doctor_id
+    and d.active
+    and exists (
+      select 1
+      from public.staff_roles sr
+      where sr.profile_id = d.profile_id
+        and sr.clinic_id = d.clinic_id
+        and sr.role = 'doctor'
+    );
+$$;
+
+-- ---------- 5. Record types ----------
+
+comment on type public.clinical_record_type is
+  'consultation_note: clinical note; assessment: the doctor''s current assessment; diagnosis: a diagnosis made in that consultation (earlier consultations'' diagnoses are historical, never rewritten); prescription; lab_order: tests ordered; lab_result; medical_history; follow_up: follow-up plan or onward referral note.';
+
+-- =====================================================================
+-- FILE: 20260929000001_referral_lifecycle_hardening.sql
+-- =====================================================================
+-- Referral lifecycle hardening: bounded access, recorded expiry, a
+-- tenant-safe audit trail.
+--
+-- WHEN A DOCTOR MAY SEE A PATIENT (public.doctor_patient_access, the one
+-- decision behind RLS and the server):
+--
+--   Own relationship (not referral-based): the doctor has a live — not
+--   cancelled — appointment with the patient, or wrote a clinical record for
+--   them. Scope: the patient record, their own appointments, the records they
+--   wrote. A booking that was cancelled no longer makes anyone "their" doctor.
+--
+--   Receiving doctor (B), referral-based, only while the referral is
+--   pending / accepted / in_progress AND now() < expires_at:
+--     pending              → patient record, the originating consultation;
+--     accepted/in_progress → + the referring doctor's consultations.
+--   Nothing referral-based once declined, revoked, completed or expired — at
+--   the moment of the transition, and at expires_at even before the expiry
+--   is recorded (the database clock is checked on every read). After
+--   completion B keeps only what the own relationship gives them (their own
+--   consultation for the referral and the records they wrote in it).
+--
+--   Referring doctor (A): the follow-up consultation their referral led to
+--   while the referral is accepted / in_progress / completed AND
+--   now() < expires_at — not after a revocation or expiry, and not forever.
+--
+--   No referral lasts longer than 180 days (the longest validity the product
+--   offers), so no referral-based access is ever open-ended.
+--
+-- Changes:
+--   1. referrals_expiry_window_check: at most 180 days (was 365).
+--   2. doctor_patient_access(): own relationship excludes cancelled-only
+--      bookings; the referrer's follow-up access is bounded by status and
+--      expiry. doctor_can_read_appointment(): own appointments only with an
+--      own relationship (server parity: canSeeAppointment).
+--   3. Receiving doctor's read policy on referrals: completed referrals only
+--      until expires_at.
+--   4. expire_due_referrals(): records every lapsed open referral as expired
+--      (audited 'referral_expired', actor: system). Called by the scheduled
+--      /api/referrals/expire job and lazily on reads.
+--   5. Clinical text is server-only: signed-in roles lose direct SELECT on
+--      referrals and clinical_records, so every read goes through the
+--      authorizing, audited API. The RLS policies stay as a backstop.
+--   6. audit_events: patient_id and referral_id columns (every referral and
+--      clinical-record event names clinic, actor, patient, referral, action,
+--      time); a guard that keeps each row inside its clinic's tenant (the
+--      patient and referral must belong to clinic_id) and stamps the
+--      database time; append-only (no UPDATE/DELETE for any API role).
+--
+-- Reversible: restore the functions/policies from 20260928000002 and
+-- 20260927000004, the 365-day check, the grants (grant select on referrals,
+-- clinical_records to authenticated; grant update, delete on audit_events to
+-- authenticated, service_role); drop expire_due_referrals(),
+-- audit_events_guard() and the new audit columns/indexes.
+
+-- ---------- 1. Validity window ----------
+
+alter table public.referrals drop constraint referrals_expiry_window_check;
+alter table public.referrals
+  add constraint referrals_expiry_window_check
+  check (expires_at > created_at and expires_at <= created_at + interval '180 days');
+
+-- ---------- 2. The decision ----------
+
+create or replace function public.doctor_patient_access(p_doctor_id uuid, p_patient_id uuid)
+returns table (
+  clinic_id uuid,
+  own_patient boolean,
+  active_referral_ids uuid[],
+  history_doctor_ids uuid[],
+  referral_appointment_ids uuid[]
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    d.clinic_id,
+    -- Own relationship: a live appointment, or a record the doctor wrote.
+    exists (
+      select 1
+      from public.appointments a
+      where a.clinic_id = d.clinic_id
+        and a.patient_id = p.id
+        and a.doctor_id = d.id
+        and a.status <> 'cancelled'
+    )
+    or exists (
+      select 1
+      from public.clinical_records cr
+      where cr.clinic_id = d.clinic_id
+        and cr.patient_id = p.id
+        and cr.author_doctor_id = d.id
+    ),
+    array(
+      select r.id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referred_to_doctor_id = d.id
+        and r.status in ('pending', 'accepted', 'in_progress')
+        and r.expires_at > now()
+      order by r.created_at
+    ),
+    array(
+      select distinct r.referring_doctor_id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referred_to_doctor_id = d.id
+        and r.status in ('accepted', 'in_progress')
+        and r.expires_at > now()
+    ),
+    array(
+      -- The consultation an open referral to this doctor was raised from…
+      select r.originating_appointment_id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referred_to_doctor_id = d.id
+        and r.status in ('pending', 'accepted', 'in_progress')
+        and r.expires_at > now()
+      union
+      -- …and the follow-up of a referral this doctor made, while it stands.
+      select r.follow_up_appointment_id
+      from public.referrals r
+      where r.clinic_id = d.clinic_id
+        and r.patient_id = p.id
+        and r.referring_doctor_id = d.id
+        and r.follow_up_appointment_id is not null
+        and r.status in ('accepted', 'in_progress', 'completed')
+        and r.expires_at > now()
+    )
+  from public.doctors d
+  join public.patients p
+    on p.id = p_patient_id
+   and p.clinic_id = d.clinic_id
+  where d.id = p_doctor_id
+    and d.active
+    and exists (
+      select 1
+      from public.staff_roles sr
+      where sr.profile_id = d.profile_id
+        and sr.clinic_id = d.clinic_id
+        and sr.role = 'doctor'
+    );
+$$;
+
+comment on function public.doctor_patient_access(uuid, uuid) is
+  'What an active doctor may see of a patient (see 20260929000001): own relationship (live appointment or authored record); open, unexpired referrals to them; referring doctors whose visits accepted/in-progress referrals share; referral-linked appointments (originating consultation for the receiver, follow-up for the referrer — both bounded by status and expires_at). No row = no access. Server-only.';
+
+create or replace function public.doctor_can_read_appointment(
+  p_clinic_id uuid,
+  p_patient_id uuid,
+  p_doctor_id uuid,
+  p_appointment_id uuid
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.doctor_patient_access(public.current_doctor_id(p_clinic_id), p_patient_id) x
+    where (x.own_patient and p_doctor_id = public.current_doctor_id(p_clinic_id))
+       or p_doctor_id = any (x.history_doctor_ids)
+       or p_appointment_id = any (x.referral_appointment_ids)
+  );
+$$;
+
+-- ---------- 3. The receiving doctor's view of the referral itself ----------
+
+drop policy if exists "referrals read for receiving doctor" on public.referrals;
+create policy "referrals read for receiving doctor"
+  on public.referrals for select
+  to authenticated
+  using (
+    public.is_linked_doctor(referred_to_doctor_id)
+    and status in ('pending', 'accepted', 'in_progress', 'completed')
+    and expires_at > now()
+  );
+
+-- ---------- 4. Recording expiry ----------
+
+-- Access already ends at expires_at (every check compares with now()); this
+-- records it: status 'expired' and a 'referral_expired' audit row by the
+-- system. Idempotent; the database clock decides, never the caller's.
+create or replace function public.expire_due_referrals(p_clinic_id uuid default null)
+returns integer
+language sql
+volatile
+security invoker
+set search_path = public
+as $$
+  with expired as (
+    update public.referrals
+       set status = 'expired'
+     where status in ('pending', 'accepted', 'in_progress')
+       and expires_at <= now()
+       and (p_clinic_id is null or clinic_id = p_clinic_id)
+    returning 1
+  )
+  select count(*)::integer from expired;
+$$;
+
+revoke all on function public.expire_due_referrals(uuid) from public, anon, authenticated;
+grant execute on function public.expire_due_referrals(uuid) to service_role;
+
+-- ---------- 5. Clinical text is read through the server only ----------
+
+-- The API authorizes every read with doctor_patient_access() and audits it;
+-- a signed-in session reading these tables directly would be neither. The
+-- policies remain as a backstop should a grant ever be re-added.
+revoke select on table public.referrals from authenticated;
+revoke all on table public.clinical_records from authenticated;
+
+-- ---------- 6. Audit trail ----------
+
+alter table public.audit_events
+  add column patient_id uuid,
+  add column referral_id uuid;
+
+comment on column public.audit_events.patient_id is
+  'The patient the event concerns (same clinic as clinic_id, checked on insert). Ids only — never clinical text.';
+comment on column public.audit_events.referral_id is
+  'The referral the event concerns (same clinic and patient, checked on insert).';
+
+create index audit_events_patient_idx
+  on public.audit_events (clinic_id, patient_id, created_at desc)
+  where patient_id is not null;
+create index audit_events_referral_idx
+  on public.audit_events (clinic_id, referral_id, created_at desc)
+  where referral_id is not null;
+
+create or replace function public.audit_events_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- The database clock, never a caller-supplied time.
+  new.created_at := now();
+  if new.patient_id is not null and not exists (
+       select 1 from public.patients p where p.id = new.patient_id and p.clinic_id = new.clinic_id
+     ) then
+    raise exception 'audit: patient % is not in clinic %', new.patient_id, new.clinic_id;
+  end if;
+  if new.referral_id is not null and not exists (
+       select 1 from public.referrals r
+       where r.id = new.referral_id
+         and r.clinic_id = new.clinic_id
+         and (new.patient_id is null or r.patient_id = new.patient_id)
+     ) then
+    raise exception 'audit: referral % is not in clinic % for that patient', new.referral_id, new.clinic_id;
+  end if;
+  return new;
+end;
+$$;
+
+revoke execute on function public.audit_events_guard() from public, anon, authenticated;
+
+drop trigger if exists audit_events_guard on public.audit_events;
+create trigger audit_events_guard
+  before insert on public.audit_events
+  for each row execute function public.audit_events_guard();
+
+-- Append-only for every API role: rows are written once (service role, and
+-- the audit triggers) and read by the clinic's management (RLS). Clinic
+-- deletion still cascades (performed as the table owner).
+revoke insert, update, delete, truncate on table public.audit_events from anon, authenticated;
+revoke update, delete, truncate on table public.audit_events from service_role;
+
+-- Referral events carry the patient and referral as columns; expiry is the
+-- system's act (actor null, actor_type 'system').
+create or replace function public.referrals_audit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_action text;
+  v_actor uuid;
+  v_old jsonb;
+begin
+  if tg_op = 'INSERT' then
+    v_action := 'referral_created';
+    v_actor := new.created_by;
+  elsif new.status is distinct from old.status then
+    v_action := 'referral_' || new.status::text;
+    v_actor := case new.status
+      when 'accepted' then new.accepted_by
+      when 'in_progress' then new.started_by
+      when 'declined' then new.declined_by
+      when 'completed' then new.completed_by
+      when 'revoked' then new.revoked_by
+      else null
+    end;
+    v_old := jsonb_build_object('status', old.status);
+    -- A consultation linked in the same statement (see referrals_validate).
+    if new.follow_up_appointment_id is distinct from old.follow_up_appointment_id then
+      v_old := v_old || jsonb_build_object('follow_up_appointment_id', old.follow_up_appointment_id);
+    end if;
+  elsif new.follow_up_appointment_id is distinct from old.follow_up_appointment_id then
+    v_action := 'referral_follow_up_booked';
+    select a.created_by into v_actor
+      from public.appointments a
+     where a.id = new.follow_up_appointment_id;
+    v_old := jsonb_build_object('follow_up_appointment_id', old.follow_up_appointment_id);
+  else
+    return null;
+  end if;
+
+  -- Ids, status and dates only: never the reason, handoff note or any other
+  -- clinical text.
+  insert into public.audit_events (
+    clinic_id, actor_id, actor_type, action, entity_type, entity_id,
+    patient_id, referral_id, old_values, new_values, metadata, ip_address
+  ) values (
+    new.clinic_id,
+    v_actor,
+    case when v_actor is null then 'system'::public.actor_type else 'staff'::public.actor_type end,
+    v_action,
+    'referrals',
+    new.id::text,
+    new.patient_id,
+    new.id,
+    v_old,
+    jsonb_build_object(
+      'status', new.status,
+      'priority', new.priority,
+      'patient_id', new.patient_id,
+      'referring_doctor_id', new.referring_doctor_id,
+      'referred_to_doctor_id', new.referred_to_doctor_id,
+      'originating_appointment_id', new.originating_appointment_id,
+      'follow_up_appointment_id', new.follow_up_appointment_id,
+      'expires_at', new.expires_at
+    ),
+    case when new.status = 'expired' and v_action = 'referral_expired'
+      then jsonb_build_object('cause', 'validity_elapsed')
+      else '{}'::jsonb
+    end,
+    nullif(current_setting('request.ip', true), '')
+  );
+  return null;
+end;
+$$;
+
+-- Clinical record events carry the patient, and the referral when the record
+-- was written in a referral's consultation.
+create or replace function public.clinical_records_audit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_referral uuid;
+begin
+  select r.id into v_referral
+    from public.referrals r
+   where r.clinic_id = new.clinic_id
+     and r.patient_id = new.patient_id
+     and r.follow_up_appointment_id = new.appointment_id
+   order by r.created_at desc
+   limit 1;
+
+  insert into public.audit_events (
+    clinic_id, actor_id, actor_type, action, entity_type, entity_id,
+    patient_id, referral_id, old_values, new_values
+  ) values (
+    new.clinic_id,
+    new.created_by,
+    'staff'::public.actor_type,
+    case when new.corrects_record_id is null then 'clinical_record_created' else 'clinical_record_corrected' end,
+    'clinical_records',
+    new.id::text,
+    new.patient_id,
+    v_referral,
+    null,
+    jsonb_build_object(
+      'record_type', new.record_type,
+      'patient_id', new.patient_id,
+      'author_doctor_id', new.author_doctor_id,
+      'appointment_id', new.appointment_id,
+      'corrects_record_id', new.corrects_record_id
+    )
+  );
+  return new;
+end;
+$$;
+
+-- =====================================================================
+-- FILE: 20260930000001_consultation_start.sql
+-- =====================================================================
+-- Starting a consultation is one database transaction.
+--
+-- Until now the server moved the appointment to in progress, then linked a
+-- waiting referral, then wrote the 'consultation_started' audit row — three
+-- requests. A failure between them left a started consultation with no audit
+-- row (or no referral link), and two concurrent starts could both write one.
+-- These functions do all three in one transaction, with a compare-and-swap
+-- on the appointment's status:
+--
+--   start_consultation(...)          an existing appointment → in progress
+--   start_walk_in_consultation(...)  a walk-in booked in progress through the
+--                                    booking engine (book_appointment)
+--
+-- Both write 'consultation_started' (ids only — never clinical text) with the
+-- acting staff member, and optionally link the consultation to the accepted
+-- referral waiting for it (the referral then moves to in progress through
+-- referrals_validate(), exactly as before). A link the referral trigger
+-- refuses never blocks the consultation: the referral simply stays accepted.
+--
+-- Server-only: EXECUTE for service_role alone. The server has already
+-- authorized the caller (the doctor's own appointment and access to the
+-- patient, or operational staff of the clinic); the functions re-check the
+-- tenant, the actor's staff role in the clinic and, when given, the doctor.
+--
+-- Rollback: drop function public.start_walk_in_consultation(uuid, uuid, uuid,
+-- uuid, timestamptz, uuid); drop function public.start_consultation(uuid,
+-- uuid, public.appointment_status, uuid, text, boolean, uuid); drop function
+-- public.consultation_started_effects(uuid, uuid, text, boolean, boolean).
+
+create or replace function public.consultation_started_effects(
+  p_appointment_id uuid,
+  p_actor uuid,
+  p_via text,
+  p_link_referral boolean,
+  p_walk_in boolean
+)
+returns uuid
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_appointment public.appointments%rowtype;
+  v_waiting uuid;
+  v_referral uuid;
+begin
+  select * into v_appointment from public.appointments where id = p_appointment_id;
+  if not found or v_appointment.status <> 'in_progress' then
+    raise exception 'consultation: the appointment is not in progress';
+  end if;
+
+  -- The accepted referral to this doctor for this patient that is waiting for
+  -- its consultation: none booked yet, or its booking was cancelled or has
+  -- not started (same rule as referrals_validate()).
+  if p_link_referral and not exists (
+    select 1 from public.referrals r
+     where r.follow_up_appointment_id = v_appointment.id
+       and r.status in ('accepted', 'in_progress', 'completed')
+  ) then
+    select r.id into v_waiting
+      from public.referrals r
+      left join public.appointments f on f.id = r.follow_up_appointment_id
+     where r.clinic_id = v_appointment.clinic_id
+       and r.patient_id = v_appointment.patient_id
+       and r.referred_to_doctor_id = v_appointment.doctor_id
+       and r.status = 'accepted'
+       and r.expires_at > now()
+       and (r.follow_up_appointment_id is null
+            or f.status in ('cancelled', 'no_show', 'pending', 'confirmed', 'checked_in'))
+     order by r.created_at
+     limit 1
+     for update of r;
+    if v_waiting is not null then
+      begin
+        update public.referrals set follow_up_appointment_id = v_appointment.id where id = v_waiting;
+      exception when others then
+        raise warning 'consultation not linked to referral (sqlstate %)', sqlstate;
+      end;
+    end if;
+  end if;
+
+  select r.id into v_referral
+    from public.referrals r
+   where r.clinic_id = v_appointment.clinic_id
+     and r.follow_up_appointment_id = v_appointment.id
+     and r.status in ('accepted', 'in_progress', 'completed')
+   order by r.created_at desc
+   limit 1;
+
+  insert into public.audit_events (
+    clinic_id, actor_id, actor_type, action, entity_type, entity_id,
+    patient_id, referral_id, new_values, metadata
+  ) values (
+    v_appointment.clinic_id, p_actor, 'staff', 'consultation_started', 'appointments', v_appointment.id::text,
+    v_appointment.patient_id, v_referral,
+    jsonb_build_object('status', 'in_progress'),
+    jsonb_build_object(
+      'patient_id', v_appointment.patient_id,
+      'doctor_id', v_appointment.doctor_id,
+      'referral_id', v_referral,
+      'via', p_via,
+      'walk_in', p_walk_in
+    )
+  );
+  return v_referral;
+end;
+$$;
+
+create or replace function public.start_consultation(
+  p_clinic_id uuid,
+  p_appointment_id uuid,
+  p_from_status public.appointment_status,
+  p_actor uuid,
+  p_via text,
+  p_link_referral boolean default false,
+  p_doctor_id uuid default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+begin
+  if p_via is null or p_via not in ('doctor_workspace', 'doctor_queue', 'front_desk') then
+    raise exception 'consultation: unknown start channel %', p_via;
+  end if;
+  if not exists (select 1 from public.staff_roles where profile_id = p_actor and clinic_id = p_clinic_id) then
+    raise exception 'consultation: the actor is not staff of this clinic';
+  end if;
+  if p_from_status = 'in_progress' then
+    return jsonb_build_object('started', false, 'referral_id', null);
+  end if;
+
+  -- Compare-and-swap: only the status the caller saw moves, so of two
+  -- concurrent starts exactly one starts (and audits) the consultation.
+  update public.appointments
+     set status = 'in_progress'
+   where id = p_appointment_id
+     and clinic_id = p_clinic_id
+     and status = p_from_status
+     and (p_doctor_id is null or doctor_id = p_doctor_id);
+  if not found then
+    return jsonb_build_object('started', false, 'referral_id', null);
+  end if;
+
+  return jsonb_build_object(
+    'started', true,
+    'referral_id', public.consultation_started_effects(p_appointment_id, p_actor, p_via, p_link_referral, false)
+  );
+end;
+$$;
+
+create or replace function public.start_walk_in_consultation(
+  p_clinic_id uuid,
+  p_patient_id uuid,
+  p_doctor_id uuid,
+  p_service_id uuid,
+  p_start_at timestamptz,
+  p_actor uuid
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_booking record;
+begin
+  if not exists (
+    select 1 from public.doctors d
+     where d.id = p_doctor_id and d.clinic_id = p_clinic_id and d.profile_id = p_actor
+  ) then
+    raise exception 'consultation: a walk-in is started by the doctor themselves';
+  end if;
+
+  -- The booking engine checks working hours, time blocks, the doctor's
+  -- services and overlaps, as for every other booking.
+  select * into v_booking
+    from public.book_appointment(
+      p_clinic_id, p_patient_id, p_doctor_id, p_service_id, p_start_at,
+      'in_progress'::public.appointment_status, 'walk_in'::public.appointment_source, null, p_actor
+    );
+  if v_booking.error_code is not null or v_booking.appointment_id is null then
+    return jsonb_build_object(
+      'appointment_id', null,
+      'error_code', coalesce(v_booking.error_code, 'booking_failed'),
+      'referral_id', null
+    );
+  end if;
+
+  return jsonb_build_object(
+    'appointment_id', v_booking.appointment_id,
+    'error_code', null,
+    'referral_id', public.consultation_started_effects(v_booking.appointment_id, p_actor, 'doctor_workspace', true, true)
+  );
+end;
+$$;
+
+revoke execute on function public.consultation_started_effects(uuid, uuid, text, boolean, boolean) from public, anon, authenticated;
+revoke execute on function public.start_consultation(uuid, uuid, public.appointment_status, uuid, text, boolean, uuid) from public, anon, authenticated;
+revoke execute on function public.start_walk_in_consultation(uuid, uuid, uuid, uuid, timestamptz, uuid) from public, anon, authenticated;
+grant execute on function public.consultation_started_effects(uuid, uuid, text, boolean, boolean) to service_role;
+grant execute on function public.start_consultation(uuid, uuid, public.appointment_status, uuid, text, boolean, uuid) to service_role;
+grant execute on function public.start_walk_in_consultation(uuid, uuid, uuid, uuid, timestamptz, uuid) to service_role;
+
+comment on function public.start_consultation(uuid, uuid, public.appointment_status, uuid, text, boolean, uuid) is
+  'Server-only. Moves an appointment from p_from_status to in_progress (compare-and-swap), optionally links the waiting accepted referral, and audits consultation_started — one transaction.';
+comment on function public.start_walk_in_consultation(uuid, uuid, uuid, uuid, timestamptz, uuid) is
+  'Server-only. Books a walk-in in progress through book_appointment, links the waiting accepted referral, and audits consultation_started — one transaction.';
+
+-- =====================================================================
+-- FILE: 20260930000002_server_only_booking_writes.sql
+-- =====================================================================
+-- Appointments, patients and payments are written by the server only.
+--
+-- Every write the product makes to these tables goes through a server route
+-- with the service-role client, after the route has authorized the caller:
+-- bookings and walk-ins through book_appointment(), rescheduling through
+-- reschedule_appointment(), cancellations and status changes through
+-- /api/admin/appointments/[id] (notifications, audit and analytics included),
+-- consultation starts through start_consultation(), payments through
+-- transitionPaymentStatus(), patients through /api/admin/appointments,
+-- /api/admin/patients and the Telegram identity code. No page writes them
+-- with the signed-in user's token.
+--
+-- The role-based policies from 20260818000024 still let a signed-in staff
+-- token write them directly over PostgREST (/rest/v1/...), bypassing all of
+-- that:
+--
+--   * a manager could INSERT a payment already marked 'paid' — the rule is
+--     that no browser request can mark a payment paid (payments_block_direct_write
+--     only covers UPDATE);
+--   * operational staff could INSERT appointments or move them (start_at,
+--     doctor, patient) outside the transactional booking engine, set any
+--     status with no notification to the patient, and write created_by /
+--     cancelled_by as someone else;
+--   * operational staff could create or edit patients outside the server's
+--     validation.
+--
+-- This migration removes those write policies and the table-level write
+-- grants for anon/authenticated. Reads are unchanged (RLS read policies stay),
+-- the doctor's own appointment-status path was already server-only
+-- (20260927000004), and the server's service-role writes are unaffected
+-- (service_role bypasses RLS and keeps its grants).
+--
+-- Rollback: re-create the six policies exactly as in
+-- 20260818000024_role_based_rls.sql and
+-- `grant insert, update on public.appointments, public.patients, public.payments to authenticated;`.
+
+drop policy if exists "appointments insert for operational staff" on public.appointments;
+drop policy if exists "appointments update for operational staff" on public.appointments;
+drop policy if exists "patients insert for operational staff" on public.patients;
+drop policy if exists "patients update for operational staff" on public.patients;
+drop policy if exists "payments insert for management" on public.payments;
+drop policy if exists "payments update for management" on public.payments;
+
+revoke insert, update, delete, truncate on public.appointments from anon, authenticated;
+revoke insert, update, delete, truncate on public.patients from anon, authenticated;
+revoke insert, update, delete, truncate on public.payments from anon, authenticated;
+
+-- =====================================================================
+-- FILE: 20260930000003_shared_rate_limits.sql
+-- =====================================================================
+-- A rate limit every server instance shares.
+--
+-- src/lib/rate-limit.ts counts requests in the memory of one server
+-- instance, so with N Cloud Run instances a caller gets up to N times the
+-- limit. That is acceptable for the public, IP-keyed limits (a load-balancer
+-- policy covers those), but not for the limit that guards clinical data: the
+-- per-doctor patient-record lookup limit, which slows down id guessing and
+-- bulk reading of patients' records. consume_rate_limit() keeps that count in
+-- Postgres, so it holds across instances.
+--
+-- One row per key (a doctor's account and what is limited), updated in place
+-- with an atomic upsert: fixed windows, the count capped at limit + 1. Keys
+-- are per staff account, so the table stays as small as the staff list.
+--
+-- Server-only: RLS on with no policies, no grants for anon/authenticated,
+-- EXECUTE for service_role alone.
+--
+-- Rollback: drop function public.consume_rate_limit(text, integer, integer);
+-- drop table public.rate_limit_buckets;
+
+create table public.rate_limit_buckets (
+  key text primary key check (length(key) between 1 and 200),
+  window_started_at timestamptz not null,
+  hits integer not null check (hits >= 0)
+);
+
+alter table public.rate_limit_buckets enable row level security;
+revoke all on public.rate_limit_buckets from public, anon, authenticated;
+grant select, insert, update, delete on public.rate_limit_buckets to service_role;
+
+comment on table public.rate_limit_buckets is
+  'Server-only request counters shared by every app instance (consume_rate_limit). No personal data: keys are an account id and a purpose.';
+
+create or replace function public.consume_rate_limit(p_key text, p_limit integer, p_window_seconds integer)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_window interval;
+  v_bucket public.rate_limit_buckets%rowtype;
+begin
+  if p_key is null or p_limit is null or p_limit < 1 or p_window_seconds is null or p_window_seconds < 1 then
+    raise exception 'rate limit: invalid key, limit or window';
+  end if;
+  v_window := make_interval(secs => p_window_seconds);
+
+  insert into public.rate_limit_buckets as b (key, window_started_at, hits)
+  values (p_key, clock_timestamp(), 1)
+  on conflict (key) do update
+    set window_started_at = case when b.window_started_at + v_window <= clock_timestamp() then clock_timestamp() else b.window_started_at end,
+        hits = case when b.window_started_at + v_window <= clock_timestamp() then 1 else least(b.hits + 1, p_limit + 1) end
+  returning * into v_bucket;
+
+  return jsonb_build_object(
+    'allowed', v_bucket.hits <= p_limit,
+    'retry_after_seconds', greatest(1, ceil(extract(epoch from (v_bucket.window_started_at + v_window - clock_timestamp())))::integer)
+  );
+end;
+$$;
+
+revoke execute on function public.consume_rate_limit(text, integer, integer) from public, anon, authenticated;
+grant execute on function public.consume_rate_limit(text, integer, integer) to service_role;
+
+comment on function public.consume_rate_limit(text, integer, integer) is
+  'Server-only. Counts one request against p_key (fixed window of p_window_seconds) and says whether it is within p_limit — shared by every app instance.';
+
+-- =====================================================================
+-- FILE: 20260930000004_anon_no_table_privileges.sql
+-- =====================================================================
+-- The anonymous role has no table privileges in public — as 20260813000013
+-- always intended ("Anonymous role intentionally receives NO table
+-- privileges"), now also on a real Supabase project.
+--
+-- A Supabase project grants anon (and authenticated, service_role) privileges
+-- on every table postgres creates in public through its own default
+-- privileges; 20260813000013 only added grants and never took anon's away.
+-- RLS still returned no rows to an anonymous request (no anon policy exists),
+-- but the table was reachable: an anonymous `GET /rest/v1/patients` answered
+-- 200 [] instead of being refused. Found by running the suites on the Supabase
+-- CLI stack in CI.
+--
+-- Nothing reads a table with the anon role: patients use the server APIs,
+-- staff sessions are `authenticated`, and the health check only asks for the
+-- API root. anon keeps USAGE on the schema (PostgREST needs it to answer at
+-- all) and EXECUTE on the functions that already allow it.
+--
+-- Rollback: `grant select, insert, update, delete on all tables in schema public to anon;`
+-- (Supabase's default) — not recommended.
+
+revoke all on all tables in schema public from anon;
+revoke all on all sequences in schema public from anon;
+
+-- Tables and sequences created later by this role (every migration) as well.
+alter default privileges in schema public revoke all on tables from anon;
+alter default privileges in schema public revoke all on sequences from anon;
+
+-- =====================================================================
+-- FILE: 20260930000005_unified_booking_engine.sql
+-- =====================================================================
+-- Unified booking engine: one authoritative booking operation, and a
+-- database guarantee that a doctor can never hold two active appointments in
+-- overlapping time.
+--
+-- The invariant — for any clinic, doctor and conflicting time interval, at
+-- most ONE active appointment — is enforced by the exclusion constraint
+-- no_overlapping_active_appointments, which Postgres checks on every INSERT
+-- and UPDATE by every role, whatever code path wrote the row. Everything else
+-- here serves it:
+--
+-- 1. Tenancy is structural. Composite foreign keys make an appointment's
+--    doctor, patient and service belong to the appointment's own clinic, and
+--    the constraint names the clinic explicitly (clinic_id, doctor_id, time):
+--    a doctor row belongs to exactly one clinic, so the same time in another
+--    clinic is never a conflict, and a row can never pair a clinic with
+--    another clinic's doctor.
+-- 2. Active = every status except 'cancelled' and 'no_show' (the product's
+--    existing model, unchanged): cancelling or marking a no-show releases the
+--    time; 'completed' keeps it (it happened).
+-- 3. Appointments have variable durations (service duration or the doctor's
+--    override), so conflicts are interval overlaps on [start_at, end_at):
+--    14:00–14:30 and 14:15–14:45 conflict, 14:00–14:30 and 14:30–15:00 do not.
+-- 4. book_appointment() is the one booking operation (Mini App, bot deep link,
+--    website, reception, admin, the doctor's walk-in): it validates clinic,
+--    doctor, service, patient, time, working hours and time blocks, serializes
+--    per doctor with an advisory lock, re-checks inside the transaction and
+--    inserts — a conflict found by the constraint instead (any race the lock
+--    does not cover) comes back as 'slot_taken', never as a raw error.
+-- 5. Idempotency: an optional key per booking attempt, unique per clinic. A
+--    retried request (double click, network retry, reconnect) returns the
+--    appointment the first attempt created (replayed = true) instead of a
+--    second one; the same key for a different booking is refused.
+-- 6. Working hours are compared as local date-times on the slot's own local
+--    day: a slot running past midnight (23:50–00:10) used to pass a
+--    time-of-day comparison. The clinic's IANA timezone (clinics.timezone)
+--    is applied inside Postgres, so DST, where a timezone has it, is handled.
+-- 7. reschedule_appointment() is clinic-scoped, locks the appointment row and
+--    takes the same per-doctor lock; the appointment never conflicts with
+--    itself.
+-- 8. The slot-validation trigger (direct writes) raises the overlap as
+--    exclusion_violation (23P01), like the constraint, so every path reports a
+--    conflict the same way.
+--
+-- Rollback: restore book_appointment / reschedule_appointment /
+-- appointments_validate_slot from 20260813000009 + 20260813000020 +
+-- 20260912000001; drop slot_within_working_hours, booking_replay; drop
+-- index appointments_clinic_idempotency_key_idx and column
+-- appointments.idempotency_key; recreate the constraint on (doctor_id, range);
+-- restore the single-column appointments_{doctor,patient,service}_id_fkey and
+-- drop services_id_clinic_id_key.
+
+-- ---------- 1. Same-clinic foreign keys ----------
+
+alter table public.services add constraint services_id_clinic_id_key unique (id, clinic_id);
+
+-- The single-column keys become composite ones under the same names (and
+-- the same ON DELETE rules): one relationship per table, so the API's embeds
+-- (doctors(name), appointments!appointments_patient_id_fkey …) are unchanged.
+alter table public.appointments
+  drop constraint appointments_doctor_id_fkey,
+  drop constraint appointments_patient_id_fkey,
+  drop constraint appointments_service_id_fkey,
+  add constraint appointments_doctor_id_fkey
+    foreign key (doctor_id, clinic_id) references public.doctors (id, clinic_id) on delete restrict,
+  add constraint appointments_patient_id_fkey
+    foreign key (patient_id, clinic_id) references public.patients (id, clinic_id) on delete cascade,
+  add constraint appointments_service_id_fkey
+    foreign key (service_id, clinic_id) references public.services (id, clinic_id) on delete restrict;
+
+-- ---------- 2. The invariant, per clinic ----------
+
+alter table public.appointments drop constraint no_overlapping_active_appointments;
+alter table public.appointments add constraint no_overlapping_active_appointments
+  exclude using gist (
+    clinic_id with =,
+    doctor_id with =,
+    tstzrange(start_at, end_at, '[)') with &&
+  ) where (status not in ('cancelled', 'no_show'));
+
+comment on constraint no_overlapping_active_appointments on public.appointments is
+  'At most one active (not cancelled / no-show) appointment per clinic, doctor and overlapping [start_at, end_at) — the booking invariant.';
+
+-- ---------- 3. Idempotency ----------
+
+alter table public.appointments
+  add column idempotency_key text
+    constraint appointments_idempotency_key_format
+      check (idempotency_key is null or idempotency_key ~ '^[A-Za-z0-9_-]{16,128}$');
+
+create unique index appointments_clinic_idempotency_key_idx
+  on public.appointments (clinic_id, idempotency_key)
+  where idempotency_key is not null;
+
+comment on column public.appointments.idempotency_key is
+  'Client-generated key of the booking attempt that created the appointment; a retry with the same key returns this appointment.';
+
+-- ---------- 4. Working hours on the slot's own local day ----------
+
+create or replace function public.slot_within_working_hours(
+  p_doctor_id uuid,
+  p_timezone text,
+  p_start_at timestamptz,
+  p_end_at timestamptz
+)
+returns boolean
+language sql
+stable
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1
+      from public.doctor_working_hours wh
+     where wh.doctor_id = p_doctor_id
+       and wh.weekday = extract(isodow from p_start_at at time zone p_timezone)
+       and (p_start_at at time zone p_timezone) >= (p_start_at at time zone p_timezone)::date + wh.start_time
+       and (p_end_at at time zone p_timezone) <= (p_start_at at time zone p_timezone)::date + wh.end_time
+  );
+$$;
+
+comment on function public.slot_within_working_hours(uuid, text, timestamptz, timestamptz) is
+  'True when [start, end) lies inside one of the doctor''s working-hour windows on the start''s local day (clinic timezone). A slot crossing local midnight is outside.';
+
+-- ---------- 5. Replaying an idempotent booking ----------
+
+create or replace function public.booking_replay(
+  p_clinic_id uuid,
+  p_idempotency_key text,
+  p_patient_id uuid,
+  p_doctor_id uuid,
+  p_service_id uuid,
+  p_start_at timestamptz
+)
+returns table (appointment_id uuid, amount numeric, error_code text)
+language sql
+stable
+set search_path = public, pg_temp
+as $$
+  select a.id,
+         (select p.amount from public.payments p where p.appointment_id = a.id order by p.created_at limit 1),
+         case
+           when a.patient_id = p_patient_id and a.doctor_id = p_doctor_id
+                and a.service_id = p_service_id and a.start_at = p_start_at then null
+           else 'idempotency_key_reused'
+         end
+    from public.appointments a
+   where a.clinic_id = p_clinic_id
+     and a.idempotency_key = p_idempotency_key;
+$$;
+
+-- ---------- 6. The booking operation ----------
+
+drop function public.book_appointment(
+  uuid, uuid, uuid, uuid, timestamptz, public.appointment_status, public.appointment_source, text, uuid
+);
+
+create function public.book_appointment(
+  p_clinic_id uuid,
+  p_patient_id uuid,
+  p_doctor_id uuid,
+  p_service_id uuid,
+  p_start_at timestamptz,
+  p_status public.appointment_status default 'pending',
+  p_source public.appointment_source default 'telegram_mini_app',
+  p_notes text default null,
+  p_created_by uuid default null,
+  p_idempotency_key text default null,
+  out appointment_id uuid,
+  out amount numeric,
+  out error_code text,
+  out error_message text,
+  out replayed boolean
+)
+returns record
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_clinic public.clinics%rowtype;
+  v_service public.services%rowtype;
+  v_duration_minutes int;
+  v_price numeric;
+  v_end_at timestamptz;
+  v_offers_service boolean;
+  v_replay record;
+  v_constraint text;
+begin
+  replayed := false;
+
+  -- A booking starts a visit; closing statuses are never booked.
+  if p_status not in ('pending', 'confirmed', 'checked_in', 'in_progress') then
+    error_code := 'invalid_status'; return;
+  end if;
+
+  select * into v_clinic from public.clinics where id = p_clinic_id and is_active;
+  if not found then
+    error_code := 'clinic_not_found'; return;
+  end if;
+
+  if not exists (select 1 from public.doctors where id = p_doctor_id and clinic_id = p_clinic_id and active) then
+    error_code := 'doctor_not_found'; return;
+  end if;
+
+  select * into v_service from public.services where id = p_service_id and clinic_id = p_clinic_id and active;
+  if not found then
+    error_code := 'service_not_found'; return;
+  end if;
+
+  if not exists (select 1 from public.patients where id = p_patient_id and clinic_id = p_clinic_id) then
+    error_code := 'patient_not_found'; return;
+  end if;
+
+  -- A doctor with an explicit service list performs only those services.
+  select exists (select 1 from public.doctor_services where doctor_id = p_doctor_id) into v_offers_service;
+  if v_offers_service and not exists (
+    select 1 from public.doctor_services where doctor_id = p_doctor_id and service_id = p_service_id
+  ) then
+    error_code := 'service_not_offered'; return;
+  end if;
+
+  -- A retried request returns the first attempt's appointment.
+  if p_idempotency_key is not null then
+    select * into v_replay
+      from public.booking_replay(p_clinic_id, p_idempotency_key, p_patient_id, p_doctor_id, p_service_id, p_start_at);
+    if found then
+      appointment_id := case when v_replay.error_code is null then v_replay.appointment_id end;
+      amount := case when v_replay.error_code is null then v_replay.amount end;
+      error_code := v_replay.error_code;
+      replayed := v_replay.error_code is null;
+      return;
+    end if;
+  end if;
+
+  -- Duration and price come from the service (or the doctor's override) —
+  -- never from the caller.
+  select coalesce(ds.duration_override_minutes, v_service.duration_minutes),
+         coalesce(ds.price_override, v_service.price)
+    into v_duration_minutes, v_price
+    from public.services s
+    left join public.doctor_services ds on ds.service_id = s.id and ds.doctor_id = p_doctor_id
+   where s.id = p_service_id;
+
+  if p_start_at <= now() then
+    error_code := 'past_slot'; return;
+  end if;
+  v_end_at := p_start_at + make_interval(mins => v_duration_minutes);
+
+  -- Serialize bookings and reschedules of this doctor (released at commit).
+  perform pg_advisory_xact_lock(hashtextextended(p_clinic_id::text || ':' || p_doctor_id::text, 0));
+
+  -- The same attempt may have committed while this one waited for the lock.
+  if p_idempotency_key is not null then
+    select * into v_replay
+      from public.booking_replay(p_clinic_id, p_idempotency_key, p_patient_id, p_doctor_id, p_service_id, p_start_at);
+    if found then
+      appointment_id := case when v_replay.error_code is null then v_replay.appointment_id end;
+      amount := case when v_replay.error_code is null then v_replay.amount end;
+      error_code := v_replay.error_code;
+      replayed := v_replay.error_code is null;
+      return;
+    end if;
+  end if;
+
+  if not public.slot_within_working_hours(p_doctor_id, v_clinic.timezone, p_start_at, v_end_at) then
+    error_code := 'outside_working_hours'; return;
+  end if;
+
+  if exists (
+    select 1 from public.doctor_time_blocks tb
+     where tb.doctor_id = p_doctor_id
+       and tstzrange(tb.starts_at, tb.ends_at, '[)') && tstzrange(p_start_at, v_end_at, '[)')
+  ) then
+    error_code := 'time_blocked'; return;
+  end if;
+
+  -- Re-check under the lock (belt) …
+  if exists (
+    select 1 from public.appointments a
+     where a.clinic_id = p_clinic_id
+       and a.doctor_id = p_doctor_id
+       and a.status not in ('cancelled', 'no_show')
+       and tstzrange(a.start_at, a.end_at, '[)') && tstzrange(p_start_at, v_end_at, '[)')
+  ) then
+    error_code := 'slot_taken'; error_message := 'Bu vaqt band qilingan'; return;
+  end if;
+
+  -- … and the exclusion constraint decides (braces).
+  begin
+    insert into public.appointments (
+      clinic_id, patient_id, doctor_id, service_id,
+      start_at, end_at, status, source, notes, created_by, idempotency_key
+    ) values (
+      p_clinic_id, p_patient_id, p_doctor_id, p_service_id,
+      p_start_at, v_end_at, p_status, p_source, p_notes, p_created_by, p_idempotency_key
+    )
+    returning id into appointment_id;
+
+    insert into public.payments (clinic_id, appointment_id, patient_id, amount, currency)
+    values (p_clinic_id, appointment_id, p_patient_id, v_price, v_clinic.currency);
+
+    amount := v_price;
+    error_code := null;
+    return;
+  exception
+    when exclusion_violation then
+      appointment_id := null;
+      error_code := 'slot_taken';
+      error_message := 'Bu vaqt band qilingan';
+      return;
+    when unique_violation then
+      get stacked diagnostics v_constraint = constraint_name;
+      if v_constraint is distinct from 'appointments_clinic_idempotency_key_idx' then
+        raise;
+      end if;
+      -- The same key was committed by a concurrent attempt for another doctor.
+      select * into v_replay
+        from public.booking_replay(p_clinic_id, p_idempotency_key, p_patient_id, p_doctor_id, p_service_id, p_start_at);
+      appointment_id := case when v_replay.error_code is null then v_replay.appointment_id end;
+      amount := case when v_replay.error_code is null then v_replay.amount end;
+      error_code := v_replay.error_code;
+      replayed := v_replay.error_code is null;
+      return;
+  end;
+end;
+$$;
+
+comment on function public.book_appointment(uuid, uuid, uuid, uuid, timestamptz, public.appointment_status, public.appointment_source, text, uuid, text) is
+  'The one booking operation for every channel. Server-only. Returns appointment_id, or error_code in (invalid_status, clinic_not_found, doctor_not_found, service_not_found, patient_not_found, service_not_offered, past_slot, outside_working_hours, time_blocked, slot_taken, idempotency_key_reused); replayed = true when an earlier attempt with the same idempotency key created it.';
+
+-- ---------- 7. Rescheduling ----------
+
+drop function public.reschedule_appointment(uuid, timestamptz, uuid);
+
+create function public.reschedule_appointment(
+  p_clinic_id uuid,
+  p_appointment_id uuid,
+  p_new_start_at timestamptz,
+  p_actor uuid default null,
+  out error_code text,
+  out error_message text
+)
+returns record
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_appt public.appointments%rowtype;
+  v_clinic public.clinics%rowtype;
+  v_duration_minutes int;
+  v_new_end_at timestamptz;
+begin
+  select * into v_appt from public.appointments where id = p_appointment_id and clinic_id = p_clinic_id;
+  if not found then
+    error_code := 'appointment_not_found'; return;
+  end if;
+
+  -- Same lock as book_appointment, then the row itself: a concurrent
+  -- reschedule, cancellation or booking of this doctor waits.
+  perform pg_advisory_xact_lock(hashtextextended(v_appt.clinic_id::text || ':' || v_appt.doctor_id::text, 0));
+  select * into v_appt from public.appointments where id = p_appointment_id and clinic_id = p_clinic_id for update;
+
+  if v_appt.status in ('cancelled', 'no_show', 'completed') then
+    error_code := 'not_reschedulable'; return;
+  end if;
+
+  if p_new_start_at <= now() then
+    error_code := 'past_slot'; return;
+  end if;
+
+  select * into v_clinic from public.clinics where id = v_appt.clinic_id;
+  select coalesce(ds.duration_override_minutes, s.duration_minutes)
+    into v_duration_minutes
+    from public.services s
+    left join public.doctor_services ds on ds.service_id = s.id and ds.doctor_id = v_appt.doctor_id
+   where s.id = v_appt.service_id;
+  v_new_end_at := p_new_start_at + make_interval(mins => v_duration_minutes);
+
+  if not public.slot_within_working_hours(v_appt.doctor_id, v_clinic.timezone, p_new_start_at, v_new_end_at) then
+    error_code := 'outside_working_hours'; return;
+  end if;
+
+  if exists (
+    select 1 from public.doctor_time_blocks tb
+     where tb.doctor_id = v_appt.doctor_id
+       and tstzrange(tb.starts_at, tb.ends_at, '[)') && tstzrange(p_new_start_at, v_new_end_at, '[)')
+  ) then
+    error_code := 'time_blocked'; return;
+  end if;
+
+  -- The appointment never conflicts with itself.
+  if exists (
+    select 1 from public.appointments a
+     where a.clinic_id = v_appt.clinic_id
+       and a.doctor_id = v_appt.doctor_id
+       and a.id <> p_appointment_id
+       and a.status not in ('cancelled', 'no_show')
+       and tstzrange(a.start_at, a.end_at, '[)') && tstzrange(p_new_start_at, v_new_end_at, '[)')
+  ) then
+    error_code := 'slot_taken'; error_message := 'Bu vaqt band qilingan'; return;
+  end if;
+
+  begin
+    -- The status is kept: moving a confirmed visit does not downgrade it.
+    update public.appointments
+       set start_at = p_new_start_at,
+           end_at = v_new_end_at
+     where id = p_appointment_id;
+    error_code := null;
+    return;
+  exception
+    when exclusion_violation then
+      error_code := 'slot_taken';
+      error_message := 'Bu vaqt band qilingan';
+      return;
+  end;
+end;
+$$;
+
+-- ---------- 8. Direct writes report an overlap as the constraint does ----------
+
+create or replace function public.appointments_validate_slot()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_clinic_tz text;
+  v_offers_service boolean;
+begin
+  -- cancelled/no_show rows never block availability; skip validation.
+  if new.status in ('cancelled', 'no_show') then
+    return new;
+  end if;
+
+  -- Updates that do not move the slot (status, notes, cancellation fields)
+  -- do not need availability validation (the exclusion constraint still
+  -- decides whether a reactivated appointment may hold its time).
+  if tg_op = 'UPDATE'
+     and new.start_at is not distinct from old.start_at
+     and new.end_at is not distinct from old.end_at
+     and new.doctor_id is not distinct from old.doctor_id then
+    return new;
+  end if;
+
+  select timezone into v_clinic_tz
+  from public.clinics
+  where id = new.clinic_id and is_active;
+  if not found then
+    raise exception 'appointment validation: clinic not found or inactive';
+  end if;
+
+  if not exists (
+    select 1 from public.doctors d
+    where d.id = new.doctor_id and d.clinic_id = new.clinic_id and d.active
+  ) then
+    raise exception 'appointment validation: doctor not found or inactive';
+  end if;
+
+  if not exists (
+    select 1 from public.services s
+    where s.id = new.service_id and s.clinic_id = new.clinic_id and s.active
+  ) then
+    raise exception 'appointment validation: service not found or inactive';
+  end if;
+
+  if not exists (
+    select 1 from public.patients p
+    where p.id = new.patient_id and p.clinic_id = new.clinic_id
+  ) then
+    raise exception 'appointment validation: patient not found';
+  end if;
+
+  -- Closed service-list rule: a doctor with explicit services must offer it.
+  select exists (select 1 from public.doctor_services where doctor_id = new.doctor_id)
+    into v_offers_service;
+  if v_offers_service and not exists (
+    select 1 from public.doctor_services
+    where doctor_id = new.doctor_id and service_id = new.service_id
+  ) then
+    raise exception 'appointment validation: service not offered by doctor';
+  end if;
+
+  -- Whole slot within one working-hour window of its own local day.
+  if not public.slot_within_working_hours(new.doctor_id, v_clinic_tz, new.start_at, new.end_at) then
+    raise exception 'appointment validation: outside working hours';
+  end if;
+
+  -- No time-block overlap.
+  if exists (
+    select 1 from public.doctor_time_blocks tb
+    where tb.doctor_id = new.doctor_id
+      and tstzrange(tb.starts_at, tb.ends_at, '[)') && tstzrange(new.start_at, new.end_at, '[)')
+  ) then
+    raise exception 'appointment validation: slot is inside a time block';
+  end if;
+
+  -- No overlap with other active appointments (the new row is not yet in the
+  -- table on INSERT, so self-exclusion is only needed on UPDATE). Raised as
+  -- exclusion_violation, exactly like the constraint.
+  if exists (
+    select 1 from public.appointments a
+    where a.clinic_id = new.clinic_id
+      and a.doctor_id = new.doctor_id
+      and (tg_op = 'INSERT' or a.id <> new.id)
+      and a.status not in ('cancelled', 'no_show')
+      and tstzrange(a.start_at, a.end_at, '[)') && tstzrange(new.start_at, new.end_at, '[)')
+  ) then
+    raise exception using
+      errcode = 'exclusion_violation',
+      message = 'appointment validation: slot overlaps another appointment',
+      constraint = 'no_overlapping_active_appointments';
+  end if;
+
+  return new;
+end;
+$$;
+
+-- ---------- 9. Grants: server-only ----------
+
+revoke all on function public.slot_within_working_hours(uuid, text, timestamptz, timestamptz) from public, anon, authenticated;
+revoke all on function public.booking_replay(uuid, text, uuid, uuid, uuid, timestamptz) from public, anon, authenticated;
+revoke all on function public.book_appointment(uuid, uuid, uuid, uuid, timestamptz, public.appointment_status, public.appointment_source, text, uuid, text) from public, anon, authenticated;
+revoke all on function public.reschedule_appointment(uuid, uuid, timestamptz, uuid) from public, anon, authenticated;
+grant execute on function public.slot_within_working_hours(uuid, text, timestamptz, timestamptz) to service_role;
+grant execute on function public.booking_replay(uuid, text, uuid, uuid, uuid, timestamptz) to service_role;
+grant execute on function public.book_appointment(uuid, uuid, uuid, uuid, timestamptz, public.appointment_status, public.appointment_source, text, uuid, text) to service_role;
+grant execute on function public.reschedule_appointment(uuid, uuid, timestamptz, uuid) to service_role;
+
+-- =====================================================================
+-- FILE: 20260930000006_tenant_integrity_hardening.sql
+-- =====================================================================
+-- Tenant integrity and hardening, from an audit of every earlier phase.
+--
+-- 1. Same-clinic references everywhere. Fourteen foreign keys between
+--    clinic-owned tables checked only the id, so a row of clinic A could point
+--    at clinic B's doctor, patient, conversation or appointment. Combined with
+--    the direct-write policies below, a manager of one clinic could add working
+--    hours or time blocks to another clinic's doctor, and operational staff
+--    could attach messages to another clinic's conversation (the insert
+--    policies compared c.clinic_id with itself). Every such key is now
+--    composite — (x_id, clinic_id) → parent(id, clinic_id) — under its old
+--    name, so PostgREST embeds keep working. The migration refuses to run if
+--    existing rows already cross clinics (listed in the error).
+-- 2. Patient communication is written by the server only. Conversations,
+--    messages, voice messages and notification jobs are written by the
+--    server after authorization (conversation takeover is compare-and-set,
+--    replies are recorded after Telegram accepted them); no application code
+--    writes them with a signed-in user's token. The direct-write policies let
+--    staff forge undelivered "operator replies" or point a reminder at any
+--    Telegram user, so they are removed with the table privileges. Staff
+--    uploads into the private voice bucket are removed likewise.
+-- 3. Every SECURITY DEFINER function gets search_path = public, pg_temp, and
+--    only the roles that need them may execute them: RLS helper functions for
+--    signed-in users, nothing for anonymous callers, and trigger functions for
+--    nobody (triggers do not need the privilege).
+-- 4. Reactivating a cancelled or no-show appointment is validated like a new
+--    booking (clinic, doctor, service, working hours, time blocks, overlap),
+--    and the slot trigger reports each refusal with a machine-readable hint.
+-- 5. Deleting a clinic works: the cascade no longer fails on audit rows for the
+--    clinic being erased (its own audit rows go with it).
+-- 6. conversations.urgent_at: urgent wording escalates to the clinic's staff.
+-- 7. voice_messages.purged_at: the retention the privacy page promises is
+--    enforced — past expires_at the audio, the transcripts and the Telegram
+--    file reference are removed (the row stays as a record that a voice
+--    message was received).
+
+-- ---------- 1. Same-clinic foreign keys ----------
+
+do $$
+declare
+  v_report text;
+begin
+  select string_agg(format('%s: %s row(s)', label, n), '; ')
+    into v_report
+  from (
+    select 'services.specialty_id' as label, count(*) as n from public.services c join public.specialties p on p.id = c.specialty_id where p.clinic_id <> c.clinic_id
+    union all select 'doctors.specialty_id', count(*) from public.doctors c join public.specialties p on p.id = c.specialty_id where p.clinic_id <> c.clinic_id
+    union all select 'doctor_working_hours.doctor_id', count(*) from public.doctor_working_hours c join public.doctors p on p.id = c.doctor_id where p.clinic_id <> c.clinic_id
+    union all select 'doctor_time_blocks.doctor_id', count(*) from public.doctor_time_blocks c join public.doctors p on p.id = c.doctor_id where p.clinic_id <> c.clinic_id
+    union all select 'payments.appointment_id', count(*) from public.payments c join public.appointments p on p.id = c.appointment_id where p.clinic_id <> c.clinic_id
+    union all select 'payments.patient_id', count(*) from public.payments c join public.patients p on p.id = c.patient_id where p.clinic_id <> c.clinic_id
+    union all select 'conversations.patient_id', count(*) from public.conversations c join public.patients p on p.id = c.patient_id where p.clinic_id <> c.clinic_id
+    union all select 'voice_messages.conversation_id', count(*) from public.voice_messages c join public.conversations p on p.id = c.conversation_id where p.clinic_id <> c.clinic_id
+    union all select 'messages.conversation_id', count(*) from public.messages c join public.conversations p on p.id = c.conversation_id where p.clinic_id <> c.clinic_id
+    union all select 'messages.voice_message_id', count(*) from public.messages c join public.voice_messages p on p.id = c.voice_message_id where p.clinic_id <> c.clinic_id
+    union all select 'notification_jobs.appointment_id', count(*) from public.notification_jobs c join public.appointments p on p.id = c.appointment_id where p.clinic_id <> c.clinic_id
+    union all select 'notification_jobs.conversation_id', count(*) from public.notification_jobs c join public.conversations p on p.id = c.conversation_id where p.clinic_id <> c.clinic_id
+    union all select 'analytics_events.patient_id', count(*) from public.analytics_events c join public.patients p on p.id = c.patient_id where p.clinic_id <> c.clinic_id
+    union all select 'clinical_records.corrects_record_id', count(*) from public.clinical_records c join public.clinical_records p on p.id = c.corrects_record_id where p.clinic_id <> c.clinic_id
+  ) crossing
+  where n > 0;
+  if v_report is not null then
+    raise exception 'tenant integrity: rows reference another clinic (%). Investigate and correct them before applying this migration.', v_report;
+  end if;
+end;
+$$;
+
+alter table public.specialties add constraint specialties_id_clinic_id_key unique (id, clinic_id);
+alter table public.appointments add constraint appointments_id_clinic_id_key unique (id, clinic_id);
+alter table public.conversations add constraint conversations_id_clinic_id_key unique (id, clinic_id);
+alter table public.voice_messages add constraint voice_messages_id_clinic_id_key unique (id, clinic_id);
+alter table public.clinical_records add constraint clinical_records_id_clinic_id_key unique (id, clinic_id);
+-- One payment per appointment, stated over the composite key's columns too, so
+-- PostgREST still embeds an appointment's payment as one object.
+alter table public.payments add constraint payments_appointment_id_clinic_id_key unique (appointment_id, clinic_id);
+
+alter table public.services
+  drop constraint services_specialty_id_fkey,
+  add constraint services_specialty_id_fkey
+    foreign key (specialty_id, clinic_id) references public.specialties (id, clinic_id) on delete set null (specialty_id);
+
+alter table public.doctors
+  drop constraint doctors_specialty_id_fkey,
+  add constraint doctors_specialty_id_fkey
+    foreign key (specialty_id, clinic_id) references public.specialties (id, clinic_id) on delete set null (specialty_id);
+
+alter table public.doctor_working_hours
+  drop constraint doctor_working_hours_doctor_id_fkey,
+  add constraint doctor_working_hours_doctor_id_fkey
+    foreign key (doctor_id, clinic_id) references public.doctors (id, clinic_id) on delete cascade;
+
+alter table public.doctor_time_blocks
+  drop constraint doctor_time_blocks_doctor_id_fkey,
+  add constraint doctor_time_blocks_doctor_id_fkey
+    foreign key (doctor_id, clinic_id) references public.doctors (id, clinic_id) on delete cascade;
+
+alter table public.payments
+  drop constraint payments_appointment_id_fkey,
+  add constraint payments_appointment_id_fkey
+    foreign key (appointment_id, clinic_id) references public.appointments (id, clinic_id) on delete cascade,
+  drop constraint payments_patient_id_fkey,
+  add constraint payments_patient_id_fkey
+    foreign key (patient_id, clinic_id) references public.patients (id, clinic_id) on delete cascade;
+
+alter table public.conversations
+  drop constraint conversations_patient_id_fkey,
+  add constraint conversations_patient_id_fkey
+    foreign key (patient_id, clinic_id) references public.patients (id, clinic_id) on delete cascade;
+
+alter table public.voice_messages
+  drop constraint voice_messages_conversation_id_fkey,
+  add constraint voice_messages_conversation_id_fkey
+    foreign key (conversation_id, clinic_id) references public.conversations (id, clinic_id) on delete cascade;
+
+alter table public.messages
+  drop constraint messages_conversation_id_fkey,
+  add constraint messages_conversation_id_fkey
+    foreign key (conversation_id, clinic_id) references public.conversations (id, clinic_id) on delete cascade,
+  drop constraint messages_voice_message_id_fkey,
+  add constraint messages_voice_message_id_fkey
+    foreign key (voice_message_id, clinic_id) references public.voice_messages (id, clinic_id) on delete set null (voice_message_id);
+
+alter table public.notification_jobs
+  drop constraint notification_jobs_appointment_id_fkey,
+  add constraint notification_jobs_appointment_id_fkey
+    foreign key (appointment_id, clinic_id) references public.appointments (id, clinic_id) on delete cascade,
+  drop constraint notification_jobs_conversation_id_fkey,
+  add constraint notification_jobs_conversation_id_fkey
+    foreign key (conversation_id, clinic_id) references public.conversations (id, clinic_id) on delete set null (conversation_id);
+
+alter table public.analytics_events
+  drop constraint analytics_events_patient_id_fkey,
+  add constraint analytics_events_patient_id_fkey
+    foreign key (patient_id, clinic_id) references public.patients (id, clinic_id) on delete set null (patient_id);
+
+alter table public.clinical_records
+  drop constraint clinical_records_corrects_record_id_fkey,
+  add constraint clinical_records_corrects_record_id_fkey
+    foreign key (corrects_record_id, clinic_id) references public.clinical_records (id, clinic_id);
+
+-- ---------- 2. Patient communication is written by the server only ----------
+
+drop policy if exists "conversations insert for operational staff" on public.conversations;
+drop policy if exists "conversations update for operational staff" on public.conversations;
+drop policy if exists "messages insert for operational staff" on public.messages;
+drop policy if exists "voice_messages insert for operational staff" on public.voice_messages;
+drop policy if exists "voice_messages update for management" on public.voice_messages;
+drop policy if exists "notification_jobs update for management" on public.notification_jobs;
+
+revoke insert, update, delete, truncate on table
+  public.conversations,
+  public.messages,
+  public.voice_messages,
+  public.notification_jobs,
+  -- No write policy exists for these; the privilege alone was dead weight.
+  public.processed_webhooks,
+  public.clinic_telegram_integrations,
+  public.analytics_events,
+  public.platform_admins
+from authenticated;
+
+drop policy if exists "voice-messages staff upload" on storage.objects;
+
+-- ---------- 3. SECURITY DEFINER functions: safe search_path, minimum grants ----------
+
+do $$
+declare
+  f record;
+begin
+  for f in
+    select p.oid::regprocedure as sig,
+           p.prorettype = 'trigger'::regtype as is_trigger,
+           has_function_privilege('authenticated', p.oid, 'execute') as for_signed_in
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.prosecdef
+  loop
+    execute format('alter function %s set search_path = public, pg_temp', f.sig);
+    execute format('revoke all on function %s from public, anon', f.sig);
+    if f.is_trigger then
+      -- A trigger runs its function without checking EXECUTE; nobody calls it.
+      execute format('revoke all on function %s from authenticated', f.sig);
+    elsif f.for_signed_in then
+      -- RLS helpers (is_clinic_staff, current_doctor_id, ...) are evaluated as
+      -- the signed-in user; keep exactly the access they had.
+      execute format('grant execute on function %s to authenticated, service_role', f.sig);
+    end if;
+  end loop;
+end;
+$$;
+
+-- ---------- 4. Reactivation is validated like a booking; refusals carry a hint ----------
+
+create or replace function public.appointments_validate_slot()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_clinic_tz text;
+  v_offers_service boolean;
+begin
+  -- cancelled/no_show rows never block availability; skip validation.
+  if new.status in ('cancelled', 'no_show') then
+    return new;
+  end if;
+
+  -- An active appointment whose slot does not move (status, notes and the
+  -- like) needs no validation. A cancelled or no-show appointment coming back
+  -- to life is a new claim on its time and is validated in full.
+  if tg_op = 'UPDATE'
+     and old.status not in ('cancelled', 'no_show')
+     and new.start_at is not distinct from old.start_at
+     and new.end_at is not distinct from old.end_at
+     and new.doctor_id is not distinct from old.doctor_id then
+    return new;
+  end if;
+
+  select timezone into v_clinic_tz
+  from public.clinics
+  where id = new.clinic_id and is_active;
+  if not found then
+    raise exception using message = 'appointment validation: clinic not found or inactive', hint = 'clinic_not_found';
+  end if;
+
+  if not exists (
+    select 1 from public.doctors d
+    where d.id = new.doctor_id and d.clinic_id = new.clinic_id and d.active
+  ) then
+    raise exception using message = 'appointment validation: doctor not found or inactive', hint = 'doctor_not_found';
+  end if;
+
+  if not exists (
+    select 1 from public.services s
+    where s.id = new.service_id and s.clinic_id = new.clinic_id and s.active
+  ) then
+    raise exception using message = 'appointment validation: service not found or inactive', hint = 'service_not_found';
+  end if;
+
+  if not exists (
+    select 1 from public.patients p
+    where p.id = new.patient_id and p.clinic_id = new.clinic_id
+  ) then
+    raise exception using message = 'appointment validation: patient not found', hint = 'patient_not_found';
+  end if;
+
+  -- Closed service-list rule: a doctor with explicit services must offer it.
+  select exists (select 1 from public.doctor_services where doctor_id = new.doctor_id)
+    into v_offers_service;
+  if v_offers_service and not exists (
+    select 1 from public.doctor_services
+    where doctor_id = new.doctor_id and service_id = new.service_id
+  ) then
+    raise exception using message = 'appointment validation: service not offered by doctor', hint = 'service_not_offered';
+  end if;
+
+  -- Whole slot within one working-hour window of its own local day.
+  if not public.slot_within_working_hours(new.doctor_id, v_clinic_tz, new.start_at, new.end_at) then
+    raise exception using message = 'appointment validation: outside working hours', hint = 'outside_working_hours';
+  end if;
+
+  -- No time-block overlap.
+  if exists (
+    select 1 from public.doctor_time_blocks tb
+    where tb.doctor_id = new.doctor_id
+      and tstzrange(tb.starts_at, tb.ends_at, '[)') && tstzrange(new.start_at, new.end_at, '[)')
+  ) then
+    raise exception using message = 'appointment validation: slot is inside a time block', hint = 'time_blocked';
+  end if;
+
+  -- No overlap with other active appointments (the new row is not yet in the
+  -- table on INSERT, so self-exclusion is only needed on UPDATE). Raised as
+  -- exclusion_violation, exactly like the constraint.
+  if exists (
+    select 1 from public.appointments a
+    where a.clinic_id = new.clinic_id
+      and a.doctor_id = new.doctor_id
+      and (tg_op = 'INSERT' or a.id <> new.id)
+      and a.status not in ('cancelled', 'no_show')
+      and tstzrange(a.start_at, a.end_at, '[)') && tstzrange(new.start_at, new.end_at, '[)')
+  ) then
+    raise exception using
+      errcode = 'exclusion_violation',
+      message = 'appointment validation: slot overlaps another appointment',
+      hint = 'slot_taken',
+      constraint = 'no_overlapping_active_appointments';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.appointments_validate_slot() from public, anon, authenticated;
+
+-- ---------- 5. Deleting a clinic erases its audit trail with it ----------
+
+-- The clinics being deleted in this transaction. Child rows removed by the
+-- cascade (which runs at the end of the DELETE statement, after every
+-- clinic row is gone) would otherwise write audit rows for a clinic that no
+-- longer exists (audit_events_clinic_id_fkey), and the whole deletion failed.
+create or replace function public.clinics_mark_erasure()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  perform set_config(
+    'app.erasing_clinics',
+    coalesce(current_setting('app.erasing_clinics', true), '') || old.id::text || ',',
+    true
+  );
+  return old;
+end;
+$$;
+
+revoke all on function public.clinics_mark_erasure() from public, anon, authenticated;
+
+drop trigger if exists clinics_mark_erasure on public.clinics;
+create trigger clinics_mark_erasure
+  before delete on public.clinics
+  for each row execute function public.clinics_mark_erasure();
+
+create or replace function public.audit_events_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  -- Rows removed with a clinic that is being deleted are not audited: the
+  -- clinic's audit trail is erased with it (audit_events cascades).
+  if strpos(coalesce(current_setting('app.erasing_clinics', true), ''), new.clinic_id::text || ',') > 0 then
+    return null;
+  end if;
+  -- The database clock, never a caller-supplied time.
+  new.created_at := now();
+  if new.patient_id is not null and not exists (
+       select 1 from public.patients p where p.id = new.patient_id and p.clinic_id = new.clinic_id
+     ) then
+    raise exception 'audit: patient % is not in clinic %', new.patient_id, new.clinic_id;
+  end if;
+  if new.referral_id is not null and not exists (
+       select 1 from public.referrals r
+       where r.id = new.referral_id
+         and r.clinic_id = new.clinic_id
+         and (new.patient_id is null or r.patient_id = new.patient_id)
+     ) then
+    raise exception 'audit: referral % is not in clinic % for that patient', new.referral_id, new.clinic_id;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.audit_events_guard() from public, anon, authenticated;
+
+-- ---------- 6. Urgent wording escalates to the clinic's staff ----------
+
+alter table public.conversations add column urgent_at timestamptz;
+
+comment on column public.conversations.urgent_at is
+  'When the patient last wrote urgent wording. The patient received the approved urgent-care message, automatic replies stopped, and the conversation is shown to the clinic''s staff as urgent until someone takes it over after this time.';
+
+create index conversations_urgent_idx on public.conversations (clinic_id, urgent_at desc) where urgent_at is not null;
+
+-- ---------- 7. Voice retention ----------
+
+alter table public.voice_messages add column purged_at timestamptz;
+
+comment on column public.voice_messages.purged_at is
+  'When the scheduled retention run removed this voice message''s audio, transcripts and Telegram file reference (after expires_at).';
+
+alter table public.voice_messages
+  drop constraint voice_messages_audio_source_check,
+  add constraint voice_messages_audio_source_check
+    check (telegram_file_id is not null or storage_path is not null or purged_at is not null);
+
+create index voice_messages_retention_idx on public.voice_messages (expires_at) where purged_at is null and expires_at is not null;

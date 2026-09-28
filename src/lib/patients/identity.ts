@@ -57,32 +57,61 @@ export async function getOrCreatePatient(opts: {
   return created;
 }
 
+/** Name as a person would recognise it: case, spacing and apostrophe variants aside. */
+function sameName(a: string | null | undefined, b: string): boolean {
+  const norm = (v: string) =>
+    v
+      .normalize("NFKC")
+      .toLocaleLowerCase("uz")
+      .replace(/[\u2018\u2019\u02BB\u02BC`']/g, "'")
+      .replace(/\s+/g, " ")
+      .trim();
+  return !!a && norm(a) === norm(b);
+}
+
 /**
- * Resolves (or creates) a patient row by verified contact information (phone number)
- * for web bookings made directly or outside of Telegram initData context.
+ * The patient for a website booking. Nothing on the website proves who the
+ * visitor is — name and phone are what they typed — so it never takes over or
+ * edits a record someone else owns: a returning visitor reuses a record only
+ * when it has no Telegram identity and both the phone and the name match;
+ * otherwise a new record is created, for reception to reconcile at the desk.
+ * (Matching on the phone alone let anyone who knew a patient's number rename
+ * their record and attach visits — and later clinical notes — to it, and a
+ * Telegram patient's chat would have received a stranger's reminders.)
  */
-export async function getOrCreatePatientByContact(opts: {
+export async function getOrCreateWebPatient(opts: {
   clinicId: string;
   phone: string;
   fullName: string;
 }) {
   const supabase = createAdminClient();
+  const now = new Date().toISOString();
 
-  const { data: existing } = await supabase
+  const { data: candidates, error: lookupError } = await supabase
     .from("patients")
     .select("*")
     .eq("clinic_id", opts.clinicId)
     .eq("phone", opts.phone)
-    .maybeSingle();
+    .is("telegram_user_id", null)
+    .order("created_at", { ascending: true })
+    .limit(20);
+  if (lookupError) {
+    logger.error("web patient lookup failed", { code: lookupError.code });
+    throw new Error("patient_lookup_failed");
+  }
 
+  const existing = (candidates ?? []).find((p) => sameName(p.full_name, opts.fullName));
   if (existing) {
-    await supabase
+    const { error } = await supabase
       .from("patients")
       .update({
-        full_name: opts.fullName || existing.full_name,
-        last_seen_at: new Date().toISOString(),
+        last_seen_at: now,
+        // The same person ticked the consent box again.
+        ...(existing.consent_given ? {} : { consent_given: true, consent_given_at: now }),
       })
-      .eq("id", existing.id);
+      .eq("id", existing.id)
+      .eq("clinic_id", opts.clinicId);
+    if (error) logger.warn("web patient touch failed", { code: error.code });
     return existing;
   }
 
@@ -93,14 +122,14 @@ export async function getOrCreatePatientByContact(opts: {
       full_name: opts.fullName,
       phone: opts.phone,
       consent_given: true,
-      consent_given_at: new Date().toISOString(),
-      last_seen_at: new Date().toISOString(),
+      consent_given_at: now,
+      last_seen_at: now,
     })
     .select("*")
     .single();
 
   if (error) {
-    logger.error("patient create by contact failed", { error: error.message });
+    logger.error("web patient create failed", { code: error.code });
     throw new Error("patient_create_failed");
   }
   return created;

@@ -1,0 +1,113 @@
+# Release gates on every push: lint, typecheck, tests, build — and the database,
+# integration, authorization and end-to-end suites against a local Supabase
+# stack (migrations + seed) started by the Supabase CLI. No secrets are used:
+# the stack's keys are its local development keys, and the app's own secrets
+# are random per run.
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Lint, typecheck, tests (no database), build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      # Without a database the integration suites skip (they say so); everything else runs.
+      - run: npm test
+      - run: node scripts/build-full-db-setup.mjs --check
+      - name: Build
+        run: |
+          cp .env.test.example .env
+          npm run build
+
+  database:
+    name: Database, integration and end-to-end tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start Supabase (migrations + seed)
+        run: supabase start -x studio,imgproxy,edge-runtime,logflare,vector,realtime,postgres-meta
+      - name: Write .env for the local stack
+        run: |
+          supabase status -o env > "$RUNNER_TEMP/supabase.env"
+          set -a; . "$RUNNER_TEMP/supabase.env"; set +a
+          for v in API_URL ANON_KEY SERVICE_ROLE_KEY DB_URL JWT_SECRET; do
+            [ -n "${!v}" ] || { echo "supabase status did not report $v"; exit 1; }
+          done
+          {
+            grep -v -E '^(SUPABASE_URL|SUPABASE_ANON_KEY|SUPABASE_SERVICE_ROLE_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_WEBHOOK_SECRET|CRON_SECRET|ENABLE_TELEGRAM_DEV_MODE)=' .env.test.example
+            echo "SUPABASE_URL=$API_URL"
+            echo "NEXT_PUBLIC_SUPABASE_URL=$API_URL"
+            echo "SUPABASE_ANON_KEY=$ANON_KEY"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$ANON_KEY"
+            echo "SUPABASE_SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY"
+            echo "SUPABASE_DB_URL=$DB_URL"
+            echo "SUPABASE_JWT_SECRET=$JWT_SECRET"
+            echo "OWNER_EMAIL=owner@ci.local"
+            echo "OWNER_PASSWORD=Owner-$(openssl rand -hex 12)"
+            echo "TELEGRAM_BOT_TOKEN=123456789:$(openssl rand -hex 16)"
+            echo "TELEGRAM_WEBHOOK_SECRET=$(openssl rand -hex 32)"
+            echo "CRON_SECRET=$(openssl rand -hex 32)"
+            echo "ENABLE_TELEGRAM_DEV_MODE=false"
+          } > .env
+      - name: Clinic owner account (used by the session tests)
+        run: npm run create-owner
+      - name: Tests (unit, integration, authorization, database)
+        run: npm test
+      - name: Build and start the app
+        run: |
+          npm run build
+          cp -r public .next/standalone/ 2>/dev/null || true
+          cp -r .next/static .next/standalone/.next/
+          set -a; . ./.env; set +a
+          HOSTNAME=127.0.0.1 PORT=3000 nohup node .next/standalone/server.js > "$RUNNER_TEMP/app.log" 2>&1 &
+          for i in $(seq 1 60); do curl -fsS -o /dev/null http://127.0.0.1:3000/login && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/app.log"; exit 1
+      - name: Browser for the end-to-end scripts
+        run: npx playwright install --with-deps chromium
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"
+      - name: End-to-end workflow and HTTP red team
+        run: |
+          npm run e2e:seed
+          npm run test:e2e
+      - name: App log and screenshots
+        if: failure()
+        run: cat "$RUNNER_TEMP/app.log" || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-screenshots
+          path: test-results/
+          if-no-files-found: ignore

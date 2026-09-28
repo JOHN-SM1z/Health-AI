@@ -7,6 +7,15 @@
  * instance until the operator fixes the configuration. A misconfigured
  * production service must never serve traffic.
  */
+/** Shared secrets that guard the cron jobs and every Telegram webhook. */
+const MIN_SECRET_LENGTH = 32;
+const PLACEHOLDER_SECRETS = new Set(["change-me-in-production", "your-random-secret", "changeme", "secret"]);
+
+/** Too short to resist guessing, a placeholder copied from the docs, or one character repeated. */
+function weakSecret(value: string): boolean {
+  return value.length < MIN_SECRET_LENGTH || PLACEHOLDER_SECRETS.has(value.toLowerCase()) || /^(.)\1*$/.test(value);
+}
+
 export function register() {
   if (process.env.NODE_ENV !== "production") return;
   if (process.env.NEXT_PHASE === "phase-production-build") return;
@@ -31,8 +40,8 @@ export function register() {
   }
 
   const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret || cronSecret === "change-me-in-production") {
-    missing.push("CRON_SECRET (must be set and must not be the known default 'change-me-in-production')");
+  if (!cronSecret || weakSecret(cronSecret)) {
+    missing.push(`CRON_SECRET (must be set, at least ${MIN_SECRET_LENGTH} random characters — e.g. openssl rand -hex 32 — and not a documented placeholder)`);
   }
 
   // TELEGRAM_WEBHOOK_SECRET seeds the per-bot HMAC secret every clinic's
@@ -47,6 +56,8 @@ export function register() {
   // unconditionally, exactly like CRON_SECRET.
   if (!process.env.TELEGRAM_WEBHOOK_SECRET) {
     missing.push("TELEGRAM_WEBHOOK_SECRET (required to validate every clinic's Telegram webhook — any clinic admin can activate a bot at any time)");
+  } else if (weakSecret(process.env.TELEGRAM_WEBHOOK_SECRET)) {
+    missing.push(`TELEGRAM_WEBHOOK_SECRET (at least ${MIN_SECRET_LENGTH} random characters and not a documented placeholder — every clinic's webhook secret is derived from it)`);
   }
 
   if (process.env.ENABLE_TELEGRAM_DEV_MODE === "true") {

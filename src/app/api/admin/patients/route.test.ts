@@ -106,7 +106,7 @@ describe("admin patients list", () => {
         expect.objectContaining({ type: "eq", args: ["clinic_id", "clinic-a"] }),
         expect.objectContaining({ type: "eq", args: ["consent_given", false] }),
         expect.objectContaining({ type: "not", args: ["telegram_user_id", "is", null] }),
-        expect.objectContaining({ type: "or", args: ["full_name.ilike.%ali%,phone.ilike.%ali%,telegram_username.ilike.%ali%,telegram_first_name.ilike.%ali%"] }),
+        expect.objectContaining({ type: "or", args: ['full_name.ilike."%ali%",phone.ilike."%ali%",telegram_username.ilike."%ali%",telegram_first_name.ilike."%ali%"'] }),
       ]),
     );
   });
@@ -156,6 +156,53 @@ describe("admin patient detail", () => {
     expect(conversations.conditions).toContainEqual(
       expect.objectContaining({ type: "eq", args: ["patient_id", "p-1"] }),
     );
+    // Related rows are scoped to the staff clinic too, not only via the patient.
+    for (const related of [appointments, conversations]) {
+      expect(related.conditions).toContainEqual(
+        expect.objectContaining({ type: "eq", args: ["clinic_id", "clinic-a"] }),
+      );
+    }
+  });
+
+  it("includes the patient's referrals, scoped to the staff clinic, without clinical text", async () => {
+    const patient = chainBuilder({ id: "p-1", full_name: "Ali Valiyev", phone: "+998901234567" });
+    const referrals = chainBuilder([
+      {
+        id: "r-1",
+        status: "accepted",
+        priority: "routine",
+        created_at: "2026-09-20T10:00:00Z",
+        expires_at: "2999-01-01T00:00:00Z",
+        follow_up_appointment_id: null,
+        referring: { name: "Dr A" },
+        referred_to: { id: "d-2", name: "Dr B" },
+        follow_up: null,
+      },
+    ]);
+    const others = chainBuilder([]);
+    const selects: Record<string, unknown[]> = {};
+    supabaseMock.from.mockImplementation((table: string) => {
+      const builder = table === "patients" ? patient : table === "referrals" ? referrals : others;
+      const select = builder.select as (...args: unknown[]) => unknown;
+      builder.select = (...args: unknown[]) => {
+        selects[table] = args;
+        return select(...args);
+      };
+      return builder;
+    });
+
+    const res = await GET(getReq("/api/admin/patients?id=p-1"));
+    const json = (await res.json()) as { data: { referrals: Array<Record<string, unknown>> } };
+    expect(json.data.referrals).toEqual([
+      expect.objectContaining({ id: "r-1", status: "accepted", referredToDoctor: { id: "d-2", name: "Dr B" }, canBookFollowUp: true }),
+    ]);
+    expect(referrals.conditions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "eq", args: ["clinic_id", "clinic-a"] }),
+        expect.objectContaining({ type: "eq", args: ["patient_id", "p-1"] }),
+      ]),
+    );
+    expect(String(selects.referrals?.[0])).not.toMatch(/reason|handoff_note/);
   });
 
   it("returns an empty detail when the patient belongs to another clinic", async () => {

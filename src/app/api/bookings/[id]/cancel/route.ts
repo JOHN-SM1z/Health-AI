@@ -5,7 +5,8 @@ import { getClinicFromRequest } from "@/lib/clinics/context";
 import { resolvePatientFromInitData, devIdentityAllowed } from "@/lib/patients/identity";
 import { handleApiError, ApiError, ok, fail } from "@/lib/api/errors";
 import { parseBody } from "@/lib/api/validate";
-import { rateLimit, keyFromIp } from "@/lib/rate-limit";
+import { keyFromIp } from "@/lib/rate-limit";
+import { sharedRateLimit } from "@/lib/rate-limit-shared";
 import { enqueueCancellationNotification } from "@/lib/notifications/jobs";
 import { trackAnalytics } from "@/lib/analytics";
 
@@ -27,7 +28,7 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
   try {
     const { id } = await ctx.params;
     const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-    const limit = rateLimit({ key: keyFromIp(ip, `cancel-${id}`), limit: 10, windowMs: 60_000 });
+    const limit = await sharedRateLimit({ key: keyFromIp(ip, `cancel-${id}`), limit: 10, windowMs: 60_000 });
     if (!limit.ok) return fail("Juda ko‘p so‘rov", 429, "rate_limited");
 
     const body = await parseBody(request, cancelSchema);
@@ -53,16 +54,27 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
     if (["cancelled", "no_show", "completed"].includes(appointment.status)) {
       throw new ApiError(409, "Qabul allaqachon yakunlangan", "already_closed");
     }
+    // A patient cancels a booking, not a visit: once they are checked in or
+    // the time has come, only the clinic changes it.
+    if (!["pending", "confirmed"].includes(appointment.status) || new Date(appointment.start_at).getTime() <= Date.now()) {
+      throw new ApiError(409, "Qabul boshlangan — bekor qilish uchun klinikaga murojaat qiling", "not_cancellable");
+    }
 
-    const { error: updateError } = await supabase
+    // Compare-and-set on the status read above, in this clinic: a change made
+    // meanwhile (the patient checked in at the desk) is never overwritten.
+    const { data: cancelled, error: updateError } = await supabase
       .from("appointments")
       .update({
         status: "cancelled",
         cancelled_at: new Date().toISOString(),
         cancelled_reason: body.reason ?? "Bemor tomonidan bekor qilindi",
       })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("clinic_id", clinic.id)
+      .eq("status", appointment.status)
+      .select("id");
     if (updateError) throw new ApiError(500, "Qabulni bekor qilib bo‘lmadi");
+    if (!cancelled?.length) throw new ApiError(409, "Qabul holati o‘zgargan, sahifani yangilang", "appointment_changed");
 
     if (resolved.patient.telegram_user_id) {
       await enqueueCancellationNotification({

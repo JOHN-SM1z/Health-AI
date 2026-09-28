@@ -74,6 +74,54 @@ export const PAYMENT_STATUS_TONES: Record<string, "green" | "amber" | "blue" | "
   manual_review: "purple",
 };
 
+export const REFERRAL_STATUS_LABELS: Record<string, string> = {
+  pending: "Kutilmoqda",
+  accepted: "Qabul qilindi",
+  in_progress: "Qabul boshlangan",
+  declined: "Rad etildi",
+  completed: "Yakunlandi",
+  revoked: "Bekor qilindi",
+  expired: "Muddati o‘tgan",
+};
+
+export const REFERRAL_STATUS_TONES: Record<string, "amber" | "blue" | "green" | "red" | "gray"> = {
+  pending: "amber",
+  accepted: "blue",
+  in_progress: "blue",
+  declined: "red",
+  completed: "green",
+  revoked: "gray",
+  expired: "gray",
+};
+
+export const REFERRAL_PRIORITY_LABELS: Record<string, string> = {
+  routine: "Oddiy",
+  urgent: "Shoshilinch",
+};
+
+/** Doctor-authored clinical record types (public.clinical_record_type). */
+export const CLINICAL_RECORD_TYPE_LABELS: Record<string, string> = {
+  consultation_note: "Klinik qayd",
+  assessment: "Klinik baho",
+  diagnosis: "Tashxis",
+  prescription: "Retsept",
+  lab_order: "Tahlilga yo‘llanma",
+  lab_result: "Tahlil natijasi",
+  medical_history: "Anamnez",
+  follow_up: "Keyingi qadam / yo‘llanma",
+};
+
+export const CLINICAL_RECORD_TYPE_TONES: Record<string, "neutral" | "green" | "red" | "amber" | "blue" | "purple"> = {
+  consultation_note: "neutral",
+  assessment: "blue",
+  diagnosis: "purple",
+  prescription: "green",
+  lab_order: "amber",
+  lab_result: "blue",
+  medical_history: "amber",
+  follow_up: "neutral",
+};
+
 export const SOURCE_LABELS: Record<string, string> = {
   telegram_mini_app: "Mini App",
   telegram_chat: "Telegram bot",

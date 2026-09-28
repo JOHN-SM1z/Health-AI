@@ -12,6 +12,7 @@ import { trackAnalytics } from "@/lib/analytics";
 import { recordAudit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { getTranscriptionProvider } from "@/lib/transcription/provider";
+import { detectUrgency, urgentMessage } from "@/lib/safety/policy";
 
 /**
  * Booking link for a clinic, or null when no usable app address is
@@ -146,6 +147,24 @@ export async function handleTelegramMessage(opts: {
       telegramMessageId: opts.updateId,
     });
 
+    const patientLabel = opts.from.username ? `@${opts.from.username}` : String(opts.from.id);
+
+    // Urgent wording, decided before anything else and without any AI: the
+    // approved urgent-care message goes out and the clinic's staff are
+    // alerted — also when an operator already holds the conversation (the
+    // deterministic safety message is not an automatic reply).
+    if (detectUrgency(text) === "urgent") {
+      await escalateUrgent({
+        clinicId: clinic.id,
+        patientId: patient.id,
+        conversationId: conversation.id,
+        chatId: opts.chatId,
+        text,
+        patientLabel,
+      });
+      return;
+    }
+
     // Conversation under human control: store, do not auto-reply.
     if (await conversationIsHeld(conversation.id)) {
       logger.info("message stored, conversation held by admin", { conversationId: conversation.id });
@@ -193,10 +212,6 @@ export async function handleTelegramMessage(opts: {
       content: reply.text,
     });
 
-    if (reply.urgent) {
-      await notifyAdmins(`⚠️ Shoshilinch holat ehtimoli: bemor ${opts.from.first_name ?? ""} (@${opts.from.username ?? "-"})`);
-      await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "urgent_flag" });
-    }
   } catch (e) {
     logger.error("telegram message handling failed", {
       chatId: opts.chatId,
@@ -410,6 +425,56 @@ export async function handleMenuButton(opts: {
 }
 
 /** Patient asks for a human: pause automation and notify admins. */
+/**
+ * Urgent wording reaches the clinic's own staff. The conversation is marked
+ * urgent (the conversation center lists it first, flagged, until a staff
+ * member takes it over) and automatic replies stop, so a person answers
+ * next; the event is audited. The patient receives the approved urgent-care
+ * message, and is told the staff were alerted only once that is recorded.
+ * Platform admin chats, when configured, are told as before.
+ */
+async function escalateUrgent(opts: {
+  clinicId: string;
+  patientId: string;
+  conversationId: string;
+  chatId: number;
+  text: string;
+  patientLabel: string;
+}): Promise<void> {
+  const { data: flagged, error } = await createAdminClient()
+    .from("conversations")
+    .update({ urgent_at: new Date().toISOString(), ai_enabled: false })
+    .eq("id", opts.conversationId)
+    .eq("clinic_id", opts.clinicId)
+    .select("id");
+  const alerted = !error && !!flagged?.length;
+  if (!alerted) {
+    logger.error("urgent escalation could not be recorded", { conversationId: opts.conversationId, code: error?.code });
+  } else {
+    await recordAudit({
+      clinicId: opts.clinicId,
+      action: "conversation_urgent",
+      entityType: "conversations",
+      entityId: opts.conversationId,
+      actor: { actorType: "telegram" },
+    });
+  }
+
+  const reply = alerted
+    ? `${urgentMessage(opts.text)}\n\nKlinika xodimlariga xabar berildi — operator imkon qadar tezroq javob beradi.`
+    : urgentMessage(opts.text);
+  await sendTelegramMessage({ chatId: opts.chatId, text: reply, replyMarkup: buildHeldKeyboard() }, opts.clinicId);
+  await appendMessage({
+    conversationId: opts.conversationId,
+    clinicId: opts.clinicId,
+    role: "bot",
+    type: "text",
+    content: reply,
+  });
+  await trackAnalytics({ clinicId: opts.clinicId, patientId: opts.patientId, eventType: "urgent_flag" });
+  await notifyAdmins(`⚠️ Shoshilinch holat ehtimoli: bemor ${opts.patientLabel}`);
+}
+
 export async function requestHumanHandoff(opts: {
   clinicId: string;
   patientId: string;
@@ -614,19 +679,34 @@ async function handleVoiceMessage(opts: {
   );
 }
 
+/**
+ * The voice message a button press refers to — only if it belongs to this
+ * clinic AND to the Telegram user who pressed the button. Callback data can
+ * be sent by a modified client with any value, so the id alone never lets
+ * one patient consent to (or correct) another patient's recording.
+ */
+async function ownVoiceMessage(clinicId: string, voiceMessageId: string, telegramUserId: number) {
+  const { data } = await createAdminClient()
+    .from("voice_messages")
+    .select("*, conversations!inner(patients!inner(telegram_user_id))")
+    .eq("id", voiceMessageId)
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  const owner = (data?.conversations as { patients?: { telegram_user_id?: number | null } } | null)?.patients?.telegram_user_id;
+  if (!data || owner !== telegramUserId) return null;
+  return data;
+}
+
 export async function handleVoiceConsent(opts: {
   clinicId: string;
   chatId: number;
+  /** The Telegram user who pressed the button: consent is theirs to give, for their own recording only. */
+  telegramUserId: number;
   voiceMessageId: string;
   consent: boolean;
 }): Promise<void> {
   const supabase = createAdminClient();
-  const { data: voiceRow } = await supabase
-    .from("voice_messages")
-    .select("*")
-    .eq("id", opts.voiceMessageId)
-    .eq("clinic_id", opts.clinicId)
-    .maybeSingle();
+  const voiceRow = await ownVoiceMessage(opts.clinicId, opts.voiceMessageId, opts.telegramUserId);
   if (!voiceRow) {
     // Must go through the patient's own clinic bot like every other reply
     // in this handler — omitting clinicId here would fall back to the
@@ -726,15 +806,31 @@ export async function handleVoiceConsent(opts: {
 }
 
 /** Patient confirmed the transcription — route it through the AI. */
-export async function handleVoiceCorrect(opts: { clinicId: string; chatId: number; voiceMessageId: string }) {
+export async function handleVoiceCorrect(opts: { clinicId: string; chatId: number; telegramUserId: number; voiceMessageId: string }) {
   const supabase = createAdminClient();
-  const { data: voiceRow } = await supabase
-    .from("voice_messages")
-    .select("clinic_id, conversation_id, transcription, transcription_status")
-    .eq("id", opts.voiceMessageId)
-    .eq("clinic_id", opts.clinicId)
-    .maybeSingle();
+  const voiceRow = await ownVoiceMessage(opts.clinicId, opts.voiceMessageId, opts.telegramUserId);
   if (!voiceRow || !voiceRow.transcription) return;
+
+  const { data: conv } = await supabase
+    .from("conversations")
+    .select("patient_id")
+    .eq("id", voiceRow.conversation_id)
+    .eq("clinic_id", voiceRow.clinic_id)
+    .maybeSingle();
+
+  // Urgent wording in a confirmed transcription escalates exactly like a
+  // typed message — before anything else, held conversation or not.
+  if (conv && detectUrgency(voiceRow.transcription) === "urgent") {
+    await escalateUrgent({
+      clinicId: voiceRow.clinic_id,
+      patientId: conv.patient_id,
+      conversationId: voiceRow.conversation_id,
+      chatId: opts.chatId,
+      text: voiceRow.transcription,
+      patientLabel: String(opts.telegramUserId),
+    });
+    return;
+  }
 
   // AI automation must stay silent while the conversation is under human
   // control — the same rule as plain text messages.
@@ -746,11 +842,6 @@ export async function handleVoiceCorrect(opts: { clinicId: string; chatId: numbe
   }
 
   const clinic = await getClinicById(voiceRow.clinic_id);
-  const { data: conv } = await supabase
-    .from("conversations")
-    .select("patient_id")
-    .eq("id", voiceRow.conversation_id)
-    .maybeSingle();
 
   const reply = await generateReceptionistReply({ clinicId: clinic.id, userText: voiceRow.transcription });
   // The admin may have taken over while transcribing/thinking — never reply
@@ -777,14 +868,8 @@ export async function handleVoiceCorrect(opts: { clinicId: string; chatId: numbe
 }
 
 /** Patient wants to correct the transcription — ask them to type it. */
-export async function handleVoiceWrong(opts: { clinicId: string; chatId: number; voiceMessageId: string }) {
-  const supabase = createAdminClient();
-  const { data: voiceRow } = await supabase
-    .from("voice_messages")
-    .select("clinic_id")
-    .eq("id", opts.voiceMessageId)
-    .eq("clinic_id", opts.clinicId)
-    .maybeSingle();
+export async function handleVoiceWrong(opts: { clinicId: string; chatId: number; telegramUserId: number; voiceMessageId: string }) {
+  const voiceRow = await ownVoiceMessage(opts.clinicId, opts.voiceMessageId, opts.telegramUserId);
   if (!voiceRow) return;
   await sendTelegramMessage(
     {

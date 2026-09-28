@@ -1,5 +1,6 @@
 import "server-only";
 import { getStaffContext, hasRole, hasAnyRole, type StaffContext, type StaffRole } from "@/lib/auth/staff";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 
 /**
@@ -30,6 +31,27 @@ export async function requireRoles(...roles: StaffRole[]): Promise<StaffContext 
     throw new ApiError(403, "Bu amal uchun ruxsat yo‘q", "forbidden");
   }
   return ctx as StaffContext & { clinicId: string };
+}
+
+export type LinkedDoctor = StaffContext & { clinicId: string; doctorId: string; doctorName: string };
+
+/**
+ * A doctor acting as themselves: holds the doctor role itself in the
+ * session's clinic (requireStaff("doctor") would also admit owner/admin/
+ * manager by weight) and is linked to an active doctor record there.
+ */
+export async function requireLinkedDoctor(): Promise<LinkedDoctor> {
+  const ctx = await requireRoles("doctor");
+  const { data: doctor, error } = await createAdminClient()
+    .from("doctors")
+    .select("id, name")
+    .eq("profile_id", ctx.profileId)
+    .eq("clinic_id", ctx.clinicId)
+    .eq("active", true)
+    .maybeSingle();
+  if (error) throw new ApiError(500, "Shifokor hisobini tekshirib bo‘lmadi");
+  if (!doctor) throw new ApiError(403, "Sizning shifokor hisobingiz topilmadi", "doctor_not_linked");
+  return { ...ctx, doctorId: doctor.id, doctorName: doctor.name };
 }
 
 /** Platform staff only (Health AI platform administration). */

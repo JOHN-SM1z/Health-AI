@@ -75,7 +75,6 @@ async function main() {
   }
 
   const { data: services } = await supabase.from("services").select("id, name").eq("clinic_id", clinicId);
-  const servMap = new Map((services ?? []).map((s) => [s.name, s.id]));
   console.log(`✓ ${services?.length ?? 0} xizmat mavjud`);
 
   // 3. Doctors

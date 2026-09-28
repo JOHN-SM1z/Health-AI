@@ -2,7 +2,9 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getStaffContext, hasRole } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
-import { HeartPulse, ListOrdered, CalendarRange } from "lucide-react";
+import { NavStrip } from "@/components/admin/nav-strip";
+import { HeartPulse, ListOrdered, CalendarRange, Send, Users, KeyRound } from "lucide-react";
+import { PendingReferralsBadge } from "@/components/doctor/pending-referrals-badge";
 
 export const metadata = { title: "Shifokor paneli" };
 
@@ -27,8 +29,11 @@ export default async function DoctorLayout({ children }: { children: React.React
           <p className="font-numeric px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.16em] text-ink-muted/80">
             Ish jarayoni
           </p>
-          <NavLink href="/doctor" icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
+          <NavLink href="/doctor" exact icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
+          <NavLink href="/doctor/patients" icon={<Users className="h-4 w-4" />}>Bemorlarim</NavLink>
+          <NavLink href="/doctor/referrals" icon={<Send className="h-4 w-4" />}>Yo‘llanmalar<PendingReferralsBadge /></NavLink>
           <NavLink href="/doctor/schedule" icon={<CalendarRange className="h-4 w-4" />}>Jadvalim</NavLink>
+          <NavLink href="/doctor/password" icon={<KeyRound className="h-4 w-4" />}>Parolim</NavLink>
           {hasRole(ctx, "admin") && (
             <Link
               href="/admin"
@@ -53,6 +58,14 @@ export default async function DoctorLayout({ children }: { children: React.React
             <span className="font-display text-sm font-bold tracking-tight">Shifokor paneli</span>
           </Link>
         </header>
+        {/* Phones and small tablets: the sidebar is hidden, so its sections sit in a scrollable strip. */}
+        <NavStrip label="Shifokor bo‘limlari">
+          <NavLink href="/doctor" exact icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
+          <NavLink href="/doctor/patients" icon={<Users className="h-4 w-4" />}>Bemorlarim</NavLink>
+          <NavLink href="/doctor/referrals" icon={<Send className="h-4 w-4" />}>Yo‘llanmalar<PendingReferralsBadge /></NavLink>
+          <NavLink href="/doctor/schedule" icon={<CalendarRange className="h-4 w-4" />}>Jadvalim</NavLink>
+          <NavLink href="/doctor/password" icon={<KeyRound className="h-4 w-4" />}>Parolim</NavLink>
+        </NavStrip>
         <div className="flex-1 overflow-x-hidden p-4 md:p-8">{children}</div>
       </div>
     </div>
