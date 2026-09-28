@@ -1,17 +1,18 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
-import { recordAudit, recordAudits, type AuditEvent } from "@/lib/audit";
+import { recordAudit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 import type { Database } from "@/lib/supabase/database.types";
-import { canDoctorAccessPatientClinicalData, canSeeAppointment, type ClinicalAccess } from "@/lib/clinical-access/access";
+import { canDoctorAccessPatientClinicalData, type ClinicalAccess } from "@/lib/clinical-access/access";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
 
 /**
- * Doctor-authored clinical records (public.clinical_records). Reading follows
- * the clinical access decision exactly — a record is visible where its
- * consultation is — and writing is only ever the calling doctor documenting
+ * Doctor-authored clinical records (public.clinical_records), part of the
+ * patient's longitudinal clinic record. Reading follows the clinical access
+ * decision: a doctor with a legitimate relationship to the patient sees every
+ * doctor's records. Writing is only ever the calling doctor documenting
  * their own consultation with this patient. Clinical text is never logged.
  *
  * Records are versioned and append-only. Only the doctor who wrote a record
@@ -84,8 +85,8 @@ const isMine = (doctor: LinkedDoctor, row: { author_doctor_id: string; created_b
   row.author_doctor_id === doctor.doctorId && row.created_by === doctor.profileId;
 
 /**
- * The CURRENT version of every record of `patientId` that `access` covers for
- * `doctor`, newest first. Superseded versions are left out: they are kept in
+ * The CURRENT version of every record of `patientId` — by every doctor — for
+ * a doctor whose access gives them the patient's history, newest first. Superseded versions are left out: they are kept in
  * each record's history (getClinicalRecordHistory), not shown as findings.
  */
 export async function listVisibleClinicalRecords(
@@ -93,15 +94,7 @@ export async function listVisibleClinicalRecords(
   patientId: string,
   access: ClinicalAccess,
 ): Promise<ClinicalRecordView[]> {
-  if (!access.allowed) return [];
-  // The same coverage as the appointments the doctor may read: a record's
-  // author is its consultation's doctor (foreign key).
-  const authors = [...(access.scope.ownAppointments ? [doctor.doctorId] : []), ...access.scope.sharedHistoryDoctorIds];
-  const coverage = [
-    authors.length > 0 ? `author_doctor_id.in.(${authors.join(",")})` : null,
-    access.scope.referralAppointmentIds.length > 0 ? `appointment_id.in.(${access.scope.referralAppointmentIds.join(",")})` : null,
-  ].filter(Boolean);
-  if (coverage.length === 0) return [];
+  if (!access.fullHistory) return [];
 
   // Current versions are picked by the database before the limit, so no
   // number of corrections can push another record out of the list.
@@ -113,7 +106,6 @@ export async function listVisibleClinicalRecords(
     .eq("clinic_id", doctor.clinicId)
     .eq("patient_id", patientId)
     .eq("status", "current")
-    .or(coverage.join(","))
     .order("created_at", { ascending: false })
     .limit(500);
   if (error) throw new ApiError(500, "Tibbiy yozuvlarni yuklab bo‘lmadi");
@@ -149,33 +141,49 @@ async function findVersion(doctor: LinkedDoctor, patientId: string, recordId: st
   return data;
 }
 
-type DenialReason = "not_found" | "not_visible" | "not_owned";
+type DenialReason = "not_found" | "not_owned" | "not_own_consultation";
 
 /**
- * Refuses an action on a clinical record and audits the refusal (ids only).
- * A record the doctor may not see is simply "not found" — its existence is
- * never confirmed; a record they may see but did not write is
- * CLINICAL_RECORD_NOT_OWNED.
+ * Audits a refused clinical read or write (ids only): a read of a record the
+ * doctor may not see is an unauthorized clinical access attempt; a write to
+ * a record or consultation that isn't theirs, an unauthorized clinical
+ * mutation attempt. Strict: the refusal is logged before it is answered.
+ */
+export async function auditClinicalRefusal(
+  doctor: LinkedDoctor,
+  patientId: string,
+  entity: { type: "clinical_records" | "appointments"; id: string },
+  reason: DenialReason,
+  attempted: "correct" | "history" | "write",
+): Promise<void> {
+  await recordAudit({
+    clinicId: doctor.clinicId,
+    action: attempted === "history" ? "unauthorized_clinical_access_attempt" : "unauthorized_clinical_mutation_attempt",
+    entityType: entity.type,
+    entityId: entity.id,
+    // The patient was established by the access decision before any record
+    // lookup, so it is a patient of this clinic.
+    patientId,
+    actor: { actorId: doctor.profileId, actorType: "staff" },
+    metadata: { reason, attempted, doctor_id: doctor.doctorId },
+    strict: true,
+  });
+}
+
+/**
+ * Refuses an action on a clinical record and audits the refusal. A record
+ * that isn't this patient's in this clinic is simply "not found"; one the
+ * doctor may read but did not write is CLINICAL_RECORD_NOT_OWNED — they
+ * record their own assessment as a new record instead.
  */
 async function recordAccessDenied(
   doctor: LinkedDoctor,
   patientId: string,
   recordId: string,
-  reason: DenialReason,
-  action: "correct" | "history",
+  reason: "not_found" | "not_owned",
+  attempted: "correct" | "history",
 ): Promise<ApiError> {
-  await recordAudit({
-    clinicId: doctor.clinicId,
-    action: "clinical_record_access_denied",
-    entityType: "clinical_records",
-    entityId: recordId,
-    // The patient was established by the access decision before any record
-    // lookup, so it is a patient of this clinic.
-    patientId,
-    actor: { actorId: doctor.profileId, actorType: "staff" },
-    metadata: { reason, attempted: action, doctor_id: doctor.doctorId },
-    strict: true,
-  });
+  await auditClinicalRefusal(doctor, patientId, { type: "clinical_records", id: recordId }, reason, attempted);
   return reason === "not_owned"
     ? new ApiError(
         403,
@@ -209,7 +217,7 @@ async function versionConflict(doctor: LinkedDoctor, rootRecordId: string): Prom
 
 /**
  * Every version of a record, oldest first, read-only — for a doctor who may
- * see the record. The read is audited before anything is returned.
+ * see the patient's history. The read is audited before anything is returned.
  */
 export async function getClinicalRecordHistory(doctor: LinkedDoctor, patientId: string, recordId: string): Promise<ClinicalRecordHistory> {
   const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, patientId);
@@ -219,10 +227,6 @@ export async function getClinicalRecordHistory(doctor: LinkedDoctor, patientId: 
   if (!target?.root_record_id || !target.appointment_id || !target.author_doctor_id) {
     throw await recordAccessDenied(doctor, patientId, recordId, "not_found", "history");
   }
-  if (!canSeeAppointment(access, doctor.doctorId, { id: target.appointment_id, doctorId: target.author_doctor_id })) {
-    throw await recordAccessDenied(doctor, patientId, recordId, "not_visible", "history");
-  }
-
   const supabase = createAdminClient();
   const [{ data: rows, error }, { data: author }] = await Promise.all([
     supabase
@@ -250,96 +254,26 @@ export async function getClinicalRecordHistory(doctor: LinkedDoctor, patientId: 
     supersededAt: v.superseded_at,
   }));
 
-  const viaReferral = target.author_doctor_id !== doctor.doctorId;
-  const releasedBy = viaReferral
-    ? await releasingReferralIds(doctor, patientId, [{ authorDoctorId: target.author_doctor_id, appointmentId: target.appointment_id }])
-    : [];
-  const events: AuditEvent[] = [
-    {
-      clinicId: doctor.clinicId,
-      action: "clinical_record_history_viewed",
-      entityType: "clinical_records",
-      entityId: target.root_record_id,
-      patientId,
-      actor: { actorId: doctor.profileId, actorType: "staff" },
-      metadata: { record_ids: versions.map((v) => v.id), version_count: versions.length },
-    },
-  ];
-  if (viaReferral) events.push(referralAccessEvent(doctor, patientId, access, versions.map((v) => v.id), releasedBy, target.root_record_id));
-  await recordAudits(events, { strict: true });
-
-  return { rootRecordId: target.root_record_id, type: target.record_type!, appointmentId: target.appointment_id, versions };
-}
-
-/**
- * The referrals that release `records` — written by other doctors — to
- * `doctor`, by the same rules as public.doctor_patient_access(): a referral
- * to the doctor from the record's author (accepted or in progress), a
- * referral to the doctor raised from the record's consultation (open), or
- * the doctor's own referral whose follow-up the record was written in
- * (accepted, in progress or completed); unexpired in every case. Only for the
- * audit trail: access itself is decided by the database.
- */
-export async function releasingReferralIds(
-  doctor: LinkedDoctor,
-  patientId: string,
-  records: Array<{ authorDoctorId: string; appointmentId: string }>,
-): Promise<string[]> {
-  if (records.length === 0) return [];
-  const { data, error } = await createAdminClient()
-    .from("referrals")
-    .select("id, status, expires_at, referring_doctor_id, referred_to_doctor_id, originating_appointment_id, follow_up_appointment_id")
-    .eq("clinic_id", doctor.clinicId)
-    .eq("patient_id", patientId)
-    .or(`referred_to_doctor_id.eq.${doctor.doctorId},referring_doctor_id.eq.${doctor.doctorId}`);
-  if (error) throw new ApiError(500, "Yo‘llanmalarni tekshirib bo‘lmadi");
-
-  const now = Date.now();
-  const ids = new Set<string>();
-  for (const r of data ?? []) {
-    if (new Date(r.expires_at).getTime() <= now) continue;
-    const toMe = r.referred_to_doctor_id === doctor.doctorId;
-    const fromMe = r.referring_doctor_id === doctor.doctorId;
-    const releases = records.some(
-      (rec) =>
-        (toMe && r.referring_doctor_id === rec.authorDoctorId && ["accepted", "in_progress"].includes(r.status)) ||
-        (toMe && r.originating_appointment_id === rec.appointmentId && ["pending", "accepted", "in_progress"].includes(r.status)) ||
-        (fromMe && r.follow_up_appointment_id === rec.appointmentId && ["accepted", "in_progress", "completed"].includes(r.status)),
-    );
-    if (releases) ids.add(r.id);
-  }
-  return [...ids].sort();
-}
-
-/**
- * Another doctor's records released to `doctor` on the strength of a
- * referral — its own audit event, naming the referrals that released them
- * (releasingReferralIds), so referral-based access is never hidden behind
- * the doctor's own relationship with the patient.
- */
-export function referralAccessEvent(
-  doctor: LinkedDoctor,
-  patientId: string,
-  access: ClinicalAccess,
-  recordIds: string[],
-  referralIds: string[],
-  entityId?: string,
-): AuditEvent {
-  return {
+  await recordAudit({
     clinicId: doctor.clinicId,
-    action: "clinical_record_accessed_via_referral",
+    action: "clinical_record_viewed",
     entityType: "clinical_records",
-    entityId: entityId ?? null,
+    entityId: target.root_record_id,
     patientId,
-    referralId: referralIds.length === 1 ? referralIds[0] : null,
+    referralId: access.relationship === "referred" && access.activeReferralIds.length === 1 ? access.activeReferralIds[0] : null,
     actor: { actorId: doctor.profileId, actorType: "staff" },
     metadata: {
-      record_ids: recordIds,
-      referral_ids: referralIds,
-      shared_history_doctor_ids: access.scope.sharedHistoryDoctorIds,
-      referral_appointment_ids: access.scope.referralAppointmentIds,
+      via: "history",
+      relationship: access.relationship,
+      referral_ids: access.activeReferralIds,
+      author_doctor_id: target.author_doctor_id,
+      record_ids: versions.map((v) => v.id),
+      version_count: versions.length,
     },
-  };
+    strict: true,
+  });
+
+  return { rootRecordId: target.root_record_id, type: target.record_type!, appointmentId: target.appointment_id, versions };
 }
 
 export type CreateClinicalRecordInput = {
@@ -501,7 +435,12 @@ export async function createClinicalRecord(
     .eq("doctor_id", doctor.doctorId)
     .maybeSingle();
   if (error) throw new ApiError(500, "Qabulni tekshirib bo‘lmadi");
-  if (!consultation) throw new ApiError(404, "Qabul topilmadi", "consultation_not_found");
+  if (!consultation) {
+    // Another doctor's consultation (or none): records are only ever written
+    // into the author's own consultation.
+    await auditClinicalRefusal(doctor, patientId, { type: "appointments", id: input.appointmentId }, "not_own_consultation", "write");
+    throw new ApiError(404, "Qabul topilmadi", "consultation_not_found");
+  }
   if (consultation.status !== "in_progress" && consultation.status !== "completed") {
     throw new ApiError(409, "Yozuv faqat boshlangan yoki yakunlangan qabulga qo‘shiladi", "consultation_not_active");
   }
@@ -556,9 +495,7 @@ export async function correctClinicalRecord(
   if (!target?.root_record_id || !target.appointment_id || !target.author_doctor_id || !target.record_type) {
     throw await recordAccessDenied(doctor, patientId, recordId, "not_found", "correct");
   }
-  if (!canSeeAppointment(access, doctor.doctorId, { id: target.appointment_id, doctorId: target.author_doctor_id })) {
-    throw await recordAccessDenied(doctor, patientId, recordId, "not_visible", "correct");
-  }
+  // Readable is not writable: only the author (this doctor record AND login) corrects.
   if (target.author_doctor_id !== doctor.doctorId || target.created_by !== doctor.profileId) {
     throw await recordAccessDenied(doctor, patientId, recordId, "not_owned", "correct");
   }

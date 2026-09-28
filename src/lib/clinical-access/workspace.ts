@@ -1,26 +1,26 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
-import { recordAudits } from "@/lib/audit";
+import { recordAudit } from "@/lib/audit";
 import { localDayWindow } from "@/lib/time/local";
 import type { LinkedDoctor } from "@/lib/auth/guards";
-import {
-  canDoctorAccessPatientClinicalData,
-  canSeeAppointment,
-  type ClinicalAccess,
-  type ClinicalRelationship,
-} from "@/lib/clinical-access/access";
-import { listVisibleClinicalRecords, referralAccessEvent, releasingReferralIds, type ClinicalRecordView } from "@/lib/clinical-records/service";
+import type { Database } from "@/lib/supabase/database.types";
+import { canDoctorAccessPatientClinicalData, type ClinicalAccess, type ClinicalRelationship } from "@/lib/clinical-access/access";
+import { listVisibleClinicalRecords, type ClinicalRecordView } from "@/lib/clinical-records/service";
 import { listPatientReferralsForDoctor, type PatientReferral } from "@/lib/referrals/service";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
 import { recordCategory, type RecordCategory, type RecordStage } from "@/lib/clinical-records/categories";
 
 /**
- * A doctor's clinical workspace for one patient: everything on it — the
- * patient, consultations, clinical records, referrals — is read after, and
- * scoped by, the clinical access decision (canDoctorAccessPatientClinicalData);
- * the page only renders what this returns.
+ * A doctor's workspace for one patient: the patient's longitudinal clinic
+ * record — every doctor's consultations and clinical records, the patient's
+ * referrals — as the clinical access decision (canDoctorAccessPatientClinicalData)
+ * allows it. Everything on it is read after that decision; the page only
+ * renders what this returns. No payment history, staff or clinic data: only
+ * the payment status of the doctor's own visit in front of them.
  */
+
+export type PaymentStatus = Database["public"]["Enums"]["payment_status"];
 
 export type ClinicalAppointment = {
   id: string;
@@ -33,13 +33,19 @@ export type ClinicalAppointment = {
   service: { name: string } | null;
 };
 
-export type ConsultationRef = { appointmentId: string; startAt: string; serviceName: string | null };
+export type ConsultationRef = {
+  appointmentId: string;
+  startAt: string;
+  serviceName: string | null;
+  /** Whether this visit is paid — the only payment detail a doctor sees. Null: no payment record. */
+  paymentStatus: PaymentStatus | null;
+};
 
 /**
- * A record as the calling doctor sees it in a handoff: written in their
- * consultation under way (current) or earlier (historical) — e.g. the
- * referring doctor's diagnosis is a historical diagnosis, the receiving
- * doctor's own one a new diagnosis. The record itself is never changed.
+ * A record as the calling doctor sees it: written in their consultation
+ * under way (current) or earlier (historical) — e.g. the referring doctor's
+ * diagnosis is a historical diagnosis, the receiving doctor's own one a new
+ * diagnosis. The record itself is never changed, and stays its author's.
  */
 export type WorkspaceRecord = ClinicalRecordView & { stage: RecordStage; category: RecordCategory };
 
@@ -48,16 +54,16 @@ export type PatientWorkspace = {
   relationship: Exclude<ClinicalRelationship, "none">;
   activeReferralIds: string[];
   /**
-   * When the referral-based part of this access ends at the latest (the open
-   * referrals' expires_at) — null when none is open. It ends earlier if the
-   * referral is declined, revoked or completed.
+   * When access that rests only on a referral ends at the latest (the open
+   * referrals' expires_at) — null for a doctor with their own relationship.
+   * It ends earlier if the referral is declined or revoked.
    */
   referralAccessUntil: string | null;
-  /** Consultations the decision covers, newest first. */
+  /** The patient's consultations in the clinic, every doctor's, newest first. */
   appointments: ClinicalAppointment[];
-  /** Clinical records the decision covers, with provenance, newest first. */
+  /** The current version of every clinical record, with provenance, newest first. */
   records: WorkspaceRecord[];
-  /** Referrals of this patient the doctor is on and may see, with their text. */
+  /** The patient's referrals, with their text — actions only where the doctor is on them. */
   referrals: PatientReferral[];
   consultation: {
     /** The doctor's own consultation with the patient that is in progress. */
@@ -66,7 +72,6 @@ export type PatientWorkspace = {
     booked: ConsultationRef | null;
     /** Whether the doctor may start a walk-in consultation now. */
     canStartWalkIn: boolean;
-    blockedReason: "referral_pending" | null;
     /** Services the doctor can see the patient for. */
     services: Array<{ id: string; name: string }>;
   };
@@ -82,14 +87,21 @@ type AppointmentRow = {
   doctors: { name: string } | null;
 };
 
-function referralAccessUntil(referrals: PatientReferral[]): string | null {
-  const open = referrals.filter((r) => r.role === "receiver" && ["pending", "accepted", "in_progress"].includes(r.status));
+const APPOINTMENT_COLUMNS = "id, start_at, end_at, status, doctor_id, services(name), doctors(name)";
+
+function referralAccessUntil(access: ClinicalAccess, referrals: PatientReferral[]): string | null {
+  if (access.relationship !== "referred") return null;
+  const open = referrals.filter((r) => access.activeReferralIds.includes(r.id));
   return open.length > 0 ? open.map((r) => r.expiresAt).sort().at(-1)! : null;
 }
 
-/** Whether `access` lets the doctor start a consultation (own patient or an accepted referral). */
+/**
+ * Whether `access` lets the doctor start a consultation: any legitimate
+ * relationship — their own patient, or an open referral (a pending one is
+ * accepted as the consultation starts; see startConsultation).
+ */
 export function canStartConsultation(access: ClinicalAccess): boolean {
-  return access.allowed && (access.scope.ownAppointments || access.scope.sharedHistoryDoctorIds.length > 0);
+  return access.allowed;
 }
 
 async function doctorServices(doctor: LinkedDoctor): Promise<Array<{ id: string; name: string }>> {
@@ -103,20 +115,21 @@ async function doctorServices(doctor: LinkedDoctor): Promise<Array<{ id: string;
   return data ?? [];
 }
 
+/** Payment status of the doctor's own visits in front of them (never amounts or other visits). */
+async function paymentStatusOf(doctor: LinkedDoctor, appointmentIds: string[]): Promise<Map<string, PaymentStatus>> {
+  if (appointmentIds.length === 0) return new Map();
+  const { data, error } = await createAdminClient()
+    .from("payments")
+    .select("appointment_id, status")
+    .eq("clinic_id", doctor.clinicId)
+    .in("appointment_id", appointmentIds);
+  if (error) throw new ApiError(500, "Bemor ma‘lumotlarini yuklab bo‘lmadi");
+  return new Map((data ?? []).map((p) => [p.appointment_id, p.status]));
+}
+
 export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: string): Promise<PatientWorkspace> {
   const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, patientId);
   if (!access.allowed || access.relationship === "none") throw await patientAccessDenied(doctor, patientId);
-
-  // What is shown comes from the decision alone, never from the request:
-  // the doctors whose visits are covered, plus referral-linked appointments.
-  const visibleDoctorIds = [
-    ...(access.scope.ownAppointments ? [doctor.doctorId] : []),
-    ...access.scope.sharedHistoryDoctorIds,
-  ];
-  const coverage = [
-    visibleDoctorIds.length > 0 ? `doctor_id.in.(${visibleDoctorIds.join(",")})` : null,
-    access.scope.referralAppointmentIds.length > 0 ? `id.in.(${access.scope.referralAppointmentIds.join(",")})` : null,
-  ].filter(Boolean);
 
   const supabase = createAdminClient();
   const [patientRes, appointmentsRes, records, referrals, services] = await Promise.all([
@@ -126,39 +139,34 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
       .eq("id", patientId)
       .eq("clinic_id", doctor.clinicId)
       .maybeSingle(),
-    coverage.length > 0
-      ? supabase
-          .from("appointments")
-          .select("id, start_at, end_at, status, doctor_id, services(name), doctors(name)")
-          .eq("clinic_id", doctor.clinicId)
-          .eq("patient_id", patientId)
-          .or(coverage.join(","))
-          .order("start_at", { ascending: false })
-          .limit(100)
-      : null,
+    supabase
+      .from("appointments")
+      .select(APPOINTMENT_COLUMNS)
+      .eq("clinic_id", doctor.clinicId)
+      .eq("patient_id", patientId)
+      .order("start_at", { ascending: false })
+      .limit(200),
     listVisibleClinicalRecords(doctor, patientId, access),
     listPatientReferralsForDoctor(doctor, patientId),
     doctorServices(doctor),
   ]);
-  if (patientRes.error || appointmentsRes?.error) throw new ApiError(500, "Bemor ma‘lumotlarini yuklab bo‘lmadi");
+  if (patientRes.error || appointmentsRes.error) throw new ApiError(500, "Bemor ma‘lumotlarini yuklab bo‘lmadi");
   if (!patientRes.data) throw new ApiError(404, "Bemor topilmadi", "patient_not_found");
 
-  // A visible record always comes with its consultation, even one older than
-  // the visit window above (same decision, same coverage).
-  const rows = (appointmentsRes?.data ?? []) as unknown as AppointmentRow[];
+  // A record always comes with its consultation, even one older than the
+  // visit window above.
+  const rows = (appointmentsRes.data ?? []) as unknown as AppointmentRow[];
   const listed = new Set(rows.map((a) => a.id));
   const missing = [...new Set(records.map((r) => r.appointmentId))].filter((id) => !listed.has(id));
   for (let i = 0; i < missing.length; i += 150) {
     const { data: older, error } = await supabase
       .from("appointments")
-      .select("id, start_at, end_at, status, doctor_id, services(name), doctors(name)")
+      .select(APPOINTMENT_COLUMNS)
       .eq("clinic_id", doctor.clinicId)
       .eq("patient_id", patientId)
       .in("id", missing.slice(i, i + 150));
     if (error) throw new ApiError(500, "Bemor ma‘lumotlarini yuklab bo‘lmadi");
-    for (const a of (older ?? []) as unknown as AppointmentRow[]) {
-      if (canSeeAppointment(access, doctor.doctorId, { id: a.id, doctorId: a.doctor_id })) rows.push(a);
-    }
+    rows.push(...((older ?? []) as unknown as AppointmentRow[]));
   }
   if (missing.length > 0) rows.sort((a, b) => b.start_at.localeCompare(a.start_at));
 
@@ -171,7 +179,6 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
     doctor: a.doctors ? { id: a.doctor_id, name: a.doctors.name } : null,
     service: a.services,
   }));
-  const asRef = (a: ClinicalAppointment): ConsultationRef => ({ appointmentId: a.id, startAt: a.startAt, serviceName: a.service?.name ?? null });
   const today = localDayWindow(doctor.clinicTimezone);
   const current = appointments.find((a) => a.mine && a.status === "in_progress") ?? null;
   const booked =
@@ -184,44 +191,36 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
           a.startAt >= today.start &&
           a.startAt < today.end,
       ) ?? null;
-  const canStart = canStartConsultation(access);
+  const payments = await paymentStatusOf(doctor, [current?.id, booked?.id].filter((id): id is string => !!id));
+  const asRef = (a: ClinicalAppointment): ConsultationRef => ({
+    appointmentId: a.id,
+    startAt: a.startAt,
+    serviceName: a.service?.name ?? null,
+    paymentStatus: payments.get(a.id) ?? null,
+  });
 
-  // The access log names the patient, the referral the access rests on (when
-  // exactly one does), and every record of another doctor released — ids
-  // only, written before anything is returned. Records another doctor wrote
-  // are only ever released through a referral, so they get their own event
-  // too: referral-based access is never hidden behind the doctor's own
-  // relationship with the patient.
-  const shared = records.filter((r) => r.author.id !== doctor.doctorId);
-  const viaReferral = shared.map((r) => r.id);
-  const releasedBy = await releasingReferralIds(
-    doctor,
+  // The access log names the patient, the relationship the access rests on
+  // (and the referral, when exactly one), and which records were shown —
+  // ids only, written before anything is returned.
+  await recordAudit({
+    clinicId: doctor.clinicId,
+    action: "clinical_record_viewed",
+    entityType: "patients",
+    entityId: patientId,
     patientId,
-    shared.map((r) => ({ authorDoctorId: r.author.id, appointmentId: r.appointmentId })),
-  );
-  await recordAudits(
-    [
-      {
-        clinicId: doctor.clinicId,
-        action: "patient_clinical_record_viewed",
-        entityType: "patients",
-        entityId: patientId,
-        patientId,
-        referralId: access.activeReferralIds.length === 1 ? access.activeReferralIds[0] : null,
-        actor: { actorId: doctor.profileId, actorType: "staff" },
-        metadata: {
-          relationship: access.relationship,
-          referral_ids: access.activeReferralIds,
-          shown_referral_ids: referrals.map((r) => r.id),
-          shared_history_doctor_ids: access.scope.sharedHistoryDoctorIds,
-          record_count: records.length,
-          shared_record_ids: records.filter((r) => !r.mine).map((r) => r.id),
-        },
-      },
-      ...(viaReferral.length > 0 ? [referralAccessEvent(doctor, patientId, access, viaReferral, releasedBy)] : []),
-    ],
-    { strict: true },
-  );
+    referralId: access.relationship === "referred" && access.activeReferralIds.length === 1 ? access.activeReferralIds[0] : null,
+    actor: { actorId: doctor.profileId, actorType: "staff" },
+    metadata: {
+      via: "workspace",
+      relationship: access.relationship,
+      referral_ids: access.activeReferralIds,
+      shown_referral_ids: referrals.map((r) => r.id),
+      record_count: records.length,
+      record_ids: records.map((r) => r.id),
+      other_author_record_ids: records.filter((r) => !r.mine).map((r) => r.id),
+    },
+    strict: true,
+  });
 
   return {
     patient: {
@@ -232,7 +231,7 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
     },
     relationship: access.relationship,
     activeReferralIds: access.activeReferralIds,
-    referralAccessUntil: referralAccessUntil(referrals),
+    referralAccessUntil: referralAccessUntil(access, referrals),
     appointments,
     records: records.map((r) => {
       const stage: RecordStage = current && r.appointmentId === current.id ? "current" : "historical";
@@ -242,8 +241,7 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
     consultation: {
       current: current ? asRef(current) : null,
       booked: booked ? asRef(booked) : null,
-      canStartWalkIn: canStart,
-      blockedReason: !canStart && access.activeReferralIds.length > 0 ? "referral_pending" : null,
+      canStartWalkIn: canStartConsultation(access),
       services,
     },
   };
