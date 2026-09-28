@@ -88,6 +88,15 @@ export async function PATCH(request: NextRequest) {
       .eq("clinic_id", staff.clinicId)
       .select("*")
       .single();
+    // A doctor card keeps its clinical records' authors: it can't be handed
+    // to another login (the database refuses; a new doctor gets a new card).
+    if (error?.code === "CRLNK") {
+      throw new ApiError(
+        409,
+        "Bu shifokor kartasida boshqa hisob yozgan tibbiy yozuvlar bor, uni boshqa hisobga bog‘lab bo‘lmaydi. Yangi shifokor uchun yangi karta yarating.",
+        "doctor_has_clinical_records",
+      );
+    }
     if (error || !data) throw new ApiError(404, "Shifokor topilmadi");
     return ok({ doctor: data });
   } catch (e) {

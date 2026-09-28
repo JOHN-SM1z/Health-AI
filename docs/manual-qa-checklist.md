@@ -80,8 +80,11 @@ notifications, and a human's eye on every screen.
 - [ ] Pending referral: workspace shows the patient and the consultation it came from; *Mening qabulim* asks to accept first
 - [ ] Accepted: the referring doctor's records appear with *Muallif: …* and date; none are marked *Siz yozgansiz*; another doctor's records never appear
 - [ ] *Hozir qabulni boshlash* starts a walk-in (or *Qabulni boshlash* for today's booked visit); records saved there show *Siz yozgansiz* under *Mening qabulim*, apart from *Oldingi yozuvlar*
-- [ ] A record can't be edited; *Tuzatish* (in the current or a previous consultation) adds a correction and marks the original *Tuzatilgan*
-- [ ] *Klinik xulosa* lists diagnoses, history, prescriptions and lab results in force — a corrected record gives way to its correction — each with author and date
+- [ ] *Tahrirlash* appears only on your own records; edit → *Saqlash* (no reason asked) replaces the text everywhere with the new version, marked *Tuzatilgan · 2-versiya*; the old text appears nowhere but under *Tarix*
+- [ ] *Tarix* lists every version (oldest first) with author and time, the latest *Amaldagi*, the rest *Almashtirilgan*, and nothing in it can be edited
+- [ ] A referred doctor sees the referring doctor's records with *Muallif: …* (and *Tarix* on corrected ones), never *Tahrirlash*
+- [ ] Two tabs editing the same record: the second *Saqlash* says the edit was not saved because the record was updated meanwhile, shows the latest version and keeps the typed text in the form for a deliberate re-save — nothing is overwritten
+- [ ] *Klinik xulosa* lists the current version of diagnoses, history, prescriptions and lab results, each with author and date
 - [ ] Pending referral: *Yo‘llanmani qabul qilish* in the workspace unlocks *Hozir qabulni boshlash*; *Rad etish* (optional reason) declines it and the page shows *Yo‘llanma rad etilgan*
 - [ ] Accepted: no *Yakunlash* anywhere until Doctor B's consultation starts; the stepper shows *Qabul qilindi*
 - [ ] Starting the consultation (workspace walk-in, today's booked visit, the queue or the front desk) moves the referral to *Qabul boshlangan*; *Mening qabulim* says it is the referral's consultation

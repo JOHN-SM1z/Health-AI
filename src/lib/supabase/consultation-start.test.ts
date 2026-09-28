@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -162,13 +163,13 @@ describeDb("consultation start — one transaction, exactly once (database layer
   afterAll(async () => {
     if (!sql) return;
     const clinics = [clinicA, clinicB];
+    await cleanupTestClinics(clinics);
     await sql`delete from public.referrals where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.appointments where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.staff_roles where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.doctors where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.patients where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.services where clinic_id in ${sql(clinics)}`;
-    await sql`delete from public.clinics where id in ${sql(clinics)}`;
     await sql`delete from auth.users where id in ${sql(Object.values(profiles))}`;
     await sql.end({ timeout: 5 });
   });

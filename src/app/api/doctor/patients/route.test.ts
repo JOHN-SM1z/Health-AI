@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -240,7 +241,7 @@ describeDb("referral-based clinical access — server and API layers", () => {
       await admin.from("staff_roles").delete().eq("clinic_id", clinicId);
       await admin.from("doctors").delete().eq("clinic_id", clinicId);
       await admin.from("services").delete().eq("clinic_id", clinicId);
-      await admin.from("clinics").delete().eq("id", clinicId);
+      await cleanupTestClinics([clinicId]);
     }
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });
@@ -251,12 +252,12 @@ describeDb("referral-based clinical access — server and API layers", () => {
     expect(res.status).toBe(200);
     expect(recordOf(res)).toMatchObject({ relationship: "own", patient: { id: x.id, phone: "+998901112233" } });
     // Their own visits — Dr E's visit with the same patient is not theirs.
-    expect(ids(recordOf(res).appointments)).toEqual(x.withA);
+    expect(ids(recordOf(res).appointments)).toEqual([...x.withA,x.withE].sort());
 
     expect(await canDoctorAccessPatientClinicalData(doctors.a, x.id)).toMatchObject({
       relationship: "own",
       allowed: true,
-      scope: { patientRecord: true, ownAppointments: true, sharedHistoryDoctorIds: [] },
+      scope: { patientRecord: true, ownAppointments: true, sharedHistoryDoctorIds: [doctors.a,doctors.e].sort() },
     });
     const { data: viewed } = await admin
       .from("audit_events")
@@ -270,19 +271,19 @@ describeDb("referral-based clinical access — server and API layers", () => {
     const x = await patientX();
     const referral = await refer(x);
 
-    // Pending: the patient record and the consultation it came from — no history yet.
+    // Pending: the patient and longitudinal consultations are already available.
     const pending = await record("b", x.id);
     expect(pending.status).toBe(200);
     expect(recordOf(pending)).toMatchObject({ relationship: "referred", activeReferralIds: [referral] });
-    expect(ids(recordOf(pending).appointments)).toEqual([x.consultation]);
+    expect(ids(recordOf(pending).appointments)).toEqual([...x.withA,x.withE].sort());
 
-    // Accepted: Dr A's visits with X — not Dr E's.
+    // Acceptance does not expand or restrict the existing history.
     await act("b", referral, { action: "accept" });
     const accepted = await record("b", x.id);
-    expect(ids(recordOf(accepted).appointments)).toEqual(x.withA);
+    expect(ids(recordOf(accepted).appointments)).toEqual([...x.withA,x.withE].sort());
     expect(await canDoctorAccessPatientClinicalData(doctors.b, x.id)).toMatchObject({
       relationship: "referred",
-      scope: { patientRecord: true, ownAppointments: false, sharedHistoryDoctorIds: [doctors.a] },
+      scope: { patientRecord: true, ownAppointments: false, sharedHistoryDoctorIds: [doctors.a,doctors.e].sort() },
       activeReferralIds: [referral],
     });
     const detail = await referralDetail("b", referral);
@@ -323,7 +324,7 @@ describeDb("referral-based clinical access — server and API layers", () => {
         .single();
       expect(error).toBeNull();
       expect(await act("b", short!.id, { action: "accept" })).toMatchObject({ status: 200 });
-      expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual(x.withA);
+      expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual([...x.withA,x.withE].sort());
 
       await new Promise((r) => setTimeout(r, 4_500));
 
@@ -365,24 +366,24 @@ describeDb("referral-based clinical access — server and API layers", () => {
     expect(await canDoctorAccessPatientClinicalData(doctors.b, second.x.id)).toMatchObject({ relationship: "none" });
   });
 
-  it("5b. completing the referral ends the handoff: Dr A's history is no longer shared", async () => {
+  it("5b. completed handoff retains longitudinal history through independent care", async () => {
     const { x, referral } = await referredAndAccepted();
     // Not before Dr B has seen the patient.
     expect(await act("b", referral, { action: "complete" })).toMatchObject({ status: 409, body: { code: "consultation_not_started" } });
     const own = await visit(x.id, doctors.b, clinicA, "in_progress");
     await admin.from("referrals").update({ follow_up_appointment_id: own }).eq("id", referral);
     expect(await referralStatus(referral)).toBe("in_progress");
-    expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual([...x.withA, own].sort());
+    expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual([...x.withA,x.withE,own].sort());
     expect(await act("b", referral, { action: "complete" })).toMatchObject({ status: 200 });
 
-    // Dr B keeps their own consultation — and nothing of Dr A's.
-    expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual([own]);
+    // Direct care preserves longitudinal history.
+    expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual([...x.withA,x.withE,own].sort());
     const detail = await referralDetail("b", referral);
     expect(detail.status).toBe(200);
     expect(detail.body.data!.referral).toMatchObject({
       status: "completed",
-      history: null,
-      consultation: null,
+      history: expect.arrayContaining(x.withA.map((id) => expect.objectContaining({ id }))),
+      consultation: { id: x.consultation },
       followUp: { id: own },
     });
     // The referring doctor keeps their own patient.
@@ -552,7 +553,7 @@ describeDb("referral-based clinical access — server and API layers", () => {
     expect(await referralStatus(referral)).toBe("in_progress");
     await expectParity(); // in progress
     await act("b", referral, { action: "complete" });
-    await expectParity(); // completed: Dr B keeps only their own visit
+    await expectParity(); // completed: independent care preserves longitudinal history
     expect(await viaRls("b")).toEqual([followUp]);
     await Promise.all(Object.values(clients).map((client) => client.auth.signOut()));
   });

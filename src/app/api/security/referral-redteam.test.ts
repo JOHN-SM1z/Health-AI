@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -299,7 +300,7 @@ describeDb("RED TEAM — referral-based clinical access", () => {
       await admin.from("staff_roles").delete().eq("clinic_id", c);
       await admin.from("doctors").delete().eq("clinic_id", c);
       await admin.from("services").delete().eq("clinic_id", c);
-      await admin.from("clinics").delete().eq("id", c);
+      await cleanupTestClinics([c]);
     }
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });
@@ -337,7 +338,7 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     denied(await writeRecord(X.id, { appointmentId: X.consultation }), [404]);
     // Correct Dr A's record.
     const own = await visit("A", X.id, doctors.b, "in_progress");
-    denied(await writeRecord(X.id, { appointmentId: own, recordType: "diagnosis", correctsRecordId: X.record }), [409]);
+    denied(await writeRecord(X.id, { appointmentId: own, recordType: "diagnosis", correctsRecordId: X.record }), [403]);
     // Start Dr A's appointment as Dr B's consultation (a patient Dr B may consult, no consultation yet).
     denied(await startConsultation(W.id, { appointmentId: W.consultation }), [404]);
     const { data: aVisit } = await admin.from("appointments").select("status, doctor_id").eq("id", W.consultation).single();
@@ -408,15 +409,14 @@ describeDb("RED TEAM — referral-based clinical access", () => {
   });
 
   // 6 ----------------------------------------------------------------------
-  it("6. completed referral IDs: no referral-based access; past validity not even the referral text", async () => {
+  it("6. completed referral IDs: direct care preserves history; closed workflow cannot be revived", async () => {
     as("b");
     const ws = await workspace(completed.patient);
     expect(ws.status).toBe(200); // Dr B's own consultation remains theirs…
     const rec = ws.body.data!.record as { appointments: Array<{ id: string }>; records: Array<{ id: string }> };
-    expect(rec.appointments.map((a) => a.id)).toEqual([completed.own]); // …and nothing of Dr A's.
-    expect(rec.records).toEqual([]);
-    expect(JSON.stringify(ws.body)).not.toContain(SECRET); // no record or referral text of Dr A's
-    denied(await referral(completed.referral), [410]);
+    expect(rec.appointments.map((a) => a.id)).toContain(completed.own);
+    expect(JSON.stringify(ws.body)).toContain(SECRET); // authorized longitudinal clinical history
+    expect((await referral(completed.referral)).status).toBe(200);
     // Past its validity Dr B can't act on it at all (410), never a silent no-op (200).
     for (const action of ["accept", "complete", "decline"]) denied(await actOn(completed.referral, { action }), [409, 410]);
     as("b");
@@ -768,7 +768,7 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     expect(data).toEqual([{ actor_id: users.b, patient_id: null, clinic_id: clinic.A }]);
   });
 
-  it("2b. referral laundering: an onward referral from Dr B passes on Dr B's history — never Dr A's", async () => {
+  it("2b. a legitimate onward handoff opens longitudinal history without sharing authorship", async () => {
     const p = await patientWithRecord("A", "a", "a");
     const toB = await insertReferral("A", p, "a", "b", "a");
     await transition(toB, { status: "accepted", accepted_by: users.b });
@@ -787,9 +787,9 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     const ws = await workspace(p.id);
     expect(ws.status).toBe(200);
     const rec = ws.body.data!.record as { appointments: Array<{ id: string }>; records: Array<{ id: string }> };
-    expect(rec.appointments.map((a) => a.id)).toEqual([own]);
-    expect(rec.records).toEqual([]);
-    expect(JSON.stringify(ws.body)).not.toContain(SECRET);
+    expect(rec.appointments.map((a) => a.id)).toContain(own);
+    expect(rec.records.length).toBeGreaterThan(0);
+    expect(JSON.stringify(ws.body)).toContain(SECRET);
   });
 
   // Cross-cutting ----------------------------------------------------------

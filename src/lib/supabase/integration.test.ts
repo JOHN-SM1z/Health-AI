@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
@@ -390,7 +391,7 @@ describeDb("local Supabase booking engine", () => {
     expect((data as { error_code: string | null }).error_code).toBe("doctor_not_found");
 
     await admin.from("doctors").delete().eq("id", otherDoctor!.id);
-    await admin.from("clinics").delete().eq("id", otherClinic!.id);
+    await cleanupTestClinics([otherClinic!.id]);
   });
 
   it("rejects a patient from a different clinic (patient_not_found)", async () => {
@@ -419,7 +420,7 @@ describeDb("local Supabase booking engine", () => {
     expect((data as { error_code: string | null }).error_code).toBe("patient_not_found");
 
     await admin.from("patients").delete().eq("id", otherPatient!.id);
-    await admin.from("clinics").delete().eq("id", otherClinic!.id);
+    await cleanupTestClinics([otherClinic!.id]);
   });
 
   it("rejects a doctor+service combination the doctor does not offer (service_not_offered)", async () => {

@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -229,6 +230,7 @@ describeDb("clinical records — database layer", () => {
   afterAll(async () => {
     if (!sql) return;
     const clinics = [clinicA, clinicB];
+    await cleanupTestClinics(clinics);
     await sql`delete from public.clinical_records where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.referrals where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.appointments where clinic_id in ${sql(clinics)}`;
@@ -236,7 +238,6 @@ describeDb("clinical records — database layer", () => {
     await sql`delete from public.doctors where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.patients where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.services where clinic_id in ${sql(clinics)}`;
-    await sql`delete from public.clinics where id in ${sql(clinics)}`;
     await sql`delete from auth.users where id in ${sql(Object.values(profiles))}`;
     await sql.end({ timeout: 5 });
   });
@@ -312,34 +313,151 @@ describeDb("clinical records — database layer", () => {
     }
     expect((await pgError(() => asServer((tx) => tx`delete from public.clinical_records where id = ${x.recEarlier}`))).code).toBe("42501");
 
-    // The author corrects their own record once, in its consultation and type.
+    // The author corrects their own record, in its consultation and type, as
+    // its next version; the version it replaces can't be corrected again.
     const correction = await write(doctors.a, x.id, x.earlier, { summary: "Secondary hypertension", corrects_record_id: x.recEarlier });
     expect(correction.summary).toBe("Secondary hypertension");
-    expect((await pgError(() => write(doctors.a, x.id, x.earlier, { corrects_record_id: x.recEarlier }))).code).toBe("23505");
+    expect((await pgError(() => write(doctors.a, x.id, x.earlier, { corrects_record_id: x.recEarlier }))).code).toBe("CRVER");
     expect(
       (await pgError(() => write(doctors.a, x.id, x.consultation, { corrects_record_id: x.recConsultation, record_type: "diagnosis" }))).message,
     ).toMatch(/keeps the consultation and the record type/);
     // Nobody corrects someone else's record.
-    expect((await pgError(() => write(doctors.e, x.id, x.withE, { corrects_record_id: x.recConsultation }))).message).toMatch(
-      /only the author can correct/,
-    );
+    const notOwned = await pgError(() => write(doctors.e, x.id, x.withE, { corrects_record_id: x.recConsultation }));
+    expect(notOwned.code).toBe("CRNOT");
+    expect(notOwned.message).toMatch(/only the author can correct/);
     const [{ summary }] = await sql<{ summary: string }[]>`select summary from public.clinical_records where id = ${x.recEarlier}`;
     expect(summary).toBe(`Essential hypertension (${suffix})`);
   });
 
+  it("keeps every version: a correction is the next version of the same record, and only the latest is current", async () => {
+    const x = await patientX();
+    const v2 = await write(doctors.a, x.id, x.earlier, { summary: "Secondary hypertension", corrects_record_id: x.recEarlier });
+    const v3 = await write(doctors.a, x.id, x.earlier, { summary: "Renovascular hypertension", corrects_record_id: v2.id });
+    // Version numbers and the lineage come from the database, never the caller.
+    const forged = await write(doctors.a, x.id, x.consultation, { record_type: "lab_result", version: 7, root_record_id: x.recEarlier });
+
+    const versions = await sql<{ id: string; version: number; root_record_id: string; status: string; summary: string; created_by: string }[]>`
+      select id, version, root_record_id, status, summary, created_by from public.clinical_record_versions
+      where root_record_id = ${x.recEarlier} order by version`;
+    expect(versions.map((v) => [v.id, v.version, v.status, v.created_by])).toEqual([
+      [x.recEarlier, 1, "superseded", profiles.a],
+      [v2.id, 2, "superseded", profiles.a],
+      [v3.id, 3, "current", profiles.a],
+    ]);
+    expect(versions[0].summary).toBe(`Essential hypertension (${suffix})`);
+    const [own] = await sql<{ version: number; root_record_id: string }[]>`select version, root_record_id from public.clinical_records where id = ${forged.id}`;
+    expect(own).toEqual({ version: 1, root_record_id: forged.id });
+
+    // Two corrections of the same (current) version at once: exactly one lands.
+    const race = await Promise.allSettled(
+      ["first", "second"].map((label) => write(doctors.a, x.id, x.earlier, { summary: `Race ${label}`, corrects_record_id: v3.id })),
+    );
+    expect(race.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const lost = race.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(["CRVER", "23505"]).toContain((lost.reason as postgres.PostgresError).code);
+    const [{ current }] = await sql<{ current: number }[]>`
+      select count(*)::int as current from public.clinical_record_versions where root_record_id = ${x.recEarlier} and status = 'current'`;
+    expect(current).toBe(1);
+  });
+
+  it("keeps a doctor record's authorship: it can't be re-linked to another login, and even then no one else could correct", async () => {
+    const x = await patientX();
+    // Dr C's login can't take over Dr A's doctor record once it holds Dr A's records.
+    await sql`update public.doctors set profile_id = null where id = ${doctors.c}`;
+    try {
+      expect((await pgError(() => asServer((tx) => tx`update public.doctors set profile_id = ${profiles.c} where id = ${doctors.a}`))).code).toBe(
+        "CRLNK",
+      );
+      // Defence in depth, in a transaction that is rolled back: with that guard
+      // switched off, the new login still can't correct the old login's record.
+      let refused: postgres.PostgresError | null = null;
+      await sql
+        .begin(async (tx) => {
+          await tx.unsafe("alter table public.doctors disable trigger doctors_keep_record_authors");
+          await tx`update public.doctors set profile_id = ${profiles.c} where id = ${doctors.a}`;
+          refused = await pgError(() =>
+            tx`insert into public.clinical_records ${tx({
+              clinic_id: clinicA,
+              patient_id: x.id,
+              author_doctor_id: doctors.a,
+              appointment_id: x.earlier,
+              record_type: "diagnosis",
+              summary: "Rewritten by another login",
+              corrects_record_id: x.recEarlier,
+              created_by: profiles.c,
+            })}`,
+          );
+          throw ROLLBACK;
+        })
+        .catch((e) => {
+          if (e !== ROLLBACK) throw e;
+        });
+      expect(refused!.code).toBe("CRNOT");
+    } finally {
+      await sql`update public.doctors set profile_id = ${profiles.c} where id = ${doctors.c}`;
+    }
+    const [{ profile_id }] = await sql<{ profile_id: string }[]>`select profile_id from public.doctors where id = ${doctors.a}`;
+    expect(profile_id).toBe(profiles.a);
+  });
+
+  it("never lets a patient deletion take bookings, payments, referrals or records along", async () => {
+    const keys = await sql<{ table: string; action: string }[]>`
+      select c.conrelid::regclass::text as table, c.confdeltype as action
+      from pg_constraint c
+      where c.contype = 'f' and c.confrelid = 'public.patients'::regclass
+        and c.conrelid::regclass::text in ('appointments', 'payments', 'referrals', 'clinical_records')
+      order by 1`;
+    // 'a' = NO ACTION: the patient can't go while any of these exist, yet a
+    // whole clinic (which removes them in the same statement) still can.
+    expect(keys).toEqual(["appointments", "clinical_records", "payments", "referrals"].map((table) => ({ table, action: "a" })));
+
+    // A patient with only a booking and its payment is kept, and so are they.
+    const patient = await newPatient();
+    const booked = await visit(patient, doctors.a, "confirmed");
+    await sql`insert into public.payments ${sql({ clinic_id: clinicA, appointment_id: booked, patient_id: patient, amount: 100000, status: "unpaid" })}`;
+    expect((await pgError(() => asServer((tx) => tx`delete from public.patients where id = ${patient}`))).code).toBe("23503");
+    const [{ appointments, payments }] = await sql<{ appointments: number; payments: number }[]>`
+      select (select count(*)::int from public.appointments where patient_id = ${patient}) as appointments,
+             (select count(*)::int from public.payments where patient_id = ${patient}) as payments`;
+    expect({ appointments, payments }).toEqual({ appointments: 1, payments: 1 });
+  });
+
+  it("keeps the audit trail, the version view and the retention rules out of reach of every API role", async () => {
+    const x = await patientX();
+    for (const [role, sub] of [
+      ["authenticated", profiles.owner],
+      ["authenticated", profiles.a],
+      ["service_role", null],
+    ] as const) {
+      for (const statement of [
+        (tx: Tx) => tx`update public.audit_events set action = 'tampered' where entity_id = ${x.recEarlier}`,
+        (tx: Tx) => tx`delete from public.audit_events where entity_id = ${x.recEarlier}`,
+      ]) {
+        expect((await pgError(() => as(role, sub, statement))).code).toBe("42501");
+      }
+    }
+    for (const sub of [profiles.a, profiles.owner]) {
+      expect((await pgError(() => asUser(sub, (tx) => tx`select id from public.clinical_record_versions limit 1`))).code).toBe("42501");
+      expect((await pgError(() => asUser(sub, (tx) => tx`select clinic_id from public.retention_policies limit 1`))).code).toBe("42501");
+    }
+    // No retention period is assumed: a clinic has none until one is confirmed.
+    const [{ count }] = await sql<{ count: number }[]>`select count(*)::int as count from public.retention_policies where clinic_id = ${clinicA}`;
+    expect(count).toBe(0);
+  });
+
   it("shows each record exactly where its consultation is visible", async () => {
     const x = await patientX();
-    const aRecords = [x.recEarlier, x.recConsultation].sort();
+    const aRecords = [x.recEarlier, x.recConsultation, x.recE].sort();
 
     expect(await readable(profiles.a, x.id)).toEqual(aRecords);
-    expect(await readable(profiles.e, x.id)).toEqual([x.recE]);
+    expect(await readable(profiles.e, x.id)).toEqual(aRecords);
     expect(await readable(profiles.b, x.id)).toEqual([]);
 
-    // Pending referral: only the records of the consultation it came from.
+    // Pending referral: longitudinal history is immediately available.
     const referral = await refer(x.id, x.consultation);
-    expect(await readable(profiles.b, x.id)).toEqual([x.recConsultation]);
+    expect(await readable(profiles.b, x.id)).toEqual(aRecords);
 
-    // Accepted: all of Dr A's records for X — never Dr E's.
+    // Acceptance tracks care without changing the history scope.
     await transition(referral, { status: "accepted", accepted_by: profiles.b });
     expect(await readable(profiles.b, x.id)).toEqual(aRecords);
 
@@ -349,12 +467,12 @@ describeDb("clinical records — database layer", () => {
     const bRecord = (await write(doctors.b, x.id, followUp, { record_type: "consultation_note", summary: "Seen for the referral", code: null })).id;
     expect(await readable(profiles.a, x.id)).toEqual([...aRecords, bRecord].sort());
     expect(await readable(profiles.b, x.id)).toEqual([...aRecords, bRecord].sort());
-    expect(await readable(profiles.e, x.id)).toEqual([x.recE]);
+    expect(await readable(profiles.e, x.id)).toEqual([...aRecords, bRecord].sort());
 
-    // Revoked: Dr B keeps only their own; Dr A no longer sees the follow-up.
+    // Revoked: independent care relationships preserve longitudinal history.
     await transition(referral, { status: "revoked", revoked_by: profiles.a, revoked_reason: "Handled elsewhere" });
-    expect(await readable(profiles.b, x.id)).toEqual([bRecord]);
-    expect(await readable(profiles.a, x.id)).toEqual(aRecords);
+    expect(await readable(profiles.b, x.id)).toEqual([...aRecords, bRecord].sort());
+    expect(await readable(profiles.a, x.id)).toEqual([...aRecords, bRecord].sort());
 
     // No relationship, another clinic, and every operational role: nothing.
     for (const profileId of [profiles.c, profiles.k, profiles.receptionist, profiles.manager, profiles.owner]) {
@@ -391,16 +509,17 @@ describeDb("clinical records — database layer", () => {
       return row.id;
     });
     await transition(referral, { status: "accepted", accepted_by: profiles.b });
-    expect(await readable(profiles.b, x.id)).toEqual([x.recEarlier, x.recConsultation].sort());
+    expect(await readable(profiles.b, x.id)).toEqual([x.recEarlier, x.recConsultation, x.recE].sort());
 
     await new Promise((r) => setTimeout(r, 2_500));
     expect(await readable(profiles.b, x.id)).toEqual([]);
   });
 
-  it("are erased with the patient", async () => {
+  it("are never erased with the patient: the patient cannot be deleted from under them", async () => {
     const x = await patientX();
-    await sql`delete from public.patients where id = ${x.id}`;
+    const err = await pgError(() => sql`delete from public.patients where id = ${x.id}`);
+    expect(err.code).toBe("23503");
     const [{ count }] = await sql<{ count: string }[]>`select count(*) from public.clinical_records where patient_id = ${x.id}`;
-    expect(Number(count)).toBe(0);
+    expect(Number(count)).toBe(3);
   });
 });

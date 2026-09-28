@@ -44,6 +44,7 @@ export function ReferralDialog({
   onCreated: (referralId: string) => void;
 }) {
   const [recipients, setRecipients] = useState<Recipient[] | null>(null);
+  const [specialty, setSpecialty] = useState("");
   const [doctorId, setDoctorId] = useState("");
   const [priority, setPriority] = useState<"routine" | "urgent">("routine");
   const [validForDays, setValidForDays] = useState("90");
@@ -67,6 +68,8 @@ export function ReferralDialog({
       });
   }, []);
 
+  const specialties = [...new Set((recipients ?? []).map((d) => d.specialty).filter((s): s is string => !!s))].sort();
+  const filteredRecipients = (recipients ?? []).filter((d) => !specialty || d.specialty === specialty);
   const recipient = recipients?.find((d) => d.id === doctorId) ?? null;
   const canReview = !!recipient && reason.trim().length >= 3;
   const doctorLabel = (d: Recipient) => [d.name, d.specialty ?? d.title].filter(Boolean).join(" — ");
@@ -158,17 +161,23 @@ export function ReferralDialog({
           <ReviewRow label="Yo‘llanma sababi">{reason.trim()}</ReviewRow>
           <ReviewRow label="Shifokor uchun izoh">{handoffNote.trim() || "—"}</ReviewRow>
           <p className="mt-2 text-xs text-ink-muted">
-            Yuborilgach sabab va izohni o‘zgartirib bo‘lmaydi. Ularni faqat siz va qabul qiluvchi shifokor ko‘radi.
+            Yuborilgach sabab va izohni o‘zgartirib bo‘lmaydi. Ularni bemorni davolashga vakolatli shifokorlar ko‘radi.
           </p>
         </div>
       ) : (
         <div className="flex flex-col gap-3">
           <div>
+            <p className="mb-1 text-xs font-medium text-ink-muted">Bo‘lim / mutaxassislik</p>
+            <ASelect value={specialty} onChange={(value) => { setSpecialty(value); setDoctorId(""); }}
+              options={[{ value: "", label: "Barcha bo‘limlar" }, ...specialties.map((name) => ({ value: name, label: name }))]}
+              aria-label="Bo‘lim / mutaxassislik" />
+          </div>
+          <div>
             <p className="mb-1 text-xs font-medium text-ink-muted">Qabul qiluvchi shifokor</p>
             <ASelect
               value={doctorId}
               onChange={setDoctorId}
-              options={[{ value: "", label: "Shifokorni tanlang" }, ...recipients.map((d) => ({ value: d.id, label: doctorLabel(d) }))]}
+              options={[{ value: "", label: "Shifokorni tanlang" }, ...filteredRecipients.map((d) => ({ value: d.id, label: doctorLabel(d) }))]}
               aria-label="Qabul qiluvchi shifokor"
             />
           </div>
@@ -200,7 +209,7 @@ export function ReferralDialog({
             <p className="mb-1 text-xs font-medium text-ink-muted">Amal qilish muddati</p>
             <ASelect value={validForDays} onChange={setValidForDays} options={VALIDITY_OPTIONS} aria-label="Amal qilish muddati" />
           </div>
-          <p className="text-xs text-ink-muted">Sabab va izohni faqat siz va qabul qiluvchi shifokor ko‘radi.</p>
+          <p className="text-xs text-ink-muted">Sabab va izohni bemorni davolashga vakolatli shifokorlar ko‘radi.</p>
         </div>
       )}
     </AModal>

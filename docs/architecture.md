@@ -57,9 +57,12 @@ Patient (Telegram)                      Clinic staff (browser)
   linked to the receiving doctor's consultation for it (`follow_up_appointment_id`, booked by
   reception or started by the doctor) — the referral is in progress once that consultation starts
 - **clinical_records** — doctor-authored clinical notes, assessments, diagnoses, prescriptions,
-  lab orders and results, medical history and follow-up plans; each tied to the author's own consultation (composite FK), immutable
-  (corrections are new records), readable only where the consultation is (see
+  lab orders and results, medical history and follow-up plans; each tied to the author's own consultation (composite FK),
+  append-only and versioned (only the author corrects, as the next version; earlier versions kept in
+  `clinical_record_versions`), never erased with the patient, readable only where the consultation is (see
   [security.md](security.md#clinical-records))
+- **retention_policies** — per clinic and data category, the retention rule a confirmed policy sets; empty — nothing
+  is deleted or anonymised on its basis yet
 - **conversations / messages / voice_messages** — chat history, admin takeover support,
   `conversations.urgent_at` (urgent wording nobody has taken over yet), `voice_messages.purged_at`
   (audio and transcripts removed after retention); written by the server only

@@ -61,7 +61,7 @@ function roleOf(doctor: LinkedDoctor, row: { referring_doctor_id: string; referr
 }
 
 /**
- * Same rule as the "referrals read for receiving doctor" RLS policy: the
+ * Referral-only inbox/action visibility; independent clinical history is checked separately: the
  * referring doctor always sees their referral; the receiving doctor while it
  * is open or completed — and never past expires_at, so a completed referral
  * does not stay readable forever. (An open one past expires_at is already
@@ -110,8 +110,8 @@ export function referralError(error: { code?: string; message?: string }): ApiEr
   if (has("only the receiving doctor") || has("only the referring doctor")) {
     return new ApiError(403, "Bu amal uchun ruxsat yo‘q", "forbidden");
   }
-  if (has("only be booked once the referral is accepted")) {
-    return new ApiError(409, "Yo‘llanma hali qabul qilinmagan", "referral_not_accepted");
+  if (has("only be linked to an open handoff") || has("only be booked once the referral is accepted")) {
+    return new ApiError(409, "Yo‘llanma yopilgan yoki muddati tugagan", "referral_not_open");
   }
   if (has("already booked")) return new ApiError(409, "Bu yo‘llanma uchun qabul allaqachon yozilgan", "follow_up_exists");
   if (has("follow-up appointment is cancelled")) {
@@ -284,8 +284,8 @@ export type ReferralDetail = {
   /**
    * The patient's visits with the referring doctor, as far as the clinical
    * access decision covers them: always for the referring doctor (their own
-   * visits); for the receiving doctor only while the referral is accepted or
-   * in progress, and unexpired. Null otherwise.
+   * visits); for the receiving doctor through an open unexpired referral or
+   * an independent treatment relationship. Null otherwise.
    */
   history: AppointmentRef[] | null;
   allowedActions: ReferralAction[];
@@ -343,10 +343,10 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
   const role = row ? roleOf(doctor, row) : null;
   const status = row ? effectiveStatus(row.status, row.expires_at) : null;
   if (!row || !status || !role) throw new ApiError(404, "Yo‘llanma topilmadi", "referral_not_found");
-  // The receiving doctor may learn why a referral they had is gone — never its content.
-  if (!visibleTo(role, status, row.expires_at)) throw lapsedReferralError(status);
-
   const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, row.patient_id);
+  // A closed handoff remains clinical history for an independently treating
+  // participant; referral-only readers lose access at closure/expiry.
+  if (!visibleTo(role, status, row.expires_at) && !access.allowed) throw lapsedReferralError(status);
   const historyShared =
     role === "referrer" ? access.scope.ownAppointments : access.scope.sharedHistoryDoctorIds.includes(row.referring_doctor_id);
   const contactShared = access.scope.patientRecord;
@@ -448,7 +448,7 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
 
 export type PatientReferral = {
   id: string;
-  role: ReferralRole;
+  role: ReferralRole | "care_team";
   status: ReferralStatus;
   priority: ReferralPriority;
   reason: string;
@@ -463,12 +463,11 @@ export type PatientReferral = {
   completedAt: string | null;
 };
 
-/**
- * The patient's referrals the calling doctor is on and may still see — the
- * same visibility as the referral pages (the referring doctor: all of theirs;
- * the receiving doctor: open or completed ones, until expires_at).
- */
+/** Read-only longitudinal handoffs for an authorized treating doctor. The
+ * workspace audits the complete released referral set before returning it. */
 export async function listPatientReferralsForDoctor(doctor: LinkedDoctor, patientId: string): Promise<PatientReferral[]> {
+  const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, patientId);
+  if (!access.allowed) throw new ApiError(404, "Bemor topilmadi", "patient_not_found");
   const { data, error } = await createAdminClient()
     .from("referrals")
     .select(
@@ -476,7 +475,6 @@ export async function listPatientReferralsForDoctor(doctor: LinkedDoctor, patien
     )
     .eq("clinic_id", doctor.clinicId)
     .eq("patient_id", patientId)
-    .or(`referring_doctor_id.eq.${doctor.doctorId},referred_to_doctor_id.eq.${doctor.doctorId}`)
     .order("created_at", { ascending: false })
     .limit(50);
   if (error) throw new ApiError(500, "Yo‘llanmalarni yuklab bo‘lmadi");
@@ -500,9 +498,8 @@ export async function listPatientReferralsForDoctor(doctor: LinkedDoctor, patien
     referred_to: DoctorRef | null;
   }>;
   return rows.flatMap((row) => {
-    const role = roleOf(doctor, row);
+    const role = roleOf(doctor, row) ?? "care_team";
     const status = effectiveStatus(row.status, row.expires_at, now);
-    if (!role || !visibleTo(role, status, row.expires_at, now)) return [];
     return [
       {
         id: row.id,
@@ -840,14 +837,14 @@ export async function listPatientReferrals(clinicId: string, patientId: string):
       referredToDoctor: row.referred_to,
       followUp,
       canBookFollowUp:
-        status === "accepted" && (!followUp || INACTIVE_APPOINTMENT_STATUSES.includes(followUp.status)),
+        ["pending", "accepted"].includes(status) && (!followUp || INACTIVE_APPOINTMENT_STATUSES.includes(followUp.status)),
     };
   });
 }
 
 /**
  * Before reception books a referral's follow-up: the referral must be
- * accepted and unexpired, the appointment must be with the receiving doctor
+ * pending/accepted and unexpired, the appointment must be with the receiving doctor
  * for the referred patient, and no active follow-up may exist yet.
  */
 export async function assertFollowUpBookable(
@@ -876,8 +873,8 @@ export async function assertFollowUpBookable(
       }
     | null;
   if (!row) throw new ApiError(404, "Yo‘llanma topilmadi", "referral_not_found");
-  if (effectiveStatus(row.status, row.expires_at) !== "accepted") {
-    throw new ApiError(409, "Yo‘llanma hali qabul qilinmagan yoki yopilgan", "referral_not_accepted");
+  if (!["pending", "accepted"].includes(effectiveStatus(row.status, row.expires_at))) {
+    throw new ApiError(409, "Yo‘llanma yopilgan yoki muddati tugagan", "referral_not_open");
   }
   if (doctorId !== row.referred_to_doctor_id) {
     throw new ApiError(400, "Qabul yo‘llanma berilgan shifokorga yozilishi kerak", "follow_up_wrong_doctor");

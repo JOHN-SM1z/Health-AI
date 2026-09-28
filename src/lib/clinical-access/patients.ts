@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/api/errors";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 
 /**
- * The patients a doctor may open: their own (a live — not cancelled —
+ * The patients a doctor may open: their own (a live — not cancelled/no-show —
  * appointment with them, or a record they wrote) and those actively referred
  * to them (pending, accepted or in progress, unexpired) — the same
  * rule as public.doctor_patient_access(), so every patient listed here opens
@@ -48,6 +48,7 @@ export async function listDoctorPatients(doctor: LinkedDoctor, query: string): P
       .eq("clinic_id", doctor.clinicId)
       .eq("doctor_id", doctor.doctorId)
       .neq("status", "cancelled")
+      .neq("status", "no_show")
       .order("start_at", { ascending: false })
       .limit(MAX_VISITS_SCANNED),
     supabase

@@ -4,7 +4,6 @@ import { ApiError } from "@/lib/api/errors";
 import { trackAnalytics } from "@/lib/analytics";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 import { canDoctorAccessPatientClinicalData } from "@/lib/clinical-access/access";
-import { canStartConsultation } from "@/lib/clinical-access/workspace";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
 import { startConsultationInDatabase, startWalkInInDatabase } from "@/lib/clinical-access/consultation-start";
 import { BookingError, bookingError } from "@/lib/booking/engine";
@@ -43,8 +42,8 @@ const WALK_IN_MESSAGES: Record<string, string> = {
  * the visit booked for them (moved to in progress), or a walk-in booked now
  * through the booking engine (working hours, time blocks and overlaps all
  * checked there). Allowed for the doctor's own patient or a patient referred
- * to them with an accepted referral; a started consultation of an accepted
- * referral becomes its follow-up and the referral moves to in progress
+ * to them with an open referral; starting care acknowledges a pending
+ * handoff and the consultation becomes its follow-up and the referral moves to in progress
  * (enforced by the database). The start, the referral link and the
  * 'consultation_started' audit row are one database transaction. Idempotent:
  * an existing in-progress consultation with the patient is returned instead
@@ -57,9 +56,6 @@ export async function startConsultation(
 ): Promise<{ appointmentId: string; started: boolean }> {
   const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, patientId);
   if (!access.allowed) throw await patientAccessDenied(doctor, patientId);
-  if (!canStartConsultation(access)) {
-    throw new ApiError(409, "Avval yo‘llanmani qabul qiling", "referral_not_accepted");
-  }
 
   const existing = await inProgressConsultation(doctor, patientId);
   if (existing) return { appointmentId: existing, started: false };
