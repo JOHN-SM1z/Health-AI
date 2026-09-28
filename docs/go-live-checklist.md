@@ -46,7 +46,9 @@ Server-side (`src/lib/env.ts` validates):
    public build-time substitutions (`_PUBLIC_SUPABASE_URL`, `_PUBLIC_SUPABASE_ANON_KEY`, `_PUBLIC_URL`).
 3. Deploy Cloud Run (§2); verify `/api/health`.
 4. HTTPS + DNS (§3); confirm `TELEGRAM_WEBHOOK_SECRET` is set (deploy-cloud-run.md §4
-   — required for any clinic bot to work, see telegram-setup.md §2); Cloud Scheduler (§5).
+   — required for any clinic bot to work, see telegram-setup.md §2); scheduled jobs
+   (PRODUCTION_RELEASE_CHECKLIST.md §2C — Supabase pg_cron via `supabase/ops/scheduled-jobs.sql`,
+   with `CRON_SECRET` in Supabase Vault as `health_ai_cron_secret`).
 5. `npm run create-owner` with `OWNER_EMAIL`/`OWNER_PASSWORD` in `.env` (production-safe;
    it runs against whatever `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` point to).
 6. Sign in as the owner and add the staff under *Xodimlar* (email, name, role): each new

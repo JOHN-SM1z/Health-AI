@@ -43,6 +43,7 @@ This operational checklist governs the deployment, verification, and rollback pr
 ### A. Hosting Infrastructure Provisioning
 - [ ] Deploy Next.js standalone application container to Cloud Run (or Vercel).
 - [ ] Verify container startup completes without fail-closed initialization exceptions.
+- [ ] On Vercel: Deployment Protection (Vercel Authentication) must not cover the production domain. With the default "All Deployments except Custom Domains" and no custom domain, every production URL — including `/api/telegram/webhook` and the cron endpoints — answers with the Vercel login page, so patients, Telegram and the scheduler never reach the app. Add a custom domain or set protection to "Only Preview Deployments".
 - [ ] Configure custom domain DNS records (`A` / `AAAA` / `CNAME`) pointing to hosting endpoint.
 - [ ] Confirm HTTPS / TLS certificate provisioned and enforced.
 
@@ -52,9 +53,14 @@ This operational checklist governs the deployment, verification, and rollback pr
 - [ ] Configure Telegram Mini App URL in @BotFather setting `https://<PRODUCTION_DOMAIN>/book`.
 
 ### C. Background Jobs & Scheduler
-- [ ] Configure Cloud Scheduler (or cron daemon) to trigger `POST https://<PRODUCTION_DOMAIN>/api/notifications/process` every 15 minutes (`*/15 * * * *`). The same run deletes voice messages past their retention (privacy page §2) — the response reports `voicePurged` / `voicePurgeFailed`.
-- [ ] Set Cloud Scheduler HTTP request header `Authorization: Bearer <CRON_SECRET>`.
-- [ ] Configure a second job: `POST https://<PRODUCTION_DOMAIN>/api/referrals/expire` hourly (`7 * * * *`), same header.
+Two jobs, both `POST` with header `Authorization: Bearer <CRON_SECRET>`:
+`https://<PRODUCTION_DOMAIN>/api/notifications/process` every 15 minutes (`*/15 * * * *`) — the same run deletes voice messages past their retention (privacy page §2); the response reports `voicePurged` / `voicePurgeFailed` — and `https://<PRODUCTION_DOMAIN>/api/referrals/expire` hourly (`7 * * * *`).
+
+The production project runs them from Supabase itself (pg_cron + pg_net), with [`supabase/ops/scheduled-jobs.sql`](../supabase/ops/scheduled-jobs.sql):
+- [ ] Store the app's `CRON_SECRET` in Supabase Vault under the name `health_ai_cron_secret` (Dashboard → Project Settings → Vault, or `select vault.create_secret('<CRON_SECRET>', 'health_ai_cron_secret');` in the SQL editor). Same value as the app's `CRON_SECRET`; rotate both together.
+- [ ] Set `v_app_url` in the script to the production URL and run it in the SQL editor (re-running replaces the jobs).
+- [ ] After the next quarter hour, check `select status_code, left(content, 200) from net._http_response order by id desc limit 5;` — `200` with `{"ok":true,…}`. A `401` means the Vault secret differs from `CRON_SECRET`; a `200` with an HTML body means Vercel Deployment Protection is intercepting the request (§A).
+- Cloud Scheduler (or any cron service) calling the same two URLs with the same header works equally well — use one scheduler, not both.
 
 ---
 
