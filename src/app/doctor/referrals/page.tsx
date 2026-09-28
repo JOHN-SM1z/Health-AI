@@ -26,7 +26,9 @@ type Referral = {
   reason: string;
   handoffNote: string | null;
   referringDoctor: { id: string; name: string } | null;
+  /** Null for a department referral nobody has taken yet. */
   referredToDoctor: { id: string; name: string } | null;
+  department: { id: string; name: string } | null;
 };
 
 const TABS: Array<{ box: Box; label: string }> = [
@@ -116,7 +118,9 @@ export default function DoctorReferralsPage() {
                 <div>
                   <p className="font-display text-base font-bold text-foreground">{r.patientName ?? "—"}</p>
                   <p className="text-sm text-ink-muted">
-                    {incoming ? `Yo‘llagan: ${r.referringDoctor?.name ?? "—"}` : `Qabul qiluvchi: ${r.referredToDoctor?.name ?? "—"}`}
+                    {incoming
+                      ? `Yo‘llagan: ${r.referringDoctor?.name ?? "—"}${r.department && !r.referredToDoctor ? ` · ${r.department.name} bo‘limiga` : ""}`
+                      : `Qabul qiluvchi: ${r.referredToDoctor?.name ?? (r.department ? `${r.department.name} bo‘limi` : "—")}`}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">

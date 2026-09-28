@@ -11,6 +11,8 @@ import {
   formatDateTime,
   formatTime,
   CLINICAL_RECORD_TYPE_TONES,
+  PAYMENT_STATUS_LABELS,
+  PAYMENT_STATUS_TONES,
   REFERRAL_PRIORITY_LABELS,
   REFERRAL_STATUS_LABELS,
   REFERRAL_STATUS_TONES,
@@ -53,7 +55,8 @@ type ClinicalRecord = {
 
 type Referral = {
   id: string;
-  role: "referrer" | "receiver";
+  /** "observer": a referral of this patient between other doctors — read-only. */
+  role: "referrer" | "receiver" | "observer";
   status: string;
   priority: string;
   reason: string;
@@ -61,14 +64,19 @@ type Referral = {
   createdAt: string;
   expiresAt: string;
   referringDoctor: { id: string; name: string } | null;
+  /** Null for a department referral nobody has taken yet. */
   referredToDoctor: { id: string; name: string } | null;
+  department: { id: string; name: string } | null;
   followUpAppointmentId: string | null;
   acceptedAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  /** What the caller may do (server-decided): none for observers. */
+  allowedActions: Array<"accept" | "decline" | "complete" | "revoke">;
 };
 
-type ConsultationRef = { appointmentId: string; startAt: string; serviceName: string | null };
+/** The doctor's own visit in front of them — with its payment status only (never amounts or other visits). */
+type ConsultationRef = { appointmentId: string; startAt: string; serviceName: string | null; paymentStatus: string | null };
 
 type Workspace = {
   patient: { id: string; fullName: string | null; phone: string | null };
@@ -82,7 +90,6 @@ type Workspace = {
     current: ConsultationRef | null;
     booked: ConsultationRef | null;
     canStartWalkIn: boolean;
-    blockedReason: "referral_pending" | null;
     services: Array<{ id: string; name: string }>;
   };
 };
@@ -128,15 +135,35 @@ const REFERABLE = ["in_progress", "completed"];
 /** Visits that have not taken place yet. */
 const SCHEDULED = ["pending", "confirmed", "checked_in"];
 
-/** Record types gathered in the clinical summary (consultation notes stay with their visit). */
-const SUMMARY_TYPES = ["diagnosis", "medical_history", "prescription", "lab_order", "lab_result"] as const;
-const SUMMARY_TITLES: Record<(typeof SUMMARY_TYPES)[number], string> = {
-  diagnosis: "Tashxislar",
-  medical_history: "Anamnez",
-  prescription: "Retseptlar",
-  lab_order: "Tahlilga yo‘llanmalar",
-  lab_result: "Tahlil natijalari",
+const TABS = [
+  { key: "overview", label: "Umumiy" },
+  { key: "appointments", label: "Qabullar" },
+  { key: "history", label: "Klinik tarix" },
+  { key: "diagnoses", label: "Tashxislar" },
+  { key: "lab", label: "Laboratoriya" },
+  { key: "prescriptions", label: "Retseptlar" },
+  { key: "referrals", label: "Yo‘llanmalar" },
+] as const;
+type Tab = (typeof TABS)[number]["key"];
+
+/** Records listed under each record-type tab. */
+const TAB_RECORD_TYPES: Partial<Record<Tab, Array<{ type: string; title: string }>>> = {
+  diagnoses: [
+    { type: "diagnosis", title: "Tashxislar" },
+    { type: "assessment", title: "Klinik baholar" },
+    { type: "medical_history", title: "Anamnez" },
+  ],
+  lab: [
+    { type: "lab_order", title: "Tahlilga yo‘llanmalar" },
+    { type: "lab_result", title: "Tahlil natijalari" },
+  ],
+  prescriptions: [{ type: "prescription", title: "Retseptlar" }],
 };
+
+function PaymentBadge({ status }: { status: string | null }) {
+  if (!status) return null;
+  return <ABadge tone={PAYMENT_STATUS_TONES[status] ?? "neutral"}>To‘lov: {PAYMENT_STATUS_LABELS[status] ?? status}</ABadge>;
+}
 
 function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
   return (
@@ -207,6 +234,7 @@ export default function DoctorPatientWorkspacePage() {
   const [declineFor, setDeclineFor] = useState<string | null>(null);
   const [declineReason, setDeclineReason] = useState("");
   const [notice, setNotice] = useState<ReactNode | null>(null);
+  const [tab, setTab] = useState<Tab>("overview");
 
   const load = useCallback(async (): Promise<Workspace | null> => {
     try {
@@ -318,19 +346,113 @@ export default function DoctorPatientWorkspacePage() {
     .sort((x, y) => x.startAt.localeCompare(y.startAt));
   const previous = workspace.appointments.filter((a) => a.id !== current?.appointmentId && !SCHEDULED.includes(a.status));
   const activeReferralToMe = workspace.referrals.some((r) => r.role === "receiver" && ["pending", "accepted", "in_progress"].includes(r.status));
+  // Referrals that need something from this doctor now (on the overview).
+  const actionable = workspace.referrals.filter((r) => r.allowedActions.some((a) => a !== "revoke"));
+  // The patient's journey: consultations and referrals, newest first.
+  const timeline = [
+    ...previous.map((a) => ({ kind: "visit" as const, at: a.startAt, visit: a })),
+    ...workspace.referrals.map((r) => ({ kind: "referral" as const, at: r.createdAt, referral: r })),
+  ].sort((x, y) => y.at.localeCompare(x.at));
   // The referral this consultation is the handoff for, if any.
   const handoff = current ? workspace.referrals.find((r) => r.role === "receiver" && r.followUpAppointmentId === current.appointmentId) : undefined;
   const currentRecords = current ? (recordsByAppointment.get(current.appointmentId) ?? []) : [];
   const referringDoctorIds = new Set(workspace.referrals.filter((r) => r.role === "receiver").map((r) => r.referringDoctor?.id));
+  const recipientLabel = (r: Referral) => r.referredToDoctor?.name ?? (r.department ? `${r.department.name} bo‘limi` : "—");
+  const referralCard = (r: Referral) => (
+    <Card key={r.id}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-medium text-foreground">
+          {r.role === "receiver"
+            ? `Sizga yo‘llagan: ${r.referringDoctor?.name ?? "—"}${!r.referredToDoctor && r.department ? ` (${r.department.name} bo‘limiga)` : ""}`
+            : r.role === "referrer"
+              ? `Siz yo‘llagansiz: ${recipientLabel(r)}`
+              : `${r.referringDoctor?.name ?? "—"} → ${recipientLabel(r)}`}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <ABadge tone={r.priority === "urgent" ? "red" : "neutral"}>{REFERRAL_PRIORITY_LABELS[r.priority] ?? r.priority}</ABadge>
+          <ABadge tone={REFERRAL_STATUS_TONES[r.status] ?? "gray"}>{REFERRAL_STATUS_LABELS[r.status] ?? r.status}</ABadge>
+        </div>
+      </div>
+      <p className="mt-2 text-xs text-ink-muted">Yo‘llanma sababi</p>
+      <p className="whitespace-pre-wrap text-sm text-foreground">{r.reason}</p>
+      {r.handoffNote && (
+        <>
+          <p className="mt-2 text-xs text-ink-muted">Shifokor uchun izoh</p>
+          <p className="whitespace-pre-wrap text-sm text-foreground">{r.handoffNote}</p>
+        </>
+      )}
+      <div className="mt-3">
+        <ReferralLifecycle status={r.status} createdAt={r.createdAt} acceptedAt={r.acceptedAt} startedAt={r.startedAt} completedAt={r.completedAt} />
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-ink-muted">
+          Yuborilgan {formatDateTime(r.createdAt)} · Amal qiladi {formatDateTime(r.expiresAt)}
+          {r.role !== "observer" && (
+            <>
+              {" · "}
+              <Link href={`/doctor/referrals/${r.id}`} className="text-pine hover:underline">
+                Yo‘llanmani ochish
+              </Link>
+            </>
+          )}
+        </p>
+        {r.allowedActions.includes("accept") && declineFor !== r.id && (
+          <div className="flex gap-2">
+            {r.allowedActions.includes("decline") && (
+              <AButton size="sm" variant="outline" onClick={() => setDeclineFor(r.id)}>
+                Rad etish
+              </AButton>
+            )}
+            <AButton size="sm" loading={busy} onClick={() => void actOnReferral(r.id, "accept")}>
+              Yo‘llanmani qabul qilish
+            </AButton>
+          </div>
+        )}
+        {r.allowedActions.includes("complete") && confirmComplete !== r.id && (
+          <AButton size="sm" variant="outline" onClick={() => setConfirmComplete(r.id)}>
+            Yo‘llanmani yakunlash
+          </AButton>
+        )}
+      </div>
+      {r.role === "receiver" && ["pending", "accepted"].includes(r.status) && (
+        <p className="mt-2 text-sm text-ink-muted">
+          Bemorning tarixi sizga ochiq. O‘z qabulingizni “Umumiy” bo‘limida boshlang — yo‘llanma qabul qilinib, “Qabul boshlangan” holatiga
+          o‘tadi.
+        </p>
+      )}
+      {declineFor === r.id && (
+        <div className="mt-3 flex flex-col gap-2 border-t border-hairline pt-3">
+          <p className="text-sm text-foreground">Rad etish sababi (ixtiyoriy) — yo‘llagan shifokor uni ko‘radi.</p>
+          <ATextArea value={declineReason} onChange={setDeclineReason} rows={2} aria-label="Rad etish sababi" />
+          <div className="flex gap-2">
+            <AButton size="sm" variant="outline" onClick={() => setDeclineFor(null)}>
+              Orqaga
+            </AButton>
+            <AButton size="sm" loading={busy} onClick={() => void actOnReferral(r.id, "decline", declineReason.trim() || undefined)}>
+              Yo‘llanmani rad etish
+            </AButton>
+          </div>
+        </div>
+      )}
+      {confirmComplete === r.id && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-hairline pt-3">
+          <p className="text-sm text-foreground">Yo‘llanmani yakunlaysizmi? Yakunlangan yo‘llanmani qayta ochib bo‘lmaydi.</p>
+          <div className="flex gap-2">
+            <AButton size="sm" variant="outline" onClick={() => setConfirmComplete(null)}>
+              Bekor qilish
+            </AButton>
+            <AButton size="sm" loading={busy} onClick={() => void actOnReferral(r.id, "complete")}>
+              Ha, yakunlash
+            </AButton>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
   // The server sends each visible record's consultation; anything else is
   // still listed rather than silently dropped.
   const shownAppointmentIds = new Set([...(current ? [current.appointmentId] : []), ...previous.map((a) => a.id)]);
   const unplaced = workspace.records.filter((r) => !shownAppointmentIds.has(r.appointmentId));
-  // Records by type (the server sends only each record's current version).
-  const summary = SUMMARY_TYPES.map((type) => [type, workspace.records.filter((r) => r.type === type)] as const).filter(
-    ([, items]) => items.length > 0,
-  );
-
   return (
     <div>
       <PageHeader title={workspace.patient.fullName ?? "Bemor"} subtitle={workspace.patient.phone ?? undefined} action={back} />
@@ -344,7 +466,7 @@ export default function DoctorPatientWorkspacePage() {
       <div className="mb-6 flex flex-wrap items-center gap-2 text-sm">
         {workspace.relationship === "own" && <ABadge tone="green">Mening bemorim</ABadge>}
         {(workspace.relationship === "referred" || activeReferralToMe) && <ABadge tone="blue">Yo‘llanma bo‘yicha</ABadge>}
-        <span className="text-ink-muted">Faqat sizga ruxsat etilgan ma‘lumotlar ko‘rsatiladi.</span>
+        <span className="text-ink-muted">Bemorning klinikadagi tibbiy tarixi — har bir yozuv o‘z muallifi bilan.</span>
         {workspace.referralAccessUntil && (
           <span className="text-ink-muted">
             Yo‘llanma bo‘yicha kirish {formatDateTime(workspace.referralAccessUntil)} da tugaydi (yo‘llanma yopilsa — darhol).
@@ -352,301 +474,118 @@ export default function DoctorPatientWorkspacePage() {
         )}
       </div>
 
-      {workspace.referrals.length > 0 && (
-        <Section title="Yo‘llanmalar">
-          {workspace.referrals.map((r) => (
-            <Card key={r.id}>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-medium text-foreground">
-                  {r.role === "receiver"
-                    ? `Sizga yo‘llagan: ${r.referringDoctor?.name ?? "—"}`
-                    : `Siz yo‘llagansiz: ${r.referredToDoctor?.name ?? "—"}`}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <ABadge tone={r.priority === "urgent" ? "red" : "neutral"}>{REFERRAL_PRIORITY_LABELS[r.priority] ?? r.priority}</ABadge>
-                  <ABadge tone={REFERRAL_STATUS_TONES[r.status] ?? "gray"}>{REFERRAL_STATUS_LABELS[r.status] ?? r.status}</ABadge>
-                </div>
-              </div>
-              <p className="mt-2 text-xs text-ink-muted">Yo‘llanma sababi</p>
-              <p className="whitespace-pre-wrap text-sm text-foreground">{r.reason}</p>
-              {r.handoffNote && (
-                <>
-                  <p className="mt-2 text-xs text-ink-muted">Shifokor uchun izoh</p>
-                  <p className="whitespace-pre-wrap text-sm text-foreground">{r.handoffNote}</p>
-                </>
-              )}
-              <div className="mt-3">
-                <ReferralLifecycle status={r.status} createdAt={r.createdAt} acceptedAt={r.acceptedAt} startedAt={r.startedAt} completedAt={r.completedAt} />
-              </div>
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs text-ink-muted">
-                  Yuborilgan {formatDateTime(r.createdAt)} · Amal qiladi {formatDateTime(r.expiresAt)} ·{" "}
-                  <Link href={`/doctor/referrals/${r.id}`} className="text-pine hover:underline">
-                    Yo‘llanmani ochish
-                  </Link>
-                </p>
-                {r.role === "receiver" && r.status === "pending" && declineFor !== r.id && (
-                  <div className="flex gap-2">
-                    <AButton size="sm" variant="outline" onClick={() => setDeclineFor(r.id)}>
-                      Rad etish
-                    </AButton>
-                    <AButton size="sm" loading={busy} onClick={() => void actOnReferral(r.id, "accept")}>
-                      Yo‘llanmani qabul qilish
-                    </AButton>
-                  </div>
-                )}
-                {r.role === "receiver" && r.status === "in_progress" && confirmComplete !== r.id && (
-                  <AButton size="sm" variant="outline" onClick={() => setConfirmComplete(r.id)}>
-                    Yo‘llanmani yakunlash
-                  </AButton>
-                )}
-              </div>
-              {r.role === "receiver" && r.status === "accepted" && (
-                <p className="mt-2 text-sm text-ink-muted">
-                  Keyingi qadam: quyida o‘z qabulingizni boshlang — yo‘llanma “Qabul boshlangan” holatiga o‘tadi.
-                </p>
-              )}
-              {declineFor === r.id && (
-                <div className="mt-3 flex flex-col gap-2 border-t border-hairline pt-3">
-                  <p className="text-sm text-foreground">Rad etish sababi (ixtiyoriy) — yo‘llagan shifokor uni ko‘radi.</p>
-                  <ATextArea value={declineReason} onChange={setDeclineReason} rows={2} aria-label="Rad etish sababi" />
-                  <div className="flex gap-2">
-                    <AButton size="sm" variant="outline" onClick={() => setDeclineFor(null)}>
-                      Orqaga
-                    </AButton>
-                    <AButton size="sm" loading={busy} onClick={() => void actOnReferral(r.id, "decline", declineReason.trim() || undefined)}>
-                      Yo‘llanmani rad etish
-                    </AButton>
-                  </div>
-                </div>
-              )}
-              {confirmComplete === r.id && (
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-hairline pt-3">
-                  <p className="text-sm text-foreground">
-                    Yakunlangach, o‘z qabullaringizdan boshqa yozuvlar sizga ko‘rinmay qoladi.
-                  </p>
-                  <div className="flex gap-2">
-                    <AButton size="sm" variant="outline" onClick={() => setConfirmComplete(null)}>
-                      Bekor qilish
-                    </AButton>
-                    <AButton size="sm" loading={busy} onClick={() => void actOnReferral(r.id, "complete")}>
-                      Ha, yakunlash
-                    </AButton>
-                  </div>
-                </div>
-              )}
+      <nav className="mb-6 flex flex-wrap gap-2" aria-label="Bemor kartasi bo‘limlari">
+        {TABS.map((t) => (
+          <AButton key={t.key} size="sm" variant={tab === t.key ? "primary" : "outline"} onClick={() => setTab(t.key)}>
+            {t.label}
+          </AButton>
+        ))}
+      </nav>
+
+      {tab === "overview" && actionable.length > 0 && <Section title="Javob kutayotgan yo‘llanmalar">{actionable.map(referralCard)}</Section>}
+
+      {tab === "referrals" && (
+        <Section title="Yo‘llanmalar" subtitle="Bemorning barcha yo‘llanmalari — amallar faqat siz ishtirok etganlarida.">
+          {workspace.referrals.length === 0 ? (
+            <Card>
+              <AEmpty title="Yo‘llanmalar yo‘q" icon={<ClipboardList className="h-6 w-6" />} />
             </Card>
-          ))}
-        </Section>
-      )}
-
-      <Section title="Mening qabulim" subtitle="Siz bu bemor uchun yozadigan yangi qabul — oldingi yozuvlardan alohida.">
-        <Card className={current ? "border-pine/40" : undefined}>
-          {current ? (
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-sm text-foreground">
-                    <ABadge tone="purple">Jarayonda</ABadge>{" "}
-                    <span className="ml-1">
-                      {formatDateTime(current.startAt)}
-                      {current.serviceName ? ` · ${current.serviceName}` : ""}
-                    </span>
-                  </p>
-                  {handoff && (
-                    <p className="mt-1 text-xs text-ink-muted">
-                      {handoff.referringDoctor?.name ?? "—"} yo‘llanmasi bo‘yicha qabul — yozuvlaringiz sizning nomingizdan saqlanadi, oldingi
-                      yozuvlar o‘zgarmaydi.
-                    </p>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <AButton
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      const visit = workspace.appointments.find((a) => a.id === current.appointmentId);
-                      if (visit) setReferFrom(visit);
-                    }}
-                  >
-                    Yo‘llanma
-                  </AButton>
-                  <AButton variant="outline" size="sm" loading={busy} onClick={() => void completeConsultation(current.appointmentId)}>
-                    Qabulni yakunlash
-                  </AButton>
-                </div>
-              </div>
-              {currentRecords.length > 0 && (
-                <ul className="flex flex-col gap-2" aria-label="Joriy qabul yozuvlari">
-                  {currentRecords.map((r) => (
-                    <RecordItem key={r.id} record={r} patientId={workspace.patient.id} onCorrect={correct} />
-                  ))}
-                </ul>
-              )}
-              {correcting && correcting.appointmentId === current.appointmentId ? (
-                <ClinicalRecordForm
-                  key={correcting.rootRecordId}
-                  patientId={workspace.patient.id}
-                  appointmentId={current.appointmentId}
-                  correcting={correcting}
-                  onCancel={() => setCorrecting(null)}
-                  onConflict={reloadAfterConflict}
-                  onSaved={() => {
-                    setCorrecting(null);
-                    void load();
-                  }}
-                />
-              ) : (
-                <ClinicalRecordForm patientId={workspace.patient.id} appointmentId={current.appointmentId} onSaved={() => void load()} />
-              )}
-            </div>
-          ) : consultation.blockedReason === "referral_pending" ? (
-            <p className="text-sm text-ink-muted">
-              Qabulni boshlash uchun avval yo‘llanmani qabul qiling.{" "}
-              {workspace.referrals.find((r) => r.role === "receiver" && r.status === "pending") && (
-                <Link
-                  href={`/doctor/referrals/${workspace.referrals.find((r) => r.role === "receiver" && r.status === "pending")!.id}`}
-                  className="font-medium text-pine hover:underline"
-                >
-                  Yo‘llanmani ochish
-                </Link>
-              )}
-            </p>
-          ) : consultation.booked ? (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-foreground">
-                Bugun {formatTime(consultation.booked.startAt)} ga yozilgan qabulingiz
-                {consultation.booked.serviceName ? ` · ${consultation.booked.serviceName}` : ""}
-              </p>
-              <AButton loading={busy} onClick={() => void startConsultation({ appointmentId: consultation.booked!.appointmentId })}>
-                Qabulni boshlash
-              </AButton>
-            </div>
-          ) : consultation.canStartWalkIn ? (
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="min-w-56 flex-1">
-                <p className="mb-1 text-xs font-medium text-ink-muted">Xizmat</p>
-                <ASelect
-                  value={serviceId}
-                  onChange={setServiceId}
-                  options={[{ value: "", label: "Xizmatni tanlang" }, ...consultation.services.map((s) => ({ value: s.id, label: s.name }))]}
-                  aria-label="Xizmat"
-                />
-              </div>
-              <AButton loading={busy} disabled={!serviceId} onClick={() => void startConsultation({ serviceId })}>
-                Hozir qabulni boshlash
-              </AButton>
-            </div>
           ) : (
-            <p className="text-sm text-ink-muted">Bu bemor bilan qabul boshlay olmaysiz.</p>
+            workspace.referrals.map(referralCard)
           )}
-        </Card>
-      </Section>
-
-      {scheduled.length > 0 && (
-        <Section title="Rejalashtirilgan qabullar">
-          <Card>
-            <ul className="divide-y divide-hairline/70">
-              {scheduled.map((a) => (
-                <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                  <span className="text-foreground">
-                    {formatDateTime(a.startAt)}
-                    {a.service?.name ? ` · ${a.service.name}` : ""}
-                    <span className="text-ink-muted"> · {a.mine ? "Siz" : (a.doctor?.name ?? "—")}</span>
-                  </span>
-                  <ABadge tone={STATUS_TONES[a.status] ?? "neutral"}>{STATUS_LABELS[a.status] ?? a.status}</ABadge>
-                </li>
-              ))}
-            </ul>
-          </Card>
         </Section>
       )}
 
-      {summary.length > 0 && (
-        <Section title="Klinik xulosa" subtitle="Amaldagi yozuvlar turi bo‘yicha — tuzatilgan yozuvning oxirgi versiyasi ko‘rsatiladi.">
-          <div className="grid gap-3 md:grid-cols-2">
-            {summary.map(([type, items]) => (
-              <Card key={type}>
-                <p className="mb-2 font-display text-sm font-bold text-foreground">{SUMMARY_TITLES[type]}</p>
-                <ul className="flex flex-col gap-2" aria-label={SUMMARY_TITLES[type]}>
-                  {items.map((r) => (
-                    <li key={r.id} className="text-sm">
-                      {type === "diagnosis" && (
-                        <ABadge tone={r.stage === "current" ? "purple" : "neutral"}>{RECORD_CATEGORY_LABELS[r.category]}</ABadge>
-                      )}{" "}
-                      <span className="font-medium text-foreground">{r.summary}</span>
-                      {r.code && <span className="font-numeric text-xs text-ink-muted"> · {r.code}</span>}
-                      <p className="text-xs text-ink-muted">
-                        {r.mine ? "Siz" : (r.author.name ?? "—")} · {formatDateTime(r.createdAt)}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      <Section
-        title="Oldingi yozuvlar"
-        subtitle="Qabullar va ularda yozilgan tibbiy yozuvlar — har birida muallif va vaqt. Ular mualliflariniki: ko‘rish yoki yangi tashxis qo‘yish ularni o‘zgartirmaydi."
-      >
-        {unplaced.length > 0 && (
+      {tab === "appointments" && (
+        <Section title="Qabullar" subtitle="Bemorning klinikadagi barcha qabullari.">
           <Card>
-            <p className="text-sm font-medium text-foreground">Boshqa qabullardagi yozuvlar</p>
-            <ul className="mt-3 flex flex-col gap-2">
-              {unplaced.map((r) => (
-                <RecordItem key={r.id} record={r} patientId={workspace.patient.id} />
-              ))}
-            </ul>
-          </Card>
-        )}
-        {previous.length === 0 && unplaced.length === 0 ? (
-          <Card>
-            <AEmpty title="Ko‘rsatiladigan oldingi yozuv yo‘q" icon={<ClipboardList className="h-6 w-6" />} />
-          </Card>
-        ) : (
-          previous.map((a) => {
-            const records = recordsByAppointment.get(a.id) ?? [];
-            return (
-              <Card key={a.id}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
+            {workspace.appointments.length === 0 ? (
+              <AEmpty title="Qabullar yo‘q" icon={<ClipboardList className="h-6 w-6" />} />
+            ) : (
+              <ul className="divide-y divide-hairline/70">
+                {workspace.appointments.map((a) => (
+                  <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                    <span className="text-foreground">
                       {formatDateTime(a.startAt)}
                       {a.service?.name ? ` · ${a.service.name}` : ""}
-                    </p>
-                    <p className="text-xs text-ink-muted">
-                      {a.mine
-                        ? "Sizning qabulingiz"
-                        : `${a.doctor?.name ?? "—"}${a.doctor && referringDoctorIds.has(a.doctor.id) ? " — yo‘llagan shifokor" : ""}`}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
+                      <span className="text-ink-muted"> · {a.mine ? "Siz" : (a.doctor?.name ?? "—")}</span>
+                    </span>
                     <ABadge tone={STATUS_TONES[a.status] ?? "neutral"}>{STATUS_LABELS[a.status] ?? a.status}</ABadge>
-                    {a.mine && REFERABLE.includes(a.status) && (
-                      <AButton size="sm" variant="outline" onClick={() => setReferFrom(a)}>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        </Section>
+      )}
+
+      {TAB_RECORD_TYPES[tab]?.map(({ type, title }) => {
+        const items = workspace.records.filter((r) => r.type === type);
+        return (
+          <Section key={type} title={title}>
+            {items.length === 0 ? (
+              <p className="text-sm text-ink-muted">Yozuv yo‘q.</p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {items.map((r) => (
+                  <RecordItem key={r.id} record={r} patientId={workspace.patient.id} />
+                ))}
+              </ul>
+            )}
+          </Section>
+        );
+      })}
+
+      {tab === "overview" && (
+        <>
+          <Section title="Mening qabulim" subtitle="Siz bu bemor uchun yozadigan yangi qabul — oldingi yozuvlardan alohida.">
+            <Card className={current ? "border-pine/40" : undefined}>
+              {current ? (
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm text-foreground">
+                        <ABadge tone="purple">Jarayonda</ABadge> <PaymentBadge status={current.paymentStatus} />{" "}
+                        <span className="ml-1">
+                          {formatDateTime(current.startAt)}
+                          {current.serviceName ? ` · ${current.serviceName}` : ""}
+                        </span>
+                      </p>
+                      {handoff && (
+                        <p className="mt-1 text-xs text-ink-muted">
+                          {handoff.referringDoctor?.name ?? "—"} yo‘llanmasi bo‘yicha qabul — yozuvlaringiz sizning nomingizdan saqlanadi, oldingi
+                          yozuvlar o‘zgarmaydi.
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <AButton
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const visit = workspace.appointments.find((a) => a.id === current.appointmentId);
+                          if (visit) setReferFrom(visit);
+                        }}
+                      >
                         Yo‘llanma
                       </AButton>
-                    )}
+                      <AButton variant="outline" size="sm" loading={busy} onClick={() => void completeConsultation(current.appointmentId)}>
+                        Qabulni yakunlash
+                      </AButton>
+                    </div>
                   </div>
-                </div>
-                {records.length > 0 ? (
-                  <ul className="mt-3 flex flex-col gap-2">
-                    {records.map((r) => (
-                      <RecordItem key={r.id} record={r} patientId={workspace.patient.id} onCorrect={correct} />
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="mt-2 text-xs text-ink-muted">Bu qabulda tibbiy yozuv yo‘q.</p>
-                )}
-                {correcting && correcting.appointmentId === a.id && (
-                  <div className="mt-3 border-t border-hairline pt-3">
+                  {currentRecords.length > 0 && (
+                    <ul className="flex flex-col gap-2" aria-label="Joriy qabul yozuvlari">
+                      {currentRecords.map((r) => (
+                        <RecordItem key={r.id} record={r} patientId={workspace.patient.id} onCorrect={correct} />
+                      ))}
+                    </ul>
+                  )}
+                  {correcting && correcting.appointmentId === current.appointmentId ? (
                     <ClinicalRecordForm
                       key={correcting.rootRecordId}
                       patientId={workspace.patient.id}
-                      appointmentId={a.id}
+                      appointmentId={current.appointmentId}
                       correcting={correcting}
                       onCancel={() => setCorrecting(null)}
                       onConflict={reloadAfterConflict}
@@ -655,13 +594,155 @@ export default function DoctorPatientWorkspacePage() {
                         void load();
                       }}
                     />
+                  ) : (
+                    <ClinicalRecordForm patientId={workspace.patient.id} appointmentId={current.appointmentId} onSaved={() => void load()} />
+                  )}
+                </div>
+              ) : consultation.booked ? (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm text-foreground">
+                    Bugun {formatTime(consultation.booked.startAt)} ga yozilgan qabulingiz
+                    {consultation.booked.serviceName ? ` · ${consultation.booked.serviceName}` : ""}{" "}
+                    <PaymentBadge status={consultation.booked.paymentStatus} />
+                  </p>
+                  <AButton loading={busy} onClick={() => void startConsultation({ appointmentId: consultation.booked!.appointmentId })}>
+                    Qabulni boshlash
+                  </AButton>
+                </div>
+              ) : consultation.canStartWalkIn ? (
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="min-w-56 flex-1">
+                    <p className="mb-1 text-xs font-medium text-ink-muted">Xizmat</p>
+                    <ASelect
+                      value={serviceId}
+                      onChange={setServiceId}
+                      options={[{ value: "", label: "Xizmatni tanlang" }, ...consultation.services.map((s) => ({ value: s.id, label: s.name }))]}
+                      aria-label="Xizmat"
+                    />
                   </div>
-                )}
+                  <AButton loading={busy} disabled={!serviceId} onClick={() => void startConsultation({ serviceId })}>
+                    Hozir qabulni boshlash
+                  </AButton>
+                </div>
+              ) : (
+                <p className="text-sm text-ink-muted">Bu bemor bilan qabul boshlay olmaysiz.</p>
+              )}
+            </Card>
+          </Section>
+
+          {scheduled.length > 0 && (
+            <Section title="Rejalashtirilgan qabullar">
+              <Card>
+                <ul className="divide-y divide-hairline/70">
+                  {scheduled.map((a) => (
+                    <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                      <span className="text-foreground">
+                        {formatDateTime(a.startAt)}
+                        {a.service?.name ? ` · ${a.service.name}` : ""}
+                        <span className="text-ink-muted"> · {a.mine ? "Siz" : (a.doctor?.name ?? "—")}</span>
+                      </span>
+                      <ABadge tone={STATUS_TONES[a.status] ?? "neutral"}>{STATUS_LABELS[a.status] ?? a.status}</ABadge>
+                    </li>
+                  ))}
+                </ul>
               </Card>
-            );
-          })
-        )}
-      </Section>
+            </Section>
+          )}
+
+        </>
+      )}
+
+      {tab === "history" && (
+        <Section
+          title="Klinik tarix"
+          subtitle="Bemorning klinikadagi yo‘li: qabullar, ularda yozilgan tibbiy yozuvlar va yo‘llanmalar — yangilari yuqorida. Har bir yozuv o‘z muallifiniki: ko‘rish yoki yangi tashxis qo‘yish uni o‘zgartirmaydi."
+        >
+          {unplaced.length > 0 && (
+            <Card>
+              <p className="text-sm font-medium text-foreground">Boshqa qabullardagi yozuvlar</p>
+              <ul className="mt-3 flex flex-col gap-2">
+                {unplaced.map((r) => (
+                  <RecordItem key={r.id} record={r} patientId={workspace.patient.id} />
+                ))}
+              </ul>
+            </Card>
+          )}
+          {timeline.length === 0 && unplaced.length === 0 ? (
+            <Card>
+              <AEmpty title="Ko‘rsatiladigan oldingi yozuv yo‘q" icon={<ClipboardList className="h-6 w-6" />} />
+            </Card>
+          ) : (
+            timeline.map((item) => {
+              if (item.kind === "referral") {
+                const r = item.referral;
+                return (
+                  <Card key={`referral-${r.id}`} className="border-dashed">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-foreground">
+                        {formatDateTime(r.createdAt)} · Yo‘llanma: {r.referringDoctor?.name ?? "—"} → {recipientLabel(r)}
+                      </p>
+                      <ABadge tone={REFERRAL_STATUS_TONES[r.status] ?? "gray"}>{REFERRAL_STATUS_LABELS[r.status] ?? r.status}</ABadge>
+                    </div>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{r.reason}</p>
+                  </Card>
+                );
+              }
+              const a = item.visit;
+              const records = recordsByAppointment.get(a.id) ?? [];
+              return (
+                <Card key={a.id}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">
+                        {formatDateTime(a.startAt)}
+                        {a.service?.name ? ` · ${a.service.name}` : ""}
+                      </p>
+                      <p className="text-xs text-ink-muted">
+                        {a.mine
+                          ? "Sizning qabulingiz"
+                          : `${a.doctor?.name ?? "—"}${a.doctor && referringDoctorIds.has(a.doctor.id) ? " — yo‘llagan shifokor" : ""}`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <ABadge tone={STATUS_TONES[a.status] ?? "neutral"}>{STATUS_LABELS[a.status] ?? a.status}</ABadge>
+                      {a.mine && REFERABLE.includes(a.status) && (
+                        <AButton size="sm" variant="outline" onClick={() => setReferFrom(a)}>
+                          Yo‘llanma
+                        </AButton>
+                      )}
+                    </div>
+                  </div>
+                  {records.length > 0 ? (
+                    <ul className="mt-3 flex flex-col gap-2">
+                      {records.map((r) => (
+                        <RecordItem key={r.id} record={r} patientId={workspace.patient.id} onCorrect={correct} />
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-xs text-ink-muted">Bu qabulda tibbiy yozuv yo‘q.</p>
+                  )}
+                  {correcting && correcting.appointmentId === a.id && (
+                    <div className="mt-3 border-t border-hairline pt-3">
+                      <ClinicalRecordForm
+                        key={correcting.rootRecordId}
+                        patientId={workspace.patient.id}
+                        appointmentId={a.id}
+                        correcting={correcting}
+                        onCancel={() => setCorrecting(null)}
+                        onConflict={reloadAfterConflict}
+                        onSaved={() => {
+                          setCorrecting(null);
+                          void load();
+                        }}
+                      />
+                    </div>
+                  )}
+                </Card>
+              );
+            })
+          )}
+        </Section>
+      )}
 
       {referFrom && (
         <ReferralDialog

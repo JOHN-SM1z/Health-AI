@@ -38,7 +38,9 @@ type Referral = {
   completedAt: string | null;
   revokedAt: string | null;
   referringDoctor: Doctor;
-  referredToDoctor: Doctor;
+  /** Null for a department referral nobody has taken yet. */
+  referredToDoctor: Doctor | null;
+  department: { id: string; name: string } | null;
   patientId: string;
   patientRecordAccessible: boolean;
   patient: { fullName: string | null; phone: string | null; preferredLanguage: string | null } | null;
@@ -177,11 +179,11 @@ export default function DoctorReferralPage() {
         </Card>
       )}
 
-      {incoming && referral.status === "accepted" && referral.patientRecordAccessible && (
+      {incoming && ["pending", "accepted"].includes(referral.status) && referral.patientRecordAccessible && (
         <Card className="mb-4">
           <p className="text-sm text-foreground">
-            Keyingi qadam: bemor bilan o‘z qabulingizni bemor kartasida boshlang — yo‘llanma “Qabul boshlangan” holatiga o‘tadi, yakunlash
-            esa shundan keyin mumkin bo‘ladi.{" "}
+            Bemorning tibbiy tarixi bemor kartasida ochiq — hech kimdan ruxsat so‘rash shart emas. Qabulni o‘sha yerda boshlang: yo‘llanma
+            (hali qabul qilinmagan bo‘lsa) qabul qilinadi va “Qabul boshlangan” holatiga o‘tadi; yakunlash shundan keyin mumkin bo‘ladi.{" "}
             <Link href={`/doctor/patients/${referral.patientId}`} className="font-medium text-pine hover:underline">
               Bemor kartasini ochish
             </Link>
@@ -237,7 +239,10 @@ export default function DoctorReferralPage() {
             <p className="mb-2 text-sm text-ink-muted">Bekor qilish sababi: {referral.revokedReason}</p>
           )}
           <Field label="Yo‘llagan shifokor">{referral.referringDoctor?.name ?? "—"}</Field>
-          <Field label="Qabul qiluvchi shifokor">{referral.referredToDoctor?.name ?? "—"}</Field>
+          {referral.department && <Field label="Bo‘lim">{referral.department.name}</Field>}
+          <Field label="Qabul qiluvchi shifokor">
+            {referral.referredToDoctor?.name ?? (referral.department ? "Bo‘limning birinchi qabul qilgan shifokori" : "—")}
+          </Field>
           <Field label="Yuborilgan">{formatDateTime(referral.createdAt)}</Field>
           <Field label="Amal qilish muddati">{formatDateTime(referral.expiresAt)}</Field>
           {referral.acceptedAt && <Field label="Qabul qilingan">{formatDateTime(referral.acceptedAt)}</Field>}
@@ -270,13 +275,11 @@ export default function DoctorReferralPage() {
 
           <Card>
             <p className="mb-2 font-display text-sm font-bold text-foreground">
-              Qabullar tarixi {referral.referringDoctor?.name ? `(${referral.referringDoctor.name})` : ""}
+              Bemorning qabullari (so‘nggi 20 ta, barcha shifokorlar)
             </p>
             {referral.history === null ? (
               <p className="text-sm text-ink-muted">
-                {referral.status === "pending"
-                  ? "Tarix yo‘llanmani qabul qilganingizdan keyin ko‘rinadi."
-                  : "Yo‘llanma faol emas — qabullar tarixi endi ko‘rinmaydi."}
+                Yo‘llanma faol emas va bu bemor bilan o‘z qabulingiz yo‘q — tarix ko‘rinmaydi.
               </p>
             ) : referral.history.length === 0 ? (
               <p className="text-sm text-ink-muted">Qabullar yo‘q</p>
