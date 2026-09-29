@@ -439,6 +439,8 @@ create policy "referrals read for receiving doctor"
       or (
         referred_to_doctor_id is null
         and status = 'pending'
+        -- A doctor never receives the referral they raised themselves.
+        and referring_doctor_id is distinct from public.current_doctor_id(clinic_id)
         and referred_to_specialty_id = (
           select d.specialty_id from public.doctors d where d.id = public.current_doctor_id(clinic_id)
         )
@@ -488,7 +490,7 @@ as $$
           and cr.author_doctor_id = d.id
       ) as own_patient,
       -- Open, unexpired referrals to the doctor — or to the doctor's
-      -- department while nobody has taken them.
+      -- department while nobody has taken them (other than their own).
       array(
         select r.id
         from public.referrals r
@@ -501,6 +503,9 @@ as $$
             or (
               r.referred_to_doctor_id is null
               and r.status = 'pending'
+              -- Never the referral the doctor raised themselves: their own
+              -- department is not a receiver of it.
+              and r.referring_doctor_id <> d.id
               and d.specialty_id is not null
               and r.referred_to_specialty_id = d.specialty_id
             )

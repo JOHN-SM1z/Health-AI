@@ -87,10 +87,10 @@ function visibleTo(role: ReferralRole | null, status: ReferralStatus, expiresAt:
   return role === "receiver" && (OPEN_STATUSES.includes(status) || status === "completed") && Date.parse(expiresAt) > now;
 }
 
-/** Incoming for this doctor: addressed to them, or to their department while untaken. */
+/** Incoming for this doctor: addressed to them, or to their department while untaken — never their own referral. */
 function incomingFilter(doctor: LinkedDoctor): string {
   return doctor.specialtyId
-    ? `referred_to_doctor_id.eq.${doctor.doctorId},and(referred_to_doctor_id.is.null,referred_to_specialty_id.eq.${doctor.specialtyId},status.eq.pending)`
+    ? `referred_to_doctor_id.eq.${doctor.doctorId},and(referred_to_doctor_id.is.null,referred_to_specialty_id.eq.${doctor.specialtyId},status.eq.pending,referring_doctor_id.neq.${doctor.doctorId})`
     : `referred_to_doctor_id.eq.${doctor.doctorId}`;
 }
 

@@ -63,7 +63,7 @@ export async function listDoctorPatients(doctor: LinkedDoctor, query: string): P
       // To the doctor, or to their department while nobody has taken it.
       .or(
         doctor.specialtyId
-          ? `referred_to_doctor_id.eq.${doctor.doctorId},and(referred_to_doctor_id.is.null,referred_to_specialty_id.eq.${doctor.specialtyId},status.eq.pending)`
+          ? `referred_to_doctor_id.eq.${doctor.doctorId},and(referred_to_doctor_id.is.null,referred_to_specialty_id.eq.${doctor.specialtyId},status.eq.pending,referring_doctor_id.neq.${doctor.doctorId})`
           : `referred_to_doctor_id.eq.${doctor.doctorId}`,
       )
       .in("status", ["pending", "accepted", "in_progress"])

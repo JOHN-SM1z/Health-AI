@@ -57,7 +57,7 @@ async function acceptPendingReferral(doctor: LinkedDoctor, patientId: string): P
     .order("created_at", { ascending: true })
     .limit(1);
   query = doctor.specialtyId
-    ? query.or(`referred_to_doctor_id.eq.${doctor.doctorId},and(referred_to_doctor_id.is.null,referred_to_specialty_id.eq.${doctor.specialtyId})`)
+    ? query.or(`referred_to_doctor_id.eq.${doctor.doctorId},and(referred_to_doctor_id.is.null,referred_to_specialty_id.eq.${doctor.specialtyId},referring_doctor_id.neq.${doctor.doctorId})`)
     : query.eq("referred_to_doctor_id", doctor.doctorId);
   const { data: pending, error } = await query.maybeSingle();
   if (error) throw new ApiError(500, "Yo‘llanmani tekshirib bo‘lmadi");
