@@ -293,7 +293,22 @@ export function QuickBookingModal({
                 <label htmlFor="qb-phone" className="mb-1 block text-xs font-medium text-ink-muted">
                   Telefon
                 </label>
-                <AInput value={phone} onChange={setPhone} placeholder="+998 90 123 45 67" type="tel" aria-label="Telefon" />
+                <AInput
+                  value={phone}
+                  onChange={(value) => {
+                    setPhone(value);
+                    // "A different person" was confirmed for the number shown
+                    // then; another number is checked for duplicates again.
+                    setConfirmedNew(false);
+                    if (duplicates) {
+                      setDuplicates(null);
+                      setLoadError(null);
+                    }
+                  }}
+                  placeholder="+998 90 123 45 67"
+                  type="tel"
+                  aria-label="Telefon"
+                />
               </div>
             </>
           )}
