@@ -1,20 +1,28 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
+import { withoutGlobalSweeps } from "@/test/referral-sweep-lock";
 
 /**
  * Doctor-authored clinical records — the DATABASE guarantees of
- * supabase/migrations/20260927000005_clinical_records.sql: provenance that
- * cannot be forged, immutability, a redacted audit trail, and RLS that shows
- * a record exactly where its consultation is visible (the Phase 3 decision).
+ * supabase/migrations/20260927000005_clinical_records.sql,
+ * 20261001000001_clinical_record_governance.sql and
+ * 20261002000001_longitudinal_history.sql: provenance that cannot be forged,
+ * immutability (only the author corrects, as the record's next version), a
+ * redacted audit trail, and RLS that shows a patient's records — every
+ * doctor's — to each doctor with a legitimate clinical relationship to the
+ * patient (a treating relationship, or an open referral from the moment it
+ * is created), and to nobody else. The records belong to the patient's
+ * longitudinal clinic record, not to the consultation or referral they came
+ * from.
  *
  * Doctor and staff sessions are simulated the way PostgREST runs requests
  * (`set local role authenticated` + JWT claims), so every "as …" read is what
  * that person gets calling the Supabase REST API with their own token.
  *
- * Cast: Dr A (patient X's doctor), Dr E (also saw X), Dr B (X is referred to
- * them), Dr C (no relationship), Dr K (another clinic), and the clinic's
- * receptionist, manager and owner.
+ * Cast: Dr A (patient X's doctor), Dr E (also saw X — a treating doctor too),
+ * Dr B (X is referred to them), Dr C (no relationship), Dr K (another clinic),
+ * and the clinic's receptionist, manager and owner.
  */
 
 const DB_URL = process.env.SUPABASE_DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -347,6 +355,22 @@ describeDb("clinical records — database layer", () => {
     const [own] = await sql<{ version: number; root_record_id: string }[]>`select version, root_record_id from public.clinical_records where id = ${forged.id}`;
     expect(own).toEqual({ version: 1, root_record_id: forged.id });
 
+    // Each correction is audited as a new version of the record, naming the
+    // version it replaces — ids and version numbers only, never the text.
+    const audit = await sql<{ entity_id: string; action: string; actor_id: string; old_values: Values; new_values: Values }[]>`
+      select entity_id, action, actor_id, old_values, new_values from public.audit_events
+      where entity_type = 'clinical_records' and entity_id in ${sql([v2.id, v3.id])}
+      order by created_at`;
+    expect(audit.map((a) => [a.entity_id, a.action, a.actor_id, a.old_values])).toEqual([
+      [v2.id, "clinical_record_version_created", profiles.a, { record_id: x.recEarlier, version: 1, author_doctor_id: doctors.a, created_by: profiles.a }],
+      [v3.id, "clinical_record_version_created", profiles.a, { record_id: v2.id, version: 2, author_doctor_id: doctors.a, created_by: profiles.a }],
+    ]);
+    expect(audit.map((a) => a.new_values)).toEqual([
+      expect.objectContaining({ corrects_record_id: x.recEarlier, root_record_id: x.recEarlier, version: 2, author_doctor_id: doctors.a }),
+      expect.objectContaining({ corrects_record_id: v2.id, root_record_id: x.recEarlier, version: 3, author_doctor_id: doctors.a }),
+    ]);
+    expect(JSON.stringify(audit)).not.toMatch(/hypertension/i);
+
     // Two corrections of the same (current) version at once: exactly one lands.
     const race = await Promise.allSettled(
       ["first", "second"].map((label) => write(doctors.a, x.id, x.earlier, { summary: `Race ${label}`, corrects_record_id: v3.id })),
@@ -444,36 +468,45 @@ describeDb("clinical records — database layer", () => {
     expect(count).toBe(0);
   });
 
-  it("shows each record exactly where its consultation is visible", async () => {
+  it("shows every doctor's records to each doctor with a relationship to the patient — a referral from its creation — and to nobody else", async () => {
     const x = await patientX();
-    const aRecords = [x.recEarlier, x.recConsultation].sort();
+    const all = [x.recEarlier, x.recConsultation, x.recE].sort();
 
-    expect(await readable(profiles.a, x.id)).toEqual(aRecords);
-    expect(await readable(profiles.e, x.id)).toEqual([x.recE]);
+    // The treating doctors each see the whole record, every author's: Dr A
+    // sees Dr E's prescription, Dr E sees Dr A's diagnosis and lab result.
+    expect(await readable(profiles.a, x.id)).toEqual(all);
+    expect(await readable(profiles.e, x.id)).toEqual(all);
     expect(await readable(profiles.b, x.id)).toEqual([]);
 
-    // Pending referral: only the records of the consultation it came from.
+    // Pending referral: Dr B sees all of it at once — no acceptance, no approval from anyone.
     const referral = await refer(x.id, x.consultation);
-    expect(await readable(profiles.b, x.id)).toEqual([x.recConsultation]);
-
-    // Accepted: all of Dr A's records for X — never Dr E's.
+    expect(await readable(profiles.b, x.id)).toEqual(all);
+    // Accepted: the same.
     await transition(referral, { status: "accepted", accepted_by: profiles.b });
-    expect(await readable(profiles.b, x.id)).toEqual(aRecords);
+    expect(await readable(profiles.b, x.id)).toEqual(all);
 
-    // Dr B's own consultation and record; Dr A sees it as the referral's follow-up.
+    // Dr B's own consultation and record join the patient's history for every treating doctor.
     const followUp = await visit(x.id, doctors.b, "in_progress");
     await transition(referral, { follow_up_appointment_id: followUp });
     const bRecord = (await write(doctors.b, x.id, followUp, { record_type: "consultation_note", summary: "Seen for the referral", code: null })).id;
-    expect(await readable(profiles.a, x.id)).toEqual([...aRecords, bRecord].sort());
-    expect(await readable(profiles.b, x.id)).toEqual([...aRecords, bRecord].sort());
-    expect(await readable(profiles.e, x.id)).toEqual([x.recE]);
+    const withB = [...all, bRecord].sort();
+    for (const profileId of [profiles.a, profiles.b, profiles.e]) {
+      expect(await readable(profileId, x.id)).toEqual(withB);
+    }
 
-    // Revoked: Dr B keeps only their own; Dr A no longer sees the follow-up.
+    // Revoked: Dr B keeps the whole history through their own consultation
+    // and record, and Dr A keeps seeing Dr B's record.
     await transition(referral, { status: "revoked", revoked_by: profiles.a, revoked_reason: "Handled elsewhere" });
-    expect(await readable(profiles.b, x.id)).toEqual([bRecord]);
-    expect(await readable(profiles.a, x.id)).toEqual(aRecords);
+    expect(await readable(profiles.b, x.id)).toEqual(withB);
+    expect(await readable(profiles.a, x.id)).toEqual(withB);
 
-    // No relationship, another clinic, and every operational role: nothing.
+    // A referral that is a doctor's only link: everything while pending,
+    // nothing once declined.
+    const toC = await refer(x.id, x.consultation, { referred_to_doctor_id: doctors.c });
+    expect(await readable(profiles.c, x.id)).toEqual(withB);
+    await transition(toC, { status: "declined", declined_by: profiles.c });
+
+    // No relationship (Dr C now), another clinic, and every operational role: nothing.
     for (const profileId of [profiles.c, profiles.k, profiles.receptionist, profiles.manager, profiles.owner]) {
       expect(await readable(profileId, x.id)).toEqual([]);
     }
@@ -491,28 +524,40 @@ describeDb("clinical records — database layer", () => {
     expect(granted).toBe(false);
   });
 
-  it("stops showing a referral's records once it expires, without waiting for the sweep", async () => {
-    const x = await patientX();
-    const referral = await asServer(async (tx) => {
-      const [{ soon }] = await tx<{ soon: Date }[]>`select now() + interval '2 seconds' as soon`;
-      const [row] = await tx<{ id: string }[]>`insert into public.referrals ${tx({
-        clinic_id: clinicA,
-        patient_id: x.id,
-        referring_doctor_id: doctors.a,
-        referred_to_doctor_id: doctors.b,
-        originating_appointment_id: x.consultation,
-        reason: `Short-lived (${suffix})`,
-        created_by: profiles.a,
-        expires_at: soon,
-      })} returning id`;
-      return row.id;
-    });
-    await transition(referral, { status: "accepted", accepted_by: profiles.b });
-    expect(await readable(profiles.b, x.id)).toEqual([x.recEarlier, x.recConsultation].sort());
+  it("stops showing the records to a doctor whose only link was the referral once it expires, without waiting for the sweep", async () => {
+    await withoutGlobalSweeps(async () => {
+      const x = await patientX();
+      const all = [x.recEarlier, x.recConsultation, x.recE].sort();
+      const referral = await asServer(async (tx) => {
+        const [{ soon }] = await tx<{ soon: Date }[]>`select now() + interval '3 seconds' as soon`;
+        const [row] = await tx<{ id: string }[]>`insert into public.referrals ${tx({
+          clinic_id: clinicA,
+          patient_id: x.id,
+          referring_doctor_id: doctors.a,
+          referred_to_doctor_id: doctors.b,
+          originating_appointment_id: x.consultation,
+          reason: `Short-lived (${suffix})`,
+          created_by: profiles.a,
+          expires_at: soon,
+        })} returning id`;
+        return row.id;
+      });
+      // Every doctor's record while it is open — pending, then accepted.
+      expect(await readable(profiles.b, x.id)).toEqual(all);
+      await transition(referral, { status: "accepted", accepted_by: profiles.b });
+      expect(await readable(profiles.b, x.id)).toEqual(all);
 
-    await new Promise((r) => setTimeout(r, 2_500));
-    expect(await readable(profiles.b, x.id)).toEqual([]);
-  });
+      // Wait out the validity on the database's clock.
+      const [{ ms }] = await sql<{ ms: number }[]>`
+        select ceil(extract(epoch from (expires_at - now())) * 1000)::int as ms from public.referrals where id = ${referral}`;
+      await new Promise((r) => setTimeout(r, Math.max(ms, 0) + 300));
+
+      // Still stored as accepted — no sweep has recorded the expiry — yet nothing is readable.
+      const [{ status }] = await sql<{ status: string }[]>`select status from public.referrals where id = ${referral}`;
+      expect(status).toBe("accepted");
+      expect(await readable(profiles.b, x.id)).toEqual([]);
+    });
+  }, 20_000);
 
   it("are never erased with the patient: the patient cannot be deleted from under them", async () => {
     const x = await patientX();

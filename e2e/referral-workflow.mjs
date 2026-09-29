@@ -4,12 +4,15 @@
 //
 //   Dr A (desktop): opens their patient → documents history, diagnosis, lab
 //     result → Yo‘llanma → picks Dr B → reason + handoff → review → submit
-//   Dr B (tablet): sees the pending referral → accepts → opens the patient →
-//     reviews Dr A's diagnoses / labs / history (attributed) → starts a
-//     consultation → writes new records → completes the referral
+//   Dr B (tablet): sees the pending referral and, before accepting, the
+//     patient's visits (a handoff, not a permission request) → accepts →
+//     opens the patient → reviews Dr A's diagnoses / labs / history
+//     (attributed) on the record's tabs → starts a consultation → writes new
+//     records → completes the referral
 //   Dr A (phone): sees the outcome, attributed to Dr B; own records unchanged
 //   Dr B: revoked, expired, declined and unrelated patients show a clear
-//     state and never the data; a pending referral is accepted in place
+//     state and never the data; a pending referral never blocks the
+//     consultation and can be accepted in place
 //   Reception and manager (phone): the admin sections, and no clinical text
 //   The audit trail: every step with its actor, ids only.
 //
@@ -70,6 +73,12 @@ async function writeRecord(page, type, summary, code) {
   await page.getByRole("button", { name: "Yozuvni saqlash" }).click();
   await page.getByRole("list", { name: "Joriy qabul yozuvlari" }).getByText(summary).waitFor();
 }
+
+/** The patient record's tabs ("Umumiy", "Tashxislar", "Klinik tarix", …) and their sections. */
+const openTab = (page, name) => page.getByRole("navigation", { name: "Bemor kartasi bo‘limlari" }).getByRole("button", { name, exact: true }).click();
+const section = (page, name) => page.getByRole("region", { name, exact: true });
+/** Shown within a few seconds — a failed check, not an aborted run, when it never appears. */
+const shown = (locator) => locator.waitFor({ timeout: 5_000 }).then(() => true, () => false);
 
 async function linkedDoctor(email) {
   const [row] = await db`select d.id, d.profile_id, d.clinic_id from public.doctors d join auth.users u on u.id = d.profile_id where u.email = ${email}`;
@@ -162,7 +171,12 @@ async function run() {
       await fitsWidth(page, "tablet: referrals list");
       await page.goto(`${BASE}/doctor/referrals/${referralId}`);
       await page.getByRole("button", { name: "Qabul qilish" }).waitFor();
-      check(await page.getByText("Tarix yo‘llanmani qabul qilganingizdan keyin ko‘rinadi.").isVisible(), "before accepting, A's history is withheld");
+      check(
+        (await page.getByText("tarix ko‘rinmaydi").count()) === 0 &&
+          (await page.getByRole("table").getByText(DEMO_NAMES.generalService).count()) >= 1 &&
+          (await page.getByRole("link", { name: "Bemor kartasini ochish" }).isVisible()),
+        "before accepting, B already sees the patient's visits and can open the record — no approval asked",
+      );
       await tappable(page.getByRole("button", { name: "Qabul qilish" }), "tablet: accept button");
       await page.getByRole("button", { name: "Qabul qilish" }).click();
       await page.getByText("Yo‘llanma qabul qilindi").waitFor();
@@ -173,20 +187,26 @@ async function run() {
       await page.getByRole("link", { name: "Bemor kartasini ochish" }).click();
       await page.waitForURL(/\/doctor\/patients\/[0-9a-f-]{36}$/);
       await page.getByText("Yo‘llanma bo‘yicha", { exact: true }).waitFor();
-      const summary = (name) => page.getByRole("list", { name });
-      check(await summary("Tashxislar").getByText(`Arterial gipertenziya (${suffix})`).isVisible(), "B reviews A's previous diagnosis");
-      check(await summary("Tahlil natijalari").getByText(`HbA1c 7.9% (${suffix})`).isVisible(), "B reviews A's lab result");
-      check(await summary("Anamnez").getByText(`Qandli diabet 2-tip, 2015 yildan (${suffix})`).isVisible(), "B reviews A's medical history");
-      check((await page.getByLabel("Oldingi yozuvlar").getByText(`Muallif: ${DEMO_NAMES.referrer}`, { exact: false }).count()) >= 3, "each historical record names Dr A as its author");
+      await openTab(page, "Tashxislar");
+      check(await shown(section(page, "Tashxislar").getByText(`Arterial gipertenziya (${suffix})`)), "B reviews A's previous diagnosis");
+      check(await shown(section(page, "Anamnez").getByText(`Qandli diabet 2-tip, 2015 yildan (${suffix})`)), "B reviews A's medical history");
+      await openTab(page, "Laboratoriya");
+      check(await shown(section(page, "Tahlil natijalari").getByText(`HbA1c 7.9% (${suffix})`)), "B reviews A's lab result");
+      await openTab(page, "Klinik tarix");
+      const clinicalHistory = section(page, "Klinik tarix");
+      await clinicalHistory.locator("li", { hasText: `Arterial gipertenziya (${suffix})` }).waitFor();
+      check((await clinicalHistory.getByText(`Muallif: ${DEMO_NAMES.referrer}`, { exact: false }).count()) >= 3, "each historical record names Dr A as its author");
       check(
-        await page.getByLabel("Oldingi yozuvlar").locator("li", { hasText: `Arterial gipertenziya (${suffix})` }).getByText("Oldingi tashxis").isVisible(),
+        await clinicalHistory.locator("li", { hasText: `Arterial gipertenziya (${suffix})` }).getByText("Oldingi tashxis").isVisible(),
         "A's diagnosis is labelled a historical diagnosis",
       );
       check((await page.getByText("Siz yozgansiz").count()) === 0, "nothing is attributed to B yet");
       await fitsWidth(page, "tablet: patient workspace (history)");
       await page.screenshot({ path: `${SHOTS}/b1-history-tablet.png`, fullPage: true });
 
-      // Start B's own consultation.
+      // Start B's own consultation (on the overview tab).
+      await openTab(page, "Umumiy");
+      await page.getByLabel("Xizmat").waitFor();
       const services = await page.getByLabel("Xizmat").locator("option").allTextContents();
       await page.getByLabel("Xizmat").selectOption({ label: services.find((o) => o.includes(DEMO_NAMES.cardiologyService)) ?? services[1] });
       await tappable(page.getByRole("button", { name: "Hozir qabulni boshlash" }), "tablet: start consultation");
@@ -230,6 +250,8 @@ async function run() {
       await page.getByRole("button", { name: "Yo‘llanmani yakunlash" }).click();
       await tappable(page.getByRole("button", { name: "Ha, yakunlash" }), "tablet: confirm completion");
       await page.getByRole("button", { name: "Ha, yakunlash" }).click();
+      // Closed, it no longer awaits B on the overview; the Yo‘llanmalar tab keeps every referral.
+      await openTab(page, "Yo‘llanmalar");
       await page.getByRole("list", { name: "Yo‘llanma bosqichlari" }).locator('[aria-current="step"]', { hasText: "Yakunlandi" }).waitFor();
       const [completed] = await db`select status, completed_by from public.referrals where id = ${referralId}`;
       check(completed.status === "completed" && completed.completed_by === B.profile_id, "B completes the referral");
@@ -264,14 +286,18 @@ async function run() {
       await page.getByLabel("Bemorni qidirish").fill(suffix);
       await page.getByRole("link", { name: PATIENT }).click();
       await page.waitForURL((u) => u.pathname === `/doctor/patients/${patient.id}`);
-      const history = page.getByLabel("Oldingi yozuvlar");
+      await openTab(page, "Klinik tarix");
+      const history = section(page, "Klinik tarix");
       await history.locator("li", { hasText: `Paroksizmal taxikardiya (${suffix})` }).waitFor();
       check(
         await history.locator("li", { hasText: `Paroksizmal taxikardiya (${suffix})` }).getByText(`Muallif: ${DEMO_NAMES.receiver}`, { exact: false }).isVisible(),
         "A sees B's new diagnosis, attributed to B",
       );
+      await openTab(page, "Yo‘llanmalar");
+      check(await shown(page.getByText("Yakunlandi", { exact: true }).first()), "A sees the referral completed");
+      await openTab(page, "Umumiy");
+      await page.getByRole("list", { name: "Joriy qabul yozuvlari" }).waitFor();
       check((await page.getByRole("list", { name: "Joriy qabul yozuvlari" }).getByText("Siz yozgansiz").count()) === 3, "A's own records are still A's");
-      check(await page.getByText("Yakunlandi", { exact: true }).first().isVisible(), "A sees the referral completed");
       await fitsWidth(page, "phone: referring doctor's patient page");
       await tappable(page.getByRole("button", { name: "Yo‘llanma", exact: true }), "phone: refer button");
       await page.getByRole("button", { name: "Yo‘llanma", exact: true }).click();
@@ -314,10 +340,11 @@ async function run() {
       check(listed.includes(PATIENT) && listed.includes(pending.name), "B's patient list has the referred patients");
       check(![revoked.name, expired.name, `E2E Begona ${suffix}`].some((n) => listed.includes(n)), "B's patient list leaves out revoked, expired and unrelated patients");
 
-      // A pending referral is accepted in place; completing waits for the consultation.
+      // A pending referral never blocks the consultation (a handoff, not a permission request);
+      // it can still be accepted in place, and completing waits for the consultation.
       await page.getByRole("link", { name: pending.name }).click();
       await page.getByRole("button", { name: "Yo‘llanmani qabul qilish" }).waitFor();
-      check((await page.getByRole("button", { name: "Hozir qabulni boshlash" }).count()) === 0, "no consultation before the referral is accepted");
+      check((await page.getByRole("button", { name: "Hozir qabulni boshlash" }).count()) === 1, "a pending referral does not block the consultation — B can start it at once");
       await page.getByRole("button", { name: "Yo‘llanmani qabul qilish" }).click();
       await page.getByRole("button", { name: "Hozir qabulni boshlash" }).waitFor();
       check((await db`select status from public.referrals where id = ${pending.referral}`)[0].status === "accepted", "the pending referral is accepted from the workspace");
@@ -395,13 +422,14 @@ async function run() {
     "lifecycle audited in order with the right actors",
   );
   const count = async (q) => (await q)[0].n;
-  check((await count(db`select count(*)::int as n from public.audit_events where referral_id = ${referralId} and action = 'referral_viewed'`)) >= 2, "referral views audited");
+  check((await count(db`select count(*)::int as n from public.audit_events where referral_id = ${referralId} and action = 'referral_opened'`)) >= 2, "referral detail views audited (referral_opened)");
+  check((await count(db`select count(*)::int as n from public.audit_events where referral_id = ${referralId} and action = 'referral_viewed'`)) >= 1, "referral list views audited (referral_viewed)");
   check((await count(db`select count(*)::int as n from public.audit_events where action = 'clinical_record_created' and referral_id = ${referralId}`)) === 5, "B's five records audited against the referral");
   check(
     (await count(db`
       select count(*)::int as n from public.audit_events
-       where action = 'patient_clinical_record_viewed' and patient_id = ${patient.id} and actor_id = ${B.profile_id}
-         and jsonb_array_length(metadata->'shared_record_ids') >= 3`)) >= 1,
+       where action = 'clinical_record_viewed' and patient_id = ${patient.id} and actor_id = ${B.profile_id}
+         and jsonb_array_length(metadata->'other_author_record_ids') >= 3`)) >= 1,
     "B's access to A's records audited with the record ids",
   );
   check(

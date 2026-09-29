@@ -296,6 +296,8 @@ describeDb("referral API (doctor portal + reception)", () => {
     const ids = (res.body.data!.doctors as Array<{ id: string }>).map((d) => d.id);
     expect(ids).toEqual(expect.arrayContaining([doctors.receiver, doctors.bystander]));
     for (const excluded of [doctors.referrer, doctors.inactive, doctors.clinicB]) expect(ids).not.toContain(excluded);
+    // No colleague here belongs to a department, so there is no department to refer to.
+    expect(res.body.data!.departments).toEqual([]);
   });
 
   describe("creating a referral", () => {
@@ -348,7 +350,7 @@ describeDb("referral API (doctor portal + reception)", () => {
       const { data: row } = await admin
         .from("referrals")
         .select(
-          "clinic_id, patient_id, referring_doctor_id, referred_to_doctor_id, originating_appointment_id, status, priority, reason, handoff_note, created_by, creation_key, expires_at",
+          "clinic_id, patient_id, referring_doctor_id, referred_to_doctor_id, referred_to_specialty_id, originating_appointment_id, status, priority, reason, handoff_note, created_by, creation_key, expires_at",
         )
         .eq("id", id)
         .single();
@@ -357,6 +359,7 @@ describeDb("referral API (doctor portal + reception)", () => {
         patient_id: patient,
         referring_doctor_id: doctors.referrer,
         referred_to_doctor_id: doctors.receiver,
+        referred_to_specialty_id: null,
         originating_appointment_id: appointmentId,
         status: "pending",
         priority: "routine",
@@ -380,7 +383,14 @@ describeDb("referral API (doctor portal + reception)", () => {
       expect(listed).toEqual(expect.arrayContaining([expect.objectContaining({ id, status: "pending", priority: "routine" })]));
       expect(listed.every((r) => r.status === "pending")).toBe(true);
       // The referral's own text is for the two doctors on it — the receiver sees it.
-      expect(listed.find((r) => r.id === id)).toMatchObject({ reason: body.reason, handoffNote: body.handoffNote, patientId: patient });
+      expect(listed.find((r) => r.id === id)).toMatchObject({
+        reason: body.reason,
+        handoffNote: body.handoffNote,
+        patientId: patient,
+        referredToDoctor: { id: doctors.receiver },
+        department: null,
+        allowedActions: ["accept", "decline"],
+      });
       expect((await pendingFor("bystander")).body.data!.referrals).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ id })]),
       );
@@ -553,6 +563,7 @@ describeDb("referral API (doctor portal + reception)", () => {
         patient_id: patient,
         referring_doctor_id: doctors.referrer,
         referred_to_doctor_id: doctors.receiver,
+        referred_to_specialty_id: null,
         originating_appointment_id: appointmentId,
       });
       const logged = JSON.stringify(trail);
@@ -668,12 +679,15 @@ describeDb("referral API (doctor portal + reception)", () => {
     expect(await refer({ reason: " " })).toMatchObject({ status: 400, body: { code: "validation" } });
   });
 
-  it("shows a referral only to its doctors, shares history after acceptance, and logs every view", async () => {
+  it("shows a referral only to its doctors, shares the patient's history from the moment it exists, and logs every opening", async () => {
     const id = await freshReferral();
+    const { data: row } = await admin.from("referrals").select("patient_id, originating_appointment_id").eq("id", id).single();
+    const visit = row!.originating_appointment_id as string;
 
     expect(await detail("bystander", id)).toMatchObject({ status: 404, body: { code: "referral_not_found" } });
     expect(await detail("receiver", "not-a-uuid")).toMatchObject({ status: 404 });
 
+    // Pending: a clinical handoff, not a permission request — the receiving doctor sees the history at once.
     const pending = await detail("receiver", id);
     expect(pending.status).toBe(200);
     expect(pending.body.data!.referral).toMatchObject({
@@ -681,28 +695,34 @@ describeDb("referral API (doctor portal + reception)", () => {
       status: "pending",
       priority: "urgent",
       reason: `Suspected arrhythmia, please assess (${suffix})`,
-      history: null,
+      patientId: row!.patient_id,
+      patientRecordAccessible: true,
+      consultation: { id: visit },
+      history: [{ id: visit, status: "completed" }],
+      referredToDoctor: { id: doctors.receiver },
+      department: null,
       allowedActions: ["accept", "decline"],
       patient: { fullName: `Referral API patient ${suffix}` },
     });
 
     const asReferrer = await detail("referrer", id);
-    expect(asReferrer.body.data!.referral).toMatchObject({ role: "referrer", allowedActions: ["revoke"] });
-    expect((asReferrer.body.data!.referral as { history: unknown[] }).history).toHaveLength(1);
+    expect(asReferrer.body.data!.referral).toMatchObject({ role: "referrer", allowedActions: ["revoke"], history: [{ id: visit }] });
 
     const accepted = await act("receiver", id, { action: "accept" });
     expect(accepted).toMatchObject({ status: 200, body: { data: { status: "accepted" } } });
     const afterAccept = await detail("receiver", id);
-    expect((afterAccept.body.data!.referral as { history: unknown[] }).history).toHaveLength(1);
+    expect(afterAccept.body.data!.referral).toMatchObject({ status: "accepted", allowedActions: [], history: [{ id: visit }] });
 
-    const { data: views } = await admin
-      .from("audit_events")
-      .select("actor_id, metadata")
-      .eq("entity_id", id)
-      .eq("action", "referral_viewed")
-      .order("created_at");
-    expect((views ?? []).map((v) => v.actor_id)).toEqual([users.receiver, users.referrer, users.receiver]);
-    expect((views ?? []).map((v) => (v.metadata as { history_shared: boolean }).history_shared)).toEqual([false, true, true]);
+    // Every opening of the detail is 'referral_opened' (the bystander's 404 releases nothing and is not one);
+    // 'referral_viewed' is left to the list views, and none happened here.
+    const logged = async (action: string) =>
+      (await admin.from("audit_events").select("actor_id, patient_id, referral_id, metadata").eq("entity_id", id).eq("action", action).order("created_at")).data ?? [];
+    expect(await logged("referral_opened")).toEqual([
+      { actor_id: users.receiver, patient_id: row!.patient_id, referral_id: id, metadata: { via: "detail", role: "receiver", status: "pending", relationship: "referred", history_shared: true } },
+      { actor_id: users.referrer, patient_id: row!.patient_id, referral_id: id, metadata: { via: "detail", role: "referrer", status: "pending", relationship: "own", history_shared: true } },
+      { actor_id: users.receiver, patient_id: row!.patient_id, referral_id: id, metadata: { via: "detail", role: "receiver", status: "accepted", relationship: "referred", history_shared: true } },
+    ]);
+    expect(await logged("referral_viewed")).toEqual([]);
   });
 
   it("lets only the right doctor act, and only in a valid order", async () => {

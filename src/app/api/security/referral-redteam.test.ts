@@ -7,7 +7,7 @@ import { NextRequest } from "next/server";
 import { localDbAvailable } from "@/test/local-db";
 
 /**
- * RED-TEAM suite for referral-based clinical access. Every attack is made
+ * RED-TEAM suite for clinical access and referrals. Every attack is made
  * against the real route handlers, services, decision function, triggers and
  * RLS on the local Supabase stack — only the session lookup is replaced, so a
  * test "as receptionist" is exactly a request carrying a receptionist's
@@ -18,9 +18,22 @@ import { localDbAvailable } from "@/test/local-db";
  * button is hidden. Every response to an attack is also checked for leaked
  * patient or clinical text.
  *
+ * The model under attack (supabase/migrations/20261002000001_longitudinal_history.sql):
+ * a doctor with a legitimate relationship — a non-cancelled appointment with
+ * the patient or a record they wrote, or an open referral to them (or, while
+ * nobody has taken it, to their department) — sees the patient's WHOLE
+ * clinical history in the clinic, from the moment a referral exists. What
+ * must never happen: a same-clinic doctor without a relationship, or anyone
+ * of another clinic, seeing anything; a doctor changing a record they did not
+ * write; anyone but the session's doctor acting on (or taking) a referral;
+ * access that rests only on a referral outliving its decline, revocation,
+ * completion or expires_at; operational staff seeing clinical text.
+ *
  * Cast (clinic A unless noted): Dr A (refers), Dr B (receives), Dr C (no
  * relationship), a receptionist, a manager linked to a doctor record but
- * without the doctor role, Dr K and Dr K2 (clinic B).
+ * without the doctor role, Dr K and Dr K2 (clinic B). Departments: Dr Card1
+ * and Dr Card2 (cardiology), Dr Neuro (neurology), an observer (no
+ * department), Dr KCard (clinic B, a department with cardiology's very name).
  */
 
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -44,6 +57,7 @@ import { POST as consultationPost } from "@/app/api/doctor/patients/[id]/consult
 import { GET as referralList, POST as referralCreate } from "@/app/api/doctor/referrals/route";
 import { GET as referralGet, PATCH as referralAct } from "@/app/api/doctor/referrals/[id]/route";
 import { GET as recipientsGet } from "@/app/api/doctor/referrals/recipients/route";
+import { GET as pendingCountGet } from "@/app/api/doctor/referrals/pending-count/route";
 import { PATCH as doctorAppointmentPatch } from "@/app/api/doctor/appointments/[id]/route";
 import { POST as timeBlockPost } from "@/app/api/doctor/appointments/route";
 import { GET as adminPatientsGet } from "@/app/api/admin/patients/route";
@@ -67,6 +81,8 @@ describeDb("RED TEAM — referral-based clinical access", () => {
   const doctors: Record<string, string> = {};
   const clinic: Record<"A" | "B", string> = { A: "", B: "" };
   const service: Record<"A" | "B", string> = { A: "", B: "" };
+  // Clinic A's cardiology and neurology; clinic B's department of the same name as clinic A's cardiology.
+  const specialty: Record<"cardio" | "neuro" | "cardioB", string> = { cardio: "", neuro: "", cardioB: "" };
   let slot = 0;
 
   // The world under attack.
@@ -79,7 +95,9 @@ describeDb("RED TEAM — referral-based clinical access", () => {
   let clinicBReferral: string; // K → K2 in clinic B
   let expired: { referral: string; patient: string };
   let revoked: { referral: string; patient: string };
-  let completed: { referral: string; patient: string; own: string };
+  let completed: { referral: string; patient: string; own: string; consultation: string; record: string };
+  // Completed too, but Dr B's consultation was cancelled afterwards and Dr B wrote nothing: the referral was the only link.
+  let completedOnly: { referral: string; patient: string; own: string };
   let declined: { referral: string; patient: string };
 
   // ---------- plumbing ----------
@@ -136,10 +154,10 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     await admin.from("profiles").insert({ id: users[name], full_name: `RT ${name}` });
     if (role) await admin.from("staff_roles").insert({ clinic_id: clinic[clinicKey], profile_id: users[name], role });
   }
-  async function makeDoctor(key: string, clinicKey: "A" | "B", profile: string) {
+  async function makeDoctor(key: string, clinicKey: "A" | "B", profile: string, specialtyId: string | null = null) {
     const { data, error } = await admin
       .from("doctors")
-      .insert({ clinic_id: clinic[clinicKey], profile_id: profile, name: `Dr ${key} ${suffix}`, active: true })
+      .insert({ clinic_id: clinic[clinicKey], profile_id: profile, name: `Dr ${key} ${suffix}`, specialty_id: specialtyId, active: true })
       .select("id")
       .single();
     expect(error).toBeNull();
@@ -210,6 +228,35 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     expect(error).toBeNull();
     return data!.id as string;
   }
+  /** A referral to a department nobody has taken yet (as POST /api/doctor/referrals creates it). */
+  async function insertDepartmentReferral(p: { id: string; consultation: string }, from: string, specialtyId: string) {
+    const { data, error } = await admin
+      .from("referrals")
+      .insert({
+        clinic_id: clinic.A,
+        patient_id: p.id,
+        referring_doctor_id: doctors[from],
+        referred_to_doctor_id: null,
+        referred_to_specialty_id: specialtyId,
+        originating_appointment_id: p.consultation,
+        reason: `${SECRET} department reason`,
+        handoff_note: `${SECRET} department note`,
+        created_by: users[from],
+      })
+      .select("id")
+      .single();
+    expect(error).toBeNull();
+    return data!.id as string;
+  }
+  const referralRow = async (id: string) =>
+    (await admin.from("referrals").select("status, referred_to_doctor_id, accepted_by, follow_up_appointment_id").eq("id", id).single()).data;
+  const UNTAKEN = { status: "pending", referred_to_doctor_id: null, accepted_by: null, follow_up_appointment_id: null };
+  const sorted = (ids: string[]) => [...ids].sort();
+  /** Refused as "not on this referral" — indistinguishable from a referral that does not exist. */
+  const notOnIt = (res: Res) => {
+    denied(res, [404]);
+    expect(res.body.code).toBe("referral_not_found");
+  };
   const transition = async (id: string, patch: Record<string, unknown>) => {
     const { error } = await admin.from("referrals").update(patch).eq("id", id);
     expect(error).toBeNull();
@@ -242,7 +289,20 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     service.A = services!.find((s) => s.clinic_id === clinic.A)!.id;
     service.B = services!.find((s) => s.clinic_id === clinic.B)!.id;
 
-    for (const n of ["a", "b", "c"]) await makeUser(n, "A", "doctor");
+    const { data: specialties } = await admin
+      .from("specialties")
+      .insert([
+        { clinic_id: clinic.A, name: `RT Kardiologiya ${suffix}` },
+        { clinic_id: clinic.A, name: `RT Nevrologiya ${suffix}` },
+        { clinic_id: clinic.B, name: `RT Kardiologiya ${suffix}` },
+      ])
+      .select("id, clinic_id, name");
+    specialty.cardio = specialties!.find((s) => s.clinic_id === clinic.A && s.name.startsWith("RT Kardiologiya"))!.id;
+    specialty.neuro = specialties!.find((s) => s.clinic_id === clinic.A && s.name.startsWith("RT Nevrologiya"))!.id;
+    specialty.cardioB = specialties!.find((s) => s.clinic_id === clinic.B)!.id;
+
+    for (const n of ["a", "b", "c", "card1", "card2", "neuro", "observer"]) await makeUser(n, "A", "doctor");
+    await makeUser("kcard", "B", "doctor");
     await makeUser("receptionist", "A", "receptionist");
     await makeUser("manager", "A", "manager");
     await makeUser("k", "B", "doctor");
@@ -251,6 +311,11 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     for (const n of ["a", "b", "c"]) await makeDoctor(n, "A", users[n]);
     await makeDoctor("k", "B", users.k);
     await makeDoctor("k2", "B", users.k2);
+    await makeDoctor("card1", "A", users.card1, specialty.cardio);
+    await makeDoctor("card2", "A", users.card2, specialty.cardio);
+    await makeDoctor("neuro", "A", users.neuro, specialty.neuro);
+    await makeDoctor("observer", "A", users.observer);
+    await makeDoctor("kcard", "B", users.kcard, specialty.cardioB);
     // A manager account linked to a doctor record — without the doctor role.
     await makeDoctor("managerDoc", "A", users.manager);
 
@@ -281,7 +346,17 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     const own = await visit("A", x4.id, doctors.b, "in_progress");
     await transition(c4, { follow_up_appointment_id: own });
     await transition(c4, { status: "completed", completed_by: users.b });
-    completed = { referral: c4, patient: x4.id, own };
+    completed = { referral: c4, patient: x4.id, own, consultation: x4.consultation, record: x4.record };
+
+    const x7 = await patientWithRecord("A", "a", "a");
+    const c7 = await insertReferral("A", x7, "a", "b", "a", 3_000);
+    await transition(c7, { status: "accepted", accepted_by: users.b });
+    const own7 = await visit("A", x7.id, doctors.b, "in_progress");
+    await transition(c7, { follow_up_appointment_id: own7 });
+    await transition(c7, { status: "completed", completed_by: users.b });
+    const { error: cancelError } = await admin.from("appointments").update({ status: "cancelled", cancelled_reason: "Entered in error" }).eq("id", own7);
+    expect(cancelError).toBeNull();
+    completedOnly = { referral: c7, patient: x7.id, own: own7 };
 
     const x5 = await patientWithRecord("A", "a", "a");
     declined = { referral: await insertReferral("A", x5, "a", "b", "a"), patient: x5.id };
@@ -306,6 +381,16 @@ describeDb("RED TEAM — referral-based clinical access", () => {
 
   // 1 ----------------------------------------------------------------------
   it("1. another patient's ID: an unrelated patient can't be read, written or consulted", async () => {
+    const probes = async () =>
+      (
+        await admin
+          .from("audit_events")
+          .select("clinic_id, actor_type, entity_type, patient_id, referral_id, metadata")
+          .eq("action", "unauthorized_clinical_access_attempt")
+          .eq("entity_id", Y.id)
+          .eq("actor_id", users.b)
+      ).data ?? [];
+    const before = (await probes()).length;
     as("b");
     denied(await workspace(Y.id), [404]);
     // Writing into the unrelated patient's chart — with Dr B's own consultation of X, or C's consultation of Y.
@@ -325,9 +410,20 @@ describeDb("RED TEAM — referral-based clinical access", () => {
       }),
       [404],
     );
-    // Every refusal to open the patient is logged.
-    const { data: log } = await admin.from("audit_events").select("actor_id").eq("action", "patient_clinical_access_denied").eq("entity_id", Y.id);
-    expect((log ?? []).some((r) => r.actor_id === users.b)).toBe(true);
+    // Every refusal to open the patient is logged (the workspace, both writes, both consultation starts) —
+    // the probed id stays the entity and never becomes a patient reference: nothing proves it is Dr B's business.
+    const log = await probes();
+    expect(log).toHaveLength(before + 5);
+    for (const row of log) {
+      expect(row).toEqual({
+        clinic_id: clinic.A,
+        actor_type: "staff",
+        entity_type: "patients",
+        patient_id: null,
+        referral_id: null,
+        metadata: { doctor_id: doctors.b, referral_status: null },
+      });
+    }
   });
 
   // 2 ----------------------------------------------------------------------
@@ -408,20 +504,52 @@ describeDb("RED TEAM — referral-based clinical access", () => {
   });
 
   // 6 ----------------------------------------------------------------------
-  it("6. completed referral IDs: no referral-based access; past validity not even the referral text", async () => {
+  it("6. completed referral IDs: no referral-based access is left — only Dr B's own visit keeps the history; past validity the referral itself is closed", async () => {
     as("b");
+    // Dr B's consultation for the referral is a treating relationship of its own (continuity of care): the
+    // patient's whole history stays — Dr A's visit and record included — though no referral gives anything.
     const ws = await workspace(completed.patient);
-    expect(ws.status).toBe(200); // Dr B's own consultation remains theirs…
-    const rec = ws.body.data!.record as { appointments: Array<{ id: string }>; records: Array<{ id: string }> };
-    expect(rec.appointments.map((a) => a.id)).toEqual([completed.own]); // …and nothing of Dr A's.
-    expect(rec.records).toEqual([]);
-    expect(JSON.stringify(ws.body)).not.toContain(SECRET); // no record or referral text of Dr A's
-    denied(await referral(completed.referral), [410]);
-    // Past its validity Dr B can't act on it at all (410), never a silent no-op (200).
-    for (const action of ["accept", "complete", "decline"]) denied(await actOn(completed.referral, { action }), [409, 410]);
+    expect(ws.status).toBe(200);
+    const rec = ws.body.data!.record as {
+      relationship: string;
+      activeReferralIds: string[];
+      referralAccessUntil: string | null;
+      appointments: Array<{ id: string }>;
+      records: Array<{ id: string; author: { id: string }; mine: boolean }>;
+      referrals: Array<{ id: string; role: string; status: string; allowedActions: string[] }>;
+    };
+    expect(rec).toMatchObject({ relationship: "own", activeReferralIds: [], referralAccessUntil: null });
+    expect(sorted(rec.appointments.map((a) => a.id))).toEqual(sorted([completed.consultation, completed.own]));
+    expect(rec.records.map((r) => [r.id, r.author.id, r.mine])).toEqual([[completed.record, doctors.a, false]]);
+    expect(rec.referrals).toEqual([expect.objectContaining({ id: completed.referral, role: "receiver", status: "completed", allowedActions: [] })]);
+    // Past its validity the referral answers Dr B with its status only — no text, no transition, never a silent no-op.
+    const detail = await referral(completed.referral);
+    denied(detail, [410]);
+    expect(detail.body.code).toBe("referral_completed");
+    for (const action of ["accept", "complete", "decline"]) {
+      const res = await actOn(completed.referral, { action });
+      denied(res, [410]);
+      expect(res.body.code).toBe("referral_completed");
+    }
+    denied(await actOn(completed.referral, { action: "revoke", reason: "Receiver tries" }), [403]);
     as("b");
     const incoming = await callList(referralList as ListHandler, "GET", "/api/doctor/referrals?box=incoming");
     expect((incoming.body.data!.referrals as Array<{ id: string }>).map((r) => r.id)).not.toContain(completed.referral);
+
+    // A completed referral that was Dr B's only link (their consultation since cancelled, nothing written):
+    // nothing of the patient at all — no history, no writes, no new consultation.
+    for (const res of [
+      await workspace(completedOnly.patient),
+      await referral(completedOnly.referral),
+      await writeRecord(completedOnly.patient, { appointmentId: completedOnly.own }),
+      await startConsultation(completedOnly.patient, { serviceId: service.A }),
+    ]) {
+      denied(res, [410]);
+      expect(res.body.code).toBe("referral_completed");
+    }
+    for (const id of [completed.referral, completedOnly.referral]) expect((await referralRow(id))!.status).toBe("completed");
+    const { data: written } = await admin.from("clinical_records").select("id").eq("patient_id", completedOnly.patient).eq("author_doctor_id", doctors.b);
+    expect(written).toEqual([]);
   });
 
   // 7 ----------------------------------------------------------------------
@@ -512,6 +640,20 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     expect((await c.from("patients").select("id").eq("id", X.id)).data).toEqual([]);
     expect((await c.from("appointments").select("id").eq("patient_id", X.id)).data).toEqual([]);
     expect((await k.from("patients").select("id").eq("id", X.id)).data).toEqual([]);
+    expect((await k.from("appointments").select("id").eq("patient_id", X.id)).data).toEqual([]);
+    // Dr B, whom X is referred to, reads X's whole visit history — every doctor's, Dr A's included — and still
+    // nothing of Y, a patient of the same clinic Dr B has no relationship with.
+    const { data: allOfX } = await admin.from("appointments").select("id").eq("patient_id", X.id);
+    expect(sorted(((await b.from("appointments").select("id").eq("patient_id", X.id)).data ?? []).map((a) => a.id))).toEqual(sorted((allOfX ?? []).map((a) => a.id)));
+    expect((await b.from("patients").select("id").eq("id", X.id)).data).toEqual([{ id: X.id }]);
+    expect((await b.from("patients").select("id").eq("id", Y.id)).data).toEqual([]);
+    expect((await b.from("appointments").select("id").eq("patient_id", Y.id)).data).toEqual([]);
+    // Payments: a doctor's own token reads none — not even the payment of their own visit (the server shows only its status).
+    const bVisit = await visit("A", X.id, doctors.b, "completed");
+    const { error: paymentError } = await admin.from("payments").insert({ clinic_id: clinic.A, appointment_id: bVisit, patient_id: X.id, amount: 100000 });
+    expect(paymentError).toBeNull();
+    expect((await b.from("payments").select("id").eq("appointment_id", bVisit)).data ?? []).toEqual([]);
+    expect(((await receptionist.from("payments").select("appointment_id").eq("appointment_id", bVisit)).data ?? []).map((r) => r.appointment_id)).toEqual([bVisit]);
     // The audit log: doctors and reception read none of it; clinic B's staff none of clinic A's.
     for (const client of [b, c, receptionist, k]) {
       expect((await client.from("audit_events").select("id").eq("clinic_id", clinic.A)).data ?? []).toEqual([]);
@@ -567,11 +709,26 @@ describeDb("RED TEAM — referral-based clinical access", () => {
 
   // 11 ---------------------------------------------------------------------
   it("11. client-side state manipulation: what the page believes is never what the server trusts", async () => {
-    // The page says a pending referral can't start a consultation — call it anyway.
+    // Whatever the page believes about a pending referral, the server decides: a doctor with no relationship
+    // can't start a consultation with the patient at all…
     const pendingPatient = await patientWithRecord("A", "a", "a");
-    await insertReferral("A", pendingPatient, "a", "b", "a");
+    const pendingReferral = await insertReferral("A", pendingPatient, "a", "b", "a");
+    as("c");
+    denied(await startConsultation(pendingPatient.id, { serviceId: service.A }), [404]);
+    expect(await referralRow(pendingReferral)).toMatchObject({ status: "pending", accepted_by: null, follow_up_appointment_id: null });
+    // …while the receiving doctor's start takes the referral on — accepted by the session's doctor and linked to
+    // the new consultation, whatever doctor, referral or status the body names (those fields are not accepted).
     as("b");
-    denied(await startConsultation(pendingPatient.id, { serviceId: service.A }), [409]);
+    const started = await startConsultation(pendingPatient.id, { serviceId: service.A, doctorId: doctors.c, referralId: aToC, status: "completed" });
+    expect(started.status, JSON.stringify(started.body)).toBe(201);
+    const walkIn = (started.body.data!.consultation as { appointmentId: string }).appointmentId;
+    expect((await admin.from("appointments").select("doctor_id, patient_id, status").eq("id", walkIn).single()).data).toEqual({
+      doctor_id: doctors.b,
+      patient_id: pendingPatient.id,
+      status: "in_progress",
+    });
+    expect(await referralRow(pendingReferral)).toEqual({ status: "in_progress", referred_to_doctor_id: doctors.b, accepted_by: users.b, follow_up_appointment_id: walkIn });
+    expect(await referralRow(aToC)).toMatchObject({ status: "pending", follow_up_appointment_id: null });
     // Replaying another doctor's idempotency key can't return their record.
     const key = randomUUID();
     as("a");
@@ -764,46 +921,260 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     for (const other of [Y.id, Z.id, expired.patient, revoked.patient, declined.patient]) expect(ids).not.toContain(other);
     const probe = randomUUID();
     denied(await workspace(probe), [404]);
-    const { data } = await admin.from("audit_events").select("actor_id, patient_id, clinic_id").eq("action", "patient_clinical_access_denied").eq("entity_id", probe);
-    expect(data).toEqual([{ actor_id: users.b, patient_id: null, clinic_id: clinic.A }]);
+    const { data } = await admin
+      .from("audit_events")
+      .select("actor_id, patient_id, referral_id, clinic_id, entity_type, metadata")
+      .eq("action", "unauthorized_clinical_access_attempt")
+      .eq("entity_id", probe);
+    expect(data).toEqual([
+      { actor_id: users.b, patient_id: null, referral_id: null, clinic_id: clinic.A, entity_type: "patients", metadata: { doctor_id: doctors.b, referral_status: null } },
+    ]);
   });
 
-  it("2b. referral laundering: an onward referral from Dr B passes on Dr B's history — never Dr A's", async () => {
+  it("2b. referral laundering: an onward referral hands on the history, never authorship — the onward receiver changes nobody's records, can't act on the original referral, and loses everything when the onward referral ends", async () => {
     const p = await patientWithRecord("A", "a", "a");
     const toB = await insertReferral("A", p, "a", "b", "a");
     await transition(toB, { status: "accepted", accepted_by: users.b });
     as("b");
     const own = await visit("A", p.id, doctors.b, "in_progress");
-    const onward = await callList(referralCreate as ListHandler, "POST", "/api/doctor/referrals", {
+    const bNote = await writeRecord(p.id, { appointmentId: own, summary: `${SECRET} B's assessment` });
+    expect(bNote.status).toBe(201);
+    const bRecord = (bNote.body.data!.record as { id: string }).id;
+    const onwardRes = await callList(referralCreate as ListHandler, "POST", "/api/doctor/referrals", {
       idempotencyKey: randomUUID(),
       appointmentId: own,
       referredToDoctorId: doctors.c,
       reason: "Onward",
       priority: "routine",
     });
-    expect(onward.status).toBe(201);
+    expect(onwardRes.status).toBe(201);
+    const onward = (onwardRes.body.data!.referral as { id: string }).id;
     as("c");
-    expect((await actOn((onward.body.data!.referral as { id: string }).id, { action: "accept" })).status).toBe(200);
+    expect((await actOn(onward, { action: "accept" })).status).toBe(200);
+
+    // The onward referral is a handoff like any other: Dr C sees the whole history — Dr A's and Dr B's records —
+    // and neither is Dr C's.
     const ws = await workspace(p.id);
     expect(ws.status).toBe(200);
-    const rec = ws.body.data!.record as { appointments: Array<{ id: string }>; records: Array<{ id: string }> };
-    expect(rec.appointments.map((a) => a.id)).toEqual([own]);
-    expect(rec.records).toEqual([]);
-    expect(JSON.stringify(ws.body)).not.toContain(SECRET);
+    const rec = ws.body.data!.record as { relationship: string; activeReferralIds: string[]; records: Array<{ id: string; mine: boolean }> };
+    expect(rec).toMatchObject({ relationship: "referred", activeReferralIds: [onward] });
+    expect(sorted(rec.records.map((r) => r.id))).toEqual(sorted([p.record, bRecord]));
+    expect(rec.records.every((r) => !r.mine)).toBe(true);
+
+    // Reading is not writing: no correction of either author's record, no note in either doctor's consultation.
+    for (const target of [p.record, bRecord]) {
+      const res = await writeRecord(p.id, { appointmentId: own, recordType: "diagnosis", correctsRecordId: target, summary: "Laundered" });
+      denied(res, [403]);
+      expect(res.body.code).toBe("CLINICAL_RECORD_NOT_OWNED");
+    }
+    for (const appointmentId of [own, p.consultation]) denied(await writeRecord(p.id, { appointmentId, summary: "Laundered" }), [404]);
+    const { data: attempts } = await admin
+      .from("audit_events")
+      .select("entity_type, entity_id, patient_id, metadata")
+      .eq("action", "unauthorized_clinical_mutation_attempt")
+      .eq("actor_id", users.c)
+      .eq("patient_id", p.id)
+      .order("created_at");
+    expect(attempts).toEqual([
+      { entity_type: "clinical_records", entity_id: p.record, patient_id: p.id, metadata: { reason: "not_owned", attempted: "correct", doctor_id: doctors.c } },
+      { entity_type: "clinical_records", entity_id: bRecord, patient_id: p.id, metadata: { reason: "not_owned", attempted: "correct", doctor_id: doctors.c } },
+      { entity_type: "appointments", entity_id: own, patient_id: p.id, metadata: { reason: "not_own_consultation", attempted: "write", doctor_id: doctors.c } },
+      { entity_type: "appointments", entity_id: p.consultation, patient_id: p.id, metadata: { reason: "not_own_consultation", attempted: "write", doctor_id: doctors.c } },
+    ]);
+    const { data: records } = await admin.from("clinical_records").select("id, author_doctor_id").eq("patient_id", p.id);
+    expect(sorted((records ?? []).map((r) => `${r.id}:${r.author_doctor_id}`))).toEqual(sorted([`${p.record}:${doctors.a}`, `${bRecord}:${doctors.b}`]));
+
+    // The original referral is Dr A's and Dr B's: Dr C can neither open nor move it.
+    notOnIt(await referral(toB));
+    for (const body of [{ action: "accept" }, { action: "decline" }, { action: "complete" }, { action: "revoke", reason: "Laundered" }]) notOnIt(await actOn(toB, body));
+    expect(await referralRow(toB)).toMatchObject({ status: "accepted", referred_to_doctor_id: doctors.b, follow_up_appointment_id: null });
+
+    // The onward referral was Dr C's only link: revoked by Dr B, it takes everything with it at once.
+    as("b");
+    expect((await actOn(onward, { action: "revoke", reason: "Seen elsewhere" })).status).toBe(200);
+    as("c");
+    const after = await workspace(p.id);
+    denied(after, [410]);
+    expect(after.body.code).toBe("referral_revoked");
+  });
+
+  // Department referrals -----------------------------------------------------
+  const incomingIds = async () =>
+    ((await callList(referralList as ListHandler, "GET", "/api/doctor/referrals?box=incoming")).body.data!.referrals as Array<{ id: string }>).map((r) => r.id);
+  const pendingCount = async () => (await read(await pendingCountGet())).body.data;
+
+  it("21. another department's doctor: a department referral is neither seen nor taken — and opens nothing", async () => {
+    const p = await patientWithRecord("A", "a", "a");
+    const dept = await insertDepartmentReferral(p, "a", specialty.cardio);
+    as("neuro");
+    // Not in the list or the badge — not even when the query names the department or one of its doctors.
+    const forged = await callList(referralList as ListHandler, "GET", `/api/doctor/referrals?box=incoming&specialtyId=${specialty.cardio}&doctorId=${doctors.card1}`);
+    expect(forged.status).toBe(200);
+    expect(forged.body.data!.referrals).toEqual([]);
+    expect(await pendingCount()).toEqual({ pending: 0 });
+    notOnIt(await referral(dept));
+    for (const body of [{ action: "accept" }, { action: "decline" }, { action: "complete" }, { action: "revoke", reason: "Not mine" }]) notOnIt(await actOn(dept, body));
+    // No clinical access either: not the patient, not a consultation, not a record.
+    denied(await workspace(p.id), [404]);
+    denied(await startConsultation(p.id, { appointmentId: p.consultation }), [404]);
+    denied(await writeRecord(p.id, { appointmentId: p.consultation }), [404]);
+    expect(await referralRow(dept)).toEqual(UNTAKEN);
+    // The refusal is about the department: a cardiologist does receive it.
+    as("card1");
+    expect(await incomingIds()).toContain(dept);
+  });
+
+  it("22. another clinic's department of the same name: nothing crosses clinics", async () => {
+    const p = await patientWithRecord("A", "a", "a");
+    const dept = await insertDepartmentReferral(p, "a", specialty.cardio);
+    as("kcard", ["doctor"], "B");
+    expect(await incomingIds()).toEqual([]);
+    expect(await pendingCount()).toEqual({ pending: 0 });
+    notOnIt(await referral(dept));
+    for (const body of [{ action: "accept" }, { action: "decline" }]) notOnIt(await actOn(dept, body));
+    denied(await workspace(p.id), [404]);
+    // Nor can either clinic refer into the other's department — a same-named one included.
+    const kVisit = await visit("B", Z.id, doctors.kcard, "completed");
+    const toA = await callList(referralCreate as ListHandler, "POST", "/api/doctor/referrals", {
+      idempotencyKey: randomUUID(),
+      appointmentId: kVisit,
+      referredToSpecialtyId: specialty.cardio,
+      reason: "Cross-clinic department",
+      priority: "routine",
+    });
+    denied(toA, [404]);
+    expect(toA.body.code).toBe("department_not_found");
+    as("a");
+    const aVisit = await visit("A", p.id, doctors.a, "completed");
+    for (const [target, code] of [
+      [{ referredToSpecialtyId: specialty.cardioB }, "department_not_found"],
+      [{ referredToDoctorId: doctors.kcard, referredToSpecialtyId: specialty.cardio }, "doctor_not_found"],
+    ] as const) {
+      const res = await callList(referralCreate as ListHandler, "POST", "/api/doctor/referrals", {
+        idempotencyKey: randomUUID(),
+        appointmentId: aVisit,
+        reason: "Cross-clinic department",
+        priority: "routine",
+        ...target,
+      });
+      denied(res, [404]);
+      expect(res.body.code).toBe(code);
+    }
+    const { data: made } = await admin.from("referrals").select("id").in("originating_appointment_id", [kVisit, aVisit]);
+    expect(made).toEqual([]);
+    expect(await referralRow(dept)).toEqual(UNTAKEN);
+  });
+
+  it("23. an observer — the whole history through their own visit — reads the patient's referrals but can act on none of them", async () => {
+    const p = await patientWithRecord("A", "a", "a");
+    const named = await insertReferral("A", p, "a", "b", "a");
+    await transition(named, { status: "accepted", accepted_by: users.b });
+    const dept = await insertDepartmentReferral(p, "a", specialty.cardio);
+    await visit("A", p.id, doctors.observer, "completed");
+    as("observer");
+    const ws = await workspace(p.id);
+    expect(ws.status).toBe(200);
+    const rec = ws.body.data!.record as {
+      relationship: string;
+      referrals: Array<{ id: string; role: string; status: string; allowedActions: string[]; referredToDoctor: { id: string } | null; department: { id: string } | null }>;
+    };
+    expect(rec.relationship).toBe("own");
+    expect(sorted(rec.referrals.map((r) => r.id))).toEqual(sorted([named, dept]));
+    expect(rec.referrals.find((r) => r.id === named)).toMatchObject({ role: "observer", status: "accepted", allowedActions: [], referredToDoctor: { id: doctors.b }, department: null });
+    expect(rec.referrals.find((r) => r.id === dept)).toMatchObject({ role: "observer", status: "pending", allowedActions: [], referredToDoctor: null, department: { id: specialty.cardio } });
+    // Read-only means read-only: no referral page, no transition of any kind.
+    for (const id of [named, dept]) {
+      notOnIt(await referral(id));
+      for (const body of [{ action: "accept" }, { action: "decline" }, { action: "complete" }, { action: "revoke", reason: "Observer" }]) notOnIt(await actOn(id, body));
+    }
+    expect(await referralRow(named)).toEqual({ status: "accepted", referred_to_doctor_id: doctors.b, accepted_by: users.b, follow_up_appointment_id: null });
+    expect(await referralRow(dept)).toEqual(UNTAKEN);
+    expect(await incomingIds()).toEqual([]);
+  });
+
+  it("24. forging the claiming doctor: a department referral is only ever taken by the session's own doctor — the database refuses anything else", async () => {
+    const p = await patientWithRecord("A", "a", "a");
+    const dept = await insertDepartmentReferral(p, "a", specialty.cardio);
+    const forgedBody = (doctor: string, profile: string) => ({
+      action: "accept",
+      referredToDoctorId: doctors[doctor],
+      referred_to_doctor_id: doctors[doctor],
+      doctorId: doctors[doctor],
+      accepted_by: users[profile],
+      acceptedBy: users[profile],
+    });
+    const claim = (id: string, doctor: string) =>
+      call(referralAct as Handler, "PATCH", `/api/doctor/referrals/${id}?doctorId=${doctors[doctor]}&referredToDoctorId=${doctors[doctor]}`, id, forgedBody(doctor, doctor));
+
+    // A doctor outside the department can't take it for a cardiologist.
+    as("neuro");
+    notOnIt(await claim(dept, "card1"));
+    expect(await referralRow(dept)).toEqual(UNTAKEN);
+    // A cardiologist naming a colleague takes it themselves — the request's names are never read.
+    as("card1");
+    expect(await claim(dept, "card2")).toMatchObject({ status: 200, body: { data: { status: "accepted" } } });
+    expect(await referralRow(dept)).toEqual({ status: "accepted", referred_to_doctor_id: doctors.card1, accepted_by: users.card1, follow_up_appointment_id: null });
+    const { data: accepted } = await admin.from("audit_events").select("actor_id, old_values, new_values").eq("action", "referral_accepted").eq("referral_id", dept);
+    expect(accepted).toEqual([
+      {
+        actor_id: users.card1,
+        old_values: { status: "pending", referred_to_doctor_id: null },
+        new_values: expect.objectContaining({ status: "accepted", referred_to_doctor_id: doctors.card1, referred_to_specialty_id: specialty.cardio }),
+      },
+    ]);
+    // The colleague it was "claimed for" has nothing: not the referral, not the patient.
+    as("card2");
+    expect(await incomingIds()).not.toContain(dept);
+    notOnIt(await claim(dept, "card2"));
+    denied(await workspace(p.id), [404]);
+
+    // The database backstop — even a server that forwarded forged names could not claim for someone else.
+    const p2 = await patientWithRecord("A", "a", "a");
+    const dept2 = await insertDepartmentReferral(p2, "a", specialty.cardio);
+    for (const [patch, refusal] of [
+      [{ referred_to_doctor_id: doctors.card2 }, "a department referral is taken by accepting it"],
+      [{ status: "accepted", accepted_by: users.card1, referred_to_doctor_id: doctors.card2 }, "only the receiving doctor can mark the referral accepted"],
+      [{ status: "accepted", accepted_by: users.neuro, referred_to_doctor_id: doctors.neuro }, "does not belong to that department"],
+    ] as const) {
+      const { error } = await admin.from("referrals").update(patch).eq("id", dept2);
+      expect(error?.message, refusal).toContain(refusal);
+    }
+    expect(await referralRow(dept2)).toEqual(UNTAKEN);
+    // Once taken, it is never handed to another doctor.
+    const { error: moved } = await admin.from("referrals").update({ referred_to_doctor_id: doctors.card2 }).eq("id", dept);
+    expect(moved?.message).toContain("cannot be edited");
+    expect((await referralRow(dept))!.referred_to_doctor_id).toBe(doctors.card1);
   });
 
   // Cross-cutting ----------------------------------------------------------
   it("audit: legitimate reads are logged with actor, clinic, patient and referral; no clinical text in the whole trail", async () => {
     as("b");
     expect((await referral(active)).status).toBe(200);
-    const { data: view } = await admin
-      .from("audit_events")
-      .select("actor_id, clinic_id, patient_id, referral_id")
-      .eq("action", "referral_viewed")
-      .eq("referral_id", active)
-      .eq("actor_id", users.b);
-    expect((view ?? []).length).toBeGreaterThan(0);
-    expect(view![0]).toEqual({ actor_id: users.b, clinic_id: clinic.A, patient_id: X.id, referral_id: active });
+    const logged = async (action: string) =>
+      (
+        await admin
+          .from("audit_events")
+          .select("actor_id, clinic_id, patient_id, referral_id, entity_type, entity_id, metadata")
+          .eq("action", action)
+          .eq("referral_id", active)
+          .eq("actor_id", users.b)
+      ).data ?? [];
+    // The detail read is 'referral_opened' (Dr B has treated X by now, so the history rests on their own visits).
+    expect(await logged("referral_opened")).toEqual([
+      {
+        actor_id: users.b,
+        clinic_id: clinic.A,
+        patient_id: X.id,
+        referral_id: active,
+        entity_type: "referrals",
+        entity_id: active,
+        metadata: { via: "detail", role: "receiver", status: "accepted", relationship: "own", history_shared: true },
+      },
+    ]);
+    // 'referral_viewed' is left to the list views.
+    const views = await logged("referral_viewed");
+    expect(views.length).toBeGreaterThan(0);
+    for (const v of views) expect(v).toMatchObject({ clinic_id: clinic.A, patient_id: X.id, metadata: { via: "list", box: "incoming", role: "receiver" } });
     const { data: trail } = await admin.from("audit_events").select("*").in("clinic_id", [clinic.A, clinic.B]);
     expect(JSON.stringify(trail)).not.toContain(SECRET);
   });

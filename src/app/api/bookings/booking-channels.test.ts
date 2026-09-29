@@ -16,6 +16,11 @@ import { localDbAvailable } from "@/test/local-db";
  * clinic), the per-IP in-memory rate limiter (it would throttle the
  * deliberate bursts) and the patient notifications. Everything else from the
  * route handler down is real.
+ *
+ * Every reception walk-in here is a new person with a phone of their own: a
+ * phone already on a patient of the clinic is offered back as a possible
+ * duplicate before any slot check (registration is tested in
+ * src/app/api/admin/appointments/registration.test.ts).
  */
 
 const session = vi.hoisted(() => ({ ctx: null as unknown }));
@@ -76,12 +81,15 @@ describeDb("online and offline booking share one engine — real routes, real da
   const online: string[] = Array.from({ length: 8 }, () => randomUUID());
   const onlineB = randomUUID();
   let dayOffset = 40 + Math.floor(Math.random() * 2000);
+  let phoneSeq = 0;
 
   /** 10:00 Tashkent (05:00Z) on a day no other test uses. */
   function freshSlot(hhmmUtc = "05:00"): string {
     const d = new Date(Date.now() + dayOffset++ * 86_400_000);
     return `${d.toISOString().slice(0, 10)}T${hhmmUtc}:00.000Z`;
   }
+  /** A phone no other patient of clinic A has (the clinic is new each run; the online patients use +99890…). */
+  const freshPhone = () => `+99893${String(phoneSeq++).padStart(7, "0")}`;
   const read = async (res: Response): Promise<Res> => ({ status: res.status, body: (await res.json()) as Body });
   const json = (url: string, method: string, body: unknown) =>
     new NextRequest(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -123,17 +131,17 @@ describeDb("online and offline booking share one engine — real routes, real da
       ),
     );
   }
-  /** The reception dashboard's POST /api/admin/appointments (walk-in of a new patient). */
+  /** The reception dashboard's POST /api/admin/appointments (walk-in of a new patient: a new person, with a new phone unless `phone` is given). */
   async function bookAtReception(
     when: { startAt?: string; startLocal?: string },
-    opts: { key?: string; doctor?: string; service?: string; name?: string; patientId?: string } = {},
+    opts: { key?: string; doctor?: string; service?: string; name?: string; phone?: string; patientId?: string } = {},
   ) {
     asReception();
     return read(
       await receptionBook(
         json("http://localhost/api/admin/appointments", "POST", {
           patientName: opts.name ?? `Qabulxona Bemor ${suffix}`,
-          phone: "+998907654321",
+          phone: opts.phone ?? freshPhone(),
           doctorId: opts.doctor ?? doctorA,
           serviceId: opts.service ?? serviceA,
           source: "walk_in",
@@ -213,7 +221,8 @@ describeDb("online and offline booking share one engine — real routes, real da
     const start = freshSlot();
     const key = randomUUID();
     const name = `Ikki marta ${suffix}`;
-    const [a, b] = await Promise.all([bookAtReception({ startAt: start }, { key, name }), bookAtReception({ startAt: start }, { key, name })]);
+    const phone = freshPhone();
+    const [a, b] = await Promise.all([bookAtReception({ startAt: start }, { key, name, phone }), bookAtReception({ startAt: start }, { key, name, phone })]);
     expect(succeeded(a) && succeeded(b)).toBe(true);
     expect(idOf(a)).toBe(idOf(b));
     expect(await activeAt(start)).toHaveLength(1);
@@ -270,6 +279,10 @@ describeDb("online and offline booking share one engine — real routes, real da
     expect(results.filter(succeeded)).toHaveLength(1);
     expect(results.filter(unavailable)).toHaveLength(9);
     expect(await activeAt(start)).toHaveLength(1);
+    // Each refused walk-in's registration went with its refusal: only a winner's patient remains.
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from public.patients where clinic_id = ${clinicA} and full_name like ${`Parallel % ${suffix}`}`;
+    expect(n).toBe(results.slice(5).filter(succeeded).length);
   });
 
   it("availability is only a hint: a slot taken after it was shown is refused at confirmation, and disappears from availability", async () => {
@@ -289,14 +302,20 @@ describeDb("online and offline booking share one engine — real routes, real da
     const start = freshSlot();
     const booked = await bookOnline(online[3], start);
     expect(booked.status).toBe(201);
-    expect(unavailable(await bookAtReception({ startAt: start }))).toBe(true);
+    // The walk-in who wants that time is refused, and the patient registered for the attempt goes with the refusal.
+    const walkIn = { name: `Kutayotgan Bemor ${suffix}`, phone: freshPhone() };
+    expect(unavailable(await bookAtReception({ startAt: start }, walkIn))).toBe(true);
+    const [{ orphans }] = await sql<{ orphans: number }[]>`
+      select count(*)::int as orphans from public.patients where clinic_id = ${clinicA} and phone = ${walkIn.phone}`;
+    expect(orphans).toBe(0);
     const cancelled = await read(
       await patientCancel(json(`http://localhost/api/bookings/${idOf(booked)}/cancel?clinic=${clinicA}`, "POST", { initData: `tg:${online[3]}` }), {
         params: Promise.resolve({ id: idOf(booked)! }),
       }),
     );
     expect(cancelled.status).toBe(200);
-    expect(succeeded(await bookAtReception({ startAt: start }))).toBe(true);
+    // The same walk-in, registered again for the freed time (nothing left behind to be offered as a duplicate).
+    expect(succeeded(await bookAtReception({ startAt: start }, walkIn))).toBe(true);
     expect(await activeAt(start)).toHaveLength(1);
   });
 
