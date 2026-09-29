@@ -55,7 +55,8 @@ type Referral = {
   clinic_id: string;
   patient_id: string;
   referring_doctor_id: string;
-  referred_to_doctor_id: string;
+  referred_to_doctor_id: string | null;
+  referred_to_specialty_id: string | null;
   originating_appointment_id: string;
   follow_up_appointment_id: string | null;
   creation_key: string | null;
@@ -539,7 +540,6 @@ describeDb("referrals data model (Phase 1)", () => {
       "clinic_id",
       "patient_id",
       "referring_doctor_id",
-      "referred_to_doctor_id",
       "originating_appointment_id",
       "reason",
       "created_by",
@@ -549,6 +549,14 @@ describeDb("referrals data model (Phase 1)", () => {
       const err = await pgError(() => insertReferral(values));
       expect(err.code).toBe("23502");
       expect(err.column_name).toBe(column);
+    });
+
+    it("requires a recipient — a doctor or a department (referred_to_doctor_id alone is no longer mandatory)", async () => {
+      const values = referralValues(await consultation());
+      delete values.referred_to_doctor_id;
+      const err = await pgError(() => insertReferral(values));
+      expect(err.code).toBe("23514");
+      expect(err.constraint_name).toBe("referrals_recipient_check");
     });
 
     it("rejects a blank or oversized reason and handoff note", async () => {

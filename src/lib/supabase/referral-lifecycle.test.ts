@@ -6,7 +6,15 @@ import { asOnlyGlobalSweep } from "@/test/referral-sweep-lock";
 /**
  * The referral lifecycle at the DATABASE layer — every transition, what it
  * does to each doctor's access, and the audit row it leaves
- * (supabase/migrations/20260929000001_referral_lifecycle_hardening.sql):
+ * (supabase/migrations/20260929000001_referral_lifecycle_hardening.sql, and
+ * the longitudinal access model of 20261002000001_longitudinal_history.sql):
+ *
+ * A referral is a clinical handoff, never a permission request: while it is
+ * open (pending, accepted or in progress, unexpired) the receiving doctor has
+ * the patient's WHOLE history — every doctor's visits and records — from the
+ * moment it is created. When it ends, the receiving doctor keeps that history
+ * only through their own relationship (a non-cancelled appointment or a record
+ * they wrote); a referral that was their only link takes everything with it.
  *
  *   PENDING → ACCEPTED → IN_PROGRESS → COMPLETED
  *   PENDING → DECLINED;  PENDING | ACCEPTED | IN_PROGRESS → REVOKED | EXPIRED
@@ -41,7 +49,7 @@ const describeDb = describe.skipIf(unavailable !== null);
 
 type Tx = postgres.TransactionSql;
 type Values = Record<string, unknown>;
-type Access = { own_patient: boolean; active_referral_ids: string[]; history_doctor_ids: string[]; referral_appointment_ids: string[] };
+type Access = { own_patient: boolean; active_referral_ids: string[]; full_history: boolean };
 type AuditRow = {
   action: string;
   actor_id: string | null;
@@ -271,24 +279,26 @@ describeDb("referral lifecycle — transitions, access termination and audit (da
 
   // ---------- Transitions ----------
 
-  it("created → PENDING: Dr B sees the patient and the consultation it came from — nothing else", async () => {
+  it("created → PENDING: Dr B has the patient's whole history at once, with no approval — Dr C nothing", async () => {
     const x = await patientX();
     const referral = await refer(x);
 
     expectWellFormed(await lastAudit(referral), x.id, referral, "referral_created", profiles.a);
-    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: false, active_referral_ids: [referral], history_doctor_ids: [] });
-    expect(await reach(profiles.b, x.id, referral)).toEqual({ patient: true, appointments: [x.consultation], records: [x.recConsultation], referral: true });
+    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: false, active_referral_ids: [referral], full_history: true });
+    expect(await reach(profiles.b, x.id, referral)).toEqual({ patient: true, appointments: x.aVisits, records: x.aRecords, referral: true });
     expect(await reach(profiles.c, x.id, referral)).toEqual(nothing);
   });
 
-  it("PENDING → ACCEPTED: Dr A's history opens to Dr B", async () => {
+  it("PENDING → ACCEPTED: acceptance is a care step, not a gate — Dr B's view of the history does not change", async () => {
     const x = await patientX();
     const referral = await refer(x);
+    const before = await reach(profiles.b, x.id, referral);
     await accept(referral);
 
     expectWellFormed(await lastAudit(referral), x.id, referral, "referral_accepted", profiles.b);
-    expect(await access(doctors.b, x.id)).toMatchObject({ history_doctor_ids: [doctors.a] });
+    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: false, active_referral_ids: [referral], full_history: true });
     expect(await reach(profiles.b, x.id, referral)).toEqual({ patient: true, appointments: x.aVisits, records: x.aRecords, referral: true });
+    expect(await reach(profiles.b, x.id, referral)).toEqual(before);
   });
 
   it("PENDING → DECLINED: Dr B loses everything at once", async () => {
@@ -298,7 +308,7 @@ describeDb("referral lifecycle — transitions, access termination and audit (da
 
     expectWellFormed(await lastAudit(referral), x.id, referral, "referral_declined", profiles.b);
     expect(JSON.stringify(await lastAudit(referral))).not.toContain("Outside my specialty");
-    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: false, active_referral_ids: [], referral_appointment_ids: [] });
+    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: false, active_referral_ids: [], full_history: false });
     expect(await reach(profiles.b, x.id, referral)).toEqual(nothing);
   });
 
@@ -322,7 +332,7 @@ describeDb("referral lifecycle — transitions, access termination and audit (da
       await wait(2_300);
 
       expect(await status(referral)).toBe("pending");
-      expect(await access(doctors.b, x.id)).toMatchObject({ active_referral_ids: [], referral_appointment_ids: [] });
+      expect(await access(doctors.b, x.id)).toMatchObject({ active_referral_ids: [], full_history: false });
       expect(await reach(profiles.b, x.id, referral)).toEqual(nothing);
 
       // The sweep: scoped to another clinic it touches nothing; then it records the expiry exactly once.
@@ -369,7 +379,7 @@ describeDb("referral lifecycle — transitions, access termination and audit (da
     expectWellFormed(await lastAudit(expiring), y.id, expiring, "referral_expired", null);
   });
 
-  it("IN_PROGRESS → COMPLETED: no more referral-based access for Dr B — their own consultation stays theirs", async () => {
+  it("IN_PROGRESS → COMPLETED: the referral ends, Dr B keeps the history through their own consultation and record", async () => {
     const x = await patientX();
     const referral = await refer(x);
     await accept(referral);
@@ -378,14 +388,20 @@ describeDb("referral lifecycle — transitions, access termination and audit (da
     await transition(referral, { status: "completed", completed_by: profiles.b });
 
     expectWellFormed(await lastAudit(referral), x.id, referral, "referral_completed", profiles.b);
-    // Nothing of Dr A's any more: not the history, not the originating consultation.
-    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: true, active_referral_ids: [], history_doctor_ids: [], referral_appointment_ids: [] });
-    expect(await reach(profiles.b, x.id, referral)).toEqual({ patient: true, appointments: [own], records: [ownRecord], referral: true });
-    // Dr A receives the outcome — that one consultation — while the referral is valid.
+    // No referral-based access any more, but Dr B is now the patient's doctor
+    // themselves: continuity of care keeps the whole history in front of them.
+    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: true, active_referral_ids: [], full_history: true });
+    expect(await reach(profiles.b, x.id, referral)).toEqual({
+      patient: true,
+      appointments: [...x.aVisits, own].sort(),
+      records: [...x.aRecords, ownRecord].sort(),
+      referral: true,
+    });
+    // Dr A receives the outcome too — the same longitudinal history.
     expect(await reach(profiles.a, x.id, referral)).toMatchObject({ appointments: [...x.aVisits, own].sort(), records: [...x.aRecords, ownRecord].sort() });
   });
 
-  it("COMPLETED is bounded too: past expires_at Dr B no longer reads the referral and Dr A no longer sees the follow-up", async () => {
+  it("COMPLETED is bounded too: past expires_at Dr B no longer reads the referral itself — the longitudinal history stays with both doctors", async () => {
     const x = await patientX();
     const referral = await refer(x, "3 seconds");
     await accept(referral);
@@ -395,31 +411,33 @@ describeDb("referral lifecycle — transitions, access termination and audit (da
     expect((await reach(profiles.b, x.id, referral)).referral).toBe(true);
     await wait(3_300);
 
-    // Only the own relationship remains, for each doctor — nothing referral-based.
-    expect(await reach(profiles.b, x.id, referral)).toEqual({ patient: true, appointments: [own], records: [ownRecord], referral: false });
-    expect(await reach(profiles.a, x.id, referral)).toEqual({ patient: true, appointments: x.aVisits, records: x.aRecords, referral: true });
+    // The referral text is bounded by expires_at; the history rests on each
+    // doctor's own relationship and stays.
+    const all = { appointments: [...x.aVisits, own].sort(), records: [...x.aRecords, ownRecord].sort() };
+    expect(await reach(profiles.b, x.id, referral)).toEqual({ patient: true, ...all, referral: false });
+    expect(await reach(profiles.a, x.id, referral)).toEqual({ patient: true, ...all, referral: true });
     // A completed referral is final: the sweep leaves it alone.
     await asServer((tx) => tx`select public.expire_due_referrals(${clinicA})`);
     expect(await status(referral)).toBe("completed");
   });
 
-  it("IN_PROGRESS → REVOKED and IN_PROGRESS → EXPIRED: Dr B keeps only their own consultation; Dr A loses the follow-up", async () => {
+  it("IN_PROGRESS → REVOKED and IN_PROGRESS → EXPIRED: the referral ends; both doctors keep the history through their own visits", async () => {
     const x = await patientX();
     const revoked = await refer(x);
     await accept(revoked);
     const own = await start(revoked, x.id);
     await transition(revoked, { status: "revoked", revoked_by: profiles.manager, revoked_reason: "Duplicate referral" });
     expectWellFormed(await lastAudit(revoked), x.id, revoked, "referral_revoked", profiles.manager);
-    expect(await reach(profiles.b, x.id, revoked)).toEqual({ patient: true, appointments: [own], records: [], referral: false });
-    expect((await reach(profiles.a, x.id, revoked)).appointments).toEqual(x.aVisits);
+    expect(await reach(profiles.b, x.id, revoked)).toEqual({ patient: true, appointments: [...x.aVisits, own].sort(), records: x.aRecords, referral: false });
+    expect((await reach(profiles.a, x.id, revoked)).appointments).toEqual([...x.aVisits, own].sort());
 
     const y = await patientX();
     const expiring = await refer(y, "2 seconds");
     await accept(expiring);
     const ownY = await start(expiring, y.id);
     await wait(2_300);
-    expect(await reach(profiles.b, y.id, expiring)).toEqual({ patient: true, appointments: [ownY], records: [], referral: false });
-    expect((await reach(profiles.a, y.id, expiring)).appointments).toEqual(y.aVisits);
+    expect(await reach(profiles.b, y.id, expiring)).toEqual({ patient: true, appointments: [...y.aVisits, ownY].sort(), records: y.aRecords, referral: false });
+    expect((await reach(profiles.a, y.id, expiring)).appointments).toEqual([...y.aVisits, ownY].sort());
     await asServer((tx) => tx`select public.expire_due_referrals(${clinicA})`);
     expect(await status(expiring)).toBe("expired");
     expectWellFormed(await lastAudit(expiring), y.id, expiring, "referral_expired", null);
@@ -466,11 +484,11 @@ describeDb("referral lifecycle — transitions, access termination and audit (da
     const booked = await visit(x.id, doctors.b, "confirmed");
     await transition(referral, { follow_up_appointment_id: booked });
     await transition(referral, { status: "revoked", revoked_by: profiles.a, revoked_reason: "Seen elsewhere" });
-    // While the visit is booked Dr B is the patient's doctor for it…
-    expect(await reach(profiles.b, x.id, referral)).toEqual({ patient: true, appointments: [booked], records: [], referral: false });
+    // While the visit is booked Dr B is the patient's doctor for it and has the whole history…
+    expect(await reach(profiles.b, x.id, referral)).toEqual({ patient: true, appointments: [...x.aVisits, booked].sort(), records: x.aRecords, referral: false });
     // …once reception cancels it, nothing is left.
     await sql`update public.appointments set status = 'cancelled' where id = ${booked}`;
-    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: false });
+    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: false, full_history: false });
     expect(await reach(profiles.b, x.id, referral)).toEqual(nothing);
   });
 
