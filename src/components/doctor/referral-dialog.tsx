@@ -233,7 +233,7 @@ export function ReferralDialog({
             <p className="mb-1 text-xs font-medium text-ink-muted">Amal qilish muddati</p>
             <ASelect value={validForDays} onChange={setValidForDays} options={VALIDITY_OPTIONS} aria-label="Amal qilish muddati" />
           </div>
-          <p className="text-xs text-ink-muted">Sabab va izohni faqat siz va qabul qiluvchi shifokor ko‘radi.</p>
+          <p className="text-xs text-ink-muted">Sabab va izoh bemorning tibbiy tarixiga kiradi: uni bemorni davolayotgan shifokorlar ko‘radi.</p>
         </div>
       )}
     </AModal>

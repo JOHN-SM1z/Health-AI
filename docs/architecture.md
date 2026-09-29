@@ -45,13 +45,17 @@ Patient (Telegram)                      Clinic staff (browser)
   per clinic: owner/admin/manager/receptionist/doctor), managed by the owner under *Xodimlar*
 - **patients** — Telegram-identified (telegram_user_id, verified initData) with consent flag; a
   website booking (no verified identity) reuses a record only without a Telegram identity and
-  with the same phone and name, and never edits one
+  with the same phone and name, and never edits one. `phone_normalized` (generated from `phone`,
+  indexed per clinic, not unique) is how a returning patient is found before a new record is
+  created (see [Registration and patient identity](#registration-and-patient-identity))
 - **specialties / services / doctors / doctor_services / doctor_working_hours / doctor_time_blocks** — clinic catalog
 - **appointments** — status machine (`pending → confirmed → checked_in → in_progress → completed`, `cancelled`, `no_show`), **exclusion constraint** `no_overlapping_active_appointments` prevents double-booking at DB level
 - **payments** — linked to appointment, status machine with audit trail
-- **referrals** — doctor-to-doctor referral within one clinic, raised from the consultation (the
-  appointment in which the referring doctor saw the patient); composite foreign keys keep the
-  patient, both doctors and that appointment inside the referral's clinic; status machine
+- **referrals** — referral within one clinic to a doctor, to a department (a specialty) or to both,
+  raised from the consultation (the appointment in which the referring doctor saw the patient);
+  `referred_to_doctor_id` is nullable while a department referral is untaken and
+  `referrals_recipient_check` needs a doctor or a department; composite foreign keys keep the
+  patient, the doctors, the department and that appointment inside the referral's clinic; status machine
   `pending → accepted → in_progress → completed` (or `declined` / `revoked` / `expired`)
   enforced by trigger for every writer; audited without its clinical text (reason, handoff note);
   linked to the receiving doctor's consultation for it (`follow_up_appointment_id`, booked by
@@ -59,7 +63,8 @@ Patient (Telegram)                      Clinic staff (browser)
 - **clinical_records** — doctor-authored clinical notes, assessments, diagnoses, prescriptions,
   lab orders and results, medical history and follow-up plans; each tied to the author's own consultation (composite FK),
   append-only and versioned (only the author corrects, as the next version; earlier versions kept in
-  `clinical_record_versions`), never erased with the patient, readable only where the consultation is (see
+  `clinical_record_versions`), never erased with the patient, part of the patient's longitudinal record:
+  read by doctors the access decision gives the patient's history, only through the server (see
   [security.md](security.md#clinical-records))
 - **retention_policies** — per clinic and data category, the retention rule a confirmed policy sets; empty — nothing
   is deleted or anonymised on its basis yet
@@ -120,51 +125,118 @@ Doctor's walk-in ─────────┘→ start_walk_in_consultation �
 
 ## Referral workflow
 
-Doctor A refers a patient to Doctor B in the same clinic:
+A referral is a clinical handoff between doctors of one clinic — to a colleague, to a department, or
+to both — raised from the referring doctor's own consultation. It is never a permission request: the
+receiving doctor sees the patient's history from the moment it exists.
 
-1. **Refer** — in `/doctor` (today's queue) Doctor A opens *Yo‘llanma* on an `in_progress` or
-   `completed` consultation — the only patient context a doctor has — and picks a colleague,
-   priority, reason, optional handoff note and validity (30–180 days), reviews it, and sends it →
+1. **Refer** — Doctor A opens *Yo‘llanma* on their own `in_progress` or `completed` consultation
+   (`/doctor` today's queue, or the patient's page) — the only patient context a doctor has to raise
+   one from — and picks a department, a colleague (of that department, if one is chosen), or both,
+   plus priority, reason, optional handoff note and validity (30–180 days), reviews it, and sends it →
    `POST /api/doctor/referrals`. Each reviewed referral carries a client-generated idempotency key,
    so a double click or retry resolves to the referral already created.
-2. **Review and respond** — Doctor B sees it on the `/doctor` dashboard (*Sizga kelgan
-   yo‘llanmalar*), under `/doctor/referrals` and on the patient's workspace, reviews the
-   consultation it came from, and accepts or declines (`PATCH /api/doctor/referrals/[id]`, also
-   from the workspace). After accepting, Doctor B sees Doctor A's history of the patient —
-   visits and clinical records, each attributed to Doctor A.
-3. **Book** (optional) — reception opens the patient in `/admin/patients`, sees the referral
-   (metadata only) and books the follow-up with Doctor B (`POST /api/admin/appointments` with
-   `referralId`), which goes through `book_appointment` and is then linked to the referral.
-4. **Consult** — Doctor B starts their own consultation: the booked follow-up (workspace, queue
-   or front desk) or a walk-in from the workspace. It becomes the referral's follow-up and the
+2. **Receive** — the receiving doctor — the named colleague, or, for a department referral nobody has
+   taken, every active doctor of the department except the doctor who raised it — sees it on the
+   `/doctor` dashboard (*Sizga kelgan yo‘llanmalar*), under `/doctor/referrals`, in the pending badge and
+   on the patient's page. From this moment they see the patient's whole history — every doctor's
+   visits and clinical records, each attributed to its author — with nothing to accept first and
+   nobody to ask.
+3. **Accept or decline** — the receiving doctor accepts (`PATCH /api/doctor/referrals/[id]`) or, when
+   the referral was addressed to them, declines; starting a consultation with the patient accepts a
+   pending referral automatically. A department referral can only be accepted — nobody can decline it
+   for the others — and the first doctor to accept becomes its receiving doctor
+   (`referred_to_doctor_id`); it then leaves the other department doctors' lists and badges.
+4. **Book** (optional) — reception opens the patient in `/admin/patients`, sees the referral
+   (metadata only) and, once it is accepted, books the follow-up with the receiving doctor
+   (`POST /api/admin/appointments` with `referralId`), which goes through `book_appointment` and is
+   then linked to the referral.
+5. **Consult** — Doctor B starts their own consultation: the booked follow-up (patient page, queue or
+   front desk) or a walk-in from the patient's page. It becomes the referral's follow-up and the
    database moves the referral to **in progress** (`referral_in_progress`); the start is audited
-   as `consultation_started` — start, link and audit row in one transaction (`start_consultation()`). Doctor B documents it in `clinical_records` — current assessment,
-   new diagnosis, clinical note, prescription, laboratory order, follow-up/onward referral — all
-   authored by Doctor B; Doctor A's records are shown as history (*Oldingi tashxis* …), never
-   changed. Categories come from `src/lib/clinical-records/categories.ts` (record type + whether
-   it belongs to the doctor's consultation under way).
-5. **Close** — Doctor B completes it (only once in progress); Doctor A (or owner/admin/manager
-   via `PATCH /api/admin/referrals/[id]`) can revoke it while it is open. Open referrals
-   (pending, accepted, in progress) lose all referral-based access at `expires_at` (≤ 180 days);
-   the hourly `POST /api/referrals/expire` job — and any read — records them as expired.
-   Every step is audited with actor, clinic, patient and referral; see
-   [security.md](security.md#referral-lifecycle-and-access-termination). Afterwards Doctor B keeps their own consultation, and Doctor A sees it and its
-   records as the referral's follow-up.
+   as `consultation_started` — start, link and audit row in one transaction (`start_consultation()`).
+   Doctor B documents it in `clinical_records` — current assessment, new diagnosis, clinical note,
+   prescription, laboratory order, follow-up/onward referral — all authored by Doctor B; Doctor A's
+   records are shown as history (*Oldingi tashxis* …), never changed, and Doctor B cannot correct
+   them (only their author can). Categories come from `src/lib/clinical-records/categories.ts`
+   (record type + whether it belongs to the doctor's consultation under way).
+6. **Close** — Doctor B completes it (only once in progress); Doctor A (or owner/admin/manager
+   via `PATCH /api/admin/referrals/[id]`) can revoke it while it is open, also while a department
+   referral is untaken. Open referrals (pending, accepted, in progress) give no referral-based access
+   after `expires_at` (≤ 180 days); the hourly `POST /api/referrals/expire` job — and any read —
+   records them as expired. Every step is audited with actor, clinic, patient and referral; see
+   [security.md](security.md#referral-lifecycle-and-access-termination). Afterwards Doctor B keeps the
+   history through their own consultation, and Doctor A sees that consultation and its records.
 
 Server logic lives in `src/lib/referrals/service.ts`; the database (trigger + RLS + composite
 foreign keys) enforces the same rules independently of the API.
 
-What a doctor may see of a patient — their own patient, or one actively referred to them — is one
-decision, `public.doctor_patient_access()`, used by the `patients`/`appointments` RLS policies and by
-the server (`src/lib/clinical-access/access.ts`, `GET /api/doctor/patients/[id]`, shown on the
-doctor's patient workspace `/doctor/patients/[id]`, reached from the queue, the referral, the
-referred-patients list and *Bemorlarim* (`/doctor/patients`, the doctor's own and referred patients,
-searchable). The workspace separates the doctor's own consultation ("Mening qabulim": start it,
-document and correct it, finish it) from previous records, each shown with its author, time and
-type; a *Klinik xulosa* groups the records in force (historical and new diagnoses, history,
-prescriptions, lab orders and results) with their authors, and the receiving doctor can accept,
-decline or complete the referral in place, following its lifecycle stepper. See
-[security.md](security.md#clinical-access-doctors).
+## Clinical access and the patient's profile
+
+**The access decision.** A patient's clinical history belongs to the patient's record in the clinic.
+What a doctor may see of it is one decision, `public.doctor_patient_access(doctor_id, patient_id)`,
+which returns `(clinic_id, own_patient, active_referral_ids, full_history)` for an active doctor-role
+doctor of the patient's clinic, and no row otherwise:
+
+- `own_patient` — a treating relationship: any appointment of the doctor with the patient that is not
+  cancelled (past, today or booked), or a record the doctor wrote. It is permanent (continuity of care).
+- `active_referral_ids` — open (pending, accepted, in progress), unexpired referrals of the patient to
+  the doctor, plus untaken (pending, no receiving doctor) department referrals to the doctor's
+  department that the doctor did not raise.
+- `full_history` = either. With it the doctor sees the patient's whole history in the clinic — every
+  doctor's appointments and records — from the moment a referral exists; without it, nothing. There
+  is no per-appointment scope and no acceptance gate. Referral-only access ends when the referral is
+  declined, revoked or completed and at the latest at `expires_at`, checked against the database clock.
+
+**How the server and RLS mirror each other.** RLS uses the decision through
+`doctor_can_read_patient()` (the caller's `full_history`) and `doctor_can_read_appointment()` (equal
+to it; its signature is kept for the policies). The server calls the same function with the service
+role — `canDoctorAccessPatientClinicalData()` in `src/lib/clinical-access/access.ts`, returning
+`{ relationship: "own" | "referred" | "none", allowed, fullHistory, activeReferralIds }` — so
+direct database access and the API cannot disagree. Signed-in roles have no SELECT on
+`clinical_records` or `referrals`: clinical text is read only through the server, which authorizes
+and audits each read. Payments are not read by doctors at all; the server shows only the payment
+status of the doctor's own visit. See [security.md](security.md#clinical-access-doctors).
+
+**The patient's profile** (`/doctor/patients/[id]`, reached from the queue, the referral, *Bemorlarim*
+(`/doctor/patients`, the doctor's own and referred patients, searchable) and the referral lists) is
+`GET /api/doctor/patients/[id]` (`src/lib/clinical-access/workspace.ts`): every doctor's appointments,
+the current version of every record by every author (attributed), all the patient's referrals — the
+doctor's role on each is referrer, receiver or observer, with server-computed allowed actions — and
+what the doctor can start. Its tabs:
+
+| Tab | Shows |
+| --- | --- |
+| *Umumiy* | referrals waiting for the doctor's answer; *Mening qabulim* — the doctor's own consultation (start the booked visit or a walk-in, document it, correct their own records, refer, finish); scheduled visits |
+| *Qabullar* | every visit of the patient in the clinic, whoever held it |
+| *Klinik tarix* | the patient's journey, newest first: visits with the records written in them and the referrals, each record with its author |
+| *Tashxislar* | diagnoses, clinical assessments and medical history (*Anamnez*) |
+| *Laboratoriya* | laboratory orders and results |
+| *Retseptlar* | prescriptions |
+| *Yo‘llanmalar* | all of the patient's referrals; accept / decline / complete only where the doctor is the receiver |
+
+Every record shows its author (*Siz yozgansiz* or *Muallif: …*) and time; only the author sees
+*Tahrirlash*, a correction is saved as the record's next version (*Tarix* lists them), and another
+doctor records their own view as a new record in their own consultation.
+
+**Department referrals.** An untaken referral to a department is in the incoming list, the pending
+badge and the patient history of every active doctor of the department except the doctor who raised it;
+accepting is the only action, and the first acceptance makes that doctor the receiving doctor. See
+[security.md](security.md#department-referrals).
+
+## Registration and patient identity
+
+One patient, one record. `patients.phone_normalized` is generated from `phone` (digits only; a 9-digit
+number gets the `998` prefix), indexed per clinic and not unique. Reception's quick booking
+(`src/components/admin/quick-booking-modal.tsx`) searches first — `GET /api/admin/patients?q=` also
+matches the normalized phone from 5 digits — and picks a returning patient by `patientId`. When it
+registers a new one, `POST /api/admin/appointments` answers 409 `possible_duplicate` with the clinic's
+patients that have the same normalized phone, before it creates anything; the modal lists them
+(*Shu bemor*), or the receptionist confirms *Yo‘q, bu boshqa odam* (`confirmNewPatient`), which
+registers a different person who shares the phone. Editing the phone afterwards clears that
+confirmation and the check runs again. A patient registered by a request whose booking then fails is
+removed again. The website booking finds a returning visitor by the normalized phone (and name, without a
+Telegram identity); the Mini App booking fills a verified patient's name and phone only while they are
+empty. See [security.md](security.md#patient-identity-and-registration).
 
 ## Notifications
 
@@ -175,7 +247,8 @@ decline or complete the referral in place, following its lifecycle stepper. See
 - The same scheduled run enforces voice retention: past `expires_at` a voice message's audio
   is deleted from private storage and its transcripts and Telegram file reference are removed
   (`src/lib/voice/retention.ts`); a failed deletion is retried on the next run.
-- Doctors see the referrals awaiting their answer as a count on *Yo‘llanmalar*
+- Doctors see the referrals awaiting their answer — addressed to them, or to their department while
+  untaken, never one they raised themselves — as a count on *Yo‘llanmalar*
   (`GET /api/doctor/referrals/pending-count`: a number only, no referral text, no audit rows).
 
 ## AI pipeline
