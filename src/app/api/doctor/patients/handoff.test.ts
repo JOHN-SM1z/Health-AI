@@ -402,7 +402,8 @@ describeDb("clinical handoff workflow", () => {
     const consultationId = (started.body.data!.consultation as { appointmentId: string }).appointmentId;
 
     expect(await referralRow(referral)).toMatchObject({ status: "in_progress", follow_up_appointment_id: consultationId, started_by: users.e });
-    expect((await audits(referral)).filter((a) => ["referral_accepted", "referral_in_progress"].includes(a.action)).map((a) => [a.action, a.actor_id])).toEqual([
+    expect((await audits(referral)).filter((a) => ["referral_accepted", "referral_in_progress"].includes(a.action)).map((a) => [a.action, a.actor_id]).sort()).toEqual([
+      // One transaction: both rows carry the same timestamp, so their order is not defined.
       ["referral_accepted", users.e],
       ["referral_in_progress", users.e],
     ]);
@@ -435,6 +436,19 @@ describeDb("clinical handoff workflow", () => {
     expect(await queue("e", web, "checked_in")).toMatchObject({ status: 200 });
   });
 
+  it("the patient page cannot start an unconfirmed website booking either — 409, and the pending referral stays pending", async () => {
+    const { data: created } = await admin.from("patients").insert({ clinic_id: clinicA, full_name: `Web-start patient ${suffix}`, phone: "+998907770055" }).select("id").single();
+    const patientId = created!.id as string;
+    const x = { id: patientId, consultation: await visit(patientId, doctors.a) };
+    // The referral gives Dr E access, so the refusal is the booking's, not the patient's.
+    const referral = await refer(x, doctors.e);
+    const web = await visit(patientId, doctors.e, "pending", "web");
+
+    expect(await start("e", patientId, { appointmentId: web })).toMatchObject({ status: 409, body: { code: "awaiting_confirmation" } });
+    expect((await admin.from("appointments").select("status").eq("id", web).single()).data!.status).toBe("pending");
+    expect(await referralRow(referral)).toMatchObject({ status: "pending", follow_up_appointment_id: null });
+  });
+
   it("starting from the doctor's queue takes a pending referral on too — accepted, linked, in progress", async () => {
     const { data: created } = await admin.from("patients").insert({ clinic_id: clinicA, full_name: `Queue-start patient ${suffix}`, phone: "+998907770044" }).select("id").single();
     const patientId = created!.id as string;
@@ -444,7 +458,8 @@ describeDb("clinical handoff workflow", () => {
 
     expect(await queue("e", own, "in_progress")).toMatchObject({ status: 200 });
     expect(await referralRow(referral)).toMatchObject({ status: "in_progress", follow_up_appointment_id: own, started_by: users.e });
-    expect((await audits(referral)).filter((a) => ["referral_accepted", "referral_in_progress"].includes(a.action)).map((a) => [a.action, a.actor_id])).toEqual([
+    expect((await audits(referral)).filter((a) => ["referral_accepted", "referral_in_progress"].includes(a.action)).map((a) => [a.action, a.actor_id]).sort()).toEqual([
+      // One transaction: both rows carry the same timestamp, so their order is not defined.
       ["referral_accepted", users.e],
       ["referral_in_progress", users.e],
     ]);

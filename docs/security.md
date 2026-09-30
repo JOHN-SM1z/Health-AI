@@ -276,12 +276,18 @@ records, and only the author changes their own.
   taken by this doctor), and the started consultation becomes the referral's follow-up with the
   referral moving to `in_progress`; nothing has to be accepted by hand before starting. The doctor's
   own start — from the patient's page or from the doctor queue — is one database transaction
-  (`start_consultation` / `start_walk_in_consultation`): it takes a lock on the doctor's open referrals
-  and **re-checks `doctor_patient_access()` inside the transaction** (`access_lost` answers 404/410 like
-  any refused patient read, and writes nothing), and it does the accept there too — the doctor's own
-  named referral before an untaken department one, one the database refuses skipped — so a start that
-  fails (a taken slot, a refused booking) accepts nothing, and a revoke or claim racing the start is
-  either seen or waits for it.
+  (`start_consultation` / `start_walk_in_consultation`), and the accept happens inside it, so a start
+  that fails (a taken slot, a refused booking) accepts nothing. Lock order is always appointment →
+  referral, and a shared lock is never upgraded to an exclusive one (that was a deadlock and stuck-referral
+  risk under concurrent starts). A doctor-channel start must be made by the doctor's own login (the actor is
+  checked), re-checks `doctor_patient_access()` **without taking any lock** (`access_lost` answers 404/410
+  like any refused patient read and writes nothing), and refuses a website booking staff have not
+  confirmed (`awaiting_confirmation`, 409: its visitor is unverified). It then moves the appointment
+  by compare-and-swap and accepts the waiting referral with a plain `FOR UPDATE` (the doctor's own named
+  referral before an untaken department one). A walk-in books first; when the doctor's access rests on a
+  referral alone, the transaction then locks those referrals (`FOR NO KEY UPDATE`) and verifies one is
+  still open — otherwise it raises `CALST` and the booking rolls back with it (`access_lost`) — so a
+  revoke or claim racing the start is either seen or waits for it.
 - **Nothing silently dropped.** A record always arrives with its consultation, even one older than
   the workspace's 200-visit window (fetched by id).
 - **Handoff never rewrites history.** A receiving doctor's assessment or new diagnosis is a new
