@@ -38,7 +38,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Every tenant-owned query and mutation must scope by `clinic_id`.
 - Deleting a patient must never cascade into clinical records, referrals, appointments, payments or audit rows: each has its own retention, set by the clinic's confirmed policy (`retention_policies`). Never assume a retention period in code. A doctor record that holds another login's clinical records is never re-linked to a new login; a new doctor gets a new doctor record.
 - Never trust role, clinic ID, patient ID, payment status, or Telegram identity from the browser.
-- One patient, one record: registration looks up an existing patient (by normalized phone, `patients.phone_normalized`) before creating one, and never overwrites an existing patient's identity from unverified input.
+- One patient, one record: reception registration and website booking look up an existing patient (by normalized phone, `patients.phone_normalized`) before creating one, a verified Telegram identity is its own key, and no booking path overwrites an existing patient's name or phone from unverified input. A booking made without proof of identity (an unconfirmed website booking) never gives a doctor a treating relationship with the patient.
 - `SECURITY DEFINER` functions must use a safe `search_path`, have the minimum grants, and verify caller authorization internally. Do not grant privileged RPCs broadly to `authenticated`.
 - Add or update tests whenever modifying RLS, staff roles, RPCs, or tenant-scoped queries.
 

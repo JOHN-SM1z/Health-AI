@@ -31,7 +31,7 @@ type Row = {
   services: { name: string; price: number } | null;
 };
 
-/** Metadata only — the reason and handoff note stay on the referral page. */
+/** What this dashboard shows is metadata only; the reason and handoff note are read on the referral page. */
 type PendingReferral = {
   id: string;
   priority: string;
