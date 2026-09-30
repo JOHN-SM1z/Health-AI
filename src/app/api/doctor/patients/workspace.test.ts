@@ -600,10 +600,11 @@ describeDb("referred-patient clinical workspace", () => {
       .eq("clinic_id", clinicA)
       .eq("referral_id", referral)
       .in("action", ["referral_created", "referral_accepted", "referral_in_progress", "referral_follow_up_booked"])
-      .order("created_at", { ascending: true });
+      .order("action", { ascending: true });
+    // Accepting and starting now happen in one transaction (one audit timestamp), so the two are compared as a set.
     expect(trail).toEqual([
-      { action: "referral_created", actor_id: users.a },
       { action: "referral_accepted", actor_id: users.b },
+      { action: "referral_created", actor_id: users.a },
       { action: "referral_in_progress", actor_id: users.b },
     ]);
 

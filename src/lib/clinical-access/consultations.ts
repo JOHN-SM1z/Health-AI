@@ -5,7 +5,6 @@ import { trackAnalytics } from "@/lib/analytics";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 import { canDoctorAccessPatientClinicalData } from "@/lib/clinical-access/access";
 import { canStartConsultation } from "@/lib/clinical-access/workspace";
-import { actOnReferral } from "@/lib/referrals/service";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
 import { startConsultationInDatabase, startWalkInInDatabase } from "@/lib/clinical-access/consultation-start";
 import { BookingError, bookingError } from "@/lib/booking/engine";
@@ -40,41 +39,6 @@ const WALK_IN_MESSAGES: Record<string, string> = {
 };
 
 /**
- * Starting to treat a referred patient is taking the referral on: the oldest
- * pending referral of this patient to the doctor (or, untaken, to their
- * department, never one they raised) is accepted first — one named to them
- * before an untaken department one — so the database links the consultation
- * to it. A referral someone else just took or answered, or one the database
- * refuses (say, a second one to the same doctor), is skipped for the next.
- */
-export async function acceptPendingReferral(doctor: LinkedDoctor, patientId: string): Promise<void> {
-  const supabase = createAdminClient();
-  let query = supabase
-    .from("referrals")
-    .select("id, referred_to_doctor_id, created_at")
-    .eq("clinic_id", doctor.clinicId)
-    .eq("patient_id", patientId)
-    .eq("status", "pending")
-    .gt("expires_at", new Date().toISOString())
-    .order("created_at", { ascending: true })
-    .limit(10);
-  query = doctor.specialtyId
-    ? query.or(`referred_to_doctor_id.eq.${doctor.doctorId},and(referred_to_doctor_id.is.null,referred_to_specialty_id.eq.${doctor.specialtyId},referring_doctor_id.neq.${doctor.doctorId})`)
-    : query.eq("referred_to_doctor_id", doctor.doctorId);
-  const { data: pending, error } = await query;
-  if (error) throw new ApiError(500, "Yo‘llanmani tekshirib bo‘lmadi");
-  const named = (r: { referred_to_doctor_id: string | null }) => (r.referred_to_doctor_id === doctor.doctorId ? 0 : 1);
-  for (const referral of [...(pending ?? [])].sort((a, b) => named(a) - named(b))) {
-    try {
-      await actOnReferral(doctor, referral.id, "accept");
-      return;
-    } catch (e) {
-      if (!(e instanceof ApiError) || e.status >= 500) throw e;
-    }
-  }
-}
-
-/**
  * The calling doctor starts their own consultation with `patientId`: either
  * the visit booked for them (moved to in progress), or a walk-in booked now
  * through the booking engine (working hours, time blocks and overlaps all
@@ -101,7 +65,6 @@ export async function startConsultation(
   const existing = await inProgressConsultation(doctor, patientId);
   if (existing) return { appointmentId: existing, started: false };
 
-  await acceptPendingReferral(doctor, patientId);
 
   const supabase = createAdminClient();
   let appointmentId: string;
@@ -118,7 +81,7 @@ export async function startConsultation(
     if (error) throw new ApiError(500, "Qabulni tekshirib bo‘lmadi");
     if (!visit) throw new ApiError(404, "Qabul topilmadi", "consultation_not_found");
     if (!STARTABLE.includes(visit.status)) throw new ApiError(409, "Bu qabulni boshlab bo‘lmaydi", "invalid_transition");
-    const { started } = await startConsultationInDatabase({
+    const { started, errorCode } = await startConsultationInDatabase({
       clinicId: doctor.clinicId,
       appointmentId: visit.id,
       fromStatus: visit.status,
@@ -127,6 +90,8 @@ export async function startConsultation(
       linkReferral: true,
       doctorId: doctor.doctorId,
     });
+    // The database re-checked the doctor's access in the start's own transaction.
+    if (errorCode === "access_lost") throw await patientAccessDenied(doctor, patientId);
     if (!started) {
       const raced = await inProgressConsultation(doctor, patientId);
       if (raced) return { appointmentId: raced, started: false };
@@ -145,6 +110,8 @@ export async function startConsultation(
       startAt,
       actorId: doctor.profileId,
     });
+    // The database re-checked the doctor's access in the start's own transaction.
+    if (walkIn.errorCode === "access_lost") throw await patientAccessDenied(doctor, patientId);
     if (walkIn.errorCode || !walkIn.appointmentId) {
       // A concurrent start of the same consultation wins the slot: answer with it.
       if (walkIn.errorCode === "slot_taken") {

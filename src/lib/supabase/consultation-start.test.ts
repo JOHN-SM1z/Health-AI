@@ -210,7 +210,8 @@ describeDb("consultation start — one transaction, exactly once (database layer
     const appointment = await visit(patient, doctors.b);
     // The route read 'checked_in'; reception cancels before the start arrives.
     await sql`update public.appointments set status = 'cancelled', cancelled_at = now() where id = ${appointment}`;
-    expect(await start(appointment, "checked_in", profiles.b, "doctor_queue", true, doctors.b)).toEqual({ started: false, referral_id: null });
+    // The cancelled visit was Dr B's only link to the patient: the start finds no relationship left and writes nothing.
+    expect(await start(appointment, "checked_in", profiles.b, "doctor_queue", true, doctors.b)).toEqual({ started: false, referral_id: null, error_code: "access_lost" });
     expect(await appointmentStatus(appointment)).toBe("cancelled");
     expect(await startedAudits(appointment)).toHaveLength(0);
   });
@@ -236,15 +237,17 @@ describeDb("consultation start — one transaction, exactly once (database layer
     expect((await startedAudits(followUp))[0]).toMatchObject({ actor_id: profiles.receptionist, referral_id: ref, metadata: { via: "front_desk" } });
   });
 
-  it("never links a pending, expired or other doctor's referral — the consultation still starts, without a referral", async () => {
-    // Pending: Dr B has not accepted it; Dr A's own visit is not its consultation either.
+  it("takes a pending referral on for the doctor who starts, never for the referrer, and never links an expired one", async () => {
+    // Pending: Dr A's own visit is not its consultation (A referred it) — nothing is taken on for A…
     const p1 = await newPatient();
     const pending = await acceptedReferral(p1, { pending: true });
     const aVisit = await visit(p1, doctors.a);
     expect(await start(aVisit, "checked_in", profiles.a, "doctor_queue", true, doctors.a)).toEqual({ started: true, referral_id: null });
-    const bVisit = await visit(p1, doctors.b);
-    expect(await start(bVisit, "checked_in", profiles.b, "doctor_queue", true, doctors.b)).toEqual({ started: true, referral_id: null });
     expect(await referral(pending)).toMatchObject({ status: "pending", follow_up_appointment_id: null });
+    // …while Dr B starting theirs takes it on, in the same transaction: accepted, linked, in progress.
+    const bVisit = await visit(p1, doctors.b);
+    expect(await start(bVisit, "checked_in", profiles.b, "doctor_queue", true, doctors.b)).toEqual({ started: true, referral_id: pending });
+    expect(await referral(pending)).toEqual({ status: "in_progress", follow_up_appointment_id: bVisit, started_by: profiles.b });
 
     // Accepted but expired by the database clock.
     await withoutGlobalSweeps(async () => {
@@ -287,7 +290,8 @@ describeDb("consultation start — one transaction, exactly once (database layer
     const appointment = await visit(patient, doctors.b);
     // Another clinic's id, or another doctor's appointment: nothing starts.
     expect(await start(appointment, "checked_in", profiles.k, "doctor_queue", true, null, clinicB)).toEqual({ started: false, referral_id: null });
-    expect(await start(appointment, "checked_in", profiles.a, "doctor_queue", true, doctors.a)).toEqual({ started: false, referral_id: null });
+    expect(await start(appointment, "checked_in", profiles.a, "doctor_queue", true, doctors.a)).toMatchObject({ started: false, referral_id: null });
+    expect(await appointmentStatus(appointment)).toBe("checked_in");
     // An actor with no role in the clinic, or an unknown channel.
     expect((await pgError(() => start(appointment, "checked_in", profiles.k, "front_desk"))).message).toContain("not staff of this clinic");
     expect((await pgError(() => start(appointment, "checked_in", profiles.b, "patient_app"))).message).toContain("unknown start channel");

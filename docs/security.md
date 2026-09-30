@@ -274,7 +274,14 @@ records, and only the author changes their own.
   decision gives access (own patient, or an open referral). A pending referral to the doctor — or an
   untaken one to their department — is accepted automatically first (a department referral is thereby
   taken by this doctor), and the started consultation becomes the referral's follow-up with the
-  referral moving to `in_progress`; nothing has to be accepted by hand before starting.
+  referral moving to `in_progress`; nothing has to be accepted by hand before starting. The doctor's
+  own start — from the patient's page or from the doctor queue — is one database transaction
+  (`start_consultation` / `start_walk_in_consultation`): it takes a lock on the doctor's open referrals
+  and **re-checks `doctor_patient_access()` inside the transaction** (`access_lost` answers 404/410 like
+  any refused patient read, and writes nothing), and it does the accept there too — the doctor's own
+  named referral before an untaken department one, one the database refuses skipped — so a start that
+  fails (a taken slot, a refused booking) accepts nothing, and a revoke or claim racing the start is
+  either seen or waits for it.
 - **Nothing silently dropped.** A record always arrives with its consultation, even one older than
   the workspace's 200-visit window (fetched by id).
 - **Handoff never rewrites history.** A receiving doctor's assessment or new diagnosis is a new

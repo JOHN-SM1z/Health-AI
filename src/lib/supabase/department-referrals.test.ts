@@ -347,6 +347,63 @@ describeDb("department referrals — claim by acceptance, access and revocation 
     expect(JSON.stringify(trail)).not.toMatch(/Chest pain|ECG attached/);
   });
 
+  // ---------- (i) Starting a consultation: access re-checked and referral accepted in the same transaction ----------
+
+  const walkIn = (doctor: "a" | "b" | "b2" | "n", patientId: string, serviceId = service) =>
+    serverTx(async (tx) => {
+      const [r] = await tx<{ res: { appointment_id: string | null; error_code: string | null; referral_id: string | null } }[]>`
+        select public.start_walk_in_consultation(
+          ${clinicA}::uuid, ${patientId}::uuid, ${doctors[doctor]}::uuid, ${serviceId}::uuid, now() + interval '2 minutes', ${profiles[doctor]}::uuid
+        ) as res`;
+      return r.res;
+    });
+
+  it("a start re-checks the doctor's access in its own transaction: no relationship, or a revoked referral, writes nothing", async () => {
+    const x = await newPatient();
+    const id = await referToCardiology(x);
+    const [{ before }] = await sql<{ before: number }[]>`select count(*)::int as before from public.appointments where patient_id = ${x.id}`;
+
+    // Dr N (no department) never had a relationship; Dr D (dermatology) neither.
+    for (const stranger of ["n"] as const) {
+      expect(await walkIn(stranger, x.id)).toMatchObject({ appointment_id: null, error_code: "access_lost" });
+    }
+    // Dr B's referral is revoked before the start: the start finds it gone.
+    await transition(id, { status: "revoked", revoked_by: profiles.a, revoked_reason: "Referred in error" });
+    expect(await walkIn("b", x.id)).toMatchObject({ appointment_id: null, error_code: "access_lost" });
+    const [{ after }] = await sql<{ after: number }[]>`select count(*)::int as after from public.appointments where patient_id = ${x.id}`;
+    expect(after).toBe(before);
+  });
+
+  it("a start that succeeds takes the department referral on in the same transaction — a start that fails accepts nothing", async () => {
+    const x = await newPatient();
+    const id = await referToCardiology(x);
+
+    // Dr B2 has no working hours: the booking is refused, and the referral is still untaken and pending.
+    const refused = await walkIn("b2", x.id);
+    expect(refused.appointment_id).toBeNull();
+    expect(refused.error_code).not.toBeNull();
+    expect(refused.error_code).not.toBe("access_lost");
+    expect(await row(id)).toMatchObject({ status: "pending", referred_to_doctor_id: null });
+    expect((await audits(id)).map((a) => a.action)).toEqual(["referral_created"]);
+
+    // Dr B can be booked: accepted (taking it), linked to the new visit, in progress — all as Dr B.
+    const started = await walkIn("b", x.id);
+    expect(started).toMatchObject({ error_code: null });
+    expect(started.appointment_id).not.toBeNull();
+    expect(started.referral_id).toBe(id);
+    expect(await row(id)).toEqual({ status: "in_progress", referred_to_doctor_id: doctors.b, referred_to_specialty_id: specialty.cardiology });
+    const trail = await audits(id);
+    // The referral's own steps, each as the doctor who took it on (the start itself is audited too: consultation_started).
+    expect(trail.filter((a) => a.action.startsWith("referral_")).map((a) => [a.action, a.actor_id]).sort()).toEqual(
+      [
+        ["referral_created", profiles.a],
+        ["referral_accepted", profiles.b],
+        ["referral_in_progress", profiles.b],
+      ].sort(),
+    );
+    expect(trail.filter((a) => a.action === "consultation_started")).toEqual([expect.objectContaining({ actor_id: profiles.b })]);
+  });
+
   // ---------- (h) Signed-in roles never read referral text ----------
 
   it("a department doctor's own session cannot read referrals directly — clinical text is read only through the server", async () => {

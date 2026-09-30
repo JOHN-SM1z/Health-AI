@@ -7031,6 +7031,11 @@ grant select, insert, update on table public.retention_policies to service_role;
 --    clinic, so reception can find a returning patient before creating a
 --    duplicate. Not unique: two people can share a phone.
 --
+-- 4b. CONSULTATION START. Starting a consultation re-checks the doctor's
+--    access inside the transaction (referrals locked FOR SHARE, so a concurrent
+--    revoke or claim is either seen or waits) and accepts the doctor's pending
+--    referral there too: a start that fails accepts nothing.
+--
 -- 5. AUDIT. A correction is audited as 'clinical_record_version_created'
 --    (earlier rows keep 'clinical_record_corrected'); referral events carry
 --    the department.
@@ -7038,7 +7043,9 @@ grant select, insert, update on table public.retention_policies to service_role;
 -- Reversible: restore doctor_patient_access() / doctor_can_read_appointment()
 -- / referrals_audit() and the receiving-doctor policy from 20260929000001,
 -- doctor_can_read_patient() from 20260927000003, referrals_validate() from
--- 20260928000002 and clinical_records_audit() from 20261001000001; re-create
+-- 20260928000002, clinical_records_audit() from 20261001000001, and
+-- consultation_started_effects()/start_consultation()/start_walk_in_consultation()
+-- from 20260930000001 (then drop consultation_access_holds()); re-create
 -- "payments read for own doctor" (20260927000004); drop
 -- referrals.referred_to_specialty_id (after assigning or revoking department
 -- referrals), its constraints and indexes, and set referred_to_doctor_id not
@@ -7609,6 +7616,273 @@ alter table public.patients
 create index patients_clinic_phone_normalized_idx
   on public.patients (clinic_id, phone_normalized)
   where phone_normalized is not null;
+
+-- ---------------------------------------------------------------------------
+-- 5b. Starting a consultation: access re-checked and referral accepted in the
+--     same transaction as the start
+-- ---------------------------------------------------------------------------
+
+-- Whether the doctor still has a legitimate relationship to the patient,
+-- decided INSIDE the transaction that starts the consultation. The doctor's
+-- open referrals are locked FOR SHARE first: a concurrent revoke, decline or
+-- claim of one either committed already (and the decision below sees it) or
+-- waits until this transaction ends.
+create or replace function public.consultation_access_holds(p_clinic_id uuid, p_doctor_id uuid, p_patient_id uuid)
+returns boolean
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_specialty uuid;
+begin
+  select d.specialty_id into v_specialty from public.doctors d where d.id = p_doctor_id and d.clinic_id = p_clinic_id;
+  perform 1
+    from public.referrals r
+   where r.clinic_id = p_clinic_id
+     and r.patient_id = p_patient_id
+     and r.status in ('pending', 'accepted', 'in_progress')
+     and r.expires_at > now()
+     and (
+       r.referred_to_doctor_id = p_doctor_id
+       or (r.referred_to_doctor_id is null and v_specialty is not null
+           and r.referred_to_specialty_id = v_specialty and r.referring_doctor_id <> p_doctor_id)
+     )
+     for share of r;
+  return coalesce((
+    select x.full_history from public.doctor_patient_access(p_doctor_id, p_patient_id) x where x.clinic_id = p_clinic_id
+  ), false);
+end;
+$$;
+
+revoke execute on function public.consultation_access_holds(uuid, uuid, uuid) from public, anon, authenticated;
+grant execute on function public.consultation_access_holds(uuid, uuid, uuid) to service_role;
+
+-- consultation_started_effects: the doctor who starts treating a referred
+-- patient takes the referral on first — their own named pending referral
+-- before an untaken department one, a referral the database refuses skipped —
+-- so a start that fails (a taken slot, a refused booking) accepts nothing.
+create or replace function public.consultation_started_effects(
+  p_appointment_id uuid,
+  p_actor uuid,
+  p_via text,
+  p_link_referral boolean,
+  p_walk_in boolean
+)
+returns uuid
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_appointment public.appointments%rowtype;
+  v_waiting uuid;
+  v_referral uuid;
+  v_profile uuid;
+  v_specialty uuid;
+  v_pending record;
+begin
+  select * into v_appointment from public.appointments where id = p_appointment_id;
+  if not found or v_appointment.status <> 'in_progress' then
+    raise exception 'consultation: the appointment is not in progress';
+  end if;
+
+  if p_link_referral and p_via in ('doctor_workspace', 'doctor_queue') then
+    select d.profile_id, d.specialty_id into v_profile, v_specialty from public.doctors d where d.id = v_appointment.doctor_id;
+    for v_pending in
+      select r.id
+        from public.referrals r
+       where r.clinic_id = v_appointment.clinic_id
+         and r.patient_id = v_appointment.patient_id
+         and r.status = 'pending'
+         and r.expires_at > now()
+         and (
+           r.referred_to_doctor_id = v_appointment.doctor_id
+           or (r.referred_to_doctor_id is null and v_specialty is not null
+               and r.referred_to_specialty_id = v_specialty and r.referring_doctor_id <> v_appointment.doctor_id)
+         )
+       order by (r.referred_to_doctor_id is null), r.created_at
+         for update of r skip locked
+    loop
+      begin
+        update public.referrals
+           set status = 'accepted',
+               accepted_by = v_profile,
+               referred_to_doctor_id = v_appointment.doctor_id
+         where id = v_pending.id and status = 'pending';
+        exit when found;
+      exception when others then
+        null; -- a referral the database refuses (say, a second open one to the same doctor) is left for the next
+      end;
+    end loop;
+  end if;
+
+  -- The accepted referral to this doctor for this patient that is waiting for
+  -- its consultation: none booked yet, or its booking was cancelled or has
+  -- not started (same rule as referrals_validate()).
+  if p_link_referral and not exists (
+    select 1 from public.referrals r
+     where r.follow_up_appointment_id = v_appointment.id
+       and r.status in ('accepted', 'in_progress', 'completed')
+  ) then
+    select r.id into v_waiting
+      from public.referrals r
+      left join public.appointments f on f.id = r.follow_up_appointment_id
+     where r.clinic_id = v_appointment.clinic_id
+       and r.patient_id = v_appointment.patient_id
+       and r.referred_to_doctor_id = v_appointment.doctor_id
+       and r.status = 'accepted'
+       and r.expires_at > now()
+       and (r.follow_up_appointment_id is null
+            or f.status in ('cancelled', 'no_show', 'pending', 'confirmed', 'checked_in'))
+     order by r.created_at
+     limit 1
+     for update of r;
+    if v_waiting is not null then
+      begin
+        update public.referrals set follow_up_appointment_id = v_appointment.id where id = v_waiting;
+      exception when others then
+        raise warning 'consultation not linked to referral (sqlstate %)', sqlstate;
+      end;
+    end if;
+  end if;
+
+  select r.id into v_referral
+    from public.referrals r
+   where r.clinic_id = v_appointment.clinic_id
+     and r.follow_up_appointment_id = v_appointment.id
+     and r.status in ('accepted', 'in_progress', 'completed')
+   order by r.created_at desc
+   limit 1;
+
+  insert into public.audit_events (
+    clinic_id, actor_id, actor_type, action, entity_type, entity_id,
+    patient_id, referral_id, new_values, metadata
+  ) values (
+    v_appointment.clinic_id, p_actor, 'staff', 'consultation_started', 'appointments', v_appointment.id::text,
+    v_appointment.patient_id, v_referral,
+    jsonb_build_object('status', 'in_progress'),
+    jsonb_build_object(
+      'patient_id', v_appointment.patient_id,
+      'doctor_id', v_appointment.doctor_id,
+      'referral_id', v_referral,
+      'via', p_via,
+      'walk_in', p_walk_in
+    )
+  );
+  return v_referral;
+end;
+$$;
+
+-- start_consultation: a doctor's own start (workspace or queue) re-checks
+-- their access in the transaction; the front desk's start is reception's act.
+create or replace function public.start_consultation(
+  p_clinic_id uuid,
+  p_appointment_id uuid,
+  p_from_status public.appointment_status,
+  p_actor uuid,
+  p_via text,
+  p_link_referral boolean default false,
+  p_doctor_id uuid default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_patient uuid;
+  v_doctor uuid;
+begin
+  if p_via is null or p_via not in ('doctor_workspace', 'doctor_queue', 'front_desk') then
+    raise exception 'consultation: unknown start channel %', p_via;
+  end if;
+  if not exists (select 1 from public.staff_roles where profile_id = p_actor and clinic_id = p_clinic_id) then
+    raise exception 'consultation: the actor is not staff of this clinic';
+  end if;
+  if p_from_status = 'in_progress' then
+    return jsonb_build_object('started', false, 'referral_id', null);
+  end if;
+
+  if p_via in ('doctor_workspace', 'doctor_queue') then
+    select a.patient_id, coalesce(p_doctor_id, a.doctor_id) into v_patient, v_doctor
+      from public.appointments a
+     where a.id = p_appointment_id and a.clinic_id = p_clinic_id;
+    if found and not public.consultation_access_holds(p_clinic_id, v_doctor, v_patient) then
+      return jsonb_build_object('started', false, 'referral_id', null, 'error_code', 'access_lost');
+    end if;
+  end if;
+
+  -- Compare-and-swap: only the status the caller saw moves, so of two
+  -- concurrent starts exactly one starts (and audits) the consultation.
+  update public.appointments
+     set status = 'in_progress'
+   where id = p_appointment_id
+     and clinic_id = p_clinic_id
+     and status = p_from_status
+     and (p_doctor_id is null or doctor_id = p_doctor_id);
+  if not found then
+    return jsonb_build_object('started', false, 'referral_id', null);
+  end if;
+
+  return jsonb_build_object(
+    'started', true,
+    'referral_id', public.consultation_started_effects(p_appointment_id, p_actor, p_via, p_link_referral, false)
+  );
+end;
+$$;
+
+-- start_walk_in_consultation: the doctor's access is re-checked before the
+-- booking, in the same transaction.
+create or replace function public.start_walk_in_consultation(
+  p_clinic_id uuid,
+  p_patient_id uuid,
+  p_doctor_id uuid,
+  p_service_id uuid,
+  p_start_at timestamptz,
+  p_actor uuid
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_booking record;
+begin
+  if not exists (
+    select 1 from public.doctors d
+     where d.id = p_doctor_id and d.clinic_id = p_clinic_id and d.profile_id = p_actor
+  ) then
+    raise exception 'consultation: a walk-in is started by the doctor themselves';
+  end if;
+
+  if not public.consultation_access_holds(p_clinic_id, p_doctor_id, p_patient_id) then
+    return jsonb_build_object('appointment_id', null, 'error_code', 'access_lost', 'referral_id', null);
+  end if;
+
+  -- The booking engine checks working hours, time blocks, the doctor's
+  -- services and overlaps, as for every other booking.
+  select * into v_booking
+    from public.book_appointment(
+      p_clinic_id, p_patient_id, p_doctor_id, p_service_id, p_start_at,
+      'in_progress'::public.appointment_status, 'walk_in'::public.appointment_source, null, p_actor
+    );
+  if v_booking.error_code is not null or v_booking.appointment_id is null then
+    return jsonb_build_object(
+      'appointment_id', null,
+      'error_code', coalesce(v_booking.error_code, 'booking_failed'),
+      'referral_id', null
+    );
+  end if;
+
+  return jsonb_build_object(
+    'appointment_id', v_booking.appointment_id,
+    'error_code', null,
+    'referral_id', public.consultation_started_effects(v_booking.appointment_id, p_actor, 'doctor_workspace', true, true)
+  );
+end;
+$$;
 
 -- ---------------------------------------------------------------------------
 -- 6. Audit naming: a correction creates a version

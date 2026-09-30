@@ -15,7 +15,10 @@ export type ConsultationChannel = "doctor_workspace" | "doctor_queue" | "front_d
  * linked when `linkReferral` (the referral then moves to in progress), and
  * 'consultation_started' is audited with the actor — ids only, never clinical
  * text. `started` is false when the status had already changed, in which case
- * nothing was written. The caller has authorized the actor already.
+ * nothing was written. For a doctor's own start the database also re-checks
+ * the doctor's access in the same transaction and takes a pending referral of
+ * theirs on (see 20261002000001): `errorCode` "access_lost" means the access
+ * ended meanwhile and nothing was written.
  */
 export async function startConsultationInDatabase(opts: {
   clinicId: string;
@@ -26,7 +29,7 @@ export async function startConsultationInDatabase(opts: {
   linkReferral: boolean;
   /** When given, the appointment must be this doctor's. */
   doctorId?: string;
-}): Promise<{ started: boolean; referralId: string | null }> {
+}): Promise<{ started: boolean; referralId: string | null; errorCode: string | null }> {
   const { data, error } = await createAdminClient().rpc("start_consultation", {
     p_clinic_id: opts.clinicId,
     p_appointment_id: opts.appointmentId,
@@ -42,8 +45,8 @@ export async function startConsultationInDatabase(opts: {
     logger.error("start_consultation failed", { code: error.code });
     throw new ApiError(500, "Qabulni boshlab bo‘lmadi", "consultation_start_failed");
   }
-  const result = data as { started?: boolean; referral_id?: string | null } | null;
-  return { started: result?.started === true, referralId: result?.referral_id ?? null };
+  const result = data as { started?: boolean; referral_id?: string | null; error_code?: string | null } | null;
+  return { started: result?.started === true, referralId: result?.referral_id ?? null, errorCode: result?.error_code ?? null };
 }
 
 /**

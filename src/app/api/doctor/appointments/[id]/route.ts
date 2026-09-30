@@ -6,7 +6,7 @@ import { parseBody } from "@/lib/api/validate";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { trackAnalytics } from "@/lib/analytics";
 import { startConsultationInDatabase } from "@/lib/clinical-access/consultation-start";
-import { acceptPendingReferral } from "@/lib/clinical-access/consultations";
+import { patientAccessDenied } from "@/lib/clinical-access/denial";
 
 export const dynamic = "force-dynamic";
 
@@ -20,8 +20,8 @@ type RouteContext = { params: Promise<{ id: string }> };
  * Doctor-only appointment status flow: checked_in → in_progress → completed.
  * Doctors can only act on their OWN appointments (verified server-side).
  * Starting a consultation (→ in_progress) takes on a referral waiting for the
- * doctor (a pending one is accepted first, as when starting from the patient's
- * page), links the visit to it (the referral then moves to in progress) and is
+ * doctor (a pending one is accepted in the same database transaction, as when
+ * starting from the patient's page), links the visit to it (the referral then moves to in progress) and is
  * audited as 'consultation_started' — one database transaction
  * (start_consultation). A website booking staff have not confirmed yet does
  * not move at all: its visitor is unverified, and a doctor advancing it would
@@ -76,11 +76,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
     }
 
     if (body.status === "in_progress" && appointment.status !== "in_progress") {
-      await acceptPendingReferral(
-        { ...staff, clinicId: staff.clinicId, doctorId: doctor.id, doctorName: doctor.name, specialtyId: doctor.specialty_id },
-        appointment.patient_id,
-      );
-      const { started } = await startConsultationInDatabase({
+      const { started, errorCode } = await startConsultationInDatabase({
         clinicId: staff.clinicId,
         appointmentId: appointment.id,
         fromStatus: appointment.status,
@@ -89,6 +85,13 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
         linkReferral: true,
         doctorId: doctor.id,
       });
+      // The database re-checked the doctor's access (and took a pending referral of theirs on) in the start's transaction.
+      if (errorCode === "access_lost") {
+        throw await patientAccessDenied(
+          { ...staff, clinicId: staff.clinicId, doctorId: doctor.id, doctorName: doctor.name, specialtyId: doctor.specialty_id },
+          appointment.patient_id,
+        );
+      }
       // Someone else changed the visit in between (a concurrent start included).
       if (!started) throw new ApiError(409, "Qabul holati o‘zgargan, sahifani yangilang", "consultation_changed");
     } else {
