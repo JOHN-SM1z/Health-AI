@@ -70,6 +70,8 @@ type PatientReferral = {
   expiresAt: string;
   referringDoctor: string | null;
   referredToDoctor: { id: string; name: string } | null;
+  /** The department of a referral no doctor has taken yet. */
+  department: string | null;
   followUp: { id: string; startAt: string; status: string } | null;
   canBookFollowUp: boolean;
 };
@@ -391,7 +393,7 @@ export default function PatientsPage() {
                       <div key={r.id} className="rounded-xl border border-hairline px-3 py-2">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-sm font-medium text-foreground">
-                            {r.referringDoctor ?? "Shifokor"} → {r.referredToDoctor?.name ?? "Shifokor"}
+                            {r.referringDoctor ?? "Shifokor"} → {r.referredToDoctor?.name ?? r.department ?? "Shifokor"}
                           </p>
                           <ABadge tone={REFERRAL_STATUS_TONES[r.status] ?? "gray"}>{REFERRAL_STATUS_LABELS[r.status] ?? r.status}</ABadge>
                         </div>
@@ -480,7 +482,7 @@ export default function PatientsPage() {
           }
         >
           <p className="text-sm text-ink-muted">
-            {revokeFor.referringDoctor ?? "Shifokor"} → {revokeFor.referredToDoctor?.name ?? "Shifokor"}. Sababni yozing — qabul
+            {revokeFor.referringDoctor ?? "Shifokor"} → {revokeFor.referredToDoctor?.name ?? revokeFor.department ?? "Shifokor"}. Sababni yozing — qabul
             qiluvchi shifokor yo‘llanmani boshqa ko‘rmaydi.
           </p>
           <ATextArea value={revokeReason} onChange={setRevokeReason} rows={3} aria-label="Bekor qilish sababi" />

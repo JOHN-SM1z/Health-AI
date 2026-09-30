@@ -44,7 +44,7 @@ export async function listDoctorPatients(doctor: LinkedDoctor, query: string): P
   const [visitsRes, authoredRes, referralsRes] = await Promise.all([
     supabase
       .from("appointments")
-      .select("patient_id, start_at, status")
+      .select("patient_id, start_at, status, source")
       .eq("clinic_id", doctor.clinicId)
       .eq("doctor_id", doctor.doctorId)
       .neq("status", "cancelled")
@@ -76,6 +76,8 @@ export async function listDoctorPatients(doctor: LinkedDoctor, query: string): P
   const own = new Set<string>((authoredRes.data ?? []).map((r) => r.patient_id));
   const lastVisit = new Map<string, string>();
   for (const v of visitsRes.data ?? []) {
+    // A website booking nobody has confirmed is no treating relationship (as in the decision).
+    if (v.source === "web" && v.status === "pending") continue;
     own.add(v.patient_id);
     if (!lastVisit.has(v.patient_id) && VISITED.includes(v.status)) lastVisit.set(v.patient_id, v.start_at);
   }

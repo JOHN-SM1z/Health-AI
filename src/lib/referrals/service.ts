@@ -628,7 +628,9 @@ async function findByCreationKey(doctor: LinkedDoctor, key: string): Promise<Key
 function replay(previous: KeyedReferral, input: CreateReferralInput): CreatedReferral {
   const same =
     previous.originating_appointment_id === input.appointmentId &&
-    previous.referred_to_doctor_id === (input.referredToDoctorId || null) &&
+    // A department referral a doctor has since taken still replays: only a
+    // doctor named in the request has to match the stored one.
+    (input.referredToDoctorId ? previous.referred_to_doctor_id === input.referredToDoctorId : !input.referredToSpecialtyId ? previous.referred_to_doctor_id === null : true) &&
     previous.referred_to_specialty_id === (input.referredToSpecialtyId || null) &&
     previous.reason === input.reason &&
     previous.handoff_note === (input.handoffNote || null) &&

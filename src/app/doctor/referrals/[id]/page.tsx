@@ -169,7 +169,7 @@ export default function DoctorReferralPage() {
     <div>
       <PageHeader
         title="Yo‘llanma"
-        subtitle={`${referral.patient?.fullName ?? "Bemor"} — ${incoming ? `${referral.referringDoctor?.name ?? "—"} dan` : `${referral.referredToDoctor?.name ?? "—"} ga`}`}
+        subtitle={`${referral.patient?.fullName ?? "Bemor"} — ${incoming ? `${referral.referringDoctor?.name ?? "—"} dan` : `${referral.referredToDoctor?.name ?? referral.department?.name ?? "—"} ga`}`}
         action={back}
       />
       {error && <AError message={error} />}

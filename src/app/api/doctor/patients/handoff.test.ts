@@ -32,6 +32,7 @@ vi.mock("@/lib/auth/staff", async (importOriginal) => {
 import { GET as getWorkspace } from "./[id]/route";
 import { POST as addRecord } from "./[id]/records/route";
 import { POST as startConsultation } from "./[id]/consultations/route";
+import { GET as listPatients } from "./route";
 import { POST as createReferral, GET as listReferrals } from "../referrals/route";
 import { GET as getReferral, PATCH as actOnReferral } from "../referrals/[id]/route";
 import { PATCH as doctorAppointmentStatus } from "../appointments/[id]/route";
@@ -170,7 +171,7 @@ describeDb("clinical handoff workflow", () => {
     );
   }
 
-  async function visit(patientId: string, doctor: string, status = "completed") {
+  async function visit(patientId: string, doctor: string, status = "completed", source = "walk_in") {
     const startTime = new Date(Date.UTC(2026, 0, 5, 5, 0) + slot++ * 86_400_000);
     const { data, error } = await admin
       .from("appointments")
@@ -182,7 +183,7 @@ describeDb("clinical handoff workflow", () => {
         start_at: startTime.toISOString(),
         end_at: new Date(startTime.getTime() + 30 * 60_000).toISOString(),
         status,
-        source: "walk_in",
+        source,
       })
       .select("id")
       .single();
@@ -407,6 +408,46 @@ describeDb("clinical handoff workflow", () => {
     ]);
     // Starting again is idempotent: the same consultation, nothing more accepted.
     expect(await start("e", x.id, { serviceId: quickService })).toMatchObject({ status: 200, body: { data: { consultation: { appointmentId: consultationId, started: false } } } });
+  });
+
+  it("an unconfirmed website booking gives no doctor a way in: the queue refuses it, the patient list leaves it out — until staff confirm it", async () => {
+    // Anyone can book on the website with a patient's name and phone; the booked doctor must not be able to turn that into access.
+    const { data: created } = await admin.from("patients").insert({ clinic_id: clinicA, full_name: `Web-booked patient ${suffix}`, phone: "+998907770033" }).select("id").single();
+    const patientId = created!.id as string;
+    const web = await visit(patientId, doctors.e, "pending", "web");
+
+    for (const status of ["checked_in", "in_progress", "completed"]) {
+      expect(await queue("e", web, status), status).toMatchObject({ status: 409, body: { code: "awaiting_confirmation" } });
+    }
+    expect((await admin.from("appointments").select("status").eq("id", web).single()).data!.status).toBe("pending");
+    expect(await workspace("e", patientId)).toMatchObject({ status: 404, body: { code: "patient_not_found" } });
+    const listed = async () => {
+      as("e");
+      const res = await read(await listPatients(request("GET", "/api/doctor/patients")));
+      return ((res.body.data as { patients: Array<{ id: string }> }).patients ?? []).map((p) => p.id);
+    };
+    expect(await listed()).not.toContain(patientId);
+
+    // Reception confirms it: now it is a booked visit like any other.
+    await admin.from("appointments").update({ status: "confirmed" }).eq("id", web);
+    expect(await listed()).toContain(patientId);
+    expect((await workspace("e", patientId)).status).toBe(200);
+    expect(await queue("e", web, "checked_in")).toMatchObject({ status: 200 });
+  });
+
+  it("starting from the doctor's queue takes a pending referral on too — accepted, linked, in progress", async () => {
+    const { data: created } = await admin.from("patients").insert({ clinic_id: clinicA, full_name: `Queue-start patient ${suffix}`, phone: "+998907770044" }).select("id").single();
+    const patientId = created!.id as string;
+    const x = { id: patientId, consultation: await visit(patientId, doctors.a) };
+    const referral = await refer(x, doctors.e);
+    const own = await visit(patientId, doctors.e, "checked_in");
+
+    expect(await queue("e", own, "in_progress")).toMatchObject({ status: 200 });
+    expect(await referralRow(referral)).toMatchObject({ status: "in_progress", follow_up_appointment_id: own, started_by: users.e });
+    expect((await audits(referral)).filter((a) => ["referral_accepted", "referral_in_progress"].includes(a.action)).map((a) => [a.action, a.actor_id])).toEqual([
+      ["referral_accepted", users.e],
+      ["referral_in_progress", users.e],
+    ]);
   });
 
   it("starting the consultation from the queue or the front desk links it and moves the referral in progress", async () => {

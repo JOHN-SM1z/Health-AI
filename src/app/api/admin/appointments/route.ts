@@ -17,7 +17,8 @@ export const dynamic = "force-dynamic";
 
 const createSchema = z
   .object({
-    patientName: nameSchema,
+    // Not needed for a patient picked by patientId or a referral's follow-up: their record has its own name.
+    patientName: nameSchema.optional(),
     phone: phoneSchema.optional(),
     doctorId: uuidSchema,
     serviceId: uuidSchema,
@@ -40,7 +41,8 @@ const createSchema = z
      */
     confirmNewPatient: z.boolean().optional(),
   })
-  .refine((b) => !!b.startAt !== !!b.startLocal, { message: "Qabul vaqtini ko‘rsating", path: ["startAt"] });
+  .refine((b) => !!b.startAt !== !!b.startLocal, { message: "Qabul vaqtini ko‘rsating", path: ["startAt"] })
+  .refine((b) => !!b.patientName || !!b.patientId || !!b.referralId, { message: "Bemor ismini kiriting", path: ["patientName"] });
 
 /** The instant a staff member asked for, reading a wall-clock time in the clinic's own timezone (never the browser's). */
 function requestedStart(body: { startAt?: string; startLocal?: string }, clinicTimezone: string): string {

@@ -264,6 +264,19 @@ describeDb("reception registration finds the returning patient — real routes, 
     expect(await counts()).toEqual({ patients: before.patients, appointments: before.appointments + 1 });
   });
 
+  it("4b. a patient with no stored name — a Telegram-only record — can be picked and booked without typing one", async () => {
+    const [{ id: nameless }] = await sql<{ id: string }[]>`
+      insert into public.patients (clinic_id, full_name, phone, telegram_first_name) values (${clinicA}, ${null}, ${freshPhone()}, ${`Nomsiz ${suffix}`}) returning id`;
+    const before = await counts();
+    const res = await book({ patientId: nameless });
+    expect(res.status).toBe(201);
+    expect(await patientOf(res)).toBe(nameless);
+    expect((await patient(nameless)).full_name).toBeNull();
+    expect(await counts()).toEqual({ patients: before.patients, appointments: before.appointments + 1 });
+    // Without a patient to pick, a name is still required.
+    expect(await book({ phone: freshPhone() })).toMatchObject({ status: 400 });
+  });
+
   it("5. another clinic's patient with the same number is never a candidate, never found, and never blocks a registration", async () => {
     const res = await book({ patientName: `Aziza Karimova ${suffix}`, phone: PHONE });
     expect(res.status).toBe(409);

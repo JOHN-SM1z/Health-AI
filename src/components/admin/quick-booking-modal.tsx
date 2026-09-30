@@ -131,7 +131,6 @@ export function QuickBookingModal({
         "/api/admin/appointments",
         followUp
           ? {
-              patientName: followUp.patientName,
               patientId: followUp.patientId,
               doctorId: followUp.doctor.id,
               serviceId,
@@ -142,7 +141,6 @@ export function QuickBookingModal({
             }
           : existing
             ? {
-                patientName: existing.fullName ?? patientName.trim(),
                 patientId: existing.id,
                 doctorId,
                 serviceId,

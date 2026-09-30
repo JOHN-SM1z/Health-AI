@@ -329,6 +329,46 @@ describeDb("department referrals — through the real routes", () => {
     await act("b", id, { action: "revoke", reason: "Test cleanup" });
   });
 
+  it("a retry of the creation after a colleague took the department referral replays it — it is not refused as a reused key", async () => {
+    const x = await patientOf();
+    const key = randomUUID();
+    const body = { idempotencyKey: key, appointmentId: x.consultation, reason: REASON, handoffNote: "ECG attached.", priority: "routine", referredToSpecialtyId: cardiology };
+    as("a");
+    const first = await read(await createReferral(request("POST", "/api/doctor/referrals", body)));
+    expect(first.status).toBe(201);
+    const id = referralId(first);
+    expect(await act("b", id, { action: "accept" })).toMatchObject({ status: 200 });
+
+    // The network dropped the first answer: Dr A's client sends the same request again.
+    as("a");
+    const retry = await read(await createReferral(request("POST", "/api/doctor/referrals", body)));
+    expect(retry).toMatchObject({ status: 200, body: { data: { referral: { id, replayed: true } } } });
+    // The same key for a different department is still refused.
+    as("a");
+    const other = await read(await createReferral(request("POST", "/api/doctor/referrals", { ...body, referredToSpecialtyId: dermatology })));
+    expect(other.status).toBeGreaterThanOrEqual(400);
+    await revoke(id);
+  });
+
+  it("starting a consultation with several pending referrals takes the one named to the doctor first and skips one the database refuses", async () => {
+    const x = await patientOf();
+    // A → cardiology (untaken), then A → Dr B by name. Taking the department one first would make Dr B the
+    // receiving doctor of two open referrals from A for the patient — refused — so the named one goes first.
+    const department = referralId(await refer("a", x, { referredToSpecialtyId: cardiology }));
+    const named = referralId(await refer("a", x, { referredToDoctorId: doctors.b }));
+
+    // Dr B has nothing booked; a walk-in needs a service the doctor can see the patient for.
+    as("b");
+    const { POST: startConsultation } = await import("../patients/[id]/consultations/route");
+    const started = await read(await startConsultation(request("POST", `/api/doctor/patients/${x.id}/consultations`, { serviceId: service }), params(x.id)));
+    expect(started.status).toBe(201);
+    expect(await row(named)).toMatchObject({ status: "in_progress", referred_to_doctor_id: doctors.b });
+    // The department referral stays open for the rest of the department.
+    expect(await row(department)).toMatchObject({ status: "pending", referred_to_doctor_id: null });
+    expect((await incoming("b2")).map((r) => r.id)).toContain(department);
+    await revoke(department);
+  });
+
   it("red team: another department, another clinic's department of the same name — nothing to see, accept or open", async () => {
     const x = await patientOf();
     const id = referralId(await refer("a", x, { referredToSpecialtyId: cardiology }));
