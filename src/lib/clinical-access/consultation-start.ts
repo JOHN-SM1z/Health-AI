@@ -18,7 +18,9 @@ export type ConsultationChannel = "doctor_workspace" | "doctor_queue" | "front_d
  * nothing was written. For a doctor's own start the database also re-checks
  * the doctor's access in the same transaction and takes a pending referral of
  * theirs on (see 20261002000001): `errorCode` "access_lost" means the access
- * ended meanwhile and nothing was written.
+ * ended meanwhile and nothing was written; "awaiting_confirmation" means the
+ * visit is a website booking staff have not confirmed (a doctor cannot start
+ * it), likewise with nothing written.
  */
 export async function startConsultationInDatabase(opts: {
   clinicId: string;
@@ -54,7 +56,9 @@ export async function startConsultationInDatabase(opts: {
  * booked in progress through the booking engine, linked to the waiting
  * accepted referral and audited as 'consultation_started', in one
  * transaction. A booking-engine refusal comes back as `errorCode` with
- * nothing written.
+ * nothing written; so does "access_lost" — the doctor's access ended, checked
+ * before the booking or (for access resting on a referral alone) right after
+ * it, when the whole transaction is refused.
  */
 export async function startWalkInInDatabase(opts: {
   clinicId: string;
@@ -72,6 +76,8 @@ export async function startWalkInInDatabase(opts: {
     p_start_at: opts.startAt,
     p_actor: opts.actorId,
   });
+  // The referral that gave the doctor access ended while the walk-in was being booked: the booking went with it.
+  if (error?.code === "CALST") return { appointmentId: null, errorCode: "access_lost", referralId: null };
   if (error) {
     logger.error("start_walk_in_consultation failed", { code: error.code });
     throw new ApiError(500, "Qabulni boshlab bo‘lmadi", "booking_failed");

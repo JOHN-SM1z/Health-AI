@@ -92,6 +92,7 @@ export async function startConsultation(
     });
     // The database re-checked the doctor's access in the start's own transaction.
     if (errorCode === "access_lost") throw await patientAccessDenied(doctor, patientId);
+    if (errorCode === "awaiting_confirmation") throw new ApiError(409, "Bu veb-bronni avval qabulxona tasdiqlashi kerak", "awaiting_confirmation");
     if (!started) {
       const raced = await inProgressConsultation(doctor, patientId);
       if (raced) return { appointmentId: raced, started: false };

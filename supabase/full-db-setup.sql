@@ -7031,10 +7031,12 @@ grant select, insert, update on table public.retention_policies to service_role;
 --    clinic, so reception can find a returning patient before creating a
 --    duplicate. Not unique: two people can share a phone.
 --
--- 4b. CONSULTATION START. Starting a consultation re-checks the doctor's
---    access inside the transaction (referrals locked FOR SHARE, so a concurrent
---    revoke or claim is either seen or waits) and accepts the doctor's pending
---    referral there too: a start that fails accepts nothing.
+-- 4b. CONSULTATION START. A doctor's own start re-checks their access inside
+--    the transaction (a walk-in resting on a referral alone confirms the
+--    referral is still open after booking, locking appointment-then-referral,
+--    and is refused with SQLSTATE CALST otherwise), refuses an unconfirmed
+--    website booking, and accepts the doctor's pending referral there too: a
+--    start that fails accepts nothing.
 --
 -- 5. AUDIT. A correction is audited as 'clinical_record_version_created'
 --    (earlier rows keep 'clinical_record_corrected'); referral events carry
@@ -7045,7 +7047,7 @@ grant select, insert, update on table public.retention_policies to service_role;
 -- doctor_can_read_patient() from 20260927000003, referrals_validate() from
 -- 20260928000002, clinical_records_audit() from 20261001000001, and
 -- consultation_started_effects()/start_consultation()/start_walk_in_consultation()
--- from 20260930000001 (then drop consultation_access_holds()); re-create
+-- from 20260930000001; re-create
 -- "payments read for own doctor" (20260927000004); drop
 -- referrals.referred_to_specialty_id (after assigning or revoking department
 -- referrals), its constraints and indexes, and set referred_to_doctor_id not
@@ -7622,46 +7624,19 @@ create index patients_clinic_phone_normalized_idx
 --     same transaction as the start
 -- ---------------------------------------------------------------------------
 
--- Whether the doctor still has a legitimate relationship to the patient,
--- decided INSIDE the transaction that starts the consultation. The doctor's
--- open referrals are locked FOR SHARE first: a concurrent revoke, decline or
--- claim of one either committed already (and the decision below sees it) or
--- waits until this transaction ends.
-create or replace function public.consultation_access_holds(p_clinic_id uuid, p_doctor_id uuid, p_patient_id uuid)
-returns boolean
-language plpgsql
-security invoker
-set search_path = public, pg_temp
-as $$
-declare
-  v_specialty uuid;
-begin
-  select d.specialty_id into v_specialty from public.doctors d where d.id = p_doctor_id and d.clinic_id = p_clinic_id;
-  perform 1
-    from public.referrals r
-   where r.clinic_id = p_clinic_id
-     and r.patient_id = p_patient_id
-     and r.status in ('pending', 'accepted', 'in_progress')
-     and r.expires_at > now()
-     and (
-       r.referred_to_doctor_id = p_doctor_id
-       or (r.referred_to_doctor_id is null and v_specialty is not null
-           and r.referred_to_specialty_id = v_specialty and r.referring_doctor_id <> p_doctor_id)
-     )
-     for share of r;
-  return coalesce((
-    select x.full_history from public.doctor_patient_access(p_doctor_id, p_patient_id) x where x.clinic_id = p_clinic_id
-  ), false);
-end;
-$$;
-
-revoke execute on function public.consultation_access_holds(uuid, uuid, uuid) from public, anon, authenticated;
-grant execute on function public.consultation_access_holds(uuid, uuid, uuid) to service_role;
+-- Lock order, everywhere: the APPOINTMENT first, then the referral (the order
+-- the trigger on referrals and the front desk's start already use). Nothing
+-- below takes a referral lock before an appointment lock, and no shared lock
+-- is ever upgraded — a shared-then-exclusive pattern deadlocks two concurrent
+-- starts of one visit.
 
 -- consultation_started_effects: the doctor who starts treating a referred
 -- patient takes the referral on first — their own named pending referral
 -- before an untaken department one, a referral the database refuses skipped —
 -- so a start that fails (a taken slot, a refused booking) accepts nothing.
+-- The referral rows are locked FOR UPDATE and waited for: a colleague's
+-- concurrent claim is seen (and the row then no longer qualifies), never
+-- silently skipped.
 create or replace function public.consultation_started_effects(
   p_appointment_id uuid,
   p_actor uuid,
@@ -7702,7 +7677,7 @@ begin
                and r.referred_to_specialty_id = v_specialty and r.referring_doctor_id <> v_appointment.doctor_id)
          )
        order by (r.referred_to_doctor_id is null), r.created_at
-         for update of r skip locked
+         for update of r
     loop
       begin
         update public.referrals
@@ -7774,8 +7749,17 @@ begin
 end;
 $$;
 
--- start_consultation: a doctor's own start (workspace or queue) re-checks
--- their access in the transaction; the front desk's start is reception's act.
+-- start_consultation. For a doctor's own start (workspace or queue):
+--   * the actor must be the appointment's doctor's own login (the RPC's
+--     parameters are trusted, so a doctor channel cannot be used to act as
+--     someone else);
+--   * a website booking staff have not confirmed yet is refused
+--     ('awaiting_confirmation'): its visitor is unverified, and starting it
+--     would make the doctor the patient's treating doctor;
+--   * the doctor's access is decided again, without locks ('access_lost'):
+--     their own non-cancelled appointment is itself a permanent relationship,
+--     so no referral needs holding for it.
+-- The front desk's start is reception's own act and is not restricted.
 create or replace function public.start_consultation(
   p_clinic_id uuid,
   p_appointment_id uuid,
@@ -7791,8 +7775,9 @@ security invoker
 set search_path = public, pg_temp
 as $$
 declare
-  v_patient uuid;
+  v_appointment public.appointments%rowtype;
   v_doctor uuid;
+  v_profile uuid;
 begin
   if p_via is null or p_via not in ('doctor_workspace', 'doctor_queue', 'front_desk') then
     raise exception 'consultation: unknown start channel %', p_via;
@@ -7805,11 +7790,23 @@ begin
   end if;
 
   if p_via in ('doctor_workspace', 'doctor_queue') then
-    select a.patient_id, coalesce(p_doctor_id, a.doctor_id) into v_patient, v_doctor
-      from public.appointments a
-     where a.id = p_appointment_id and a.clinic_id = p_clinic_id;
-    if found and not public.consultation_access_holds(p_clinic_id, v_doctor, v_patient) then
-      return jsonb_build_object('started', false, 'referral_id', null, 'error_code', 'access_lost');
+    select * into v_appointment from public.appointments a where a.id = p_appointment_id and a.clinic_id = p_clinic_id;
+    v_doctor := coalesce(p_doctor_id, v_appointment.doctor_id);
+    if v_doctor is not null then
+      select d.profile_id into v_profile from public.doctors d where d.id = v_doctor and d.clinic_id = p_clinic_id;
+      if v_profile is distinct from p_actor then
+        raise exception 'consultation: a doctor starts their own consultation (the actor is not that doctor''s login)';
+      end if;
+    end if;
+    if v_appointment.id is not null then
+      if v_appointment.source = 'web' and v_appointment.status = 'pending' then
+        return jsonb_build_object('started', false, 'referral_id', null, 'error_code', 'awaiting_confirmation');
+      end if;
+      if not coalesce((
+        select x.full_history from public.doctor_patient_access(v_doctor, v_appointment.patient_id) x where x.clinic_id = p_clinic_id
+      ), false) then
+        return jsonb_build_object('started', false, 'referral_id', null, 'error_code', 'access_lost');
+      end if;
     end if;
   end if;
 
@@ -7832,8 +7829,13 @@ begin
 end;
 $$;
 
--- start_walk_in_consultation: the doctor's access is re-checked before the
--- booking, in the same transaction.
+-- start_walk_in_consultation: the doctor's access is decided before the
+-- booking (no locks). When it rests on a referral alone — there is no
+-- appointment of theirs yet — the referrals that gave it are locked AFTER the
+-- booking (appointment first, then referral) and one must still be open, or
+-- the whole transaction is refused with SQLSTATE CALST and the booking goes
+-- with it: a revoke, decline or a colleague's claim that committed first is
+-- seen, and one that comes later waits for this start.
 create or replace function public.start_walk_in_consultation(
   p_clinic_id uuid,
   p_patient_id uuid,
@@ -7849,6 +7851,9 @@ set search_path = public, pg_temp
 as $$
 declare
   v_booking record;
+  v_access record;
+  v_specialty uuid;
+  v_open boolean;
 begin
   if not exists (
     select 1 from public.doctors d
@@ -7857,7 +7862,10 @@ begin
     raise exception 'consultation: a walk-in is started by the doctor themselves';
   end if;
 
-  if not public.consultation_access_holds(p_clinic_id, p_doctor_id, p_patient_id) then
+  select x.own_patient, x.full_history, x.active_referral_ids into v_access
+    from public.doctor_patient_access(p_doctor_id, p_patient_id) x
+   where x.clinic_id = p_clinic_id;
+  if not found or not v_access.full_history then
     return jsonb_build_object('appointment_id', null, 'error_code', 'access_lost', 'referral_id', null);
   end if;
 
@@ -7874,6 +7882,28 @@ begin
       'error_code', coalesce(v_booking.error_code, 'booking_failed'),
       'referral_id', null
     );
+  end if;
+
+  if not v_access.own_patient then
+    select d.specialty_id into v_specialty from public.doctors d where d.id = p_doctor_id and d.clinic_id = p_clinic_id;
+    perform 1 from public.referrals r where r.id = any (v_access.active_referral_ids) for no key update;
+    select exists (
+      select 1
+        from public.referrals r
+       where r.id = any (v_access.active_referral_ids)
+         and r.clinic_id = p_clinic_id
+         and r.patient_id = p_patient_id
+         and r.status in ('pending', 'accepted', 'in_progress')
+         and r.expires_at > now()
+         and (
+           r.referred_to_doctor_id = p_doctor_id
+           or (r.referred_to_doctor_id is null and v_specialty is not null
+               and r.referred_to_specialty_id = v_specialty and r.referring_doctor_id <> p_doctor_id)
+         )
+    ) into v_open;
+    if not v_open then
+      raise exception 'consultation: the referral that gave this doctor access has ended' using errcode = 'CALST';
+    end if;
   end if;
 
   return jsonb_build_object(

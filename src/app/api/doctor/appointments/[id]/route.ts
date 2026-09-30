@@ -92,6 +92,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
           appointment.patient_id,
         );
       }
+      if (errorCode === "awaiting_confirmation") throw new ApiError(409, "Bu veb-bronni avval qabulxona tasdiqlashi kerak", "awaiting_confirmation");
       // Someone else changed the visit in between (a concurrent start included).
       if (!started) throw new ApiError(409, "Qabul holati o‘zgargan, sahifani yangilang", "consultation_changed");
     } else {
