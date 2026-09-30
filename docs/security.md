@@ -110,7 +110,7 @@ role, unknown ids).
 
 | Relationship | Condition | Sees | Ends |
 | --- | --- | --- | --- |
-| A — treating (`own_patient`) | an appointment of this doctor with the patient whose status is not `cancelled` (past, today or booked), or a clinical record this doctor wrote | the patient's whole history in the clinic | not by time: kept for continuity of care. It lapses only if every such appointment is cancelled and the doctor has written no record (records are never deleted) |
+| A — treating (`own_patient`) | an appointment of this doctor with the patient whose status is not `cancelled` (past, today or booked) — except a website booking (`source = 'web'`) that is still `pending`, made without any proof of who the visitor is (it counts once staff confirm it) — or a clinical record this doctor wrote | the patient's whole history in the clinic | not by time: kept for continuity of care. It lapses only if every such appointment is cancelled and the doctor has written no record (records are never deleted) |
 | B — open referral (`active_referral_ids`) | a referral of the patient that is `pending`, `accepted` or `in_progress` with `expires_at > now()`, addressed to this doctor — or, while nobody has taken it (`pending`, no receiving doctor yet), to this doctor's department, unless this doctor raised it | the patient's whole history, from the moment the referral exists | the referral is declined, revoked or completed, or at the latest at `expires_at` (≤ 180 days) — unless A applies |
 | C — none | anything else: no relationship, another clinic, an inactive doctor | nothing | — |
 
@@ -474,7 +474,7 @@ overwrites an existing patient's identity from input nobody verified — the rec
 clinical history.
 
 - **`patients.phone_normalized`** (`20261002000001`) is a *generated* column
-  (`public.normalize_phone(phone)`: digits only; exactly 9 digits get the `998` prefix; no digits
+  (`public.normalize_phone(phone)`: digits only; a national number — 9 digits, or 10 with a leading 8 or 0 — gets the `998` prefix, a leading `00` before `998` is dropped; no digits
   gives NULL), indexed per clinic and **not unique** — two people can share a phone. It cannot be
   written directly, not even by the service role. `src/lib/patients/phone.ts` implements the same
   rule for the server's lookups, and a test compares the two on every input. The rule assumes Uzbek
@@ -547,7 +547,7 @@ regression test (unit, route, database or E2E):
 | F9 | The `messages` / `voice_messages` insert policies compared `c.clinic_id = c.clinic_id` (always true): staff of one clinic could attach a message to another clinic's conversation | policies removed — patient communication is server-written only; composite foreign keys |
 | F10 | Fourteen foreign keys between clinic-owned tables checked only the id: a manager could give another clinic's doctor working hours or time blocks (changing that clinic's availability), point a conversation at another clinic's patient, or a reminder at another clinic's appointment | every such key is `(x_id, clinic_id)`; the migration refuses to run over existing crossing rows |
 | F11 | Staff tokens could insert "operator replies" never sent to Telegram, take conversations over outside the compare-and-set, and point a reminder at any Telegram user (`notification_jobs` update policy) | `20260930000006`: no signed-in writes on conversations, messages, voice messages, notification jobs; HTTP red team checks with real sessions |
-| F12 | A website booking matched the patient by phone alone and overwrote the name: anyone who knew a number could rename that patient and attach visits — later clinical notes — to their record; a Telegram patient's chat received a stranger's reminders | an unverified booking reuses a record only without a Telegram identity and with the same phone (compared normalized) **and** name, never edits one, and otherwise creates its own |
+| F12 | A website booking matched the patient by phone alone and overwrote the name: anyone who knew a number could rename that patient and attach visits — later clinical notes — to their record; a Telegram patient's chat received a stranger's reminders | an unverified booking reuses a record only without a Telegram identity and with the same phone (compared normalized) **and** name, never edits one, and otherwise creates its own; and an unconfirmed website booking never gives the booked doctor a treating relationship, so it cannot open the patient's history (`doctor_patient_access()` ignores `source = 'web'` while `pending`) |
 | F13 | Urgent wording was escalated only to the optional platform bot's chats (usually nobody); the conversation was not flagged for the clinic's staff, the AI kept answering, and a held conversation got no urgent-care message | see [Medical safety](#medical-safety-non-security-but-critical) |
 | F14 | Voice-button callbacks acted on any voice message of the clinic named in the callback data (which a modified client controls): one patient could consent to transcribing another's recording | the recording must belong to the pressing Telegram user |
 | F15 | The privacy page promises voice messages are deleted after the retention period; nothing deleted them | the scheduled job removes audio, transcripts and the Telegram file reference after `expires_at` (`voice_messages.purged_at`) |

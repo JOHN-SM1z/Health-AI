@@ -125,7 +125,7 @@ describeDb("longitudinal clinical access — database layer (doctor_patient_acce
    * A visit of `patient` with `doctor` — completed unless stated — on its own
    * day so slots never collide: a past day, or one ahead for a booking.
    */
-  async function visit(patient: string, doctor: string, clinicId = clinicA, status = "completed", when: "past" | "booked" = "past"): Promise<string> {
+  async function visit(patient: string, doctor: string, clinicId = clinicA, status = "completed", when: "past" | "booked" = "past", source = "walk_in"): Promise<string> {
     const base = when === "past" ? Date.UTC(2026, 0, 5, 5, 0) : Date.UTC(new Date().getUTCFullYear() + 2, 0, 5, 5, 0);
     const start = new Date(base + day++ * 86_400_000);
     const [row] = await sql<{ id: string }[]>`
@@ -137,7 +137,7 @@ describeDb("longitudinal clinical access — database layer (doctor_patient_acce
         start_at: start,
         end_at: new Date(start.getTime() + 30 * 60_000),
         status,
-        source: "walk_in",
+        source,
       })}
       returning id`;
     return row.id;
@@ -702,6 +702,23 @@ describeDb("longitudinal clinical access — database layer (doctor_patient_acce
     await sql`update public.appointments set status = 'cancelled' where id = ${booking}`;
     expect(await access(doctors.a, q)).toEqual(noRelationship);
     expect(await seenBy(profiles.a, q)).toEqual(nothing);
+  });
+
+  it("16b. An unconfirmed website booking is no treating relationship — it is made without proof of who the visitor is — until staff confirm it", async () => {
+    const p = await newPatient();
+    const withE = await visit(p, doctors.e);
+    // Anyone can book on the website naming a patient's name and phone: the booked doctor learns nothing from that.
+    const web = await visit(p, doctors.a, clinicA, "pending", "booked", "web");
+    expect(await access(doctors.a, p)).toEqual(noRelationship);
+    expect(await seenBy(profiles.a, p)).toEqual(nothing);
+    // The same booking through any verified channel counts at once…
+    const q = await newPatient();
+    await visit(q, doctors.a, clinicA, "pending", "booked", "telegram_mini_app");
+    expect(await access(doctors.a, q)).toEqual(ownPatient());
+    // …and a website booking once staff have confirmed it.
+    await sql`update public.appointments set status = 'confirmed' where id = ${web}`;
+    expect(await access(doctors.a, p)).toEqual(ownPatient());
+    expect(await seenBy(profiles.a, p)).toEqual(wholeHistory(withE, web));
   });
 
   it("17. A record the doctor wrote is a treating relationship by itself — even once its consultation is cancelled", async () => {

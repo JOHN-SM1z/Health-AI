@@ -8,8 +8,9 @@
 --    every doctor's consultations and records — without asking anyone. The
 --    relationship (unchanged in kind, widened in what it shows):
 --      * a treating relationship: any non-cancelled appointment with the
---        patient (past, today or booked) or a record the doctor wrote — kept
---        for continuity of care; or
+--        patient (past, today or booked; a website booking not yet confirmed
+--        by staff excepted — its visitor is unverified) or a record the
+--        doctor wrote — kept for continuity of care; or
 --      * an open referral (pending, accepted or in progress, unexpired) to
 --        the doctor, or to the doctor's department while no doctor has taken
 --        it yet — from the moment it is created: acceptance is a care step,
@@ -473,7 +474,10 @@ as $$
     select
       d.clinic_id,
       -- Treating relationship: any appointment that was not cancelled (past,
-      -- today or booked), or a record the doctor wrote.
+      -- today or booked), or a record the doctor wrote. A website booking
+      -- nobody has confirmed yet is not one: it is made without any proof of
+      -- who the visitor is, and could name someone else's record. Once staff
+      -- confirm it (any status beyond pending) it counts like any other.
       exists (
         select 1
         from public.appointments a
@@ -481,6 +485,7 @@ as $$
           and a.patient_id = p.id
           and a.doctor_id = d.id
           and a.status <> 'cancelled'
+          and not (a.source = 'web' and a.status = 'pending')
       )
       or exists (
         select 1
@@ -592,14 +597,18 @@ set search_path = pg_catalog
 as $$
   select case
     when digits = '' then null
+    -- 00 998 …: the international prefix dialled from abroad.
+    when digits like '00998%' then substr(digits, 3)
+    -- A national number: 9 digits, or with the trunk prefix 8 / 0 (10 digits).
     when length(digits) = 9 then '998' || digits
+    when length(digits) = 10 and left(digits, 1) in ('8', '0') then '998' || substr(digits, 2)
     else digits
   end
   from (select regexp_replace(coalesce(p_phone, ''), '[^0-9]', '', 'g') as digits) s;
 $$;
 
 comment on function public.normalize_phone(text) is
-  'Digits only; a 9-digit local number gets the 998 country code. NULL when there are no digits.';
+  'Digits only; a national number (9 digits, or 10 with a leading 8 or 0) gets the 998 country code, and a leading 00 before 998 is dropped. NULL when there are no digits.';
 
 alter table public.patients
   add column phone_normalized text generated always as (public.normalize_phone(phone)) stored;

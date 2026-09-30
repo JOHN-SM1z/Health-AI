@@ -165,7 +165,7 @@ members there too (audited); the owner role itself is only assigned by `create-o
   an active doctor-role doctor of the patient's clinic, none otherwise); RLS reaches it through
   `doctor_can_read_patient()` / `doctor_can_read_appointment()`. See
   [architecture.md › Clinical access](architecture.md#clinical-access-and-the-patients-profile).
-- `normalize_phone(p_phone)` → digits only, a 9-digit number prefixed with `998`, NULL without
+- `normalize_phone(p_phone)` → digits only; a national number (9 digits, or 10 with a leading 8 or 0) is prefixed with `998` and a leading `00` before `998` is dropped; NULL without
   digits — the expression behind `patients.phone_normalized`.
 
 See [architecture.md › Booking engine](architecture.md#booking-engine-double-booking-protection)

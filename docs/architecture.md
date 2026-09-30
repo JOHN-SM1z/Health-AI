@@ -225,8 +225,8 @@ accepting is the only action, and the first acceptance makes that doctor the rec
 
 ## Registration and patient identity
 
-One patient, one record. `patients.phone_normalized` is generated from `phone` (digits only; a 9-digit
-number gets the `998` prefix), indexed per clinic and not unique. Reception's quick booking
+One patient, one record. `patients.phone_normalized` is generated from `phone` (digits only; a national
+number — 9 digits, or 10 with a leading 8 or 0 — gets the `998` prefix, a leading `00` before `998` is dropped), indexed per clinic and not unique. Reception's quick booking
 (`src/components/admin/quick-booking-modal.tsx`) searches first — `GET /api/admin/patients?q=` also
 matches the normalized phone from 5 digits — and picks a returning patient by `patientId`. When it
 registers a new one, `POST /api/admin/appointments` answers 409 `possible_duplicate` with the clinic's
