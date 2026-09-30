@@ -346,6 +346,8 @@ async function run() {
       await page.getByRole("button", { name: "Yo‘llanmani qabul qilish" }).waitFor();
       check((await page.getByRole("button", { name: "Hozir qabulni boshlash" }).count()) === 1, "a pending referral does not block the consultation — B can start it at once");
       await page.getByRole("button", { name: "Yo‘llanmani qabul qilish" }).click();
+      // The start button is there all along now, so wait for the accept itself: its button goes once the page reloads accepted.
+      await page.getByRole("button", { name: "Yo‘llanmani qabul qilish" }).waitFor({ state: "detached" });
       await page.getByRole("button", { name: "Hozir qabulni boshlash" }).waitFor();
       check((await db`select status from public.referrals where id = ${pending.referral}`)[0].status === "accepted", "the pending referral is accepted from the workspace");
       check((await page.getByRole("button", { name: "Yo‘llanmani yakunlash" }).count()) === 0, "no completing before the consultation");
