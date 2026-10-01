@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, StatCard, LoadingRow } from "@/components/admin/ui";
 import { CalendarDays, UserPlus } from "lucide-react";
-import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
+import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatTime, formatPrice, adminApi, AdminApiError, fetchReferralWarnings, REFERRAL_WARNING_LABELS, REFERRAL_WARNING_HINT, type ReferralBookingWarning } from "@/lib/admin/client";
 import { QuickBookingModal } from "@/components/admin/quick-booking-modal";
 
 type Row = {
@@ -28,6 +28,8 @@ type Dashboard = {
   outstanding: number | null;
   new_patients_today: number;
   upcoming_reminders: number | null;
+  /** Management only: department referrals no doctor can take. */
+  referrals_awaiting_doctor: number | null;
   active_conversations: number;
   attention_conversations: number;
   urgent_conversations: number;
@@ -43,6 +45,7 @@ export default function TodayPage() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [todayLabel, setTodayLabel] = useState("");
+  const [warnings, setWarnings] = useState<Record<string, ReferralBookingWarning>>({});
 
   useEffect(() => {
     setTodayLabel(new Date().toLocaleDateString("uz-UZ", { weekday: "long", day: "numeric", month: "long" }));
@@ -91,6 +94,7 @@ export default function TodayPage() {
     }
     setRows(data ?? []);
     setError(null);
+    setWarnings(await fetchReferralWarnings((data ?? []).map((r) => r.id)));
   };
 
   const refreshAll = async () => {
@@ -174,6 +178,18 @@ export default function TodayPage() {
         </Link>
       </div>
 
+      {dashboard?.referrals_awaiting_doctor !== null && dashboard?.referrals_awaiting_doctor !== undefined && (
+        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Link href="/admin/referrals-awaiting">
+            <StatCard
+              label="Shifokor kutayotgan bo‘lim yo‘llanmalari"
+              value={dashboard.referrals_awaiting_doctor.toLocaleString("uz-UZ")}
+              tone={dashboard.referrals_awaiting_doctor > 0 ? "clay" : "neutral"}
+            />
+          </Link>
+        </div>
+      )}
+
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-7">
         {STATUS_KEYS.map((k) => (
           <StatCard key={k} label={STATUS_LABELS[k]} value={counts[k]} tone="neutral" />
@@ -207,7 +223,14 @@ export default function TodayPage() {
               </td>
               <td className="px-4 py-3 text-foreground">{r.doctors?.name ?? "—"}</td>
               <td className="px-4 py-3"><ABadge tone="gray">{SOURCE_LABELS[r.source] ?? r.source}</ABadge></td>
-              <td className="px-4 py-3"><ABadge tone={STATUS_TONES[r.status]}>{STATUS_LABELS[r.status]}</ABadge></td>
+              <td className="px-4 py-3">
+                <ABadge tone={STATUS_TONES[r.status]}>{STATUS_LABELS[r.status]}</ABadge>
+                {warnings[r.id] && (
+                  <p className="mt-1" title={REFERRAL_WARNING_HINT}>
+                    <ABadge tone="amber">{REFERRAL_WARNING_LABELS[warnings[r.id]]}</ABadge>
+                  </p>
+                )}
+              </td>
               <td className="px-4 py-3">
                 <ABadge tone={r.payments?.status === "paid" ? "green" : r.payments?.status === "refunded" ? "gray" : "amber"}>
                   {r.payments?.status === "paid" ? "To‘langan" : r.payments?.status === "refunded" ? "Qaytarilgan" : "To‘lanmagan"}

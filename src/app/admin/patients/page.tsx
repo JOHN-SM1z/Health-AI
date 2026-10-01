@@ -405,6 +405,13 @@ export default function PatientsPage() {
                             Qabul: {formatDateTime(r.followUp.startAt)} · {STATUS_LABELS[r.followUp.status] ?? r.followUp.status}
                           </p>
                         )}
+                        {r.followUp &&
+                          ["revoked", "declined"].includes(r.status) &&
+                          ["pending", "confirmed", "checked_in"].includes(r.followUp.status) && (
+                            <p className="mt-1 text-xs font-medium text-clay-deep">
+                              {r.status === "declined" ? "Yo‘llanma rad etilgan" : "Yo‘llanma bekor qilingan"} — qabul saqlanadi; ko‘rib chiqib, kerak bo‘lsa bekor qiling yoki ko‘chiring.
+                            </p>
+                          )}
                         {(r.canBookFollowUp || (isManagement && ["pending", "accepted", "in_progress"].includes(r.status))) && (
                           <div className="mt-2 flex flex-wrap gap-2">
                             {r.canBookFollowUp && r.referredToDoctor && (

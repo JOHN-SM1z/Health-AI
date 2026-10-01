@@ -1050,3 +1050,150 @@ export async function revokeReferralAsManagement(staff: StaffInClinic, referralI
     revoked_reason: reason,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Operational views for clinic staff (metadata only — never the clinical text)
+// ---------------------------------------------------------------------------
+
+export type AwaitingDoctorReferral = {
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  priority: ReferralPriority;
+  patientName: string | null;
+  referringDoctor: string | null;
+  department: { id: string; name: string };
+};
+
+export type AwaitingDoctorOverview = {
+  total: number;
+  departments: Array<{ id: string; name: string; count: number }>;
+  referrals: AwaitingDoctorReferral[];
+};
+
+const AWAITING_SCAN_LIMIT = 1000;
+
+/**
+ * Department referrals nobody has taken whose department has no doctor who
+ * could (the same rule as the database's department_has_receiving_doctor(),
+ * evaluated for each referral's referring doctor) — for owner/admin/manager,
+ * who can revoke them or make sure the department is staffed. The referring
+ * doctor sees their own as `awaitingDoctor`. Reason and handoff note are never
+ * selected.
+ */
+export async function listReferralsAwaitingDoctor(clinicId: string): Promise<AwaitingDoctorOverview> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("referrals")
+    .select(
+      `id, created_at, expires_at, priority, referring_doctor_id, referred_to_specialty_id, patient:patients!referrals_patient_same_clinic_fkey(full_name), ${REFERRING}(name), ${DEPARTMENT}(id, name)`,
+    )
+    .eq("clinic_id", clinicId)
+    .eq("status", "pending")
+    .is("referred_to_doctor_id", null)
+    .not("referred_to_specialty_id", "is", null)
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: true })
+    .limit(AWAITING_SCAN_LIMIT);
+  if (error) throw new ApiError(500, "Yo‘llanmalarni yuklab bo‘lmadi");
+
+  type Row = {
+    id: string;
+    created_at: string;
+    expires_at: string;
+    priority: ReferralPriority;
+    referring_doctor_id: string;
+    referred_to_specialty_id: string;
+    patient: { full_name: string | null } | null;
+    referring: { name: string } | null;
+    department: { id: string; name: string } | null;
+  };
+  const rows = (data ?? []) as unknown as Row[];
+
+  // One database check per distinct (department, referring doctor) pair.
+  const verdicts = new Map<string, Promise<boolean>>();
+  const hasReceiver = (specialtyId: string, referringDoctorId: string) => {
+    const key = `${specialtyId}:${referringDoctorId}`;
+    if (!verdicts.has(key)) {
+      verdicts.set(
+        key,
+        Promise.resolve(
+          supabase.rpc("department_has_receiving_doctor", {
+            p_clinic_id: clinicId,
+            p_specialty_id: specialtyId,
+            p_excluding_doctor_id: referringDoctorId,
+          }),
+        ).then(({ data: ok, error: rpcError }) => {
+          if (rpcError) throw new ApiError(500, "Bo‘limni tekshirib bo‘lmadi");
+          return ok === true;
+        }),
+      );
+    }
+    return verdicts.get(key)!;
+  };
+
+  const awaiting: AwaitingDoctorReferral[] = [];
+  for (const row of rows) {
+    if (!row.department || (await hasReceiver(row.referred_to_specialty_id, row.referring_doctor_id))) continue;
+    awaiting.push({
+      id: row.id,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      priority: row.priority,
+      patientName: row.patient?.full_name ?? null,
+      referringDoctor: row.referring?.name ?? null,
+      department: row.department,
+    });
+  }
+
+  const byDepartment = new Map<string, { id: string; name: string; count: number }>();
+  for (const r of awaiting) {
+    const entry = byDepartment.get(r.department.id) ?? { id: r.department.id, name: r.department.name, count: 0 };
+    entry.count += 1;
+    byDepartment.set(r.department.id, entry);
+  }
+  return {
+    total: awaiting.length,
+    departments: [...byDepartment.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+    referrals: awaiting,
+  };
+}
+
+export type ReferralBookingWarning = "REFERRAL_REVOKED" | "REFERRAL_DECLINED";
+
+/**
+ * Referral controls workflow; the booking controls the treating relationship.
+ * Revoking or declining a referral never cancels or alters a visit booked for
+ * it — that visit stays, and keeps the doctor's relationship with the patient.
+ * Reception is warned instead, to review it and cancel or reschedule if
+ * needed: for each of these appointments that is the follow-up of a revoked or
+ * declined referral and has not started, the reason for the warning. Derived
+ * on every read, so nothing has to be written in the referral's own
+ * transaction (and reception cancelling the visit makes the warning go).
+ */
+export async function referralWarningsForAppointments(
+  clinicId: string,
+  appointmentIds: string[],
+): Promise<Record<string, ReferralBookingWarning>> {
+  const ids = [...new Set(appointmentIds)].slice(0, 200);
+  if (!ids.length) return {};
+  const supabase = createAdminClient();
+  const [referralsRes, appointmentsRes] = await Promise.all([
+    supabase
+      .from("referrals")
+      .select("follow_up_appointment_id, status")
+      .eq("clinic_id", clinicId)
+      .in("follow_up_appointment_id", ids)
+      .in("status", ["revoked", "declined"]),
+    supabase.from("appointments").select("id").eq("clinic_id", clinicId).in("id", ids).in("status", ["pending", "confirmed", "checked_in"]),
+  ]);
+  if (referralsRes.error || appointmentsRes.error) throw new ApiError(500, "Yo‘llanma holatini yuklab bo‘lmadi");
+  const upcoming = new Set((appointmentsRes.data ?? []).map((a) => a.id));
+  const warnings: Record<string, ReferralBookingWarning> = {};
+  for (const r of referralsRes.data ?? []) {
+    if (r.follow_up_appointment_id && upcoming.has(r.follow_up_appointment_id)) {
+      warnings[r.follow_up_appointment_id] = r.status === "declined" ? "REFERRAL_DECLINED" : "REFERRAL_REVOKED";
+    }
+  }
+  return warnings;
+}

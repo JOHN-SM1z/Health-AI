@@ -1759,6 +1759,10 @@ export type Database = {
         Args: { p_clinic_id: string; p_patient_id: string }
         Returns: boolean
       }
+      department_has_receiving_doctor: {
+        Args: { p_clinic_id: string; p_excluding_doctor_id?: string; p_specialty_id: string }
+        Returns: boolean
+      }
       doctor_patient_access: {
         Args: { p_doctor_id: string; p_patient_id: string }
         Returns: {

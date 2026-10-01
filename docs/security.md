@@ -372,9 +372,14 @@ records, and only the author changes their own.
   an untaken department referral has none yet — with the receiving doctor, for the
   referred patient, one active follow-up at a time (a consultation that took place may replace a
   booked follow-up that has not started). If the link loses a race the new appointment
-  is cancelled and the request fails (409). A booking linked to a still-pending referral gives the
-  doctor a treating relationship like any booked visit (and so outlasts the referral if it is revoked
-  or declined — reception cancels the booking to end it; see `TASKS.md`). When the visit of a
+  is cancelled and the request fails (409). Referral controls workflow; the booking controls the treating
+  relationship: a booking linked to a referral gives the doctor a treating relationship like any
+  booked visit and **outlasts the referral** — revoking or declining it never cancels or changes
+  the visit. Reception is warned instead (`GET /api/admin/appointments/referral-warnings` →
+  `REFERRAL_REVOKED` / `REFERRAL_DECLINED`, derived on every read for visits that are pending,
+  confirmed or checked in; shown as a badge on the today and appointments lists and in the
+  patient panel) and reviews, cancels or reschedules it; the relationship ends when the visit is
+  cancelled or marked a no-show. When the visit of a
   pending referral starts, or is already under way when the doctor accepts, the referral is in
   progress from the acceptance (`referrals_catch_up_started`; both transitions are audited).
 
@@ -415,8 +420,12 @@ least one of them. A referral to a department alone is *untaken* until one of it
   referral stays as it is — it is the patient's record and the doctor may return — and is shown to
   the **referring doctor** (list and detail, `awaitingDoctor`) with a notice to revoke it or refer
   elsewhere; when a doctor becomes available it appears for them without anyone re-creating it,
-  and otherwise it ends at `expires_at`. Nobody else is notified (management notification is an
-  open decision in `TASKS.md`).
+  and otherwise it ends at `expires_at`. **Management gets the operational overview:** the
+  owner/admin/manager dashboard shows *Shifokor kutayotgan bo‘lim yo‘llanmalari* (the count), which
+  opens `/admin/referrals-awaiting` (`GET /api/admin/referrals/awaiting-doctor`) — the affected
+  departments with counts and the referrals (patient name, referring doctor, dates, priority;
+  **never the reason or handoff note**), each of which management can revoke. Receptionists and
+  doctors get nothing of it; nothing is re-routed automatically.
 - **Booking its follow-up.** Reception may book the follow-up visit of a referral to a *named*
   doctor while it is still `pending` (acknowledgement is a care step, not a gate); an untaken
   department referral has no doctor yet, so its visit can only be booked once a doctor took it

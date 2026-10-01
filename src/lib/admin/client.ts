@@ -39,6 +39,29 @@ export const adminApi = {
   del: <T>(path: string) => request<T>(path, "DELETE"),
 };
 
+export type ReferralBookingWarning = "REFERRAL_REVOKED" | "REFERRAL_DECLINED";
+
+export const REFERRAL_WARNING_LABELS: Record<ReferralBookingWarning, string> = {
+  REFERRAL_REVOKED: "Yo‘llanma bekor qilingan",
+  REFERRAL_DECLINED: "Yo‘llanma rad etilgan",
+};
+
+export const REFERRAL_WARNING_HINT =
+  "Qabul saqlanadi: u bemor bilan shifokorning davolash munosabatini belgilaydi. Qabulxona ko‘rib chiqib, kerak bo‘lsa bekor qilsin yoki boshqa vaqtga ko‘chirsin.";
+
+/** Appointments (of those given) booked for a referral that was revoked or declined and have not started. */
+export async function fetchReferralWarnings(ids: string[]): Promise<Record<string, ReferralBookingWarning>> {
+  if (!ids.length) return {};
+  try {
+    const res = await adminApi.get<{ warnings: Record<string, ReferralBookingWarning> }>(
+      `/api/admin/appointments/referral-warnings?ids=${ids.slice(0, 100).join(",")}`,
+    );
+    return res.warnings ?? {};
+  } catch {
+    return {};
+  }
+}
+
 export const STATUS_LABELS: Record<string, string> = {
   pending: "Kutilmoqda",
   confirmed: "Tasdiqlangan",

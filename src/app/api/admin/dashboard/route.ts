@@ -4,6 +4,8 @@ import { requireRoles } from "@/lib/auth/guards";
 import { canViewPaymentDynamics } from "@/lib/auth/staff";
 import { handleApiError, ok } from "@/lib/api/errors";
 import { localDayWindow } from "@/lib/time/local";
+import { listReferralsAwaitingDoctor } from "@/lib/referrals/service";
+import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +85,17 @@ export async function GET() {
       upcomingReminders = reminders ?? 0;
     }
 
+    // Management only: department referrals no doctor can take (counts, never clinical text).
+    let referralsAwaitingDoctor: number | null = null;
+    if (isManagement) {
+      try {
+        referralsAwaitingDoctor = (await listReferralsAwaitingDoctor(ctx.clinicId)).total;
+      } catch (e) {
+        // The overview is a convenience: the dashboard still loads without it.
+        logger.error("referrals awaiting doctor count failed", { error: String(e) });
+      }
+    }
+
     // Conversation oversight: how many chats are live right now, and how many
     // need an operator (patient asked for one, AI is off, nobody claimed it).
     const activeStatuses = ["open", "assigned"] as const;
@@ -122,6 +135,7 @@ export async function GET() {
       outstanding: mayViewPaymentDynamics ? outstanding : null,
       new_patients_today: newPatients ?? 0,
       upcoming_reminders: upcomingReminders,
+      referrals_awaiting_doctor: referralsAwaitingDoctor,
       active_conversations: activeConversations ?? 0,
       attention_conversations: attentionConversations ?? 0,
       urgent_conversations: urgentConversations,
