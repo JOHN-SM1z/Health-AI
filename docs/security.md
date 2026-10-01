@@ -211,6 +211,47 @@ before production use (tracked in `TASKS.md`):
   department while nobody has taken the referral;
 - the patient-facing wording of `/privacy` §3 and §5, which describes this model.
 
+## Laboratory (phase 2: database model)
+
+`20261003000001_lab_foundation.sql`. The model only — no routes, UI, roles, payments, documents or patient
+delivery yet (phases 3–14, see `docs/labs/`). Everything below is enforced in the database.
+
+- **Separate concepts, separate columns.** Order status (`lab_orders`), payment status (`payments`, phase 5),
+  sample status (`lab_samples`), result status (`lab_results`, = status of the latest version, kept by
+  triggers and not writable by the application) and verification (`lab_result_versions.status`,
+  `verified_by`, `verified_at`).
+- **Same-clinic integrity by composite FKs** (`unique (id, clinic_id)` on every referenced lab table). An order
+  is bound to the ordering doctor's **own consultation** with that patient (the `clinical_records` pattern); the
+  consultation must be in progress or completed; `created_by` must be that doctor's own login; a referral must be
+  this clinic's referral of this patient. A sample and its tests must belong to the same order; a result's item,
+  order and patient must agree.
+- **The client cannot forge** what the database computes: item name, code, sample type and **price snapshot**
+  (taken from the catalog at order time; an inactive test cannot be ordered), version numbers, verification time,
+  collection time, the **reference range bounds** (copied from the configured range, so later edits never re-flag a
+  stored result) and the **flag** (`normal/low/high/critical_low/critical_high/unclassified` — "outside the
+  configured reference range", never a diagnosis).
+- **Results are append-only.** A correction is a new version that must name the current verified version and give
+  a reason; one version in progress at a time and exactly one verified version (partial unique indexes); the
+  previous verified version becomes `superseded` when the new one is verified; values of a submitted/verified/
+  superseded version cannot change; the original author and verifier are preserved. Verifier and entering user
+  must be staff of the clinic (the lab role comes in phase 3). Compare-and-swap updates make concurrent
+  collections/verifications resolve to exactly one.
+- **No signed-in access to clinical lab data.** RLS is enabled on all 14 tables; clinic staff may read the
+  catalog (tests, parameters, ranges, panels — configuration, not clinical text); orders, samples and results have
+  no signed-in grant and no policy: every read is server-side after `doctor_patient_access()` and audited (phase 4+).
+  `service_role` has no DELETE on any lab table (except draft values and panel membership) and UPDATE only on
+  lifecycle columns.
+- **No cascade, no deletion.** All FKs are restrictive; a patient, appointment, clinic, order or test with
+  laboratory data cannot be deleted. `retention_data_category` gains `laboratory`; no period is assumed.
+- **Audit is ids-only** and written by purpose-built triggers (not `audit_track_changes`, which would copy
+  values): `lab_order_created/_in_progress/_completed/_cancelled`, `lab_order_item_added/_cancelled`,
+  `lab_sample_created/_collected/_rejected/…`, `lab_result_entered/_submitted/_verified/_version_created/
+  _version_superseded`, `lab_attachment_added`, `lab_catalog_created/_updated` (column **names** only). A test
+  asserts no value, unit, note, price, test name or reason appears in any of these rows.
+
+Tests: `src/lib/supabase/lab-foundation.test.ts`. Fixtures are removed by `cleanupTestClinics()` (the lab tables
+are registered in `FIXTURE_RETENTION_TABLES`).
+
 ## Clinical records
 
 `clinical_records` (`20260927000005_clinical_records.sql`, types extended in

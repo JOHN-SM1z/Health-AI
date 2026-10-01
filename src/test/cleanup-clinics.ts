@@ -1,6 +1,10 @@
 import postgres from "postgres";
 
 export const FIXTURE_RETENTION_TABLES = [
+  // Laboratory (children first; they hang on orders, patients and appointments).
+  "lab_result_attachments", "lab_result_values", "lab_result_versions", "lab_results", "lab_sample_items",
+  "lab_samples", "lab_order_items", "lab_orders", "lab_panel_tests", "lab_panels", "lab_reference_ranges",
+  "lab_test_parameters", "lab_tests", "lab_categories",
   "messages", "voice_messages", "conversations", "clinical_records", "referrals",
   "payments", "notification_jobs", "appointments", "audit_events", "retention_policies",
 ] as const;

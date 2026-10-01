@@ -37,7 +37,7 @@ Prerequisite for a full local run: `npm run db:reset-local` (above) and a
 
 ## Migrations
 
-55 migrations in `supabase/migrations/` (ordered, repeatable on any environment; `supabase/full-db-setup.sql` is all of them as one script). The first 21:
+56 migrations in `supabase/migrations/` (ordered, repeatable on any environment; `supabase/full-db-setup.sql` is all of them as one script). The first 21:
 
 1. `0001`–`0008` — schema: clinics, profiles, staff_roles, patients, specialties,
    services, doctors, doctor_services, working hours, time blocks, appointments,
@@ -124,6 +124,15 @@ Regenerate TypeScript types after schema changes:
 npx supabase gen types typescript --local > src/lib/supabase/database.types.ts
 ```
 
+
+### `20261003000001_lab_foundation.sql` (laboratory, phase 2)
+
+The normalized laboratory domain model (decisions: `docs/labs/DECISIONS.md`, design: `docs/labs/PHASE_1_AUDIT.md`;
+no payments change, no role change, no storage bucket yet). Adds 14 tables and the `lab_*` enums, the
+`laboratory` retention category, snapshot/lifecycle/immutability triggers and ids-only audit triggers.
+RLS is on everywhere; clinic staff read only the (non-clinical) catalog; order, sample and result tables have
+no signed-in grant; `service_role` has no DELETE anywhere and column-limited UPDATE; nothing cascades. Reversal
+is in the migration header. See [security.md › Laboratory](security.md#laboratory-phase-2-database-model).
 
 ### `20261002000002` – `20261002000005` (follow-ups)
 

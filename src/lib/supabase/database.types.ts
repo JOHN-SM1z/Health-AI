@@ -817,6 +817,965 @@ export type Database = {
           },
         ]
       }
+      lab_categories: {
+        Row: {
+          active: boolean
+          clinic_id: string
+          created_at: string
+          id: string
+          name: string
+          sort_order: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          active?: boolean
+          clinic_id: string
+          created_at?: string
+          id?: string
+          name: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          active?: boolean
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          name?: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_categories_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_categories_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lab_order_items: {
+        Row: {
+          cancel_reason: string | null
+          cancelled_at: string | null
+          clinic_id: string
+          created_at: string
+          id: string
+          order_id: string
+          panel_id: string | null
+          price_snapshot: number
+          sample_type: string | null
+          status: Database["public"]["Enums"]["lab_item_status"]
+          test_code: string
+          test_id: string
+          test_name: string
+        }
+        Insert: {
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          clinic_id: string
+          created_at?: string
+          id?: string
+          order_id: string
+          panel_id?: string | null
+          price_snapshot: number
+          sample_type?: string | null
+          status?: Database["public"]["Enums"]["lab_item_status"]
+          test_code: string
+          test_id: string
+          test_name: string
+        }
+        Update: {
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          order_id?: string
+          panel_id?: string | null
+          price_snapshot?: number
+          sample_type?: string | null
+          status?: Database["public"]["Enums"]["lab_item_status"]
+          test_code?: string
+          test_id?: string
+          test_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_order_items_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_order_items_order_fkey"
+            columns: ["order_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_orders"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_order_items_panel_fkey"
+            columns: ["panel_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_panels"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_order_items_test_fkey"
+            columns: ["test_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_tests"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
+      lab_orders: {
+        Row: {
+          appointment_id: string
+          cancel_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          clinic_id: string
+          completed_at: string | null
+          created_at: string
+          created_by: string
+          creation_key: string | null
+          id: string
+          notes: string | null
+          ordering_doctor_id: string
+          patient_id: string
+          priority: Database["public"]["Enums"]["lab_priority"]
+          referral_id: string | null
+          status: Database["public"]["Enums"]["lab_order_status"]
+          updated_at: string
+        }
+        Insert: {
+          appointment_id: string
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          clinic_id: string
+          completed_at?: string | null
+          created_at?: string
+          created_by: string
+          creation_key?: string | null
+          id?: string
+          notes?: string | null
+          ordering_doctor_id: string
+          patient_id: string
+          priority?: Database["public"]["Enums"]["lab_priority"]
+          referral_id?: string | null
+          status?: Database["public"]["Enums"]["lab_order_status"]
+          updated_at?: string
+        }
+        Update: {
+          appointment_id?: string
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          clinic_id?: string
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string
+          creation_key?: string | null
+          id?: string
+          notes?: string | null
+          ordering_doctor_id?: string
+          patient_id?: string
+          priority?: Database["public"]["Enums"]["lab_priority"]
+          referral_id?: string | null
+          status?: Database["public"]["Enums"]["lab_order_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_orders_cancelled_by_fkey"
+            columns: ["cancelled_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_orders_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_orders_consultation_fkey"
+            columns: [
+              "appointment_id",
+              "clinic_id",
+              "patient_id",
+              "ordering_doctor_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id", "clinic_id", "patient_id", "doctor_id"]
+          },
+          {
+            foreignKeyName: "lab_orders_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_orders_doctor_fkey"
+            columns: ["ordering_doctor_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "doctors"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_orders_patient_fkey"
+            columns: ["patient_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_orders_referral_fkey"
+            columns: ["referral_id", "clinic_id", "patient_id"]
+            isOneToOne: false
+            referencedRelation: "referrals"
+            referencedColumns: ["id", "clinic_id", "patient_id"]
+          },
+        ]
+      }
+      lab_panel_tests: {
+        Row: {
+          clinic_id: string
+          panel_id: string
+          sort_order: number
+          test_id: string
+        }
+        Insert: {
+          clinic_id: string
+          panel_id: string
+          sort_order?: number
+          test_id: string
+        }
+        Update: {
+          clinic_id?: string
+          panel_id?: string
+          sort_order?: number
+          test_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_panel_tests_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_panel_tests_panel_fkey"
+            columns: ["panel_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_panels"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_panel_tests_test_fkey"
+            columns: ["test_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_tests"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
+      lab_panels: {
+        Row: {
+          active: boolean
+          clinic_id: string
+          code: string
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          price: number | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          active?: boolean
+          clinic_id: string
+          code: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          price?: number | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          active?: boolean
+          clinic_id?: string
+          code?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          price?: number | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_panels_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_panels_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lab_reference_ranges: {
+        Row: {
+          active: boolean
+          age_max_years: number | null
+          age_min_years: number | null
+          clinic_id: string
+          created_at: string
+          critical_high: number | null
+          critical_low: number | null
+          high: number | null
+          id: string
+          low: number | null
+          note: string | null
+          parameter_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          active?: boolean
+          age_max_years?: number | null
+          age_min_years?: number | null
+          clinic_id: string
+          created_at?: string
+          critical_high?: number | null
+          critical_low?: number | null
+          high?: number | null
+          id?: string
+          low?: number | null
+          note?: string | null
+          parameter_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          active?: boolean
+          age_max_years?: number | null
+          age_min_years?: number | null
+          clinic_id?: string
+          created_at?: string
+          critical_high?: number | null
+          critical_low?: number | null
+          high?: number | null
+          id?: string
+          low?: number | null
+          note?: string | null
+          parameter_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_reference_ranges_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_reference_ranges_parameter_fkey"
+            columns: ["parameter_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_test_parameters"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_reference_ranges_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lab_result_attachments: {
+        Row: {
+          clinic_id: string
+          content_type: string
+          created_at: string
+          id: string
+          result_id: string
+          sha256: string
+          size_bytes: number
+          storage_path: string
+          uploaded_by: string
+        }
+        Insert: {
+          clinic_id: string
+          content_type: string
+          created_at?: string
+          id?: string
+          result_id: string
+          sha256: string
+          size_bytes: number
+          storage_path: string
+          uploaded_by: string
+        }
+        Update: {
+          clinic_id?: string
+          content_type?: string
+          created_at?: string
+          id?: string
+          result_id?: string
+          sha256?: string
+          size_bytes?: number
+          storage_path?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_result_attachments_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_result_attachments_result_fkey"
+            columns: ["result_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_results"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_result_attachments_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lab_result_values: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          critical_high: number | null
+          critical_low: number | null
+          flag: Database["public"]["Enums"]["lab_flag"]
+          id: string
+          parameter_code: string
+          parameter_id: string
+          parameter_name: string
+          ref_high: number | null
+          ref_low: number | null
+          reference_range_id: string | null
+          unit: string | null
+          value_numeric: number | null
+          value_text: string | null
+          version_id: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          critical_high?: number | null
+          critical_low?: number | null
+          flag?: Database["public"]["Enums"]["lab_flag"]
+          id?: string
+          parameter_code: string
+          parameter_id: string
+          parameter_name: string
+          ref_high?: number | null
+          ref_low?: number | null
+          reference_range_id?: string | null
+          unit?: string | null
+          value_numeric?: number | null
+          value_text?: string | null
+          version_id: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          critical_high?: number | null
+          critical_low?: number | null
+          flag?: Database["public"]["Enums"]["lab_flag"]
+          id?: string
+          parameter_code?: string
+          parameter_id?: string
+          parameter_name?: string
+          ref_high?: number | null
+          ref_low?: number | null
+          reference_range_id?: string | null
+          unit?: string | null
+          value_numeric?: number | null
+          value_text?: string | null
+          version_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_result_values_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_result_values_parameter_fkey"
+            columns: ["parameter_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_test_parameters"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_result_values_range_fkey"
+            columns: ["reference_range_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_reference_ranges"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_result_values_version_fkey"
+            columns: ["version_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_result_versions"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
+      lab_result_versions: {
+        Row: {
+          clinic_id: string
+          correction_reason: string | null
+          corrects_version_id: string | null
+          created_at: string
+          entered_at: string
+          entered_by: string
+          id: string
+          result_id: string
+          status: Database["public"]["Enums"]["lab_version_status"]
+          updated_at: string
+          verified_at: string | null
+          verified_by: string | null
+          version: number
+        }
+        Insert: {
+          clinic_id: string
+          correction_reason?: string | null
+          corrects_version_id?: string | null
+          created_at?: string
+          entered_at?: string
+          entered_by: string
+          id?: string
+          result_id: string
+          status?: Database["public"]["Enums"]["lab_version_status"]
+          updated_at?: string
+          verified_at?: string | null
+          verified_by?: string | null
+          version: number
+        }
+        Update: {
+          clinic_id?: string
+          correction_reason?: string | null
+          corrects_version_id?: string | null
+          created_at?: string
+          entered_at?: string
+          entered_by?: string
+          id?: string
+          result_id?: string
+          status?: Database["public"]["Enums"]["lab_version_status"]
+          updated_at?: string
+          verified_at?: string | null
+          verified_by?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_result_versions_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_result_versions_corrects_fkey"
+            columns: ["corrects_version_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_result_versions"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_result_versions_entered_by_fkey"
+            columns: ["entered_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_result_versions_result_fkey"
+            columns: ["result_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_results"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_result_versions_verified_by_fkey"
+            columns: ["verified_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lab_results: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          id: string
+          order_id: string
+          order_item_id: string
+          patient_id: string
+          status: Database["public"]["Enums"]["lab_result_status"]
+          updated_at: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          id?: string
+          order_id: string
+          order_item_id: string
+          patient_id: string
+          status?: Database["public"]["Enums"]["lab_result_status"]
+          updated_at?: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          order_id?: string
+          order_item_id?: string
+          patient_id?: string
+          status?: Database["public"]["Enums"]["lab_result_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_results_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_results_item_fkey"
+            columns: ["order_item_id", "clinic_id", "order_id"]
+            isOneToOne: false
+            referencedRelation: "lab_order_items"
+            referencedColumns: ["id", "clinic_id", "order_id"]
+          },
+          {
+            foreignKeyName: "lab_results_order_fkey"
+            columns: ["order_id", "clinic_id", "patient_id"]
+            isOneToOne: false
+            referencedRelation: "lab_orders"
+            referencedColumns: ["id", "clinic_id", "patient_id"]
+          },
+        ]
+      }
+      lab_sample_items: {
+        Row: {
+          clinic_id: string
+          order_id: string
+          order_item_id: string
+          sample_id: string
+        }
+        Insert: {
+          clinic_id: string
+          order_id: string
+          order_item_id: string
+          sample_id: string
+        }
+        Update: {
+          clinic_id?: string
+          order_id?: string
+          order_item_id?: string
+          sample_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_sample_items_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_sample_items_item_fkey"
+            columns: ["order_item_id", "clinic_id", "order_id"]
+            isOneToOne: false
+            referencedRelation: "lab_order_items"
+            referencedColumns: ["id", "clinic_id", "order_id"]
+          },
+          {
+            foreignKeyName: "lab_sample_items_sample_fkey"
+            columns: ["sample_id", "clinic_id", "order_id"]
+            isOneToOne: false
+            referencedRelation: "lab_samples"
+            referencedColumns: ["id", "clinic_id", "order_id"]
+          },
+        ]
+      }
+      lab_samples: {
+        Row: {
+          clinic_id: string
+          collected_at: string | null
+          collected_by: string | null
+          created_at: string
+          created_by: string
+          id: string
+          notes: string | null
+          order_id: string
+          patient_id: string
+          rejected_reason: string | null
+          sample_code: string
+          sample_type: string
+          status: Database["public"]["Enums"]["lab_sample_status"]
+          updated_at: string
+        }
+        Insert: {
+          clinic_id: string
+          collected_at?: string | null
+          collected_by?: string | null
+          created_at?: string
+          created_by: string
+          id?: string
+          notes?: string | null
+          order_id: string
+          patient_id: string
+          rejected_reason?: string | null
+          sample_code: string
+          sample_type: string
+          status?: Database["public"]["Enums"]["lab_sample_status"]
+          updated_at?: string
+        }
+        Update: {
+          clinic_id?: string
+          collected_at?: string | null
+          collected_by?: string | null
+          created_at?: string
+          created_by?: string
+          id?: string
+          notes?: string | null
+          order_id?: string
+          patient_id?: string
+          rejected_reason?: string | null
+          sample_code?: string
+          sample_type?: string
+          status?: Database["public"]["Enums"]["lab_sample_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_samples_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_samples_collected_by_fkey"
+            columns: ["collected_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_samples_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_samples_order_fkey"
+            columns: ["order_id", "clinic_id", "patient_id"]
+            isOneToOne: false
+            referencedRelation: "lab_orders"
+            referencedColumns: ["id", "clinic_id", "patient_id"]
+          },
+        ]
+      }
+      lab_test_parameters: {
+        Row: {
+          active: boolean
+          choices: string[] | null
+          clinic_id: string
+          code: string
+          created_at: string
+          data_type: Database["public"]["Enums"]["lab_data_type"]
+          display_order: number
+          id: string
+          name: string
+          test_id: string
+          unit: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          active?: boolean
+          choices?: string[] | null
+          clinic_id: string
+          code: string
+          created_at?: string
+          data_type?: Database["public"]["Enums"]["lab_data_type"]
+          display_order?: number
+          id?: string
+          name: string
+          test_id: string
+          unit?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          active?: boolean
+          choices?: string[] | null
+          clinic_id?: string
+          code?: string
+          created_at?: string
+          data_type?: Database["public"]["Enums"]["lab_data_type"]
+          display_order?: number
+          id?: string
+          name?: string
+          test_id?: string
+          unit?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_test_parameters_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_test_parameters_test_fkey"
+            columns: ["test_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_tests"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_test_parameters_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lab_tests: {
+        Row: {
+          active: boolean
+          category_id: string | null
+          clinic_id: string
+          code: string
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          preparation_text: string | null
+          price: number
+          sample_type: string | null
+          turnaround_minutes: number | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          active?: boolean
+          category_id?: string | null
+          clinic_id: string
+          code: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          preparation_text?: string | null
+          price?: number
+          sample_type?: string | null
+          turnaround_minutes?: number | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          active?: boolean
+          category_id?: string | null
+          clinic_id?: string
+          code?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          preparation_text?: string | null
+          price?: number
+          sample_type?: string | null
+          turnaround_minutes?: number | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_tests_category_fkey"
+            columns: ["category_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_categories"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_tests_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_tests_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       messages: {
         Row: {
           clinic_id: string
@@ -1866,6 +2825,29 @@ export type Database = {
       conversation_status: "open" | "assigned" | "closed"
       message_role: "patient" | "bot" | "ai" | "admin" | "system"
       message_type: "text" | "voice" | "button" | "callback" | "system"
+      lab_data_type: "numeric" | "text" | "choice"
+      lab_flag:
+        | "normal"
+        | "low"
+        | "high"
+        | "critical_low"
+        | "critical_high"
+        | "unclassified"
+      lab_item_status: "active" | "cancelled"
+      lab_order_status: "ordered" | "in_progress" | "completed" | "cancelled"
+      lab_priority: "routine" | "urgent"
+      lab_result_status: "draft" | "pending_verification" | "verified"
+      lab_sample_status:
+        | "awaiting_collection"
+        | "collected"
+        | "processing"
+        | "rejected"
+        | "cancelled"
+      lab_version_status:
+        | "draft"
+        | "pending_verification"
+        | "verified"
+        | "superseded"
       notification_job_status:
         | "pending"
         | "in_progress"
@@ -1905,6 +2887,7 @@ export type Database = {
         | "communications"
         | "clinical_records"
         | "audit_records"
+        | "laboratory"
       staff_role: "owner" | "manager" | "admin" | "receptionist" | "doctor"
       telegram_bot_status: "disabled" | "active" | "error"
       time_block_reason: "break" | "absence" | "reservation" | "admin_hold"
@@ -2070,6 +3053,32 @@ export const Constants = {
       conversation_status: ["open", "assigned", "closed"],
       message_role: ["patient", "bot", "ai", "admin", "system"],
       message_type: ["text", "voice", "button", "callback", "system"],
+      lab_data_type: ["numeric", "text", "choice"],
+      lab_flag: [
+        "normal",
+        "low",
+        "high",
+        "critical_low",
+        "critical_high",
+        "unclassified",
+      ],
+      lab_item_status: ["active", "cancelled"],
+      lab_order_status: ["ordered", "in_progress", "completed", "cancelled"],
+      lab_priority: ["routine", "urgent"],
+      lab_result_status: ["draft", "pending_verification", "verified"],
+      lab_sample_status: [
+        "awaiting_collection",
+        "collected",
+        "processing",
+        "rejected",
+        "cancelled",
+      ],
+      lab_version_status: [
+        "draft",
+        "pending_verification",
+        "verified",
+        "superseded",
+      ],
       notification_job_status: [
         "pending",
         "in_progress",
@@ -2113,6 +3122,7 @@ export const Constants = {
         "communications",
         "clinical_records",
         "audit_records",
+        "laboratory",
       ],
       staff_role: ["owner", "manager", "admin", "receptionist", "doctor"],
       telegram_bot_status: ["disabled", "active", "error"],
