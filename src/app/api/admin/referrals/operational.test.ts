@@ -28,6 +28,7 @@ vi.mock("@/lib/auth/staff", async (importOriginal) => {
 });
 
 import { GET as warningsRoute } from "@/app/api/admin/appointments/referral-warnings/route";
+import { POST as reviewRoute } from "@/app/api/admin/appointments/[id]/referral-warning/route";
 import { GET as awaitingRoute } from "./awaiting-doctor/route";
 import { GET as dashboardRoute } from "@/app/api/admin/dashboard/route";
 
@@ -156,6 +157,56 @@ describeDb("referral booking warnings and the management overview — real route
     expect((await warnings([booking])).body.data).toEqual({ warnings: {} });
     // …and with the booking cancelled (the referral long over) the relationship is gone too.
     expect(await accessOf(doctors.b, patient)).toMatchObject({ own_patient: false, full_history: false });
+  });
+
+  it("\"I've reviewed this\": the warning is dismissed, who and when are recorded and audited, and the booking is left exactly as it was", async () => {
+    const patient = await newPatient(clinicA);
+    const referral = await refer(clinicA, patient, doctors.a, profiles.a, { doctor: doctors.b });
+    const booking = await visit(clinicA, patient, doctors.b, "confirmed");
+    await link(referral, booking);
+    const review = async (id: string, as = () => asStaff(profiles.reception, clinicA, "receptionist")) => {
+      as();
+      return read(await reviewRoute(new NextRequest(`http://localhost/api/admin/appointments/${id}/referral-warning`, { method: "POST" }), { params: Promise.resolve({ id }) }));
+    };
+    const snapshot = async () =>
+      (await sql`select status, start_at, end_at, doctor_id, service_id, patient_id, notes from public.appointments where id = ${booking}`)[0];
+    const reviewedAudits = () => sql<{ actor_id: string; referral_id: string }[]>`
+      select actor_id, referral_id from public.audit_events where action = 'referral_warning_reviewed' and entity_id = ${booking}`;
+
+    // Nothing to review while the referral is open.
+    expect((await review(booking)).status).toBe(409);
+
+    await revoke(referral, profiles.a);
+    expect((await warnings([booking])).body.data).toEqual({ warnings: { [booking]: "REFERRAL_REVOKED" } });
+    const before = await snapshot();
+
+    // A doctor cannot dismiss it; another clinic's staff cannot even find the visit.
+    expect((await review(booking, () => asStaff(profiles.b, clinicA, "doctor"))).status).toBe(403);
+    expect((await review(booking, () => asStaff(profiles.managerK, clinicB, "manager"))).status).toBe(404);
+    expect((await warnings([booking])).body.data).toEqual({ warnings: { [booking]: "REFERRAL_REVOKED" } });
+
+    // Reception reviews: the warning goes, the booking stays intact, Dr B still has the patient through it.
+    expect(await review(booking)).toMatchObject({ status: 200, body: { data: { reviewed: true, already: false } } });
+    expect((await warnings([booking])).body.data).toEqual({ warnings: {} });
+    expect(await snapshot()).toEqual(before);
+    expect(await accessOf(doctors.b, patient)).toMatchObject({ own_patient: true, full_history: true });
+    expect(await sql`select referral_warning_reviewed_by from public.appointments where id = ${booking} and referral_warning_reviewed_at is not null`).toEqual([
+      { referral_warning_reviewed_by: profiles.reception },
+    ]);
+    // Audited once, as the receptionist, with the referral — ids only.
+    expect(await reviewedAudits()).toEqual([{ actor_id: profiles.reception, referral_id: referral }]);
+
+    // Repeating it changes and audits nothing more.
+    expect(await review(booking)).toMatchObject({ status: 200, body: { data: { already: true } } });
+    expect(await reviewedAudits()).toHaveLength(1);
+
+    // Management may dismiss one too — but a warning that is not there cannot be reviewed.
+    const other = await visit(clinicA, patient, doctors.b, "confirmed");
+    expect((await review(other, () => asStaff(profiles.manager, clinicA, "manager"))).status).toBe(409);
+
+    // The review only covers what happened before it: a referral that ended AFTER the review warns again.
+    await sql`update public.appointments set referral_warning_reviewed_at = now() - interval '1 day' where id = ${booking}`;
+    expect((await warnings([booking])).body.data).toEqual({ warnings: { [booking]: "REFERRAL_REVOKED" } });
   });
 
   it("a declined referral warns as REFERRAL_DECLINED — until the visit starts; and only this clinic's appointments are ever looked at", async () => {

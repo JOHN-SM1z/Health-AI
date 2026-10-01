@@ -1167,8 +1167,10 @@ export type ReferralBookingWarning = "REFERRAL_REVOKED" | "REFERRAL_DECLINED";
  * it — that visit stays, and keeps the doctor's relationship with the patient.
  * Reception is warned instead, to review it and cancel or reschedule if
  * needed: for each of these appointments that is the follow-up of a revoked or
- * declined referral and has not started, the reason for the warning. Derived
- * on every read, so nothing has to be written in the referral's own
+ * declined referral and has not started, the reason for the warning — unless
+ * reception has reviewed it since the referral ended (reviewReferralWarning:
+ * who and when are stored on the appointment, the visit itself untouched).
+ * Derived on every read, so nothing has to be written in the referral's own
  * transaction (and reception cancelling the visit makes the warning go).
  */
 export async function referralWarningsForAppointments(
@@ -1181,19 +1183,50 @@ export async function referralWarningsForAppointments(
   const [referralsRes, appointmentsRes] = await Promise.all([
     supabase
       .from("referrals")
-      .select("follow_up_appointment_id, status")
+      .select("follow_up_appointment_id, status, revoked_at, declined_at")
       .eq("clinic_id", clinicId)
       .in("follow_up_appointment_id", ids)
       .in("status", ["revoked", "declined"]),
-    supabase.from("appointments").select("id").eq("clinic_id", clinicId).in("id", ids).in("status", ["pending", "confirmed", "checked_in"]),
+    supabase
+      .from("appointments")
+      .select("id, referral_warning_reviewed_at")
+      .eq("clinic_id", clinicId)
+      .in("id", ids)
+      .in("status", ["pending", "confirmed", "checked_in"]),
   ]);
   if (referralsRes.error || appointmentsRes.error) throw new ApiError(500, "Yo‘llanma holatini yuklab bo‘lmadi");
-  const upcoming = new Set((appointmentsRes.data ?? []).map((a) => a.id));
+  const upcoming = new Map((appointmentsRes.data ?? []).map((a) => [a.id, a.referral_warning_reviewed_at]));
   const warnings: Record<string, ReferralBookingWarning> = {};
   for (const r of referralsRes.data ?? []) {
-    if (r.follow_up_appointment_id && upcoming.has(r.follow_up_appointment_id)) {
-      warnings[r.follow_up_appointment_id] = r.status === "declined" ? "REFERRAL_DECLINED" : "REFERRAL_REVOKED";
-    }
+    if (!r.follow_up_appointment_id || !upcoming.has(r.follow_up_appointment_id)) continue;
+    // Reviewed since the referral ended: reception looked at it and kept the visit.
+    const reviewedAt = upcoming.get(r.follow_up_appointment_id);
+    const endedAt = r.status === "declined" ? r.declined_at : r.revoked_at;
+    if (reviewedAt && (!endedAt || Date.parse(reviewedAt) >= Date.parse(endedAt))) continue;
+    warnings[r.follow_up_appointment_id] = r.status === "declined" ? "REFERRAL_DECLINED" : "REFERRAL_REVOKED";
   }
   return warnings;
+}
+
+/**
+ * Reception (or management) has looked at the warning and keeps the visit:
+ * records who and when — in one database transaction with its audit row — and
+ * changes nothing else about the appointment. 404 when there is no such
+ * appointment in the clinic, 409 when there is nothing to review (no revoked
+ * or declined referral behind it, or it has started or ended).
+ */
+export async function reviewReferralWarning(staff: StaffInClinic, appointmentId: string): Promise<{ already: boolean }> {
+  const { data, error } = await createAdminClient().rpc("review_referral_warning", {
+    p_clinic_id: staff.clinicId,
+    p_appointment_id: appointmentId,
+    p_actor: staff.profileId,
+  });
+  if (error) {
+    logger.error("review_referral_warning failed", { code: error.code });
+    throw new ApiError(500, "Ogohlantirishni belgilab bo‘lmadi");
+  }
+  const result = data as { reviewed?: boolean; already?: boolean; error_code?: string } | null;
+  if (result?.error_code === "appointment_not_found") throw new ApiError(404, "Qabul topilmadi", "appointment_not_found");
+  if (!result?.reviewed) throw new ApiError(409, "Bu qabul uchun ko‘rib chiqiladigan ogohlantirish yo‘q", "nothing_to_review");
+  return { already: result.already === true };
 }

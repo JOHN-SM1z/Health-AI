@@ -14,6 +14,9 @@ import {
   REFERRAL_PRIORITY_LABELS,
   REFERRAL_STATUS_LABELS,
   REFERRAL_STATUS_TONES,
+  fetchReferralWarnings,
+  reviewReferralWarning,
+  type ReferralBookingWarning,
 } from "@/lib/admin/client";
 
 type PatientRow = {
@@ -102,6 +105,8 @@ export default function PatientsPage() {
   const [noConsent, setNoConsent] = useState(false);
   const [detail, setDetail] = useState<DetailResponse | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
+  // Follow-up visits of revoked/declined referrals that reception has not reviewed yet.
+  const [warnings, setWarnings] = useState<Record<string, ReferralBookingWarning>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
@@ -156,6 +161,7 @@ export default function PatientsPage() {
     try {
       const res = await adminApi.get<DetailResponse>(`/api/admin/patients?id=${id}`);
       setDetail(res);
+      setWarnings(await fetchReferralWarnings(res.referrals.flatMap((r) => (r.followUp ? [r.followUp.id] : []))));
       setNotesDraft(res.patient?.operational_notes ?? "");
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Bemor ma'lumotlarini yuklab bo‘lmadi");
@@ -405,12 +411,26 @@ export default function PatientsPage() {
                             Qabul: {formatDateTime(r.followUp.startAt)} · {STATUS_LABELS[r.followUp.status] ?? r.followUp.status}
                           </p>
                         )}
-                        {r.followUp &&
-                          ["revoked", "declined"].includes(r.status) &&
-                          ["pending", "confirmed", "checked_in"].includes(r.followUp.status) && (
-                            <p className="mt-1 text-xs font-medium text-clay-deep">
-                              {r.status === "declined" ? "Yo‘llanma rad etilgan" : "Yo‘llanma bekor qilingan"} — qabul saqlanadi; ko‘rib chiqib, kerak bo‘lsa bekor qiling yoki ko‘chiring.
-                            </p>
+                        {r.followUp && warnings[r.followUp.id] && (
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-medium text-clay-deep">
+                              <span>
+                                {r.status === "declined" ? "Yo‘llanma rad etilgan" : "Yo‘llanma bekor qilingan"} — qabul saqlanadi; ko‘rib chiqib, kerak bo‘lsa bekor qiling yoki ko‘chiring.
+                              </span>
+                              <AButton
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                  try {
+                                    await reviewReferralWarning(r.followUp!.id);
+                                    setWarnings(await fetchReferralWarnings([r.followUp!.id]));
+                                  } catch (e) {
+                                    setError(e instanceof AdminApiError ? e.message : "Xatolik yuz berdi");
+                                  }
+                                }}
+                              >
+                                Ko‘rib chiqdim
+                              </AButton>
+                            </div>
                           )}
                         {(r.canBookFollowUp || (isManagement && ["pending", "accepted", "in_progress"].includes(r.status))) && (
                           <div className="mt-2 flex flex-wrap gap-2">

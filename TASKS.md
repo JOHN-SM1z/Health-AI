@@ -30,7 +30,7 @@
   - patient creation and deletion are audited in the database (`patient_created` / `patient_deleted`, with `patients.created_by` / `created_via`; ids and channel only)
   - phone normalization never matches two different people (`+`/`00` is international, 7–15 digits)
   - department referral: refused for a department with no receiving doctor (route 409 `department_unavailable` + database trigger); flagged to the referring doctor when the department empties later
-  - locked behaviour: referral controls workflow, the booking controls the treating relationship — revoking/declining a referral never cancels its follow-up booking; reception gets a derived `REFERRAL_REVOKED` / `REFERRAL_DECLINED` warning (today list, appointments list, patient panel) and decides
+  - locked behaviour: referral controls workflow, the booking controls the treating relationship — revoking/declining a referral never cancels its follow-up booking; reception gets a derived `REFERRAL_REVOKED` / `REFERRAL_DECLINED` warning (today list, appointments list, patient panel) and decides; *Ko‘rib chiqdim* dismisses it per booking (`referral_warning_reviewed_at/_by`, audited, `20261002000005`)
   - management overview of department referrals awaiting a doctor: dashboard count (owner/admin/manager) and `/admin/referrals-awaiting` (metadata only, with revoke)
   - not done, by decision: patient merge tool (later — especially needed for the MedPlus/Excel migration, where duplicate patients are likely); old audit rows keep their old action names (history is not rewritten; new records use the corrected names)
 - [x] ~~17. Longitudinal patient history, department referrals and registration dedupe~~ (2026-09-30)

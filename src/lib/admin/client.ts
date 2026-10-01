@@ -49,6 +49,10 @@ export const REFERRAL_WARNING_LABELS: Record<ReferralBookingWarning, string> = {
 export const REFERRAL_WARNING_HINT =
   "Qabul saqlanadi: u bemor bilan shifokorning davolash munosabatini belgilaydi. Qabulxona ko‘rib chiqib, kerak bo‘lsa bekor qilsin yoki boshqa vaqtga ko‘chirsin.";
 
+/** "I've reviewed this": the warning goes, the booking stays (who and when are recorded). */
+export const reviewReferralWarning = (appointmentId: string) =>
+  adminApi.post<{ reviewed: boolean }>(`/api/admin/appointments/${appointmentId}/referral-warning`);
+
 /** Appointments (of those given) booked for a referral that was revoked or declined and have not started. */
 export async function fetchReferralWarnings(ids: string[]): Promise<Record<string, ReferralBookingWarning>> {
   if (!ids.length) return {};

@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, StatCard, LoadingRow } from "@/components/admin/ui";
 import { CalendarDays, UserPlus } from "lucide-react";
-import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatTime, formatPrice, adminApi, AdminApiError, fetchReferralWarnings, REFERRAL_WARNING_LABELS, REFERRAL_WARNING_HINT, type ReferralBookingWarning } from "@/lib/admin/client";
+import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatTime, formatPrice, adminApi, AdminApiError, fetchReferralWarnings, reviewReferralWarning, REFERRAL_WARNING_LABELS, REFERRAL_WARNING_HINT, type ReferralBookingWarning } from "@/lib/admin/client";
 import { QuickBookingModal } from "@/components/admin/quick-booking-modal";
 
 type Row = {
@@ -115,6 +115,19 @@ export default function TodayPage() {
     }
     return c;
   }, [rows]);
+
+  // The warning is dismissed; the visit itself is untouched.
+  const markReviewed = async (id: string) => {
+    setBusyId(id);
+    try {
+      await reviewReferralWarning(id);
+      setWarnings(await fetchReferralWarnings((rows ?? []).map((r) => r.id)));
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Xatolik yuz berdi");
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const setStatus = async (id: string, status: string) => {
     setBusyId(id);
@@ -226,8 +239,11 @@ export default function TodayPage() {
               <td className="px-4 py-3">
                 <ABadge tone={STATUS_TONES[r.status]}>{STATUS_LABELS[r.status]}</ABadge>
                 {warnings[r.id] && (
-                  <p className="mt-1" title={REFERRAL_WARNING_HINT}>
+                  <p className="mt-1 flex flex-wrap items-center gap-1.5" title={REFERRAL_WARNING_HINT}>
                     <ABadge tone="amber">{REFERRAL_WARNING_LABELS[warnings[r.id]]}</ABadge>
+                    <AButton size="sm" variant="outline" loading={busyId === r.id} onClick={() => void markReviewed(r.id)}>
+                      Ko‘rib chiqdim
+                    </AButton>
                   </p>
                 )}
               </td>

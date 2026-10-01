@@ -378,8 +378,12 @@ records, and only the author changes their own.
   the visit. Reception is warned instead (`GET /api/admin/appointments/referral-warnings` →
   `REFERRAL_REVOKED` / `REFERRAL_DECLINED`, derived on every read for visits that are pending,
   confirmed or checked in; shown as a badge on the today and appointments lists and in the
-  patient panel) and reviews, cancels or reschedules it; the relationship ends when the visit is
-  cancelled or marked a no-show. When the visit of a
+  patient panel) and reviews, cancels or reschedules it. A visit they keep is dismissed with *Ko‘rib
+  chiqdim* (`POST /api/admin/appointments/[id]/referral-warning`, owner/admin/manager/receptionist):
+  `public.review_referral_warning()` records `appointments.referral_warning_reviewed_at/_by` and
+  audits `referral_warning_reviewed` (ids and statuses only) in one transaction, changing nothing
+  else about the booking; the warning shows again only if a referral ends *after* the review. The
+  relationship ends when the visit is cancelled or marked a no-show. When the visit of a
   pending referral starts, or is already under way when the doctor accepts, the referral is in
   progress from the acceptance (`referrals_catch_up_started`; both transitions are audited).
 

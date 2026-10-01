@@ -130,6 +130,8 @@ export type Database = {
           no_show_reason: string | null
           notes: string | null
           patient_id: string
+          referral_warning_reviewed_at: string | null
+          referral_warning_reviewed_by: string | null
           service_id: string
           source: Database["public"]["Enums"]["appointment_source"]
           start_at: string
@@ -150,6 +152,8 @@ export type Database = {
           no_show_reason?: string | null
           notes?: string | null
           patient_id: string
+          referral_warning_reviewed_at?: string | null
+          referral_warning_reviewed_by?: string | null
           service_id: string
           source?: Database["public"]["Enums"]["appointment_source"]
           start_at: string
@@ -170,6 +174,8 @@ export type Database = {
           no_show_reason?: string | null
           notes?: string | null
           patient_id?: string
+          referral_warning_reviewed_at?: string | null
+          referral_warning_reviewed_by?: string | null
           service_id?: string
           source?: Database["public"]["Enums"]["appointment_source"]
           start_at?: string
@@ -1758,6 +1764,10 @@ export type Database = {
       doctor_can_read_patient: {
         Args: { p_clinic_id: string; p_patient_id: string }
         Returns: boolean
+      }
+      review_referral_warning: {
+        Args: { p_actor: string; p_appointment_id: string; p_clinic_id: string }
+        Returns: Json
       }
       department_has_receiving_doctor: {
         Args: { p_clinic_id: string; p_excluding_doctor_id?: string; p_specialty_id: string }

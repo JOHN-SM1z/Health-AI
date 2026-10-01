@@ -37,7 +37,7 @@ Prerequisite for a full local run: `npm run db:reset-local` (above) and a
 
 ## Migrations
 
-54 migrations in `supabase/migrations/` (ordered, repeatable on any environment; `supabase/full-db-setup.sql` is all of them as one script). The first 21:
+55 migrations in `supabase/migrations/` (ordered, repeatable on any environment; `supabase/full-db-setup.sql` is all of them as one script). The first 21:
 
 1. `0001`–`0008` — schema: clinics, profiles, staff_roles, patients, specialties,
    services, doctors, doctor_services, working hours, time blocks, appointments,
@@ -67,7 +67,7 @@ records that keep their authors, patient deletion that never cascades into clini
 referral, booking or payment records, and an empty `retention_policies`), and
 independent retention (`20261001000003`: parent deletion — a clinic, a patient with conversations, an
 appointment with a payment — is refused while retained rows exist, never cascaded), longitudinal history
-(`20261002000001`, below) and its follow-ups (`20261002000002`–`20261002000004`, after it). `20261001000002` is PR #11's care-access migration; `20261002000001` re-creates its functions and drops its `referral history for treating doctor` policy.
+(`20261002000001`, below) and its follow-ups (`20261002000002`–`20261002000005`, after it). `20261001000002` is PR #11's care-access migration; `20261002000001` re-creates its functions and drops its `referral history for treating doctor` policy.
 
 ### `20261002000001_longitudinal_history.sql`
 
@@ -125,7 +125,7 @@ npx supabase gen types typescript --local > src/lib/supabase/database.types.ts
 ```
 
 
-### `20261002000002` – `20261002000004` (follow-ups)
+### `20261002000002` – `20261002000005` (follow-ups)
 
 Apply after `20261002000001`; each is independent and reversible (the reversal is in its header comment).
 
@@ -136,6 +136,9 @@ Apply after `20261002000001`; each is independent and reversible (the reversal i
 - **`20261002000003_phone_normalization.sql`** — the new `normalize_phone()` rule (explicit `+`/`00` is
   international; 7–15 digits; otherwise Uzbek national). `patients.phone_normalized` is a stored
   generated column, so it is dropped and added again (one rewrite of `patients`) with its index.
+- **`20261002000005_referral_warning_review.sql`** — `appointments.referral_warning_reviewed_at/_by` and
+  `review_referral_warning()` (service role only): reception's "I've reviewed this" for the warning of a
+  visit booked for a revoked/declined referral; audited, the booking untouched.
 - **`20261002000004_department_referral_availability.sql`** — `department_has_receiving_doctor()`
   (service role only) and a `BEFORE INSERT` trigger on `referrals` refusing a department referral for a
   department with no doctor who can receive it.

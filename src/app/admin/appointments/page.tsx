@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect, AModal, ATextArea, LoadingRow } from "@/components/admin/ui";
 import { ClipboardList } from "lucide-react";
-import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatDateTime, formatPrice, adminApi, AdminApiError, fetchReferralWarnings, REFERRAL_WARNING_LABELS, REFERRAL_WARNING_HINT, type ReferralBookingWarning } from "@/lib/admin/client";
+import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatDateTime, formatPrice, adminApi, AdminApiError, fetchReferralWarnings, reviewReferralWarning, REFERRAL_WARNING_LABELS, REFERRAL_WARNING_HINT, type ReferralBookingWarning } from "@/lib/admin/client";
 
 type Row = {
   id: string;
@@ -292,8 +292,26 @@ function AppointmentRow({
       <td className="px-4 py-3">
         <ABadge tone={STATUS_TONES[row.status]}>{STATUS_LABELS[row.status]}</ABadge>
         {warning && (
-          <p className="mt-1" title={REFERRAL_WARNING_HINT}>
+          <p className="mt-1 flex flex-wrap items-center gap-1.5" title={REFERRAL_WARNING_HINT}>
             <ABadge tone="amber">{REFERRAL_WARNING_LABELS[warning]}</ABadge>
+            <AButton
+              size="sm"
+              variant="outline"
+              loading={busy === "review"}
+              onClick={async () => {
+                setBusy("review");
+                try {
+                  await reviewReferralWarning(row.id);
+                  onChanged();
+                } catch (e) {
+                  onError(e instanceof AdminApiError ? e.message : "Xatolik yuz berdi");
+                } finally {
+                  setBusy(null);
+                }
+              }}
+            >
+              Ko‘rib chiqdim
+            </AButton>
           </p>
         )}
       </td>
