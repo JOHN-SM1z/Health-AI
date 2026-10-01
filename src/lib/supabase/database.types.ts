@@ -963,6 +963,8 @@ export type Database = {
           consent_given: boolean
           consent_given_at: string | null
           created_at: string
+          created_by: string | null
+          created_via: string | null
           full_name: string | null
           id: string
           last_seen_at: string | null
@@ -981,6 +983,8 @@ export type Database = {
           consent_given?: boolean
           consent_given_at?: string | null
           created_at?: string
+          created_by?: string | null
+          created_via?: string | null
           full_name?: string | null
           id?: string
           last_seen_at?: string | null
@@ -999,6 +1003,8 @@ export type Database = {
           consent_given?: boolean
           consent_given_at?: string | null
           created_at?: string
+          created_by?: string | null
+          created_via?: string | null
           full_name?: string | null
           id?: string
           last_seen_at?: string | null

@@ -6,6 +6,7 @@ import { requireRoles } from "@/lib/auth/guards";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { phoneSchema, nameSchema, uuidSchema, parseBody } from "@/lib/api/validate";
 import { trackAnalytics } from "@/lib/analytics";
+import { recordAudit } from "@/lib/audit";
 import { enqueueBookingNotifications } from "@/lib/notifications/jobs";
 import { logger } from "@/lib/logger";
 import { assertFollowUpBookable, linkFollowUp } from "@/lib/referrals/service";
@@ -128,6 +129,8 @@ export async function POST(request: NextRequest) {
         });
       }
     }
+    // Who registered the patient and through which channel: the database audits the creation ('patient_created').
+    const registeredBy = { created_by: ctx.profileId, created_via: body.source === "walk_in" ? "walk_in" : "reception" };
     if (patientId) {
       const { data: patient } = await supabase
         .from("patients")
@@ -144,7 +147,7 @@ export async function POST(request: NextRequest) {
       const id = walkInPatientId(ctx.clinicId, body.idempotencyKey);
       const { error } = await supabase
         .from("patients")
-        .insert({ id, clinic_id: ctx.clinicId, full_name: body.patientName, phone: body.phone ?? null });
+        .insert({ id, clinic_id: ctx.clinicId, full_name: body.patientName, phone: body.phone ?? null, ...registeredBy });
       if (error && error.code !== "23505") throw new ApiError(500, "Bemorni yaratib bo‘lmadi");
       if (!error) registered = id;
       patientId = id;
@@ -155,6 +158,7 @@ export async function POST(request: NextRequest) {
           clinic_id: ctx.clinicId,
           full_name: body.patientName,
           phone: body.phone ?? null,
+          ...registeredBy,
         })
         .select("id")
         .single();
@@ -184,7 +188,18 @@ export async function POST(request: NextRequest) {
       if (registered) {
         // Nothing references a patient registered a moment ago; any other
         // row would make this refuse (foreign keys), never cascade.
-        await supabase.from("patients").delete().eq("id", registered).eq("clinic_id", ctx.clinicId);
+        const { data: removed } = await supabase.from("patients").delete().eq("id", registered).eq("clinic_id", ctx.clinicId).select("id");
+        // The creation was audited ('patient_created'); the record's removal is too, so the trail shows what became of it.
+        if (removed?.length) {
+          await recordAudit({
+            clinicId: ctx.clinicId,
+            action: "patient_discarded",
+            entityType: "patients",
+            entityId: registered,
+            actor: { actorId: ctx.profileId, actorType: "staff" },
+            metadata: { reason: "booking_refused" },
+          });
+        }
       }
       throw e;
     }

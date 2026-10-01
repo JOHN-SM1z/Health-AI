@@ -47,6 +47,7 @@ export async function getOrCreatePatient(opts: {
       telegram_first_name: opts.user.first_name ?? null,
       telegram_last_name: opts.user.last_name ?? null,
       last_seen_at: new Date().toISOString(),
+      created_via: "telegram",
     })
     .select("*")
     .single();
@@ -126,6 +127,7 @@ export async function getOrCreateWebPatient(opts: {
       consent_given: true,
       consent_given_at: now,
       last_seen_at: now,
+      created_via: "website",
     })
     .select("*")
     .single();

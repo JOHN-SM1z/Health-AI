@@ -406,4 +406,43 @@ describeDb("reception registration finds the returning patient — real routes, 
     expect(await patient(first)).toMatchObject({ full_name: `Aziza Karimova ${suffix}`, phone: PHONE });
     expect(await samePhone()).toEqual([first, second].sort());
   });
+  it("every patient created above is audited as 'patient_created' — channel and creator, never the name or phone", async () => {
+    // A website visitor nobody has seen: a record is created for them.
+    const visitorName = `Sayt Mehmoni ${suffix}`;
+    const visitorPhone = freshPhone();
+    const visitor = await bookOnline({ patientName: visitorName, phone: visitorPhone });
+    expect(visitor.status).toBe(201);
+    const visitorId = await patientOf(visitor);
+
+    const patients = await sql<{ id: string; created_by: string | null; created_via: string | null }[]>`
+      select id, created_by, created_via from public.patients where clinic_id = ${clinicA}`;
+    const audits = await sql<
+      { entity_id: string; patient_id: string; actor_id: string | null; actor_type: string; new_values: unknown; metadata: Record<string, unknown> }[]
+    >`select entity_id, patient_id, actor_id, actor_type, new_values, metadata from public.audit_events where clinic_id = ${clinicA} and action = 'patient_created'`;
+
+    // One audit row per patient that exists. A possible duplicate creates nothing; a patient registered for a booking the engine then
+    // refused is removed again — and that is audited too ('patient_discarded'), so every creation is accounted for.
+    const discarded = (
+      await sql<{ entity_id: string }[]>`select entity_id from public.audit_events where clinic_id = ${clinicA} and action = 'patient_discarded'`
+    ).map((a) => a.entity_id);
+    expect(audits.map((a) => a.entity_id).filter((id) => !discarded.includes(id)).sort()).toEqual(patients.map((p) => p.id).sort());
+    expect(discarded.every((id) => audits.some((a) => a.entity_id === id))).toBe(true);
+    expect(audits.every((a) => a.patient_id === a.entity_id)).toBe(true);
+    const byPatient = new Map(audits.map((a) => [a.entity_id, a]));
+    for (const p of patients) {
+      const audit = byPatient.get(p.id)!;
+      expect(audit.metadata).toMatchObject({ created_via: p.created_via });
+      if (p.created_via === "walk_in") expect(audit).toMatchObject({ actor_id: receptionist, actor_type: "staff" });
+      if (p.created_via === "telegram") expect(audit).toMatchObject({ actor_id: null, actor_type: "telegram" });
+      if (p.created_via === "website") expect(audit).toMatchObject({ actor_id: null, actor_type: "system" });
+    }
+    expect(byPatient.get(first)).toMatchObject({ actor_id: receptionist, actor_type: "staff", metadata: { created_via: "walk_in", has_phone: true, has_telegram_identity: false } });
+    expect(byPatient.get(visitorId)).toMatchObject({ metadata: { created_via: "website", has_phone: true, has_telegram_identity: false } });
+    // (Rows this suite inserted straight into the table have no provenance: null.)
+    expect(new Set(patients.map((p) => p.created_via).filter(Boolean))).toEqual(new Set(["walk_in", "telegram", "website"]));
+
+    // Identifiers only: no name, phone or Telegram detail anywhere in the audit rows.
+    const text = JSON.stringify(audits);
+    for (const secret of [visitorName, visitorPhone, `Aziza Karimova ${suffix}`, PHONE, PHONE_LOCAL, NORMALIZED, "Telegram Yangi"]) expect(text).not.toContain(secret);
+  });
 });
