@@ -8828,7 +8828,41 @@ revoke all on function public.review_referral_warning(uuid, uuid, uuid) from pub
 grant execute on function public.review_referral_warning(uuid, uuid, uuid) to service_role;
 
 -- =====================================================================
--- FILE: 20261003000001_lab_foundation.sql
+-- FILE: 20261003000001_lab_staff_role.sql
+-- =====================================================================
+-- Laboratory module, phase 3: the laboratory staff role.
+--
+-- A technician enters results and handles samples without any admin, finance, booking or clinical-history
+-- access, which none of owner/admin/manager/receptionist/doctor express (docs/labs/PHASE_1_AUDIT.md §7).
+-- A separate verifier role is NOT added: verification is a permission of lab_staff, and whether a second
+-- person must verify is a per-clinic setting (app_settings key 'lab', phase 3).
+--
+-- Fail-closed by construction: every route and RLS policy lists the roles it admits, so a new value gains
+-- nothing until it is named; the only "any staff" policies are the read-only configuration tables
+-- (clinics, services, doctors, specialties, working hours, faqs, app_settings, staff_roles and the lab
+-- catalog), which a lab technician may read like every other staff role. Nothing about patients,
+-- appointments, payments, conversations, referrals or clinical records is granted.
+--
+-- It must be its own migration: a new enum value cannot be used in the transaction that adds it (the
+-- lab triggers of the next migration use it). Not reversible by migration (an enum value cannot be removed);
+-- remove the staff_roles rows and stop assigning it.
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_enum e
+    join pg_type t on t.oid = e.enumtypid
+    where t.typname = 'staff_role' and e.enumlabel = 'lab_staff'
+  ) then
+    alter type public.staff_role add value 'lab_staff' after 'doctor';
+  end if;
+end $$;
+
+-- New enum values must be committed before any later statement uses them.
+commit;
+
+-- =====================================================================
+-- FILE: 20261003000002_lab_foundation.sql
 -- =====================================================================
 -- Laboratory module, phase 2: the domain model.
 --
@@ -8872,6 +8906,7 @@ grant execute on function public.review_referral_warning(uuid, uuid, uuid) to se
 --   * The audit trail is ids-only and written by purpose-built triggers; the generic
 --     audit_track_changes() is deliberately NOT used (it would copy result values into audit_events).
 --
+-- (Phase 3: samples and results require the lab_staff role — 20261003000001.)
 -- Reversible: drop the tables below in reverse dependency order (lab_result_attachments,
 -- lab_result_values, lab_result_versions, lab_results, lab_sample_items, lab_samples,
 -- lab_order_items, lab_orders, lab_panel_tests, lab_panels, lab_reference_ranges,
@@ -9219,6 +9254,21 @@ create index lab_result_attachments_result_idx on public.lab_result_attachments 
 -- 4. Helpers
 -- ---------------------------------------------------------------------------
 
+-- Samples and results are handled by laboratory staff only (the role of 20261003000001).
+create or replace function public.lab_is_lab_staff(p_profile uuid, p_clinic uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select p_profile is not null and exists (
+    select 1 from public.staff_roles sr where sr.profile_id = p_profile and sr.clinic_id = p_clinic and sr.role = 'lab_staff'
+  );
+$$;
+revoke all on function public.lab_is_lab_staff(uuid, uuid) from public, anon, authenticated;
+
+-- Any staff member of the clinic (used where the actor only needs to belong to the clinic, e.g. cancelling an order).
 create or replace function public.lab_is_clinic_staff(p_profile uuid, p_clinic uuid)
 returns boolean
 language sql
@@ -9582,8 +9632,8 @@ begin
     if new.status is distinct from 'awaiting_collection' then
       raise exception 'lab sample: a sample is created awaiting collection';
     end if;
-    if not public.lab_is_clinic_staff(new.created_by, new.clinic_id) then
-      raise exception 'lab sample: created_by must be staff of the clinic';
+    if not public.lab_is_lab_staff(new.created_by, new.clinic_id) then
+      raise exception 'lab sample: created_by must be lab staff of the clinic';
     end if;
     new.collected_at := null; new.collected_by := null; new.rejected_reason := null;
     return new;
@@ -9615,8 +9665,8 @@ begin
     end if;
   end if;
   if new.status = 'collected' then
-    if new.collected_by is null or not public.lab_is_clinic_staff(new.collected_by, new.clinic_id) then
-      raise exception 'lab sample: collected_by must be staff of the clinic';
+    if new.collected_by is null or not public.lab_is_lab_staff(new.collected_by, new.clinic_id) then
+      raise exception 'lab sample: collected_by must be lab staff of the clinic';
     end if;
     new.collected_at := now();
   elsif new.status in ('processing', 'cancelled') then
@@ -9743,8 +9793,8 @@ begin
     if new.status is distinct from 'draft' then
       raise exception 'lab result: a version is created as a draft';
     end if;
-    if not public.lab_is_clinic_staff(new.entered_by, new.clinic_id) then
-      raise exception 'lab result: entered_by must be staff of the clinic';
+    if not public.lab_is_lab_staff(new.entered_by, new.clinic_id) then
+      raise exception 'lab result: entered_by must be lab staff of the clinic';
     end if;
     new.version := coalesce((select max(v.version) from public.lab_result_versions v where v.result_id = new.result_id), 0) + 1;
     new.entered_at := now();
@@ -9794,8 +9844,8 @@ begin
     new.verified_by := null;
     new.verified_at := null;
   elsif old.status = 'pending_verification' and new.status = 'verified' then
-    if new.verified_by is null or not public.lab_is_clinic_staff(new.verified_by, new.clinic_id) then
-      raise exception 'lab result: verified_by must be staff of the clinic';
+    if new.verified_by is null or not public.lab_is_lab_staff(new.verified_by, new.clinic_id) then
+      raise exception 'lab result: verified_by must be lab staff of the clinic';
     end if;
     new.verified_at := now();
     -- The previous verified version steps aside in the same statement (system transition).
@@ -10108,3 +10158,69 @@ comment on table public.lab_result_values is
 
 -- New enum values must be committed before any later statement uses them.
 commit;
+
+-- =====================================================================
+-- FILE: 20261003000003_lab_panel_functions.sql
+-- =====================================================================
+-- Laboratory configuration, phase 3: a panel and its tests are written atomically.
+--
+-- PostgREST cannot span two statements in one transaction; creating a panel and then replacing its tests as
+-- two calls could leave a panel without tests if the second failed. These two functions do each in ONE
+-- transaction, verify that the panel and every test belong to the clinic, and are callable by the server only.
+-- The table triggers and audit run exactly as for direct writes.
+--
+-- Reversible: drop function public.lab_create_panel(...), public.lab_set_panel_tests(uuid, uuid, uuid[]).
+
+create or replace function public.lab_set_panel_tests(p_clinic_id uuid, p_panel_id uuid, p_test_ids uuid[])
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if p_test_ids is null or cardinality(p_test_ids) = 0 then
+    raise exception 'lab catalog: a panel needs at least one test';
+  end if;
+  if not exists (select 1 from public.lab_panels where id = p_panel_id and clinic_id = p_clinic_id) then
+    raise exception 'lab catalog: the panel is not in this clinic';
+  end if;
+  if (select count(*) from public.lab_tests where clinic_id = p_clinic_id and id = any (p_test_ids)) <> cardinality(p_test_ids) then
+    raise exception 'lab catalog: a test is not in this clinic';
+  end if;
+  delete from public.lab_panel_tests where panel_id = p_panel_id and clinic_id = p_clinic_id;
+  insert into public.lab_panel_tests (panel_id, test_id, clinic_id, sort_order)
+  select p_panel_id, t.id, p_clinic_id, (t.ord - 1)::int
+    from unnest(p_test_ids) with ordinality as t(id, ord);
+end;
+$$;
+
+create or replace function public.lab_create_panel(
+  p_clinic_id uuid,
+  p_actor uuid,
+  p_code text,
+  p_name text,
+  p_description text,
+  p_price numeric,
+  p_active boolean,
+  p_test_ids uuid[]
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_id uuid;
+begin
+  insert into public.lab_panels (clinic_id, code, name, description, price, active, updated_by)
+  values (p_clinic_id, p_code, p_name, p_description, p_price, coalesce(p_active, true), p_actor)
+  returning id into v_id;
+  perform public.lab_set_panel_tests(p_clinic_id, v_id, p_test_ids);
+  return v_id;
+end;
+$$;
+
+revoke all on function public.lab_set_panel_tests(uuid, uuid, uuid[]) from public, anon, authenticated;
+revoke all on function public.lab_create_panel(uuid, uuid, text, text, text, numeric, boolean, uuid[]) from public, anon, authenticated;
+grant execute on function public.lab_set_panel_tests(uuid, uuid, uuid[]) to service_role;
+grant execute on function public.lab_create_panel(uuid, uuid, text, text, text, numeric, boolean, uuid[]) to service_role;

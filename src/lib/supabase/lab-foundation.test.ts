@@ -6,11 +6,11 @@ import { localDbAvailable } from "@/test/local-db";
 
 /**
  * The laboratory domain model at the DATABASE layer
- * (supabase/migrations/20261003000001_lab_foundation.sql): composite same-clinic integrity, lifecycle
+ * (supabase/migrations/20261003000002_lab_foundation.sql): composite same-clinic integrity, lifecycle
  * and immutability enforced by triggers, snapshots the client cannot forge, append-only versions with
  * verification, ids-only audit, no signed-in access to clinical lab tables, and no deletion paths.
  *
- * Cast: clinic A — doctors A and B, a lab operator (a clinic staff login), a manager, patients X and Y;
+ * Cast: clinic A — doctors A and B, two laboratory staff (lab, ver), a manager, a receptionist, patients X and Y;
  * clinic B — a doctor and a patient (the cross-clinic attacker's targets).
  */
 
@@ -34,7 +34,7 @@ describeDb("laboratory domain model — database layer", () => {
   const suffix = Date.now().toString(36);
   const clinicA = randomUUID();
   const clinicB = randomUUID();
-  const P = { dA: randomUUID(), dB: randomUUID(), lab: randomUUID(), mgr: randomUUID(), dK: randomUUID(), outsider: randomUUID() };
+  const P = { dA: randomUUID(), dB: randomUUID(), lab: randomUUID(), ver: randomUUID(), mgr: randomUUID(), rec: randomUUID(), dK: randomUUID(), outsider: randomUUID() };
   const D = { a: randomUUID(), b: randomUUID(), k: randomUUID() };
   const patient = { x: randomUUID(), y: randomUUID(), k: randomUUID() };
   const svcA = randomUUID();
@@ -107,7 +107,7 @@ describeDb("laboratory domain model — database layer", () => {
     });
   }
   const submit = (version: string) => svc((tx) => tx`update public.lab_result_versions set status = 'pending_verification' where id = ${version}`);
-  const verify = (version: string, by = P.mgr) =>
+  const verify = (version: string, by = P.ver) =>
     svc((tx) => tx`update public.lab_result_versions set status = 'verified', verified_by = ${by} where id = ${version}`);
 
   beforeAll(async () => {
@@ -122,7 +122,9 @@ describeDb("laboratory domain model — database layer", () => {
     await sql`insert into public.staff_roles ${sql([
       { clinic_id: clinicA, profile_id: P.dA, role: "doctor" },
       { clinic_id: clinicA, profile_id: P.dB, role: "doctor" },
-      { clinic_id: clinicA, profile_id: P.lab, role: "receptionist" },
+      { clinic_id: clinicA, profile_id: P.lab, role: "lab_staff" },
+      { clinic_id: clinicA, profile_id: P.ver, role: "lab_staff" },
+      { clinic_id: clinicA, profile_id: P.rec, role: "receptionist" },
       { clinic_id: clinicA, profile_id: P.mgr, role: "manager" },
       { clinic_id: clinicB, profile_id: P.dK, role: "doctor" },
     ])}`;
@@ -342,7 +344,7 @@ describeDb("laboratory domain model — database layer", () => {
       insert into public.lab_samples (clinic_id, order_id, patient_id, sample_type, sample_code, created_by)
       values (${clinicA}, ${o.id}, ${patient.x}, 'blood', ${`S-${randomUUID().slice(0, 8)}`}, ${P.lab}) returning id`))[0].id;
     // The server's compare-and-swap: only the row still awaiting collection moves.
-    const attempts = await Promise.all([P.lab, P.mgr, P.lab, P.mgr].map((by) =>
+    const attempts = await Promise.all([P.lab, P.ver, P.lab, P.ver].map((by) =>
       svc((tx) => tx<{ id: string }[]>`update public.lab_samples set status = 'collected', collected_by = ${by} where id = ${sample} and status = 'awaiting_collection' returning id`),
     ));
     expect(attempts.filter((rows) => rows.length === 1)).toHaveLength(1);
@@ -435,7 +437,7 @@ describeDb("laboratory domain model — database layer", () => {
     expect((await pgError(() => svc((tx) => tx`update public.lab_result_versions set status = 'verified', verified_at = '2001-01-01' where id = ${version}`))).code).toMatch(/^(23514|P0001)$/);
     await verify(version);
     const [v] = await sql<{ status: string; verified_by: string; verified_at: Date }[]>`select status, verified_by, verified_at from public.lab_result_versions where id = ${version}`;
-    expect(v).toMatchObject({ status: "verified", verified_by: P.mgr });
+    expect(v).toMatchObject({ status: "verified", verified_by: P.ver });
     expect(v.verified_at.getFullYear()).toBeGreaterThanOrEqual(2026);
     expect((await sql<{ status: string }[]>`select status from public.lab_results where id = ${result}`)[0].status).toBe("verified");
     // Every active item has a verified result: the order completed by itself.
@@ -460,7 +462,7 @@ describeDb("laboratory domain model — database layer", () => {
     expect((await pgError(() => svc((tx) => tx`insert into public.lab_result_versions (clinic_id, result_id, entered_by, corrects_version_id, correction_reason) values (${clinicA}, ${result}, ${P.lab}, ${randomUUID()}, 'typo')`))).code).toMatch(/^(23503|P0001)$/);
     const v2 = (await svc((tx) => tx<{ id: string; version: number }[]>`
       insert into public.lab_result_versions (clinic_id, result_id, entered_by, corrects_version_id, correction_reason)
-      values (${clinicA}, ${result}, ${P.mgr}, ${v1}, 'Transcription error') returning id, version`))[0];
+      values (${clinicA}, ${result}, ${P.ver}, ${v1}, 'Transcription error') returning id, version`))[0];
     expect(v2.version).toBe(2);
     await svc((tx) => tx`insert into public.lab_result_values (clinic_id, version_id, parameter_id, value_numeric, reference_range_id) values (${clinicA}, ${v2.id}, ${hbParam}, 118, ${hbRange})`);
     // Meanwhile the original is still THE verified result; a second concurrent correction is refused.
@@ -471,8 +473,8 @@ describeDb("laboratory domain model — database layer", () => {
     const versions = await sql<{ version: number; status: string; entered_by: string; verified_by: string | null }[]>`
       select version, status, entered_by, verified_by from public.lab_result_versions where result_id = ${result} order by version`;
     expect(versions).toEqual([
-      { version: 1, status: "superseded", entered_by: P.lab, verified_by: P.mgr }, // the original author and verifier are preserved
-      { version: 2, status: "verified", entered_by: P.mgr, verified_by: P.lab },
+      { version: 1, status: "superseded", entered_by: P.lab, verified_by: P.ver }, // the original author and verifier are preserved
+      { version: 2, status: "verified", entered_by: P.ver, verified_by: P.lab },
     ]);
     // The old values are still there, as they were.
     expect((await sql`select value_numeric::text as v from public.lab_result_values where version_id = ${v1}`)[0].v).toBe("132.5");
@@ -487,7 +489,7 @@ describeDb("laboratory domain model — database layer", () => {
     const o = await order([hb]);
     const { version } = await draftResult(o.items[0], o.id);
     await submit(version);
-    const attempts = await Promise.all([P.mgr, P.lab, P.mgr, P.lab].map((by) =>
+    const attempts = await Promise.all([P.ver, P.lab, P.ver, P.lab].map((by) =>
       svc((tx) => tx<{ id: string }[]>`update public.lab_result_versions set status = 'verified', verified_by = ${by} where id = ${version} and status = 'pending_verification' returning id`),
     ));
     expect(attempts.filter((rows) => rows.length === 1)).toHaveLength(1);
@@ -505,7 +507,7 @@ describeDb("laboratory domain model — database layer", () => {
       values (${clinicA}, ${o.id}, ${patient.x}, 'blood', ${`S-${randomUUID().slice(0, 8)}`}, ${P.lab}) returning id`))[0].id;
     await svc((tx) => tx`update public.lab_orders set status = 'cancelled', cancelled_by = ${P.lab}, cancel_reason = 'Ordered in error' where id = ${o.id}`);
     expect((await pgError(() => submit(version))).message).toContain("cancelled");
-    expect((await pgError(() => svc((tx) => tx`update public.lab_result_versions set status = 'verified', verified_by = ${P.mgr} where id = ${version}`))).message).toMatch(/cancelled|invalid version transition/);
+    expect((await pgError(() => svc((tx) => tx`update public.lab_result_versions set status = 'verified', verified_by = ${P.ver} where id = ${version}`))).message).toMatch(/cancelled|invalid version transition/);
     expect((await pgError(() => svc((tx) => tx`insert into public.lab_result_values (clinic_id, version_id, parameter_id, value_text) values (${clinicA}, ${version}, ${choiceParam}, 'clear')`))).message).toContain("cancelled");
     expect((await pgError(() => svc((tx) => tx`update public.lab_result_values set value_numeric = 140 where version_id = ${version} and parameter_id = ${hbParam}`))).message).toContain("cancelled");
     expect((await pgError(() => svc((tx) => tx`update public.lab_samples set status = 'collected', collected_by = ${P.lab} where id = ${sample}`))).message).toContain("cancelled");
@@ -543,6 +545,32 @@ describeDb("laboratory domain model — database layer", () => {
     await svc((tx) => tx`update public.lab_test_parameters set data_type = 'text' where id = ${fresh}`);
   });
 
+  it("only laboratory staff handle samples and results: managers, receptionists, doctors and outsiders are refused in every slot", async () => {
+    const o = await order([hb]);
+    for (const who of [P.mgr, P.rec, P.dA, P.dB, P.dK, P.outsider]) {
+      expect((await pgError(() => svc((tx) => tx`insert into public.lab_samples (clinic_id, order_id, patient_id, sample_type, sample_code, created_by) values (${clinicA}, ${o.id}, ${patient.x}, 'blood', ${`S-${randomUUID().slice(0, 8)}`}, ${who})`))).message, `sample by ${who}`).toContain("lab staff");
+    }
+    const sample = (await svc((tx) => tx<{ id: string }[]>`insert into public.lab_samples (clinic_id, order_id, patient_id, sample_type, sample_code, created_by) values (${clinicA}, ${o.id}, ${patient.x}, 'blood', ${`S-${randomUUID().slice(0, 8)}`}, ${P.lab}) returning id`))[0].id;
+    const r = (await svc((tx) => tx<{ id: string }[]>`insert into public.lab_results (clinic_id, order_item_id, order_id, patient_id) values (${clinicA}, ${o.items[0]}, ${o.id}, ${patient.x}) returning id`))[0].id;
+    for (const who of [P.mgr, P.rec, P.dA, P.dK, P.outsider]) {
+      expect((await pgError(() => svc((tx) => tx`update public.lab_samples set status = 'collected', collected_by = ${who} where id = ${sample}`))).message, `collect by ${who}`).toContain("lab staff");
+      expect((await pgError(() => svc((tx) => tx`insert into public.lab_result_versions (clinic_id, result_id, entered_by) values (${clinicA}, ${r}, ${who})`))).message, `enter by ${who}`).toContain("lab staff");
+    }
+    const o2 = await order([hb]);
+    const d = await draftResult(o2.items[0], o2.id);
+    await submit(d.version);
+    for (const who of [P.mgr, P.rec, P.dA, P.dK, P.outsider]) {
+      expect((await pgError(() => verify(d.version, who))).message, `verify by ${who}`).toContain("lab staff");
+    }
+    // The same login may enter and verify at the database level: whether a second person must verify is the clinic's setting, enforced by the server.
+    await verify(d.version, P.lab);
+    // Any staff of the clinic can still cancel an order (the ordering doctor, management, reception).
+    const o3 = await order([hb]);
+    for (const who of [P.mgr]) {
+      await svc((tx) => tx`update public.lab_orders set status = 'cancelled', cancelled_by = ${who}, cancel_reason = 'by management' where id = ${o3.id}`);
+    }
+  });
+
   // ---------- audit privacy ----------
 
   it("the audit trail carries ids and statuses only — never a value, unit, note, price or reason", async () => {
@@ -559,7 +587,7 @@ describeDb("laboratory domain model — database layer", () => {
     }
     expect(rows.every((r) => r.patient_id === null || r.patient_id === patient.x)).toBe(true);
     expect(rows.find((r) => r.action === "lab_order_created")).toMatchObject({ actor_id: P.dA, patient_id: patient.x });
-    expect(rows.find((r) => r.action === "lab_result_verified")).toMatchObject({ actor_id: P.mgr });
+    expect(rows.find((r) => r.action === "lab_result_verified")).toMatchObject({ actor_id: P.ver });
     const text = JSON.stringify(rows);
     for (const secret of ["187.25", "g/L", "Hemoglobin", "HGB", NOTE, "85000", "Complete blood count"]) expect(text, secret).not.toContain(secret);
   });

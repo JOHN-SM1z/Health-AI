@@ -127,6 +127,20 @@ describeDb("owner staff management (real database and auth)", () => {
     expect((await call(POST, "POST", { email, fullName: "Yangi Qabulxona", role: "receptionist" })).body.code).toBe("already_member");
   });
 
+  it("adds a laboratory technician: lab_staff only, no other role, and a technician cannot manage staff", async () => {
+    const res = await call(POST, "POST", { email: `lab-tech-${suffix}@test.local`, fullName: "Yangi Laborant", role: "lab_staff" });
+    expect(res.status).toBe(201);
+    const { profileId } = res.body.data as { profileId: string };
+    created.push(profileId);
+    expect(await roleOf(profileId)).toBe("lab_staff");
+    expect((await call(POST, "POST", { email: `lab-x-${suffix}@test.local`, fullName: "X Y", role: "laborant" })).status).toBe(400);
+    // The technician's own session: every staff-management action is refused.
+    session.ctx = { profileId, clinicId: clinicA, roles: ["lab_staff"], platformAdmin: false };
+    expect((await call(GET, "GET")).status).toBe(403);
+    expect((await call(POST, "POST", { email: `lab-y-${suffix}@test.local`, fullName: "X Y", role: "receptionist" })).status).toBe(403);
+    asOwner();
+  });
+
   it("never attaches another clinic's staff account, and says nothing about it", async () => {
     const res = await call(POST, "POST", { email: `reception-b-${suffix}@test.local`, fullName: "Begona", role: "admin" });
     expect(res).toMatchObject({ status: 409, body: { code: "email_unavailable" } });

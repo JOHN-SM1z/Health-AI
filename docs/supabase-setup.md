@@ -37,7 +37,7 @@ Prerequisite for a full local run: `npm run db:reset-local` (above) and a
 
 ## Migrations
 
-56 migrations in `supabase/migrations/` (ordered, repeatable on any environment; `supabase/full-db-setup.sql` is all of them as one script). The first 21:
+58 migrations in `supabase/migrations/` (ordered, repeatable on any environment; `supabase/full-db-setup.sql` is all of them as one script). The first 21:
 
 1. `0001`–`0008` — schema: clinics, profiles, staff_roles, patients, specialties,
    services, doctors, doctor_services, working hours, time blocks, appointments,
@@ -125,7 +125,19 @@ npx supabase gen types typescript --local > src/lib/supabase/database.types.ts
 ```
 
 
-### `20261003000001_lab_foundation.sql` (laboratory, phase 2)
+### `20261003000001_lab_staff_role.sql` (laboratory, phase 3)
+
+Adds the `lab_staff` value to `staff_role` (its own migration: a new enum value cannot be used in the
+transaction that adds it). Fail-closed: every route and policy lists the roles it admits, so the role gains
+nothing until named. Not reversible by migration (an enum value cannot be removed): delete the `staff_roles`
+rows and stop assigning it.
+
+### `20261003000003_lab_panel_functions.sql` (laboratory, phase 3)
+
+`lab_create_panel()` and `lab_set_panel_tests()` (service role only): a panel and its tests are written in one
+transaction, verified to belong to the clinic, so a refused test leaves no half-built panel.
+
+### `20261003000002_lab_foundation.sql` (laboratory, phase 2)
 
 The normalized laboratory domain model (decisions: `docs/labs/DECISIONS.md`, design: `docs/labs/PHASE_1_AUDIT.md`;
 no payments change, no role change, no storage bucket yet). Adds 14 tables and the `lab_*` enums, the

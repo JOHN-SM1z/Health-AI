@@ -16,10 +16,14 @@ export type StaffContext = {
 
 /**
  * Weighted role hierarchy for clinic staff:
- *   owner > admin == manager > doctor > receptionist
+ *   owner > admin == manager > doctor > receptionist > lab_staff
  * "doctor" and "receptionist" are below management: they cannot manage the
  * catalog, analytics or bot configuration. requireStaff("doctor") therefore
  * only passes for literal doctors (receptionist weight 0 < doctor weight 1).
+ * "lab_staff" (the laboratory technician) is below EVERY other role: it is
+ * not a step on the management ladder but a separate workspace, so no
+ * requireStaff(min)/hasRole(min) check — whatever min — admits it; it is
+ * admitted only where a route or policy names it (requireRoles("lab_staff")).
  */
 const ROLE_WEIGHT: Record<StaffRole, number> = {
   owner: 4,
@@ -27,6 +31,7 @@ const ROLE_WEIGHT: Record<StaffRole, number> = {
   manager: 3,
   doctor: 1,
   receptionist: 0,
+  lab_staff: -1,
 };
 
 export function roleAtLeast(roles: StaffRole[], min: StaffRole): boolean {
@@ -53,6 +58,17 @@ export function isCallCenterStaff(ctx: StaffContext | null): boolean {
 
 const ADMIN_WORKSPACE_ROLES: StaffRole[] = ["owner", "admin", "manager", "receptionist"];
 
+/** Who configures the laboratory (tests, panels, parameters, ranges, prices, workflow settings). */
+export const LAB_CONFIG_ROLES: StaffRole[] = ["owner", "admin", "manager"];
+
+/** Who may READ the laboratory catalog and settings (configuration, not clinical data). */
+export const LAB_CATALOG_READ_ROLES: StaffRole[] = ["owner", "admin", "manager", "lab_staff"];
+
+/** True when this session works in the laboratory workspace and in no other clinic workspace. */
+export function isLabOnlyStaff(ctx: StaffContext | null): boolean {
+  return !!ctx && !ctx.platformAdmin && hasAnyRole(ctx.roles, ["lab_staff"]) && !hasAnyRole(ctx.roles, [...ADMIN_WORKSPACE_ROLES, "doctor"]);
+}
+
 /**
  * Where a signed-in staff session belongs when it lands on the clinic
  * admin workspace (/admin/*): null means "this is the right place, stay
@@ -65,9 +81,9 @@ const ADMIN_WORKSPACE_ROLES: StaffRole[] = ["owner", "admin", "manager", "recept
  * them to their own working portal instead, mirroring the equivalent
  * doctor-only guard in doctor/layout.tsx.
  */
-export function adminWorkspaceRedirect(ctx: StaffContext): "/platform" | "/doctor" | null {
+export function adminWorkspaceRedirect(ctx: StaffContext): "/platform" | "/doctor" | "/lab" | null {
   if (ctx.platformAdmin) return "/platform";
-  if (!hasAnyRole(ctx.roles, ADMIN_WORKSPACE_ROLES)) return "/doctor";
+  if (!hasAnyRole(ctx.roles, ADMIN_WORKSPACE_ROLES)) return hasAnyRole(ctx.roles, ["lab_staff"]) && !hasAnyRole(ctx.roles, ["doctor"]) ? "/lab" : "/doctor";
   return null;
 }
 

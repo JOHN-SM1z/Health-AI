@@ -2749,6 +2749,23 @@ export type Database = {
         Args: { p_external_id: string; p_source: string }
         Returns: undefined
       }
+      lab_create_panel: {
+        Args: {
+          p_active: boolean
+          p_actor: string
+          p_clinic_id: string
+          p_code: string
+          p_description: string
+          p_name: string
+          p_price: number
+          p_test_ids: string[]
+        }
+        Returns: string
+      }
+      lab_set_panel_tests: {
+        Args: { p_clinic_id: string; p_panel_id: string; p_test_ids: string[] }
+        Returns: undefined
+      }
       is_clinic_staff: {
         Args: {
           p_clinic_id: string
@@ -2888,7 +2905,7 @@ export type Database = {
         | "clinical_records"
         | "audit_records"
         | "laboratory"
-      staff_role: "owner" | "manager" | "admin" | "receptionist" | "doctor"
+      staff_role: "owner" | "manager" | "admin" | "receptionist" | "doctor" | "lab_staff"
       telegram_bot_status: "disabled" | "active" | "error"
       time_block_reason: "break" | "absence" | "reservation" | "admin_hold"
       voice_status: "none" | "pending" | "transcribed" | "failed"
@@ -3124,7 +3141,7 @@ export const Constants = {
         "audit_records",
         "laboratory",
       ],
-      staff_role: ["owner", "manager", "admin", "receptionist", "doctor"],
+      staff_role: ["owner", "manager", "admin", "receptionist", "doctor", "lab_staff"],
       telegram_bot_status: ["disabled", "active", "error"],
       time_block_reason: ["break", "absence", "reservation", "admin_hold"],
       voice_status: ["none", "pending", "transcribed", "failed"],

@@ -40,6 +40,7 @@
 --   * The audit trail is ids-only and written by purpose-built triggers; the generic
 --     audit_track_changes() is deliberately NOT used (it would copy result values into audit_events).
 --
+-- (Phase 3: samples and results require the lab_staff role — 20261003000001.)
 -- Reversible: drop the tables below in reverse dependency order (lab_result_attachments,
 -- lab_result_values, lab_result_versions, lab_results, lab_sample_items, lab_samples,
 -- lab_order_items, lab_orders, lab_panel_tests, lab_panels, lab_reference_ranges,
@@ -387,6 +388,21 @@ create index lab_result_attachments_result_idx on public.lab_result_attachments 
 -- 4. Helpers
 -- ---------------------------------------------------------------------------
 
+-- Samples and results are handled by laboratory staff only (the role of 20261003000001).
+create or replace function public.lab_is_lab_staff(p_profile uuid, p_clinic uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select p_profile is not null and exists (
+    select 1 from public.staff_roles sr where sr.profile_id = p_profile and sr.clinic_id = p_clinic and sr.role = 'lab_staff'
+  );
+$$;
+revoke all on function public.lab_is_lab_staff(uuid, uuid) from public, anon, authenticated;
+
+-- Any staff member of the clinic (used where the actor only needs to belong to the clinic, e.g. cancelling an order).
 create or replace function public.lab_is_clinic_staff(p_profile uuid, p_clinic uuid)
 returns boolean
 language sql
@@ -750,8 +766,8 @@ begin
     if new.status is distinct from 'awaiting_collection' then
       raise exception 'lab sample: a sample is created awaiting collection';
     end if;
-    if not public.lab_is_clinic_staff(new.created_by, new.clinic_id) then
-      raise exception 'lab sample: created_by must be staff of the clinic';
+    if not public.lab_is_lab_staff(new.created_by, new.clinic_id) then
+      raise exception 'lab sample: created_by must be lab staff of the clinic';
     end if;
     new.collected_at := null; new.collected_by := null; new.rejected_reason := null;
     return new;
@@ -783,8 +799,8 @@ begin
     end if;
   end if;
   if new.status = 'collected' then
-    if new.collected_by is null or not public.lab_is_clinic_staff(new.collected_by, new.clinic_id) then
-      raise exception 'lab sample: collected_by must be staff of the clinic';
+    if new.collected_by is null or not public.lab_is_lab_staff(new.collected_by, new.clinic_id) then
+      raise exception 'lab sample: collected_by must be lab staff of the clinic';
     end if;
     new.collected_at := now();
   elsif new.status in ('processing', 'cancelled') then
@@ -911,8 +927,8 @@ begin
     if new.status is distinct from 'draft' then
       raise exception 'lab result: a version is created as a draft';
     end if;
-    if not public.lab_is_clinic_staff(new.entered_by, new.clinic_id) then
-      raise exception 'lab result: entered_by must be staff of the clinic';
+    if not public.lab_is_lab_staff(new.entered_by, new.clinic_id) then
+      raise exception 'lab result: entered_by must be lab staff of the clinic';
     end if;
     new.version := coalesce((select max(v.version) from public.lab_result_versions v where v.result_id = new.result_id), 0) + 1;
     new.entered_at := now();
@@ -962,8 +978,8 @@ begin
     new.verified_by := null;
     new.verified_at := null;
   elsif old.status = 'pending_verification' and new.status = 'verified' then
-    if new.verified_by is null or not public.lab_is_clinic_staff(new.verified_by, new.clinic_id) then
-      raise exception 'lab result: verified_by must be staff of the clinic';
+    if new.verified_by is null or not public.lab_is_lab_staff(new.verified_by, new.clinic_id) then
+      raise exception 'lab result: verified_by must be lab staff of the clinic';
     end if;
     new.verified_at := now();
     -- The previous verified version steps aside in the same statement (system transition).

@@ -1,4 +1,5 @@
 import { cleanupTestClinics } from "@/test/cleanup-clinics";
+import { daytimeTimezone } from "@/test/daytime-timezone";
 import { withoutGlobalSweeps } from "@/test/referral-sweep-lock";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -128,8 +129,8 @@ describeDb("department referrals — claim by acceptance, access and revocation 
   beforeAll(async () => {
     sql = postgres(DB_URL, { max: 4, onnotice: () => {} });
     await sql`insert into public.clinics ${sql([
-      { id: clinicA, name: `Department Clinic A ${suffix}`, slug: `department-a-${suffix}`, timezone: "Asia/Tashkent" },
-      { id: clinicB, name: `Department Clinic B ${suffix}`, slug: `department-b-${suffix}`, timezone: "Asia/Tashkent" },
+      { id: clinicA, name: `Department Clinic A ${suffix}`, slug: `department-a-${suffix}`, timezone: daytimeTimezone() },
+      { id: clinicB, name: `Department Clinic B ${suffix}`, slug: `department-b-${suffix}`, timezone: daytimeTimezone() },
     ])}`;
     await sql`insert into public.specialties ${sql([
       { id: specialty.general, clinic_id: clinicA, name: `Terapiya ${suffix}` },

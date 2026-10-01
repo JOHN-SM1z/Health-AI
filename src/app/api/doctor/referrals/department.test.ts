@@ -1,4 +1,5 @@
 import { cleanupTestClinics } from "@/test/cleanup-clinics";
+import { daytimeTimezone } from "@/test/daytime-timezone";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -20,7 +21,8 @@ import { localDbAvailable } from "@/test/local-db";
 
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const TZ = "Asia/Tashkent";
+// A zone where it is daytime now: walk-ins "now" stay inside one local day (the booking engine refuses a slot past local midnight).
+const TZ = daytimeTimezone();
 
 const session = vi.hoisted(() => ({ ctx: null as unknown }));
 
@@ -363,7 +365,7 @@ describeDb("department referrals — through the real routes", () => {
     as("b");
     const { POST: startConsultation } = await import("../patients/[id]/consultations/route");
     const started = await read(await startConsultation(request("POST", `/api/doctor/patients/${x.id}/consultations`, { serviceId: service }), params(x.id)));
-    expect(started.status).toBe(201);
+    expect(started.status, JSON.stringify(started.body)).toBe(201);
     expect(await row(named)).toMatchObject({ status: "in_progress", referred_to_doctor_id: doctors.b });
     // The department referral stays open for the rest of the department.
     expect(await row(department)).toMatchObject({ status: "pending", referred_to_doctor_id: null });

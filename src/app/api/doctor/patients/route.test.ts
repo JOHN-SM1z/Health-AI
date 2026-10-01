@@ -1,4 +1,5 @@
 import { cleanupTestClinics } from "@/test/cleanup-clinics";
+import { daytimeTimezone } from "@/test/daytime-timezone";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -28,7 +29,8 @@ import { localDbAvailable } from "@/test/local-db";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const ANON_KEY = process.env.SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const TZ = "Asia/Tashkent";
+// A zone where it is daytime now: walk-ins "now" stay inside one local day (the booking engine refuses a slot past local midnight).
+const TZ = daytimeTimezone();
 const PASSWORD = "AccessTest-Password-123!";
 
 const session = vi.hoisted(() => ({ ctx: null as unknown }));

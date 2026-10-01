@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { getStaffContext, hasRole } from "@/lib/auth/staff";
+import { getStaffContext, hasRole, isLabOnlyStaff } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
 import { HeartPulse, ListOrdered, CalendarRange, Send, Users, KeyRound } from "lucide-react";
@@ -11,7 +11,8 @@ export const metadata = { title: "Shifokor paneli" };
 export default async function DoctorLayout({ children }: { children: React.ReactNode }) {
   const ctx = await getStaffContext();
   if (!ctx) redirect("/login");
-  if (!hasRole(ctx, "doctor")) redirect("/admin");
+  // /admin sends a session with no admin-workspace role on to its own workspace; a lab technician goes straight there.
+  if (!hasRole(ctx, "doctor")) redirect(isLabOnlyStaff(ctx) ? "/lab" : "/admin");
 
   return (
     <div className="flex min-h-dvh bg-sand">

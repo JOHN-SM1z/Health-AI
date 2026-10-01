@@ -15,6 +15,7 @@ export const DEMO = {
   reception: "reception@e2e.local",
   manager: "manager@e2e.local",
   owner: "owner@e2e.local",
+  lab: "lab@e2e.local",
 };
 export const DEMO_NAMES = {
   referrer: "Aliyev Jasur",
@@ -105,8 +106,8 @@ export async function signIn(browser, report, email, viewport = "desktop", { exp
   const context = await browser.newContext({ viewport: VIEWPORTS[viewport], hasTouch: viewport !== "desktop", isMobile: viewport === "phone" });
   const page = await context.newPage();
   // Where a step deliberately opens forbidden pages or books a taken time, the
-  // browser's own "Failed to load resource: 404/409/410" lines are expected.
-  const expected = (text) => expectDenials && /Failed to load resource: .* (404|409|410)/.test(text);
+  // browser's own "Failed to load resource: 400/404/409/410" lines are expected.
+  const expected = (text) => expectDenials && /Failed to load resource: .* (400|404|409|410)/.test(text);
   page.on("console", (m) => m.type() === "error" && !expected(m.text()) && report.problems.push(`[${email}] console: ${m.text()}`));
   page.on("pageerror", (e) => report.problems.push(`[${email}] pageerror: ${e.message}`));
   page.on("response", (r) => r.status() >= 500 && report.problems.push(`[${email}] HTTP ${r.status()} ${r.url()}`));

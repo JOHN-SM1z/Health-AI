@@ -213,7 +213,7 @@ before production use (tracked in `TASKS.md`):
 
 ## Laboratory (phase 2: database model)
 
-`20261003000001_lab_foundation.sql`. The model only — no routes, UI, roles, payments, documents or patient
+`20261003000002_lab_foundation.sql`. The model only — no routes, UI, roles, payments, documents or patient
 delivery yet (phases 3–14, see `docs/labs/`). Everything below is enforced in the database.
 
 - **Separate concepts, separate columns.** Order status (`lab_orders`), payment status (`payments`, phase 5),
@@ -258,6 +258,39 @@ delivery yet (phases 3–14, see `docs/labs/`). Everything below is enforced in 
 
 Tests: `src/lib/supabase/lab-foundation.test.ts`. Fixtures are removed by `cleanupTestClinics()` (the lab tables
 are registered in `FIXTURE_RETENTION_TABLES`).
+
+## Laboratory access (phase 3: roles and configuration)
+
+Roles (`20261003000001`, `src/lib/auth/staff.ts`, `src/lib/labs/access.ts`):
+
+| Role | Configuration (tests, ranges, panels, prices, workflow settings) | Samples / results | Result values (clinical text) | Patients, bookings, money |
+| --- | --- | --- | --- | --- |
+| owner / admin / manager | write | no | **no** | as before |
+| lab_staff | read only | enter, collect, verify (phase 5/6 routes; DB already requires this role) | their worklist (phase 5/6) | **none** |
+| doctor | via their own ordering routes (phase 4) | no | through `doctor_patient_access()` only | as before |
+| receptionist | none | no | no | as before |
+
+- `lab_staff` has weight −1 in `ROLE_WEIGHT`: no `requireStaff(min)` / `hasRole(min)` check, whatever the minimum, admits
+  it. It is admitted only where a route or policy names it. Existing routes and RLS policies list their roles, so the
+  new role gains nothing it was not given; the only "any staff" policies are read-only configuration tables
+  (clinics, services, doctors, specialties, working hours, faqs, `app_settings`, `staff_roles`, the lab catalog).
+- The database also requires `lab_staff` for sample creation/collection and for entering/verifying results
+  (`lab_is_lab_staff()`); any staff member of the clinic can still cancel an order. Whether a *second* person must verify
+  is a per-clinic setting enforced by the server (phase 6); the database alone allows the same lab login to do both.
+- A technician is routed to `/lab` (`adminWorkspaceRedirect`, `doctor/layout`), never into a redirect loop; `/admin` and
+  `/doctor` send them back, and every other API answers 403.
+- **Configuration API** (`/api/admin/lab/{categories,tests,parameters,ranges,panels,settings}`): the clinic and the author
+  always come from the session; request schemas are `.strict()` (a body naming `clinicId`/`updatedBy` is refused); every id
+  is resolved inside the clinic and another clinic's id answers 404 exactly like a missing one; validation errors map from
+  the database's own constraints. Workflow settings live in `app_settings` key `lab` (`verification.required`,
+  `verification.separateVerifier`, `collection.requiresPayment`); a missing or damaged stored value falls back to the safe
+  defaults (verification required, no separate verifier, payment not required for collection) — never to a looser policy;
+  changes are audited (`lab_settings_changed`, the three booleans before/after).
+- **Inactive tests** cannot be newly ordered (database rule); their history stays readable. The configuration list hides
+  them unless asked (`includeInactive=1`).
+- Tests: `src/app/api/admin/lab/catalog.test.ts` (matrix, isolation, validation, settings), `src/lib/supabase/lab-rbac.test.ts`
+  (what a technician's own token can read/write), `src/lib/auth/lab-roles.test.ts`, the staff-management test, and
+  `e2e/lab-configuration.mjs` (real screens).
 
 ## Clinical records
 

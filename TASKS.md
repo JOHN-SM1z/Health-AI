@@ -2,7 +2,7 @@
 
 ## Active
 
-- [ ] **Laboratory module** (branch `feat/lab-system`, on top of PR #13) - phase 1 audit and locked decisions in `docs/labs/`; phase 2 (database model, `20261003000001`) done; next: phase 3 (lab role + configuration), then 4, 6, 7, identity layer, 5, 11, 9, 10, 8, 12, 13, 14 as ordered in `docs/labs/DECISIONS.md`
+- [ ] **Laboratory module** (branch `feat/lab-system`, on top of PR #13) - phase 1 audit and locked decisions in `docs/labs/`; phases 2 (database model) and 3 (lab role, configuration API and screens) done; next: phase 4 (doctor ordering), then 6, 7, identity layer, 5, 11, 9, 10, 8, 12, 13, 14 as ordered in `docs/labs/DECISIONS.md`
 
 ## Waiting On
 
