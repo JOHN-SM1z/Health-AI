@@ -1,3 +1,5 @@
+import { deleteAppointments } from "@/test/delete-appointments";
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
@@ -140,7 +142,7 @@ describeDb("admin patients directory (Phase 5)", () => {
           await admin.from("voice_messages").delete().eq("conversation_id", c.id);
         }
         await admin.from("conversations").delete().eq("patient_id", id);
-        await admin.from("appointments").delete().eq("patient_id", id);
+        await deleteAppointments(admin, (q) => q.eq("patient_id", id));
         await admin.from("patients").delete().eq("id", id);
       } catch {
         // best effort cleanup
@@ -148,7 +150,7 @@ describeDb("admin patients directory (Phase 5)", () => {
     }
     if (doctorId) {
       try {
-        await admin.from("appointments").delete().eq("doctor_id", doctorId);
+        await deleteAppointments(admin, (q) => q.eq("doctor_id", doctorId));
         await admin.from("doctor_working_hours").delete().eq("doctor_id", doctorId);
         await admin.from("doctors").delete().eq("id", doctorId);
       } catch {
@@ -156,11 +158,7 @@ describeDb("admin patients directory (Phase 5)", () => {
       }
     }
     if (clinicB) {
-      try {
-        await admin.from("clinics").delete().eq("id", clinicB);
-      } catch {
-        // best effort cleanup
-      }
+      await cleanupTestClinics([clinicB]);
     }
   });
 

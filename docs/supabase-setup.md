@@ -37,7 +37,7 @@ Prerequisite for a full local run: `npm run db:reset-local` (above) and a
 
 ## Migrations
 
-47 migrations in `supabase/migrations/` (ordered, repeatable on any environment; `supabase/full-db-setup.sql` is all of them as one script). The first 21:
+55 migrations in `supabase/migrations/` (ordered, repeatable on any environment; `supabase/full-db-setup.sql` is all of them as one script). The first 21:
 
 1. `0001`–`0008` — schema: clinics, profiles, staff_roles, patients, specialties,
    services, doctors, doctor_services, working hours, time blocks, appointments,
@@ -64,13 +64,84 @@ which supersedes the staff reply/upload policies of `0015`–`0021` — SECURITY
 search_path and grants, reactivation checks, clinic deletion, `urgent_at`, `purged_at`), and
 clinical record governance (`20261001000001`: versioned author-only corrections, doctor
 records that keep their authors, patient deletion that never cascades into clinical,
-referral, booking or payment records, and an empty `retention_policies`).
+referral, booking or payment records, and an empty `retention_policies`), and
+independent retention (`20261001000003`: parent deletion — a clinic, a patient with conversations, an
+appointment with a payment — is refused while retained rows exist, never cascaded), longitudinal history
+(`20261002000001`, below) and its follow-ups (`20261002000002`–`20261002000005`, after it). `20261001000002` is PR #11's care-access migration; `20261002000001` re-creates its functions and drops its `referral history for treating doctor` policy.
+
+### `20261002000001_longitudinal_history.sql`
+
+Longitudinal patient history, department referrals and registration dedupe. Applying it changes:
+
+- **Department referrals.** `referrals.referred_to_specialty_id` (composite foreign key to
+  `specialties (id, clinic_id)`) is added and `referred_to_doctor_id` becomes nullable;
+  `referrals_recipient_check` requires a doctor or a department. New indexes:
+  `referrals_one_open_per_department` (unique — one open untaken referral per patient, referring
+  doctor and department) and `referrals_unclaimed_department_idx`. `referrals_validate()` lets a
+  department referral be taken only by its `pending → accepted` acceptance (the accepting doctor must
+  belong to the department and not be the referring doctor or account); nobody can decline, start or
+  complete it while untaken. `referrals_audit()` carries the department. The receiving-doctor policy
+  also covers the department doctors of an untaken referral (never the one who raised it).
+- **The access decision.** `doctor_patient_access(p_doctor_id, p_patient_id)` is dropped and
+  re-created (service role only) with new return columns `clinic_id, own_patient,
+  active_referral_ids, full_history` — replacing `history_doctor_ids` and
+  `referral_appointment_ids`. `doctor_can_read_patient()` returns the caller's `full_history`;
+  `doctor_can_read_appointment()` (signature kept) equals it, so no policy is re-created. A doctor
+  with a treating relationship or an open referral (to them, or untaken to their department) now
+  reads the patient's whole history from the moment a referral exists.
+- **Payments.** The policy "payments read for own doctor" is dropped: a doctor's own token reads no
+  payment rows; the server shows only the payment status of the doctor's own visit.
+- **Patient identity.** `public.normalize_phone(text)` and the generated column
+  `patients.phone_normalized` (stored, so it is computed for existing rows when the migration runs),
+  with the partial index `patients_clinic_phone_normalized_idx` on `(clinic_id, phone_normalized)`.
+  Not unique. It cannot be written directly.
+- **Audit naming.** `clinical_records_audit()` writes `clinical_record_version_created` for a
+  correction; rows written earlier keep `clinical_record_corrected`. The server-written clinical
+  audit names changed with the same release (see
+  [security.md › Audit event names](security.md#audit-event-names)): reports spanning the migration
+  match both.
+
+Reversal (from the migration's header): restore each function from the LATEST earlier definition —
+`doctor_patient_access()`, `referrals_validate()` and `consultation_started_effects()` from
+`20261001000002` (the no-show rule and the follow-up of a pending referral; its signed-in SELECT
+policy on referrals, dropped here, is re-created only when rolling back past it), and
+`start_consultation()` / `start_walk_in_consultation()` from `20260930000001`; `referrals_audit()`
+and the receiving-doctor policy from `20260929000001`, `doctor_can_read_patient()` from
+`20260927000003`, `clinical_records_audit()` from `20261001000001`; re-create "payments read for
+own doctor" (`20260927000004`); drop the `referrals_catch_up_started` trigger; drop
+`referrals.referred_to_specialty_id` (after assigning or revoking department referrals), its
+constraints and indexes, and set `referred_to_doctor_id` not null again; drop
+`patients.phone_normalized`, its index and `normalize_phone()`. The application
+code of this release no longer matches a reversed schema.
+
+After adding or changing a migration, `supabase/full-db-setup.sql` is regenerated with
+`npm run db:full-setup` (it now includes this migration; `src/lib/supabase/full-db-setup.test.ts` and
+CI fail while it is stale), and the TypeScript types below are regenerated.
 
 Regenerate TypeScript types after schema changes:
 
 ```bash
 npx supabase gen types typescript --local > src/lib/supabase/database.types.ts
 ```
+
+
+### `20261002000002` – `20261002000005` (follow-ups)
+
+Apply after `20261002000001`; each is independent and reversible (the reversal is in its header comment).
+
+- **`20261002000002_patient_creation_audit.sql`** — `patients.created_by` (staff profile) and
+  `patients.created_via` (`reception`, `walk_in`, `telegram`, `website`; null for existing rows), an
+  `AFTER INSERT` trigger that writes `patient_created` and a `BEFORE DELETE` trigger that writes
+  `patient_deleted` (ids and channel, never name or phone) in the same transaction; a creator who is not staff of the patient's clinic is refused.
+- **`20261002000003_phone_normalization.sql`** — the new `normalize_phone()` rule (explicit `+`/`00` is
+  international; 7–15 digits; otherwise Uzbek national). `patients.phone_normalized` is a stored
+  generated column, so it is dropped and added again (one rewrite of `patients`) with its index.
+- **`20261002000005_referral_warning_review.sql`** — `appointments.referral_warning_reviewed_at/_by` and
+  `review_referral_warning()` (service role only): reception's "I've reviewed this" for the warning of a
+  visit booked for a revoked/declined referral; audited, the booking untouched.
+- **`20261002000004_department_referral_availability.sql`** — `department_has_receiving_doctor()`
+  (service role only) and a `BEFORE INSERT` trigger on `referrals` refusing a department referral for a
+  department with no doctor who can receive it.
 
 ## Seed data (demo clinic)
 
@@ -114,6 +185,12 @@ members there too (audited); the owner role itself is only assigned by `create-o
 - `reschedule_appointment(p_clinic_id, p_appointment_id, p_new_start_at, p_actor)`
   → `{ error_code, error_message }` — `appointment_not_found, not_reschedulable, past_slot,
   outside_working_hours, time_blocked, slot_taken`.
+- `doctor_patient_access(p_doctor_id, p_patient_id)` → `(clinic_id, own_patient,
+  active_referral_ids, full_history)` — the clinical access decision (service role only; one row for
+  an active doctor-role doctor of the patient's clinic, none otherwise); RLS reaches it through
+  `doctor_can_read_patient()` / `doctor_can_read_appointment()`. See
+  [architecture.md › Clinical access](architecture.md#clinical-access-and-the-patients-profile).
+- `normalize_phone(p_phone)` → digits for matching one number however typed (`20261002000003`): a `+` before the first digit or a leading `00` marks an international number, kept as typed; otherwise an Uzbek national number (9 digits, or 10 with a leading 8 or 0) is prefixed with `998`; NULL without digits or with fewer than 7 / more than 15 — the expression behind `patients.phone_normalized`.
 
 See [architecture.md › Booking engine](architecture.md#booking-engine-double-booking-protection)
 for the invariant and the constraint that enforces it.

@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -10,15 +11,16 @@ import { daytimeTimezone } from "@/test/daytime-timezone";
  * Clinical record governance, end to end against the local Supabase stack:
  * a doctor's record belongs to its author. Only the author corrects it — edit
  * and save, no reason — as its next version; the earlier version is kept,
- * superseded, never destroyed. A referral lets the receiving doctor READ the
- * referring doctor's records, never change them: the receiving doctor records
+ * superseded, never destroyed. Every doctor with a legitimate relationship to
+ * the patient — a treating relationship or a referral — READS the whole
+ * longitudinal history, never changes another doctor's record: they record
  * their own assessment in their own consultation. Every refusal is audited,
  * the database refuses the same things on its own, and nothing crosses
  * clinics. Only the session lookup is mocked.
  *
  * Cast: Dr A (writes the diagnosis, refers the patient), Dr B (receives the
  * referral), Dr C (same clinic, no relationship), Dr E (also saw the patient,
- * no referral), Dr K (another clinic).
+ * no referral — a treating relationship of their own), Dr K (another clinic).
  */
 
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -240,11 +242,11 @@ describeDb("clinical record governance — author-only versioned corrections", (
 
   afterAll(async () => {
     if (!admin || !clinicA) return;
-    // Deleting a clinic removes everything it owns in one statement; a
-    // patient on their own can no longer be deleted from under their records.
+    // The retained domains go explicitly (cleanupTestClinics); a patient or
+    // clinic cannot be deleted from under their records.
     for (const clinicId of [clinicA, clinicK]) {
       await admin.from("staff_roles").delete().eq("clinic_id", clinicId);
-      await admin.from("clinics").delete().eq("id", clinicId);
+      await cleanupTestClinics([clinicId]);
     }
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });
@@ -273,7 +275,7 @@ describeDb("clinical record governance — author-only versioned corrections", (
     ]);
 
     // The correction's audit row names both versions and the original author — ids and numbers only.
-    const [corrected] = await audits("clinical_record_corrected", "a");
+    const [corrected] = await audits("clinical_record_version_created", "a");
     expect(corrected).toMatchObject({
       entity_id: diagnosisV2,
       old_values: { record_id: diagnosisV1, version: 1, author_doctor_id: doctors.a, created_by: users.a },
@@ -297,12 +299,13 @@ describeDb("clinical record governance — author-only versioned corrections", (
     ]);
     // The history is read-only: its route has no write method at all.
     expect(Object.keys(historyRoute).filter((k) => ["POST", "PUT", "PATCH", "DELETE"].includes(k))).toEqual([]);
-    expect(await audits("clinical_record_history_viewed", "a")).toEqual([
-      expect.objectContaining({ entity_id: diagnosisV1, metadata: expect.objectContaining({ version_count: 2 }) }),
+    // A history read is an access-log entry of its own (the workspace reads above are logged too).
+    expect((await audits("clinical_record_viewed", "a")).filter((a) => a.metadata?.via === "history")).toEqual([
+      expect.objectContaining({ entity_id: diagnosisV1, metadata: expect.objectContaining({ via: "history", relationship: "own", version_count: 2 }) }),
     ]);
   });
 
-  it("C. a referred doctor reads the authorized history, and the read is audited as access via referral", async () => {
+  it("C. a referred doctor reads the history from the moment of the referral — no approval — and every read is audited", async () => {
     as("a");
     const created = await read(
       await createReferral(
@@ -318,20 +321,30 @@ describeDb("clinical record governance — author-only versioned corrections", (
     );
     expect(created.status).toBe(201);
     referral = (created.body.data!.referral as { id: string }).id;
+
+    // Pending, not accepted: Dr B already reads Dr A's current record — acceptance is no gate.
+    const seen = (await records("b", patient)).find((r) => r.rootRecordId === diagnosisV1);
+    expect(seen).toMatchObject({ id: diagnosisV2, summary: ULCER, author: { id: doctors.a }, mine: false });
+    const [viewed] = (await audits("clinical_record_viewed", "b")).filter((a) => a.metadata?.via === "workspace");
+    expect(viewed.metadata).toMatchObject({
+      relationship: "referred",
+      referral_ids: [referral],
+      record_ids: expect.arrayContaining([diagnosisV2]),
+      other_author_record_ids: expect.arrayContaining([diagnosisV2]),
+    });
+
     as("b");
     expect(
       (await read(await actOnReferral(request("PATCH", `/api/doctor/referrals/${referral}`, { action: "accept" }), { params: Promise.resolve({ id: referral }) })))
         .status,
     ).toBe(200);
 
-    const seen = (await records("b", patient)).find((r) => r.rootRecordId === diagnosisV1);
-    expect(seen).toMatchObject({ id: diagnosisV2, summary: ULCER, author: { id: doctors.a }, mine: false });
-    const [viaReferral] = await audits("clinical_record_accessed_via_referral", "b");
-    expect(viaReferral.metadata).toMatchObject({ record_ids: expect.arrayContaining([diagnosisV2]), referral_ids: [referral] });
-
     const res = await history("b", patient, diagnosisV2);
     expect(res.status).toBe(200);
     expect((res.body.data!.history as { versions: Version[] }).versions.map((v) => v.summary)).toEqual([GASTRITIS, ULCER]);
+    expect((await audits("clinical_record_viewed", "b")).filter((a) => a.metadata?.via === "history")).toEqual([
+      expect.objectContaining({ entity_id: diagnosisV1, metadata: expect.objectContaining({ relationship: "referred", referral_ids: [referral], author_doctor_id: doctors.a }) }),
+    ]);
   });
 
   it("B/D. another doctor — even one the patient is referred to — cannot correct the record; the refusal is audited", async () => {
@@ -345,18 +358,21 @@ describeDb("clinical record governance — author-only versioned corrections", (
     // No database detail leaks into the answer.
     const refused = await correct("b", patient, diagnosisV2, { summary: "Ulcer, per Dr B" });
     expect(JSON.stringify(refused.body)).not.toMatch(/CRNOT|clinical_records|constraint|violat/i);
-    expect(await audits("clinical_record_access_denied", "b")).toEqual(
+    expect(await audits("unauthorized_clinical_mutation_attempt", "b")).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ entity_id: diagnosisV2, metadata: expect.objectContaining({ reason: "not_owned", attempted: "correct" }) }),
       ]),
     );
 
-    // Dr E saw the patient too, but may not see Dr A's record: it does not exist for them.
-    expect(await correct("e", patient, diagnosisV2, { summary: "Ulcer, per Dr E" })).toMatchObject({ status: 404, body: { code: "record_not_found" } });
-    expect(await history("e", patient, diagnosisV2)).toMatchObject({ status: 404, body: { code: "record_not_found" } });
-    expect((await audits("clinical_record_access_denied", "e")).map((a) => a.metadata?.reason)).toEqual(["not_visible", "not_visible"]);
-    // Dr C has no relationship with the patient at all.
+    // Dr E saw the patient too — a treating relationship of their own, so the
+    // whole history is theirs to read; correcting Dr A's record still is not.
+    expect(await correct("e", patient, diagnosisV2, { summary: "Ulcer, per Dr E" })).toMatchObject({ status: 403, body: { code: "CLINICAL_RECORD_NOT_OWNED" } });
+    expect((await history("e", patient, diagnosisV2)).status).toBe(200);
+    expect((await audits("unauthorized_clinical_mutation_attempt", "e")).map((a) => a.metadata?.reason)).toEqual(["not_owned"]);
+    // Dr C has no relationship with the patient at all: nothing to read, nothing to correct, and the probe is logged.
     expect(await correct("c", patient, diagnosisV2, { summary: "Ulcer, per Dr C" })).toMatchObject({ status: 404, body: { code: "patient_not_found" } });
+    expect(await history("c", patient, diagnosisV2)).toMatchObject({ status: 404, body: { code: "patient_not_found" } });
+    expect((await audits("unauthorized_clinical_access_attempt", "c")).length).toBeGreaterThanOrEqual(2);
 
     // Nothing changed: still two versions, both Dr A's, the current one untouched.
     expect((await versionsOf(diagnosisV1)).map((v) => [v.version, v.status, v.summary, v.created_by])).toEqual([
@@ -389,17 +405,11 @@ describeDb("clinical record governance — author-only versioned corrections", (
     expect(shown.find((r) => r.id === assessment)).toMatchObject({ author: { id: doctors.b }, mine: true });
     expect(shown.find((r) => r.id === diagnosisV2)).toMatchObject({ summary: ULCER, author: { id: doctors.a }, mine: false });
 
-    // Dr A reads Dr B's record through the referral's follow-up: the access
-    // is logged against that referral — the one that released it.
+    // Dr A reads Dr B's record next to their own: attributed to Dr B, and the
+    // access log names it among the records of other authors that were shown.
     expect((await records("a", patient)).find((r) => r.id === assessment)).toMatchObject({ author: { id: doctors.b }, mine: false });
-    const [viaFollowUp] = await audits("clinical_record_accessed_via_referral", "a");
-    expect(viaFollowUp.metadata).toMatchObject({ record_ids: [assessment], referral_ids: [referral] });
-    const [{ referral_id }] = ((await admin
-      .from("audit_events")
-      .select("referral_id")
-      .eq("action", "clinical_record_accessed_via_referral")
-      .eq("actor_id", users.a)).data ?? []) as Array<{ referral_id: string | null }>;
-    expect(referral_id).toBe(referral);
+    const viewedByA = (await audits("clinical_record_viewed", "a")).filter((a) => a.metadata?.via === "workspace");
+    expect(viewedByA.at(-1)!.metadata).toMatchObject({ relationship: "own", other_author_record_ids: [assessment] });
   });
 
   it("no number of corrections pushes another doctor's record out of the list", { timeout: 60_000 }, async () => {

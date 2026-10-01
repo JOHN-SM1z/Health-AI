@@ -6,6 +6,7 @@ import { parseBody } from "@/lib/api/validate";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { trackAnalytics } from "@/lib/analytics";
 import { startConsultationInDatabase } from "@/lib/clinical-access/consultation-start";
+import { patientAccessDenied } from "@/lib/clinical-access/denial";
 
 export const dynamic = "force-dynamic";
 
@@ -18,9 +19,13 @@ type RouteContext = { params: Promise<{ id: string }> };
 /**
  * Doctor-only appointment status flow: checked_in → in_progress → completed.
  * Doctors can only act on their OWN appointments (verified server-side).
- * Starting a consultation (→ in_progress) links it to an accepted referral
- * waiting for it (the referral then moves to in progress) and is audited as
- * 'consultation_started' — one database transaction (start_consultation).
+ * Starting a consultation (→ in_progress) takes on a referral waiting for the
+ * doctor (a pending one is accepted in the same database transaction, as when
+ * starting from the patient's page), links the visit to it (the referral then moves to in progress) and is
+ * audited as 'consultation_started' — one database transaction
+ * (start_consultation). A website booking staff have not confirmed yet does
+ * not move at all: its visitor is unverified, and a doctor advancing it would
+ * make themselves the patient's treating doctor.
  */
 export async function PATCH(request: NextRequest, ctx: RouteContext) {
   try {
@@ -36,7 +41,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
     // The doctor must be linked to a doctors record in this clinic.
     const { data: doctor } = await supabase
       .from("doctors")
-      .select("id, name")
+      .select("id, name, specialty_id")
       .eq("profile_id", staff.profileId)
       .eq("clinic_id", staff.clinicId)
       .eq("active", true)
@@ -45,7 +50,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
 
     const { data: appointment, error: fetchError } = await supabase
       .from("appointments")
-      .select("id, status, doctor_id, patient_id")
+      .select("id, status, doctor_id, patient_id, source")
       .eq("id", id)
       .eq("clinic_id", staff.clinicId)
       .maybeSingle();
@@ -53,6 +58,10 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
     // an id can't be probed.
     if (fetchError || !appointment || appointment.doctor_id !== doctor.id) {
       throw new ApiError(404, "Qabul topilmadi", "appointment_not_found");
+    }
+
+    if (appointment.source === "web" && appointment.status === "pending") {
+      throw new ApiError(409, "Bu veb-bronni avval qabulxona tasdiqlashi kerak", "awaiting_confirmation");
     }
 
     // A repeated tap (the same status again) changes nothing.
@@ -67,7 +76,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
     }
 
     if (body.status === "in_progress" && appointment.status !== "in_progress") {
-      const { started } = await startConsultationInDatabase({
+      const { started, errorCode } = await startConsultationInDatabase({
         clinicId: staff.clinicId,
         appointmentId: appointment.id,
         fromStatus: appointment.status,
@@ -76,6 +85,14 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
         linkReferral: true,
         doctorId: doctor.id,
       });
+      // The database re-checked the doctor's access (and took a pending referral of theirs on) in the start's transaction.
+      if (errorCode === "access_lost") {
+        throw await patientAccessDenied(
+          { ...staff, clinicId: staff.clinicId, doctorId: doctor.id, doctorName: doctor.name, specialtyId: doctor.specialty_id },
+          appointment.patient_id,
+        );
+      }
+      if (errorCode === "awaiting_confirmation") throw new ApiError(409, "Bu veb-bronni avval qabulxona tasdiqlashi kerak", "awaiting_confirmation");
       // Someone else changed the visit in between (a concurrent start included).
       if (!started) throw new ApiError(409, "Qabul holati o‘zgargan, sahifani yangilang", "consultation_changed");
     } else {

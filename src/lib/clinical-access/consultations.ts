@@ -43,9 +43,10 @@ const WALK_IN_MESSAGES: Record<string, string> = {
  * the visit booked for them (moved to in progress), or a walk-in booked now
  * through the booking engine (working hours, time blocks and overlaps all
  * checked there). Allowed for the doctor's own patient or a patient referred
- * to them with an accepted referral; a started consultation of an accepted
- * referral becomes its follow-up and the referral moves to in progress
- * (enforced by the database). The start, the referral link and the
+ * to them (or to their department). A pending referral is not a gate: it is
+ * accepted as the consultation starts (a department referral is taken by
+ * this doctor), and the started consultation of an accepted referral becomes
+ * its follow-up with the referral in progress (enforced by the database). The start, the referral link and the
  * 'consultation_started' audit row are one database transaction. Idempotent:
  * an existing in-progress consultation with the patient is returned instead
  * of starting another.
@@ -58,11 +59,12 @@ export async function startConsultation(
   const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, patientId);
   if (!access.allowed) throw await patientAccessDenied(doctor, patientId);
   if (!canStartConsultation(access)) {
-    throw new ApiError(409, "Avval yo‘llanmani qabul qiling", "referral_not_accepted");
+    throw new ApiError(409, "Bu bemor bilan qabul boshlay olmaysiz", "consultation_not_allowed");
   }
 
   const existing = await inProgressConsultation(doctor, patientId);
   if (existing) return { appointmentId: existing, started: false };
+
 
   const supabase = createAdminClient();
   let appointmentId: string;
@@ -79,7 +81,7 @@ export async function startConsultation(
     if (error) throw new ApiError(500, "Qabulni tekshirib bo‘lmadi");
     if (!visit) throw new ApiError(404, "Qabul topilmadi", "consultation_not_found");
     if (!STARTABLE.includes(visit.status)) throw new ApiError(409, "Bu qabulni boshlab bo‘lmaydi", "invalid_transition");
-    const { started } = await startConsultationInDatabase({
+    const { started, errorCode } = await startConsultationInDatabase({
       clinicId: doctor.clinicId,
       appointmentId: visit.id,
       fromStatus: visit.status,
@@ -88,6 +90,9 @@ export async function startConsultation(
       linkReferral: true,
       doctorId: doctor.doctorId,
     });
+    // The database re-checked the doctor's access in the start's own transaction.
+    if (errorCode === "access_lost") throw await patientAccessDenied(doctor, patientId);
+    if (errorCode === "awaiting_confirmation") throw new ApiError(409, "Bu veb-bronni avval qabulxona tasdiqlashi kerak", "awaiting_confirmation");
     if (!started) {
       const raced = await inProgressConsultation(doctor, patientId);
       if (raced) return { appointmentId: raced, started: false };
@@ -106,6 +111,8 @@ export async function startConsultation(
       startAt,
       actorId: doctor.profileId,
     });
+    // The database re-checked the doctor's access in the start's own transaction.
+    if (walkIn.errorCode === "access_lost") throw await patientAccessDenied(doctor, patientId);
     if (walkIn.errorCode || !walkIn.appointmentId) {
       // A concurrent start of the same consultation wins the slot: answer with it.
       if (walkIn.errorCode === "slot_taken") {

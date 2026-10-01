@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -35,7 +36,7 @@ describeDb("voice retention — the scheduled purge on the real database", () =>
 
   afterAll(async () => {
     if (!sql) return;
-    await sql`delete from public.clinics where id = ${clinic}`;
+    await cleanupTestClinics([clinic]);
     await sql.end({ timeout: 5 });
   });
 

@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -55,7 +56,8 @@ type Referral = {
   clinic_id: string;
   patient_id: string;
   referring_doctor_id: string;
-  referred_to_doctor_id: string;
+  referred_to_doctor_id: string | null;
+  referred_to_specialty_id: string | null;
   originating_appointment_id: string;
   follow_up_appointment_id: string | null;
   creation_key: string | null;
@@ -310,15 +312,16 @@ describeDb("referrals data model (Phase 1)", () => {
   afterAll(async () => {
     if (!sql) return;
     const clinics = [clinicA, clinicB];
+    await cleanupTestClinics(clinics);
     // Dependency order: the audit triggers on appointments/staff_roles need
     // their clinic to still exist while those rows are removed.
     await sql`delete from public.referrals where clinic_id in ${sql(clinics)}`;
+    await sql`delete from public.payments where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.appointments where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.staff_roles where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.doctors where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.patients where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.services where clinic_id in ${sql(clinics)}`;
-    await sql`delete from public.clinics where id in ${sql(clinics)}`;
     await sql`delete from auth.users where id in ${sql(Object.values(profiles))}`;
     await sql.end({ timeout: 5 });
   });
@@ -539,7 +542,6 @@ describeDb("referrals data model (Phase 1)", () => {
       "clinic_id",
       "patient_id",
       "referring_doctor_id",
-      "referred_to_doctor_id",
       "originating_appointment_id",
       "reason",
       "created_by",
@@ -549,6 +551,14 @@ describeDb("referrals data model (Phase 1)", () => {
       const err = await pgError(() => insertReferral(values));
       expect(err.code).toBe("23502");
       expect(err.column_name).toBe(column);
+    });
+
+    it("requires a recipient — a doctor or a department (referred_to_doctor_id alone is no longer mandatory)", async () => {
+      const values = referralValues(await consultation());
+      delete values.referred_to_doctor_id;
+      const err = await pgError(() => insertReferral(values));
+      expect(err.code).toBe("23514");
+      expect(err.constraint_name).toBe("referrals_recipient_check");
     });
 
     it("rejects a blank or oversized reason and handoff note", async () => {
@@ -697,7 +707,7 @@ describeDb("referrals data model (Phase 1)", () => {
       const walkIn = await startConsultation(fresh);
       const later = await consultation({ doctor: doctors.receiver, patient: fresh.patient_id, status: "confirmed" });
       const err = await pgError(() => transition(fresh.id, { follow_up_appointment_id: later.appointmentId }));
-      expect(err.message).toMatch(/only be booked once the referral is accepted/);
+      expect(err.message).toMatch(/only be linked to an open handoff/);
       expect(walkIn.status).toBe("in_progress");
     });
 
@@ -931,17 +941,17 @@ describeDb("referrals data model (Phase 1)", () => {
       });
     });
 
-    it("is only possible once the referral is accepted", async () => {
+    it("schedules a pending handoff but cannot link at creation or after closure", async () => {
       const pending = await openReferral();
       const booking = await followUp(pending);
-      const early = await pgError(() => transition(pending.id, { follow_up_appointment_id: booking.appointmentId }));
-      expect(early.message).toMatch(/only be booked once the referral is accepted/);
+      await transition(pending.id, { follow_up_appointment_id: booking.appointmentId });
+      expect((await sql`select status from public.referrals where id = ${pending.id}`)[0].status).toBe("pending");
 
       const visit = await consultation();
       const atCreation = await pgError(async () =>
         insertReferral(referralValues(visit, { follow_up_appointment_id: (await followUp(pending)).appointmentId })),
       );
-      expect(atCreation.message).toMatch(/only be booked once the referral is accepted/);
+      expect(atCreation.message).toMatch(/only be linked to an open handoff/);
 
       const completed = await acceptedReferral();
       await startConsultation(completed);
@@ -949,7 +959,7 @@ describeDb("referrals data model (Phase 1)", () => {
       const late = await pgError(async () =>
         transition(completed.id, { follow_up_appointment_id: (await followUp(completed)).appointmentId }),
       );
-      expect(late.message).toMatch(/only be booked once the referral is accepted/);
+      expect(late.message).toMatch(/only be linked to an open handoff/);
     });
 
     it("must be with the receiving doctor, for the referred patient", async () => {

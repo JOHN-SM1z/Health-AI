@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -35,7 +36,7 @@ if (unavailable) process.stderr.write(`\n⚠️  consultation start database sui
 const describeDb = describe.skipIf(unavailable !== null);
 
 type Tx = postgres.TransactionSql;
-type Started = { started: boolean; referral_id: string | null };
+type Started = { started: boolean; referral_id: string | null; error_code?: string | null };
 type WalkIn = { appointment_id: string | null; error_code: string | null; referral_id: string | null };
 type AuditRow = {
   action: string;
@@ -84,7 +85,7 @@ describeDb("consultation start — one transaction, exactly once (database layer
     await sql`insert into public.patients (id, clinic_id, full_name) values (${id}, ${clinicA}, ${`Start patient ${suffix}`})`;
     return id;
   }
-  async function visit(patient: string, doctor: string, status = "checked_in") {
+  async function visit(patient: string, doctor: string, status = "checked_in", source = "walk_in") {
     const start = new Date(Date.UTC(2026, 1, 2, 5, 0) + day++ * 86_400_000);
     const [row] = await sql<{ id: string }[]>`insert into public.appointments ${sql({
       clinic_id: clinicA,
@@ -94,7 +95,7 @@ describeDb("consultation start — one transaction, exactly once (database layer
       start_at: start,
       end_at: new Date(start.getTime() + 30 * 60_000),
       status,
-      source: "walk_in",
+      source,
     })} returning id`;
     return row.id;
   }
@@ -162,13 +163,14 @@ describeDb("consultation start — one transaction, exactly once (database layer
   afterAll(async () => {
     if (!sql) return;
     const clinics = [clinicA, clinicB];
+    await cleanupTestClinics(clinics);
     await sql`delete from public.referrals where clinic_id in ${sql(clinics)}`;
+    await sql`delete from public.payments where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.appointments where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.staff_roles where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.doctors where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.patients where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.services where clinic_id in ${sql(clinics)}`;
-    await sql`delete from public.clinics where id in ${sql(clinics)}`;
     await sql`delete from auth.users where id in ${sql(Object.values(profiles))}`;
     await sql.end({ timeout: 5 });
   });
@@ -210,7 +212,8 @@ describeDb("consultation start — one transaction, exactly once (database layer
     const appointment = await visit(patient, doctors.b);
     // The route read 'checked_in'; reception cancels before the start arrives.
     await sql`update public.appointments set status = 'cancelled', cancelled_at = now() where id = ${appointment}`;
-    expect(await start(appointment, "checked_in", profiles.b, "doctor_queue", true, doctors.b)).toEqual({ started: false, referral_id: null });
+    // The cancelled visit was Dr B's only link to the patient: the start finds no relationship left and writes nothing.
+    expect(await start(appointment, "checked_in", profiles.b, "doctor_queue", true, doctors.b)).toEqual({ started: false, referral_id: null, error_code: "access_lost" });
     expect(await appointmentStatus(appointment)).toBe("cancelled");
     expect(await startedAudits(appointment)).toHaveLength(0);
   });
@@ -236,15 +239,17 @@ describeDb("consultation start — one transaction, exactly once (database layer
     expect((await startedAudits(followUp))[0]).toMatchObject({ actor_id: profiles.receptionist, referral_id: ref, metadata: { via: "front_desk" } });
   });
 
-  it("never links a pending, expired or other doctor's referral — the consultation still starts, without a referral", async () => {
-    // Pending: Dr B has not accepted it; Dr A's own visit is not its consultation either.
+  it("takes a pending referral on for the doctor who starts, never for the referrer, and never links an expired one", async () => {
+    // Pending: Dr A's own visit is not its consultation (A referred it) — nothing is taken on for A…
     const p1 = await newPatient();
     const pending = await acceptedReferral(p1, { pending: true });
     const aVisit = await visit(p1, doctors.a);
     expect(await start(aVisit, "checked_in", profiles.a, "doctor_queue", true, doctors.a)).toEqual({ started: true, referral_id: null });
-    const bVisit = await visit(p1, doctors.b);
-    expect(await start(bVisit, "checked_in", profiles.b, "doctor_queue", true, doctors.b)).toEqual({ started: true, referral_id: null });
     expect(await referral(pending)).toMatchObject({ status: "pending", follow_up_appointment_id: null });
+    // …while Dr B starting theirs takes it on, in the same transaction: accepted, linked, in progress.
+    const bVisit = await visit(p1, doctors.b);
+    expect(await start(bVisit, "checked_in", profiles.b, "doctor_queue", true, doctors.b)).toEqual({ started: true, referral_id: pending });
+    expect(await referral(pending)).toEqual({ status: "in_progress", follow_up_appointment_id: bVisit, started_by: profiles.b });
 
     // Accepted but expired by the database clock.
     await withoutGlobalSweeps(async () => {
@@ -256,6 +261,37 @@ describeDb("consultation start — one transaction, exactly once (database layer
       expect(await referral(expired)).toMatchObject({ status: "accepted", follow_up_appointment_id: null });
     });
   }, 20_000);
+
+  it("a pending referral whose follow-up reception linked: the start accepts it and it is in progress — not left 'accepted' beside a started visit", async () => {
+    const patient = await newPatient();
+    const ref = await acceptedReferral(patient, { pending: true });
+    const followUp = await visit(patient, doctors.b, "confirmed");
+    await asServer((tx) => tx`update public.referrals set follow_up_appointment_id = ${followUp} where id = ${ref}`);
+    expect(await referral(ref)).toMatchObject({ status: "pending", follow_up_appointment_id: followUp });
+
+    expect(await start(followUp, "confirmed", profiles.b, "doctor_queue", true, doctors.b)).toMatchObject({ started: true, referral_id: ref });
+    expect(await referral(ref)).toEqual({ status: "in_progress", follow_up_appointment_id: followUp, started_by: profiles.b });
+    // Both steps are in the trail, as the receiving doctor.
+    const actions = await sql<{ action: string; actor_id: string | null }[]>`
+      select action, actor_id from public.audit_events where referral_id = ${ref} and action in ('referral_accepted', 'referral_in_progress')`;
+    expect(actions.map((a) => a.action).sort()).toEqual(["referral_accepted", "referral_in_progress"]);
+    expect(actions.every((a) => a.actor_id === profiles.b)).toBe(true);
+    // The consultation can go on to completion and the referral with it.
+    await asServer((tx) => tx`update public.referrals set status = 'completed', completed_by = ${profiles.b} where id = ${ref}`);
+    expect((await referral(ref)).status).toBe("completed");
+  });
+
+  it("a pending referral whose visit the front desk started, then accepted by hand: in progress from the acceptance", async () => {
+    const patient = await newPatient();
+    const ref = await acceptedReferral(patient, { pending: true });
+    const followUp = await visit(patient, doctors.b, "confirmed");
+    await asServer((tx) => tx`update public.referrals set follow_up_appointment_id = ${followUp} where id = ${ref}`);
+    expect(await start(followUp, "confirmed", profiles.receptionist, "front_desk")).toMatchObject({ started: true });
+    // Reception's start accepts nothing for the doctor: the referral is still waiting.
+    expect((await referral(ref)).status).toBe("pending");
+    await asServer((tx) => tx`update public.referrals set status = 'accepted', accepted_by = ${profiles.b} where id = ${ref}`);
+    expect(await referral(ref)).toEqual({ status: "in_progress", follow_up_appointment_id: followUp, started_by: profiles.b });
+  });
 
   it("is all or nothing: when the audit row cannot be written, the appointment does not start", async () => {
     const patient = await newPatient();
@@ -287,7 +323,8 @@ describeDb("consultation start — one transaction, exactly once (database layer
     const appointment = await visit(patient, doctors.b);
     // Another clinic's id, or another doctor's appointment: nothing starts.
     expect(await start(appointment, "checked_in", profiles.k, "doctor_queue", true, null, clinicB)).toEqual({ started: false, referral_id: null });
-    expect(await start(appointment, "checked_in", profiles.a, "doctor_queue", true, doctors.a)).toEqual({ started: false, referral_id: null });
+    expect(await start(appointment, "checked_in", profiles.a, "doctor_queue", true, doctors.a)).toMatchObject({ started: false, referral_id: null });
+    expect(await appointmentStatus(appointment)).toBe("checked_in");
     // An actor with no role in the clinic, or an unknown channel.
     expect((await pgError(() => start(appointment, "checked_in", profiles.k, "front_desk"))).message).toContain("not staff of this clinic");
     expect((await pgError(() => start(appointment, "checked_in", profiles.b, "patient_app"))).message).toContain("unknown start channel");
@@ -309,6 +346,92 @@ describeDb("consultation start — one transaction, exactly once (database layer
     }
     expect(await startedAudits(appointment)).toHaveLength(0);
   });
+
+  it("a doctor cannot start a website booking staff have not confirmed — reception can; nothing is taken on meanwhile", async () => {
+    const patient = await newPatient();
+    const pending = await acceptedReferral(patient, { pending: true });
+    const web = await visit(patient, doctors.b, "pending", "web");
+    for (const via of ["doctor_queue", "doctor_workspace"]) {
+      expect(await start(web, "pending", profiles.b, via, true, doctors.b)).toEqual({ started: false, referral_id: null, error_code: "awaiting_confirmation" });
+    }
+    expect(await appointmentStatus(web)).toBe("pending");
+    expect(await referral(pending)).toMatchObject({ status: "pending", follow_up_appointment_id: null });
+    expect(await startedAudits(web)).toHaveLength(0);
+
+    // Reception has seen the visitor: their start goes through.
+    expect(await start(web, "pending", profiles.receptionist, "front_desk")).toMatchObject({ started: true });
+    expect(await appointmentStatus(web)).toBe("in_progress");
+  });
+
+  it("a doctor's channel start must come from that doctor's own login", async () => {
+    const patient = await newPatient();
+    const appointment = await visit(patient, doctors.b);
+    // Dr A naming Dr B, or starting Dr B's appointment without naming anyone.
+    for (const doctor of [doctors.b, null]) {
+      const error = await pgError(() => start(appointment, "checked_in", profiles.a, "doctor_workspace", true, doctor));
+      expect(error.message).toContain("a doctor starts their own consultation");
+    }
+    expect(await appointmentStatus(appointment)).toBe("checked_in");
+    expect(await startedAudits(appointment)).toHaveLength(0);
+  });
+
+  it("two doctor starts racing over a pending referral: one starts, the referral ends up accepted, linked and in progress — no error", async () => {
+    const patients = await Promise.all(Array.from({ length: 5 }, newPatient));
+    const cases = await Promise.all(
+      patients.map(async (patient) => ({ patient, ref: await acceptedReferral(patient, { pending: true }), appointment: await visit(patient, doctors.b) })),
+    );
+    const outcomes = await Promise.all(
+      cases.map(async (c) => ({
+        c,
+        results: await Promise.all([
+          start(c.appointment, "checked_in", profiles.b, "doctor_queue", true, doctors.b),
+          start(c.appointment, "checked_in", profiles.b, "doctor_workspace", true, doctors.b),
+        ]),
+      })),
+    );
+    for (const { c, results } of outcomes) {
+      expect(results.filter((r) => r.started)).toHaveLength(1);
+      expect(await referral(c.ref)).toEqual({ status: "in_progress", follow_up_appointment_id: c.appointment, started_by: profiles.b });
+      expect(await startedAudits(c.appointment)).toHaveLength(1);
+    }
+  }, 30_000);
+
+  it("walk-in: a referral revoked between the access check and the booking rolls the whole walk-in back (CALST)", async () => {
+    const patient = await newPatient();
+    // Dr B's only way in is this referral.
+    const ref = await acceptedReferral(patient, { pending: true });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let revoked!: () => void;
+    const revokedRow = new Promise<void>((resolve) => (revoked = resolve));
+    // The referring doctor revokes; the change stays uncommitted (row locked) until the walk-in has booked and is waiting on it.
+    const revoking = as("service_role", null, async (tx) => {
+      await tx`update public.referrals set status = 'revoked', revoked_by = ${profiles.a}, revoked_reason = 'Referred in error' where id = ${ref}`;
+      revoked();
+      await gate;
+    });
+    await revokedRow;
+    const attempt = walkIn(patient).then(
+      (value) => ({ value, error: null as postgres.PostgresError | null }),
+      (error) => ({ value: null, error: error as postgres.PostgresError }),
+    );
+    // Wait until the walk-in is blocked on the referral's row lock (it has passed its access check and booked).
+    for (let i = 0; i < 100; i++) {
+      const [waiting] = await sql<{ n: number }[]>`
+        select count(*)::int as n from pg_stat_activity
+         where wait_event_type = 'Lock' and query like '%start_walk_in_consultation%' and pid <> pg_backend_pid()`;
+      if (waiting.n > 0) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    release();
+    await revoking;
+    const { error } = await attempt;
+    expect(error?.code).toBe("CALST");
+    // The booking went with it: no appointment, no consultation audit, and the referral stays revoked.
+    expect((await sql`select count(*)::int as n from public.appointments where patient_id = ${patient} and doctor_id = ${doctors.b}`)[0].n).toBe(0);
+    expect((await sql`select count(*)::int as n from public.audit_events where action = 'consultation_started' and patient_id = ${patient}`)[0].n).toBe(0);
+    expect((await referral(ref)).status).toBe("revoked");
+  }, 20_000);
 
   it("walk-in: booked in progress through the booking engine, linked and audited together — or not at all", async () => {
     const patient = await newPatient();

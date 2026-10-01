@@ -16,7 +16,12 @@ export async function GET() {
       .from("referrals")
       .select("id", { count: "exact", head: true })
       .eq("clinic_id", doctor.clinicId)
-      .eq("referred_to_doctor_id", doctor.doctorId)
+      // Addressed to the doctor, or to their department while nobody has taken it (never one they raised).
+      .or(
+        doctor.specialtyId
+          ? `referred_to_doctor_id.eq.${doctor.doctorId},and(referred_to_doctor_id.is.null,referred_to_specialty_id.eq.${doctor.specialtyId},referring_doctor_id.neq.${doctor.doctorId})`
+          : `referred_to_doctor_id.eq.${doctor.doctorId}`,
+      )
       .eq("status", "pending")
       .gt("expires_at", new Date().toISOString());
     if (error) throw error;

@@ -5,27 +5,28 @@ import { logger } from "@/lib/logger";
 import type { Database } from "@/lib/supabase/database.types";
 
 /**
- * Referral-based authorization of a doctor's access to a patient's clinical
- * data. Working in the same clinic grants nothing by itself: a doctor sees a
- * patient only through
+ * A doctor's access to a patient's clinical data. The patient's clinical
+ * history is longitudinal — it belongs to the patient's clinic record — and a
+ * doctor with a legitimate clinical relationship sees all of it (every
+ * doctor's consultations and records) without asking anyone:
  *
- *   A. their own relationship — an appointment with the patient: the
- *      patient record and their own appointments with the patient;
- *   B. an active referral to them — pending or accepted and not past
- *      expires_at: the patient record and the consultation the referral
- *      came from, plus (once accepted) the patient's appointments with the
- *      referring doctor;
- *   C. otherwise nothing, and nothing ever in another clinic.
+ *   A. a treating relationship — any appointment with the patient that was
+ *      neither cancelled nor a no-show (past, today or booked), or a record
+ *      the doctor wrote;
+ *   B. an open referral — pending, accepted or in progress and not past
+ *      expires_at — to the doctor, or to the doctor's department while no
+ *      doctor has taken it. Acceptance is a care step, never a gate;
+ *   C. otherwise nothing: working in the same clinic grants nothing by
+ *      itself, and nothing ever crosses clinics.
  *
- * Only active doctor records count. A referring doctor also sees the
- * follow-up appointment booked for their referral.
+ * Seeing a record never makes it the reader's: only its author corrects it
+ * (src/lib/clinical-records/service.ts). Payments, conversations, staff and
+ * clinic administration are outside every doctor's clinical scope.
  *
- * The decision itself is public.doctor_patient_access() (see
- * supabase/migrations/20260927000003_referral_clinical_access.sql and
- * 20260927000004_clinical_access_hardening.sql), the same
- * function the patients/appointments RLS policies use, so the server and
- * direct database access can never disagree. Payments, conversations,
- * messages and voice notes are outside every doctor's clinical scope.
+ * The decision itself is public.doctor_patient_access()
+ * (supabase/migrations/20261002000001_longitudinal_history.sql), the same
+ * function the patients/appointments/clinical_records RLS policies use, so
+ * the server and direct database access can never disagree.
  */
 
 export type ClinicalRelationship = "own" | "referred" | "none";
@@ -34,17 +35,9 @@ export type ClinicalAccess = {
   /** A (own), B (referred) or C (none); "own" wins when both apply. */
   relationship: ClinicalRelationship;
   allowed: boolean;
-  scope: {
-    /** The patient record: name, phone, language. */
-    patientRecord: boolean;
-    /** The doctor's own appointments with the patient. */
-    ownAppointments: boolean;
-    /** Doctors whose appointments with the patient accepted referrals share. */
-    sharedHistoryDoctorIds: string[];
-    /** Appointments a referral links to: its consultation (receiver), its follow-up (referrer). */
-    referralAppointmentIds: string[];
-  };
-  /** Active (pending or accepted, unexpired) referrals of the patient to this doctor. */
+  /** The patient's whole clinical history in the clinic: every doctor's visits and records. */
+  fullHistory: boolean;
+  /** Open referrals of the patient to this doctor (or, untaken, to their department). */
   activeReferralIds: string[];
 };
 
@@ -53,50 +46,19 @@ type AccessRow = Database["public"]["Functions"]["doctor_patient_access"]["Retur
 export const NO_CLINICAL_ACCESS: ClinicalAccess = Object.freeze({
   relationship: "none",
   allowed: false,
-  scope: Object.freeze({
-    patientRecord: false,
-    ownAppointments: false,
-    sharedHistoryDoctorIds: [] as string[],
-    referralAppointmentIds: [] as string[],
-  }),
+  fullHistory: false,
   activeReferralIds: [] as string[],
 }) as ClinicalAccess;
 
 /** Maps the database decision to the server's shape; no row means no access. */
 export function toClinicalAccess(row: AccessRow | null | undefined): ClinicalAccess {
-  if (!row) return NO_CLINICAL_ACCESS;
-  const referred = row.active_referral_ids.length > 0;
-  const relationship: ClinicalRelationship = row.own_patient ? "own" : referred ? "referred" : "none";
-  if (relationship === "none") return NO_CLINICAL_ACCESS;
+  if (!row || !row.full_history) return NO_CLINICAL_ACCESS;
   return {
-    relationship,
+    relationship: row.own_patient ? "own" : "referred",
     allowed: true,
-    scope: {
-      patientRecord: true,
-      ownAppointments: row.own_patient,
-      sharedHistoryDoctorIds: [...row.history_doctor_ids],
-      referralAppointmentIds: [...row.referral_appointment_ids],
-    },
+    fullHistory: true,
     activeReferralIds: [...row.active_referral_ids],
   };
-}
-
-/**
- * Whether an appointment of the patient falls inside `access` for
- * `doctorId` — the same rule as the appointments RLS policy
- * (doctor_can_read_appointment).
- */
-export function canSeeAppointment(
-  access: ClinicalAccess,
-  doctorId: string,
-  appointment: { id: string; doctorId: string },
-): boolean {
-  if (!access.allowed) return false;
-  return (
-    (access.scope.ownAppointments && appointment.doctorId === doctorId) ||
-    access.scope.sharedHistoryDoctorIds.includes(appointment.doctorId) ||
-    access.scope.referralAppointmentIds.includes(appointment.id)
-  );
 }
 
 /**

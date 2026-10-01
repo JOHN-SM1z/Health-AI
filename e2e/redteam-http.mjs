@@ -141,7 +141,8 @@ async function run() {
     {
       const b = await session(browser, DEMO.receiver);
       const ws = await b.api("GET", `/api/doctor/patients/${X}`);
-      check(ws.status === 200 && !ws.text.includes(yVisit), "receiver opens the referred patient (pending: originating consultation only)");
+      // A referral is a handoff, not a permission request: pending, it already shows the patient's whole history — and only that patient's.
+      check(ws.status === 200 && ws.text.includes(xVisit) && !ws.text.includes(yVisit), "receiver opens the referred patient (pending: the patient's history, nobody else's)");
       expectStatus(await b.api("GET", `/api/doctor/patients/${Y}`), [404], "another patient's ID");
       expectStatus(await b.api("GET", `/api/doctor/patients/${Z}`), [404], "another clinic's patient ID");
       expectStatus(await b.api("GET", `/api/doctor/patients/${Z}?clinicId=${clinicB}`, undefined, { "x-clinic-id": clinicB }), [404], "clinic override in query/header");
@@ -155,7 +156,9 @@ async function run() {
         [404],
         "write into an unrelated patient",
       );
-      expectStatus(await b.api("POST", `/api/doctor/patients/${X}/consultations`, { serviceId: receiverService }), [409], "start before accepting (client state ignored)");
+      // A pending referral no longer gates the consultation (none is started for X here: the
+      // revocation below must end referral-only access); without any relationship it is refused.
+      expectStatus(await b.api("POST", `/api/doctor/patients/${Y}/consultations`, { serviceId: receiverService }), [404], "start a consultation with an unrelated patient");
       expectStatus(
         await b.api("POST", "/api/doctor/referrals", { idempotencyKey: randomUUID(), appointmentId: zVisit, referredToDoctorId: k, reason: "Cross-clinic referral attempt", priority: "routine", clinicId: clinicB }),
         [404],

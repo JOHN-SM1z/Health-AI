@@ -52,7 +52,10 @@ async function run() {
     const temporary = (await owner.getByTestId("temporary-password").textContent())?.trim() ?? "";
     check(temporary.length >= 12, "the one-time password is shown to the owner once");
     await owner.screenshot({ path: `${SHOTS}/staff-added.png`, fullPage: true });
-    check(await owner.getByText(email, { exact: true }).isVisible(), "the new receptionist is listed with their sign-in email");
+    check(
+      await owner.getByText(email, { exact: true }).waitFor({ timeout: 10_000 }).then(() => true, () => false),
+      "the new receptionist is listed with their sign-in email",
+    );
 
     // ---------- The receptionist signs in and changes the password (phone) ----------
     const { context: newContext, page: newcomer } = await login(browser, email, temporary, "phone");
@@ -132,9 +135,11 @@ async function run() {
       priority: "routine",
       created_by: referrer.profile_id,
     })}`;
+    // Addressed to the doctor, or to their department while no doctor has taken it.
     const [{ pending }] = await db`
       select count(*)::int as pending from public.referrals r
-        join public.doctors d on d.id = r.referred_to_doctor_id
+        join public.doctors d on d.clinic_id = r.clinic_id
+         and (d.id = r.referred_to_doctor_id or (r.referred_to_doctor_id is null and r.referred_to_specialty_id = d.specialty_id))
         join auth.users u on u.id = d.profile_id
        where u.email = ${DEMO.receiver} and r.status = 'pending' and r.expires_at > now()`;
     const { context: doctorContext, page: doctor } = await signIn(browser, report, DEMO.receiver, "desktop");

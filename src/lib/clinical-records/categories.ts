@@ -2,7 +2,7 @@ import type { Database } from "@/lib/supabase/database.types";
 
 /**
  * How a clinical record reads in a handoff. The record itself never changes
- * (clinical_records is immutable); what changes is where it stands for the
+ * (clinical_records is append-only: a correction is a new version by the author); what changes is where it stands for the
  * doctor looking at it:
  *
  *   current     — written in that doctor's consultation under way;

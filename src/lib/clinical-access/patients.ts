@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/api/errors";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 
 /**
- * The patients a doctor may open: their own (a live — not cancelled —
+ * The patients a doctor may open: their own (a live — not cancelled/no-show —
  * appointment with them, or a record they wrote) and those actively referred
  * to them (pending, accepted or in progress, unexpired) — the same
  * rule as public.doctor_patient_access(), so every patient listed here opens
@@ -44,10 +44,11 @@ export async function listDoctorPatients(doctor: LinkedDoctor, query: string): P
   const [visitsRes, authoredRes, referralsRes] = await Promise.all([
     supabase
       .from("appointments")
-      .select("patient_id, start_at, status")
+      .select("patient_id, start_at, status, source")
       .eq("clinic_id", doctor.clinicId)
       .eq("doctor_id", doctor.doctorId)
       .neq("status", "cancelled")
+      .neq("status", "no_show")
       .order("start_at", { ascending: false })
       .limit(MAX_VISITS_SCANNED),
     supabase
@@ -60,7 +61,12 @@ export async function listDoctorPatients(doctor: LinkedDoctor, query: string): P
       .from("referrals")
       .select("id, patient_id, status, created_at, referring:doctors!referrals_referring_doctor_same_clinic_fkey(name)")
       .eq("clinic_id", doctor.clinicId)
-      .eq("referred_to_doctor_id", doctor.doctorId)
+      // To the doctor, or to their department while nobody has taken it.
+      .or(
+        doctor.specialtyId
+          ? `referred_to_doctor_id.eq.${doctor.doctorId},and(referred_to_doctor_id.is.null,referred_to_specialty_id.eq.${doctor.specialtyId},status.eq.pending,referring_doctor_id.neq.${doctor.doctorId})`
+          : `referred_to_doctor_id.eq.${doctor.doctorId}`,
+      )
       .in("status", ["pending", "accepted", "in_progress"])
       .gt("expires_at", new Date().toISOString())
       .order("created_at", { ascending: false }),
@@ -71,6 +77,8 @@ export async function listDoctorPatients(doctor: LinkedDoctor, query: string): P
   const own = new Set<string>((authoredRes.data ?? []).map((r) => r.patient_id));
   const lastVisit = new Map<string, string>();
   for (const v of visitsRes.data ?? []) {
+    // A website booking nobody has confirmed is no treating relationship (as in the decision).
+    if (v.source === "web" && v.status === "pending") continue;
     own.add(v.patient_id);
     if (!lastVisit.has(v.patient_id) && VISITED.includes(v.status)) lastVisit.set(v.patient_id, v.start_at);
   }

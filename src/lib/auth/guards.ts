@@ -33,7 +33,13 @@ export async function requireRoles(...roles: StaffRole[]): Promise<StaffContext 
   return ctx as StaffContext & { clinicId: string };
 }
 
-export type LinkedDoctor = StaffContext & { clinicId: string; doctorId: string; doctorName: string };
+export type LinkedDoctor = StaffContext & {
+  clinicId: string;
+  doctorId: string;
+  doctorName: string;
+  /** The doctor's department (specialty) — department referrals wait for its doctors. */
+  specialtyId: string | null;
+};
 
 /**
  * A doctor acting as themselves: holds the doctor role itself in the
@@ -44,14 +50,14 @@ export async function requireLinkedDoctor(): Promise<LinkedDoctor> {
   const ctx = await requireRoles("doctor");
   const { data: doctor, error } = await createAdminClient()
     .from("doctors")
-    .select("id, name")
+    .select("id, name, specialty_id")
     .eq("profile_id", ctx.profileId)
     .eq("clinic_id", ctx.clinicId)
     .eq("active", true)
     .maybeSingle();
   if (error) throw new ApiError(500, "Shifokor hisobini tekshirib bo‘lmadi");
   if (!doctor) throw new ApiError(403, "Sizning shifokor hisobingiz topilmadi", "doctor_not_linked");
-  return { ...ctx, doctorId: doctor.id, doctorName: doctor.name };
+  return { ...ctx, doctorId: doctor.id, doctorName: doctor.name, specialtyId: doctor.specialty_id };
 }
 
 /** Platform staff only (Health AI platform administration). */

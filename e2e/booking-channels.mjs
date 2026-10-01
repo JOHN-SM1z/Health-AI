@@ -23,6 +23,10 @@ const { check } = report;
 const db = connect();
 const suffix = Date.now().toString(36);
 const UNAVAILABLE = "Bu vaqt endi bo‘sh emas. Iltimos, boshqa vaqtni tanlang.";
+// Each walk-in is a different person with a number of their own, new every run: a number
+// already on a patient of the clinic is offered back as a possible duplicate before any slot check.
+const RUN_DIGITS = String(Date.now()).slice(-7);
+const WALK_IN_PHONES = [`+99897${RUN_DIGITS}`, `+99898${RUN_DIGITS}`];
 
 /** The slot's button: its day's grid (days render in slot order), then its time. */
 function slotButton(page, slots, slot) {
@@ -72,15 +76,15 @@ async function run() {
       await reception.getByRole("button", { name: "Tezkor yozish" }).click();
       await reception.getByLabel("Bemor ismi").waitFor();
     };
-    const fillModal = async (name, slot) => {
+    const fillModal = async (name, phone, slot) => {
       await reception.getByLabel("Bemor ismi").fill(name);
-      await reception.getByLabel("Telefon").fill("+998907778899");
+      await reception.getByLabel("Telefon").fill(phone);
       await reception.getByLabel("Xizmat").selectOption({ label: DEMO_NAMES.generalService });
       await reception.getByLabel("Shifokor").selectOption({ label: DEMO_NAMES.referrer });
       await reception.locator("#qb-start").fill(`${slot.dayLocal}T${slot.startLocal}`);
     };
     await openModal();
-    await fillModal(`Qabulxona Bemor ${suffix}`, target);
+    await fillModal(`Qabulxona Bemor ${suffix}`, WALK_IN_PHONES[0], target);
     await reception.getByRole("button", { name: "Yozish", exact: true }).click();
     await reception.getByLabel("Bemor ismi").waitFor({ state: "detached" });
     const afterReception = await active(target.start);
@@ -109,7 +113,7 @@ async function run() {
 
     // ---------- Reception tries the patient's time: refused inside the modal ----------
     await openModal();
-    await fillModal(`Kech qolgan ${suffix}`, second);
+    await fillModal(`Kech qolgan ${suffix}`, WALK_IN_PHONES[1], second);
     await reception.getByRole("button", { name: "Yozish", exact: true }).click();
     await reception.getByText(UNAVAILABLE).waitFor();
     check(await reception.getByLabel("Bemor ismi").isVisible(), "reception sees 'no longer available' in the open modal, to pick another time");

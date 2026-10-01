@@ -3,10 +3,13 @@
 export class AdminApiError extends Error {
   status: number;
   code?: string;
-  constructor(status: number, message: string, code?: string) {
+  /** Safe structured extras from the server (e.g. the matching patients of a possible duplicate). */
+  details?: Record<string, unknown>;
+  constructor(status: number, message: string, code?: string, details?: Record<string, unknown>) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -18,7 +21,7 @@ async function request<T>(path: string, method: string, body?: unknown): Promise
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new AdminApiError(res.status, data?.error ?? "Xatolik yuz berdi", data?.code);
+    throw new AdminApiError(res.status, data?.error ?? "Xatolik yuz berdi", data?.code, data?.details);
   }
   // Server responses are wrapped in { ok: true, data }; unwrap so callers
   // receive the payload directly.
@@ -35,6 +38,33 @@ export const adminApi = {
   put: <T>(path: string, body?: unknown) => request<T>(path, "PUT", body),
   del: <T>(path: string) => request<T>(path, "DELETE"),
 };
+
+export type ReferralBookingWarning = "REFERRAL_REVOKED" | "REFERRAL_DECLINED";
+
+export const REFERRAL_WARNING_LABELS: Record<ReferralBookingWarning, string> = {
+  REFERRAL_REVOKED: "Yo‘llanma bekor qilingan",
+  REFERRAL_DECLINED: "Yo‘llanma rad etilgan",
+};
+
+export const REFERRAL_WARNING_HINT =
+  "Qabul saqlanadi: u bemor bilan shifokorning davolash munosabatini belgilaydi. Qabulxona ko‘rib chiqib, kerak bo‘lsa bekor qilsin yoki boshqa vaqtga ko‘chirsin.";
+
+/** "I've reviewed this": the warning goes, the booking stays (who and when are recorded). */
+export const reviewReferralWarning = (appointmentId: string) =>
+  adminApi.post<{ reviewed: boolean }>(`/api/admin/appointments/${appointmentId}/referral-warning`);
+
+/** Appointments (of those given) booked for a referral that was revoked or declined and have not started. */
+export async function fetchReferralWarnings(ids: string[]): Promise<Record<string, ReferralBookingWarning>> {
+  if (!ids.length) return {};
+  try {
+    const res = await adminApi.get<{ warnings: Record<string, ReferralBookingWarning> }>(
+      `/api/admin/appointments/referral-warnings?ids=${ids.slice(0, 100).join(",")}`,
+    );
+    return res.warnings ?? {};
+  } catch {
+    return {};
+  }
+}
 
 export const STATUS_LABELS: Record<string, string> = {
   pending: "Kutilmoqda",

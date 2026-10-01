@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -6,14 +7,15 @@ import { localDbAvailable } from "@/test/local-db";
 
 /**
  * The clinical handoff, end to end against the local Supabase stack: Doctor A
- * refers their patient to Doctor B, who reviews the authorized history,
- * accepts, starts their own consultation, documents it and completes the
+ * refers their patient to Doctor B, who has the patient's whole history from
+ * the moment the referral exists (no approval), accepts, starts their own
+ * consultation, documents it and completes the
  * referral — PENDING → ACCEPTED → IN_PROGRESS → COMPLETED, or DECLINED.
  * Only the session lookup is mocked; every rule (routes, services, RLS-backed
  * decision, triggers, audit) runs for real.
  *
- * Cast: Dr A (referring), Dr B (receiving), Dr E (also saw the patient — never
- * shared), a receptionist.
+ * Cast: Dr A (referring), Dr B (receiving), Dr E (also saw the patient — their
+ * record is part of the longitudinal history too), a receptionist.
  */
 
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -31,6 +33,7 @@ vi.mock("@/lib/auth/staff", async (importOriginal) => {
 import { GET as getWorkspace } from "./[id]/route";
 import { POST as addRecord } from "./[id]/records/route";
 import { POST as startConsultation } from "./[id]/consultations/route";
+import { GET as listPatients } from "./route";
 import { POST as createReferral, GET as listReferrals } from "../referrals/route";
 import { GET as getReferral, PATCH as actOnReferral } from "../referrals/[id]/route";
 import { PATCH as doctorAppointmentStatus } from "../appointments/[id]/route";
@@ -169,7 +172,7 @@ describeDb("clinical handoff workflow", () => {
     );
   }
 
-  async function visit(patientId: string, doctor: string, status = "completed") {
+  async function visit(patientId: string, doctor: string, status = "completed", source = "walk_in") {
     const startTime = new Date(Date.UTC(2026, 0, 5, 5, 0) + slot++ * 86_400_000);
     const { data, error } = await admin
       .from("appointments")
@@ -181,7 +184,7 @@ describeDb("clinical handoff workflow", () => {
         start_at: startTime.toISOString(),
         end_at: new Date(startTime.getTime() + 30 * 60_000).toISOString(),
         status,
-        source: "walk_in",
+        source,
       })
       .select("id")
       .single();
@@ -207,14 +210,14 @@ describeDb("clinical handoff workflow", () => {
     return { id, earlier, consultation, withE, history, diagnosis, prescription, eRecord };
   }
 
-  async function refer(x: { consultation: string }) {
+  async function refer(x: { consultation: string }, to = doctors.b) {
     as("a");
     const res = await read(
       await createReferral(
         request("POST", "/api/doctor/referrals", {
           idempotencyKey: randomUUID(),
           appointmentId: x.consultation,
-          referredToDoctorId: doctors.b,
+          referredToDoctorId: to,
           reason: REASON,
           handoffNote: NOTE,
           priority: "urgent",
@@ -254,7 +257,7 @@ describeDb("clinical handoff workflow", () => {
     await admin.from("staff_roles").delete().eq("clinic_id", clinicA);
     await admin.from("doctors").delete().eq("clinic_id", clinicA);
     await admin.from("services").delete().eq("clinic_id", clinicA);
-    await admin.from("clinics").delete().eq("id", clinicA);
+    await cleanupTestClinics([clinicA]);
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });
 
@@ -263,24 +266,26 @@ describeDb("clinical handoff workflow", () => {
     const diagnosisBefore = (await admin.from("clinical_records").select("*").eq("id", x.diagnosis).single()).data;
     const referral = await refer(x);
 
-    // 1. Pending: Dr B reviews what the referral authorizes — the consultation it came from.
+    // 1. Pending: Dr B has the whole longitudinal history at once — every doctor's records, each attributed to its author.
+    const everyRecord = [x.history, x.diagnosis, x.prescription, x.eRecord].sort();
     const pending = await ws("b", x.id);
-    expect(pending).toMatchObject({ relationship: "referred", consultation: { current: null, canStartWalkIn: false, blockedReason: "referral_pending" } });
-    expect(pending.records.map((r) => r.id).sort()).toEqual([x.diagnosis, x.prescription].sort());
+    expect(pending).toMatchObject({ relationship: "referred", consultation: { current: null, canStartWalkIn: true } });
+    expect(pending.consultation).not.toHaveProperty("blockedReason");
+    expect(pending.records.map((r) => r.id).sort()).toEqual(everyRecord);
     expect(pending.records.find((r) => r.id === x.diagnosis)).toMatchObject({
       author: { id: doctors.a },
       mine: false,
       stage: "historical",
       category: "historical_diagnosis",
     });
-    expect(await start("b", x.id, { serviceId: quickService })).toMatchObject({ status: 409, body: { code: "referral_not_accepted" } });
+    expect(pending.records.find((r) => r.id === x.eRecord)).toMatchObject({ author: { id: doctors.e }, mine: false });
 
-    // 2. Accept (audited), then the authorized history: all of Dr A's records, as Dr A's — never Dr E's.
+    // 2. Accept (audited): a care step, not a gate — the view of the history is exactly the same.
     expect(await act("b", referral, { action: "accept" })).toMatchObject({ status: 200, body: { data: { status: "accepted" } } });
     const accepted = await ws("b", x.id);
-    expect(accepted.records.map((r) => r.id).sort()).toEqual([x.history, x.diagnosis, x.prescription].sort());
-    expect(accepted.records.every((r) => r.author.id === doctors.a && !r.mine && r.stage === "historical")).toBe(true);
-    expect(accepted.records.map((r) => r.id)).not.toContain(x.eRecord);
+    expect(accepted.records.map((r) => r.id).sort()).toEqual(everyRecord);
+    expect(accepted.records.every((r) => !r.mine && r.stage === "historical")).toBe(true);
+    expect(accepted.records.filter((r) => r.author.id === doctors.a).map((r) => r.id).sort()).toEqual([x.history, x.diagnosis, x.prescription].sort());
     // Completing before seeing the patient is neither offered nor accepted.
     expect((await detail("b", referral)).body.data!.referral).toMatchObject({ status: "accepted", allowedActions: [] });
     expect(await act("b", referral, { action: "complete" })).toMatchObject({ status: 409, body: { code: "consultation_not_started" } });
@@ -338,10 +343,10 @@ describeDb("clinical handoff workflow", () => {
     expect(await queue("b", consultationId, "completed")).toMatchObject({ status: 200 });
     expect(await act("b", referral, { action: "complete" })).toMatchObject({ status: 200, body: { data: { status: "completed" } } });
 
-    // Afterwards Dr B keeps their own consultation only; its records are now history, still theirs.
+    // Afterwards Dr B is the patient's doctor themselves: the whole history stays, and their own records are now history too, still theirs.
     const after = await ws("b", x.id);
     expect(after.relationship).toBe("own");
-    expect(after.records.map((r) => r.id).sort()).toEqual(Object.values(mine).sort());
+    expect(after.records.map((r) => r.id).sort()).toEqual([...everyRecord, ...Object.values(mine)].sort());
     expect(after.records.find((r) => r.id === mine.diagnosis)).toMatchObject({ stage: "historical", category: "historical_diagnosis", mine: true });
     // Dr A sees the follow-up and its records — authored by Dr B — next to their own, unchanged.
     const referrer = await ws("a", x.id);
@@ -349,7 +354,7 @@ describeDb("clinical handoff workflow", () => {
     expect(referrer.records.find((r) => r.id === x.diagnosis)).toMatchObject({ author: { id: doctors.a }, mine: true, version: 1 });
 
     // The audit trail: every step, with its actor — and no clinical text anywhere.
-    expect((await audits(referral)).filter((a) => a.action.startsWith("referral_") && a.action !== "referral_viewed").map((a) => [a.action, a.actor_id])).toEqual([
+    expect((await audits(referral)).filter((a) => a.action.startsWith("referral_") && !["referral_viewed", "referral_opened"].includes(a.action)).map((a) => [a.action, a.actor_id])).toEqual([
       ["referral_created", users.a],
       ["referral_accepted", users.b],
       ["referral_in_progress", users.b],
@@ -384,6 +389,98 @@ describeDb("clinical handoff workflow", () => {
     const declined = (await audits(referral)).find((a) => a.action === "referral_declined");
     expect(declined).toMatchObject({ actor_id: users.b, old_values: { status: "pending" } });
     expect(JSON.stringify(declined)).not.toContain("nephrology");
+  });
+
+  it("starting a consultation while the referral is still pending takes the referral on: accepted, then in progress, audited as the receiving doctor", async () => {
+    // Dr E receives it: Dr B's walk-in slots "now" are taken by the tests above (a slot stays taken after it is completed).
+    const { data: created } = await admin.from("patients").insert({ clinic_id: clinicA, full_name: `Pending-start patient ${suffix}`, phone: "+998907770022" }).select("id").single();
+    const patientId = created!.id as string;
+    const x = { id: patientId, consultation: await visit(patientId, doctors.a) };
+    const referral = await refer(x, doctors.e);
+    // Once refused with 409 "accept first" — a pending referral is no longer a gate.
+    const started = await start("e", x.id, { serviceId: quickService });
+    expect(started).toMatchObject({ status: 201, body: { data: { consultation: { started: true } } } });
+    const consultationId = (started.body.data!.consultation as { appointmentId: string }).appointmentId;
+
+    expect(await referralRow(referral)).toMatchObject({ status: "in_progress", follow_up_appointment_id: consultationId, started_by: users.e });
+    expect((await audits(referral)).filter((a) => ["referral_accepted", "referral_in_progress"].includes(a.action)).map((a) => [a.action, a.actor_id]).sort()).toEqual([
+      // One transaction: both rows carry the same timestamp, so their order is not defined.
+      ["referral_accepted", users.e],
+      ["referral_in_progress", users.e],
+    ]);
+    // Starting again is idempotent: the same consultation, nothing more accepted.
+    expect(await start("e", x.id, { serviceId: quickService })).toMatchObject({ status: 200, body: { data: { consultation: { appointmentId: consultationId, started: false } } } });
+  });
+
+  it("an unconfirmed website booking gives no doctor a way in: the queue refuses it, the patient list leaves it out — until staff confirm it", async () => {
+    // Anyone can book on the website with a patient's name and phone; the booked doctor must not be able to turn that into access.
+    const { data: created } = await admin.from("patients").insert({ clinic_id: clinicA, full_name: `Web-booked patient ${suffix}`, phone: "+998907770033" }).select("id").single();
+    const patientId = created!.id as string;
+    const web = await visit(patientId, doctors.e, "pending", "web");
+
+    for (const status of ["checked_in", "in_progress", "completed"]) {
+      expect(await queue("e", web, status), status).toMatchObject({ status: 409, body: { code: "awaiting_confirmation" } });
+    }
+    expect((await admin.from("appointments").select("status").eq("id", web).single()).data!.status).toBe("pending");
+    expect(await workspace("e", patientId)).toMatchObject({ status: 404, body: { code: "patient_not_found" } });
+    const listed = async () => {
+      as("e");
+      const res = await read(await listPatients(request("GET", "/api/doctor/patients")));
+      return ((res.body.data as { patients: Array<{ id: string }> }).patients ?? []).map((p) => p.id);
+    };
+    expect(await listed()).not.toContain(patientId);
+
+    // Reception confirms it: now it is a booked visit like any other.
+    await admin.from("appointments").update({ status: "confirmed" }).eq("id", web);
+    expect(await listed()).toContain(patientId);
+    expect((await workspace("e", patientId)).status).toBe(200);
+    expect(await queue("e", web, "checked_in")).toMatchObject({ status: 200 });
+  });
+
+  it("a no-show is no treating relationship: the doctor's patient list and the workspace leave the patient out — until a visit actually takes place", async () => {
+    const { data: created } = await admin.from("patients").insert({ clinic_id: clinicA, full_name: `No-show patient ${suffix}`, phone: "+998907770066" }).select("id").single();
+    const patientId = created!.id as string;
+    const missed = await visit(patientId, doctors.e, "no_show");
+    const listed = async () => {
+      as("e");
+      const res = await read(await listPatients(request("GET", "/api/doctor/patients")));
+      return ((res.body.data as { patients: Array<{ id: string }> }).patients ?? []).map((p) => p.id);
+    };
+    expect(await listed()).not.toContain(patientId);
+    expect(await workspace("e", patientId)).toMatchObject({ status: 404, body: { code: "patient_not_found" } });
+    // Marked a no-show by mistake and corrected by reception: the visit counts again.
+    await admin.from("appointments").update({ status: "confirmed" }).eq("id", missed);
+    expect(await listed()).toContain(patientId);
+    expect((await workspace("e", patientId)).status).toBe(200);
+  });
+
+  it("the patient page cannot start an unconfirmed website booking either — 409, and the pending referral stays pending", async () => {
+    const { data: created } = await admin.from("patients").insert({ clinic_id: clinicA, full_name: `Web-start patient ${suffix}`, phone: "+998907770055" }).select("id").single();
+    const patientId = created!.id as string;
+    const x = { id: patientId, consultation: await visit(patientId, doctors.a) };
+    // The referral gives Dr E access, so the refusal is the booking's, not the patient's.
+    const referral = await refer(x, doctors.e);
+    const web = await visit(patientId, doctors.e, "pending", "web");
+
+    expect(await start("e", patientId, { appointmentId: web })).toMatchObject({ status: 409, body: { code: "awaiting_confirmation" } });
+    expect((await admin.from("appointments").select("status").eq("id", web).single()).data!.status).toBe("pending");
+    expect(await referralRow(referral)).toMatchObject({ status: "pending", follow_up_appointment_id: null });
+  });
+
+  it("starting from the doctor's queue takes a pending referral on too — accepted, linked, in progress", async () => {
+    const { data: created } = await admin.from("patients").insert({ clinic_id: clinicA, full_name: `Queue-start patient ${suffix}`, phone: "+998907770044" }).select("id").single();
+    const patientId = created!.id as string;
+    const x = { id: patientId, consultation: await visit(patientId, doctors.a) };
+    const referral = await refer(x, doctors.e);
+    const own = await visit(patientId, doctors.e, "checked_in");
+
+    expect(await queue("e", own, "in_progress")).toMatchObject({ status: 200 });
+    expect(await referralRow(referral)).toMatchObject({ status: "in_progress", follow_up_appointment_id: own, started_by: users.e });
+    expect((await audits(referral)).filter((a) => ["referral_accepted", "referral_in_progress"].includes(a.action)).map((a) => [a.action, a.actor_id]).sort()).toEqual([
+      // One transaction: both rows carry the same timestamp, so their order is not defined.
+      ["referral_accepted", users.e],
+      ["referral_in_progress", users.e],
+    ]);
   });
 
   it("starting the consultation from the queue or the front desk links it and moves the referral in progress", async () => {
@@ -424,7 +521,7 @@ describeDb("clinical handoff workflow", () => {
     });
   });
 
-  it("an in-progress referral: listed as open, revocable by Dr A — Dr B then keeps only their own consultation", async () => {
+  it("an in-progress referral: listed as open, revocable by Dr A — Dr B then keeps the history through their own consultation", async () => {
     const x = await patientX();
     const referral = await refer(x);
     await act("b", referral, { action: "accept" });
@@ -440,7 +537,7 @@ describeDb("clinical handoff workflow", () => {
     expect(await act("a", referral, { action: "revoke", reason: "Patient transferred" })).toMatchObject({ status: 200, body: { data: { status: "revoked" } } });
     const after = await ws("b", x.id);
     expect(after.relationship).toBe("own");
-    expect(after.records.map((r) => r.id)).toEqual([ownRecord]);
-    expect(after.records[0]).toMatchObject({ stage: "current", category: "current_assessment", mine: true });
+    expect(after.records.map((r) => r.id).sort()).toEqual([x.history, x.diagnosis, x.prescription, x.eRecord, ownRecord].sort());
+    expect(after.records.find((r) => r.id === ownRecord)).toMatchObject({ stage: "current", category: "current_assessment", mine: true });
   });
 });

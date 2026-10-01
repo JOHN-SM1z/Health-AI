@@ -1,85 +1,105 @@
 import { describe, expect, it } from "vitest";
-import { NO_CLINICAL_ACCESS, canSeeAppointment, toClinicalAccess } from "./access";
+import { NO_CLINICAL_ACCESS, toClinicalAccess } from "./access";
 
 type Row = NonNullable<Parameters<typeof toClinicalAccess>[0]>;
 
-const row = (overrides: Partial<Row> = {}): Row => ({
-  clinic_id: "clinic",
-  own_patient: false,
-  active_referral_ids: [],
-  history_doctor_ids: [],
-  referral_appointment_ids: [],
-  ...overrides,
-});
+/**
+ * A decision row as public.doctor_patient_access() returns it: full_history
+ * is own_patient OR an open referral, unless a test overrides it.
+ */
+const row = (overrides: Partial<Row> = {}): Row => {
+  const decision = { clinic_id: "clinic", own_patient: false, active_referral_ids: [] as string[], ...overrides };
+  return { full_history: decision.own_patient || decision.active_referral_ids.length > 0, ...decision };
+};
 
 describe("toClinicalAccess", () => {
   it("denies when the database returns no decision (unknown ids, another clinic, inactive doctor)", () => {
     expect(toClinicalAccess(undefined)).toBe(NO_CLINICAL_ACCESS);
-    expect(toClinicalAccess(null)).toEqual({
-      relationship: "none",
-      allowed: false,
-      scope: { patientRecord: false, ownAppointments: false, sharedHistoryDoctorIds: [], referralAppointmentIds: [] },
-      activeReferralIds: [],
-    });
+    expect(toClinicalAccess(null)).toBe(NO_CLINICAL_ACCESS);
+    expect(NO_CLINICAL_ACCESS).toEqual({ relationship: "none", allowed: false, fullHistory: false, activeReferralIds: [] });
   });
 
   it("denies a same-clinic doctor with no relationship", () => {
-    expect(toClinicalAccess(row())).toMatchObject({ relationship: "none", allowed: false });
+    expect(toClinicalAccess(row())).toBe(NO_CLINICAL_ACCESS);
   });
 
-  it("A: own patient — record and own appointments", () => {
+  it("A: own patient — the patient's whole clinical history", () => {
     expect(toClinicalAccess(row({ own_patient: true }))).toEqual({
       relationship: "own",
       allowed: true,
-      scope: { patientRecord: true, ownAppointments: true, sharedHistoryDoctorIds: [], referralAppointmentIds: [] },
+      fullHistory: true,
       activeReferralIds: [],
     });
   });
 
-  it("B: pending referral — record and its consultation; accepted — plus the referring doctor's visits", () => {
-    expect(toClinicalAccess(row({ active_referral_ids: ["r1"], referral_appointment_ids: ["consult"] }))).toEqual({
+  it("B: an open referral alone — the same whole history at once, whatever its status (no acceptance gate)", () => {
+    expect(toClinicalAccess(row({ active_referral_ids: ["r1"] }))).toEqual({
       relationship: "referred",
       allowed: true,
-      scope: { patientRecord: true, ownAppointments: false, sharedHistoryDoctorIds: [], referralAppointmentIds: ["consult"] },
+      fullHistory: true,
       activeReferralIds: ["r1"],
     });
-    expect(toClinicalAccess(row({ active_referral_ids: ["r1"], history_doctor_ids: ["dr-a"] })).scope.sharedHistoryDoctorIds).toEqual([
-      "dr-a",
-    ]);
+    // Several open referrals (e.g. one to the doctor, one to their department), in the database's order.
+    expect(toClinicalAccess(row({ active_referral_ids: ["r1", "r2"] })).activeReferralIds).toEqual(["r1", "r2"]);
   });
 
-  it("own wins when both apply, keeping the referral's shared history", () => {
-    expect(toClinicalAccess(row({ own_patient: true, active_referral_ids: ["r1"], history_doctor_ids: ["dr-a"] }))).toMatchObject({
+  it("own wins when both apply, keeping the open referrals", () => {
+    expect(toClinicalAccess(row({ own_patient: true, active_referral_ids: ["r1"] }))).toEqual({
       relationship: "own",
-      scope: { ownAppointments: true, sharedHistoryDoctorIds: ["dr-a"] },
+      allowed: true,
+      fullHistory: true,
+      activeReferralIds: ["r1"],
     });
   });
 
-  it("never lets callers mutate the shared denial", () => {
+  it("fails closed on the database's verdict: without full_history, nothing — whatever else the row says", () => {
+    expect(toClinicalAccess(row({ own_patient: true, full_history: false }))).toBe(NO_CLINICAL_ACCESS);
+    expect(toClinicalAccess(row({ active_referral_ids: ["r1"], full_history: false }))).toBe(NO_CLINICAL_ACCESS);
+  });
+
+  it("never lets callers mutate the shared denial, nor the database row through an access it returned", () => {
     expect(Object.isFrozen(NO_CLINICAL_ACCESS)).toBe(true);
-    expect(Object.isFrozen(NO_CLINICAL_ACCESS.scope)).toBe(true);
+    expect(() => {
+      (NO_CLINICAL_ACCESS as { allowed: boolean }).allowed = true;
+    }).toThrow(TypeError);
+    expect(() => {
+      (NO_CLINICAL_ACCESS as { fullHistory: boolean }).fullHistory = true;
+    }).toThrow(TypeError);
+    expect(NO_CLINICAL_ACCESS).toMatchObject({ relationship: "none", allowed: false, fullHistory: false });
+
+    const decision = row({ active_referral_ids: ["r1"] });
+    toClinicalAccess(decision).activeReferralIds.push("forged");
+    expect(decision.active_referral_ids).toEqual(["r1"]);
   });
 });
 
-describe("canSeeAppointment (mirrors the appointments RLS policy)", () => {
-  const me = "dr-b";
-
-  it("sees nothing without access", () => {
-    expect(canSeeAppointment(NO_CLINICAL_ACCESS, me, { id: "x", doctorId: me })).toBe(false);
+// The per-appointment scope (and canSeeAppointment, its mirror of the old
+// appointments policy) is gone: a doctor with a legitimate relationship sees
+// every doctor's visits and records, one without it nothing — as in the
+// database, where doctor_can_read_appointment() equals doctor_can_read_patient().
+describe("fullHistory — all or nothing, replacing the per-appointment scope", () => {
+  it("carries no per-appointment or per-doctor scope: an access is its relationship, the verdict and the open referrals", () => {
+    for (const access of [NO_CLINICAL_ACCESS, toClinicalAccess(row({ own_patient: true })), toClinicalAccess(row({ active_referral_ids: ["r1"] }))]) {
+      expect(Object.keys(access).sort()).toEqual(["activeReferralIds", "allowed", "fullHistory", "relationship"]);
+    }
   });
 
-  it("sees own appointments only when the patient is the doctor's own", () => {
+  it("a referral opens exactly what a treating relationship opens: the whole history", () => {
     const own = toClinicalAccess(row({ own_patient: true }));
-    expect(canSeeAppointment(own, me, { id: "mine", doctorId: me })).toBe(true);
-    expect(canSeeAppointment(own, me, { id: "theirs", doctorId: "dr-e" })).toBe(false);
+    const referred = toClinicalAccess(row({ active_referral_ids: ["r1"] }));
+    expect({ allowed: referred.allowed, fullHistory: referred.fullHistory }).toEqual({ allowed: own.allowed, fullHistory: own.fullHistory });
+    expect(referred.fullHistory).toBe(true);
   });
 
-  it("sees the referring doctor's visits and referral-linked appointments, nothing else", () => {
-    const referred = toClinicalAccess(
-      row({ active_referral_ids: ["r1"], history_doctor_ids: ["dr-a"], referral_appointment_ids: ["consult"] }),
-    );
-    expect(canSeeAppointment(referred, me, { id: "any-with-a", doctorId: "dr-a" })).toBe(true);
-    expect(canSeeAppointment(referred, me, { id: "consult", doctorId: "dr-z" })).toBe(true);
-    expect(canSeeAppointment(referred, me, { id: "with-e", doctorId: "dr-e" })).toBe(false);
+  it("mirrors full_history: allowed and fullHistory are the database's verdict for every combination", () => {
+    for (const own_patient of [false, true]) {
+      for (const active_referral_ids of [[], ["r1"]]) {
+        const decision = row({ own_patient, active_referral_ids });
+        const access = toClinicalAccess(decision);
+        expect(access.fullHistory, JSON.stringify(decision)).toBe(decision.full_history);
+        expect(access.allowed, JSON.stringify(decision)).toBe(decision.full_history);
+        expect(access.relationship, JSON.stringify(decision)).toBe(own_patient ? "own" : active_referral_ids.length > 0 ? "referred" : "none");
+      }
+    }
   });
 });

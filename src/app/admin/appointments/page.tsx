@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect, AModal, ATextArea, LoadingRow } from "@/components/admin/ui";
 import { ClipboardList } from "lucide-react";
-import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatDateTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
+import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatDateTime, formatPrice, adminApi, AdminApiError, fetchReferralWarnings, reviewReferralWarning, REFERRAL_WARNING_LABELS, REFERRAL_WARNING_HINT, type ReferralBookingWarning } from "@/lib/admin/client";
 
 type Row = {
   id: string;
@@ -24,6 +24,7 @@ export default function AppointmentsPage() {
   const searchParams = useSearchParams();
   const highlightId = searchParams.get("id");
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [warnings, setWarnings] = useState<Record<string, ReferralBookingWarning>>({});
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -87,6 +88,7 @@ export default function AppointmentsPage() {
     }
     setRows(data ?? []);
     setError(null);
+    setWarnings(await fetchReferralWarnings((data ?? []).map((r) => r.id)));
   };
 
   useEffect(() => {
@@ -173,6 +175,7 @@ export default function AppointmentsPage() {
               key={r.id}
               row={r}
               highlighted={r.id === highlightId}
+              warning={warnings[r.id] ?? null}
               onChanged={() => void load()}
               onError={setError}
               onNoShow={setNoShowRow}
@@ -243,6 +246,7 @@ export default function AppointmentsPage() {
 function AppointmentRow({
   row,
   highlighted,
+  warning,
   onChanged,
   onError,
   onNoShow,
@@ -250,6 +254,8 @@ function AppointmentRow({
 }: {
   row: Row;
   highlighted: boolean;
+  /** The visit's referral was revoked or declined: the visit stays, reception reviews it. */
+  warning: ReferralBookingWarning | null;
   onChanged: () => void;
   onError: (m: string) => void;
   onNoShow: (row: Row) => void;
@@ -283,7 +289,32 @@ function AppointmentRow({
       </td>
       <td className="px-4 py-3 text-foreground">{row.doctors?.name ?? "—"}</td>
       <td className="px-4 py-3"><ABadge tone="gray">{SOURCE_LABELS[row.source] ?? row.source}</ABadge></td>
-      <td className="px-4 py-3"><ABadge tone={STATUS_TONES[row.status]}>{STATUS_LABELS[row.status]}</ABadge></td>
+      <td className="px-4 py-3">
+        <ABadge tone={STATUS_TONES[row.status]}>{STATUS_LABELS[row.status]}</ABadge>
+        {warning && (
+          <p className="mt-1 flex flex-wrap items-center gap-1.5" title={REFERRAL_WARNING_HINT}>
+            <ABadge tone="amber">{REFERRAL_WARNING_LABELS[warning]}</ABadge>
+            <AButton
+              size="sm"
+              variant="outline"
+              loading={busy === "review"}
+              onClick={async () => {
+                setBusy("review");
+                try {
+                  await reviewReferralWarning(row.id);
+                  onChanged();
+                } catch (e) {
+                  onError(e instanceof AdminApiError ? e.message : "Xatolik yuz berdi");
+                } finally {
+                  setBusy(null);
+                }
+              }}
+            >
+              Ko‘rib chiqdim
+            </AButton>
+          </p>
+        )}
+      </td>
       <td className="px-4 py-3">
         <ABadge tone={row.payments?.status === "paid" ? "green" : "amber"}>
           {row.payments?.status === "paid" ? "To‘langan" : "To‘lanmagan"}

@@ -1,3 +1,5 @@
+import { deleteAppointments } from "@/test/delete-appointments";
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
@@ -71,7 +73,7 @@ describeDb("one booking engine serves every channel, for more than one clinic", 
     doctorAId = doctorA!.id;
     serviceAId = serviceA!.id;
     patientAId = patientA!.id;
-    await admin.from("appointments").delete().eq("doctor_id", doctorAId).gte("start_at", nextWeekdayAt10(1, 60));
+    await deleteAppointments(admin, (q) => q.eq("doctor_id", doctorAId).gte("start_at", nextWeekdayAt10(1, 60)));
 
     const { data: clinicB } = await admin
       .from("clinics")
@@ -117,8 +119,8 @@ describeDb("one booking engine serves every channel, for more than one clinic", 
   });
 
   afterAll(async () => {
-    await admin.from("clinics").delete().eq("id", clinicBId); // cascades doctors/services/patients/appointments/payments
-    await admin.from("appointments").delete().eq("doctor_id", doctorAId).gte("start_at", nextWeekdayAt10(1, 60));
+    await cleanupTestClinics([clinicBId]); // retained domains explicitly, the rest of the fixture with the clinic
+    await deleteAppointments(admin, (q) => q.eq("doctor_id", doctorAId).gte("start_at", nextWeekdayAt10(1, 60)));
   });
 
   it.each(SOURCES)("clinic A: %s books through the same book_appointment() RPC as every other channel", async (source) => {

@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createHmac } from "node:crypto";
@@ -79,11 +80,8 @@ describeDb("per-clinic telegram bots (Phase 3)", () => {
     if (admin) {
       for (const id of [clinicA, clinicB, clinicWithoutBot]) {
         if (!id) continue;
-        try {
-          await admin.from("clinics").delete().eq("id", id);
-        } catch {
-          // cleanup best effort
-        }
+        // A failing cleanup must fail the suite, never leak clinics silently.
+        await cleanupTestClinics([id]);
       }
     }
   });

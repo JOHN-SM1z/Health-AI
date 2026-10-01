@@ -25,9 +25,8 @@ export default function PrivacyPage() {
         <div>
           <p className="font-medium text-[var(--tg-text,var(--foreground))]">3. Kimga beriladi</p>
           <p className="mt-1">
-            Ma‘lumotlar faqat klinika xodimlariga (qabul tashkil qilish uchun) ko‘rsatiladi.
-            Shifokoringiz sizni klinikadagi boshqa shifokorga yo‘llasa, qabul qiluvchi shifokor
-            ham ularni ko‘radi. Uchinchi shaxslarga berilmaydi.
+            Ma‘lumotlar faqat klinika xodimlariga (qabul tashkil qilish uchun) va sizni davolayotgan
+            shifokorlarga ko‘rsatiladi (5-bandga qarang). Uchinchi shaxslarga berilmaydi.
           </p>
         </div>
         <div>
@@ -51,26 +50,29 @@ export default function PrivacyPage() {
         <div>
           <p className="font-medium text-[var(--tg-text,var(--foreground))]">5. Tibbiy yozuvlarni kim ko‘radi</p>
           <p className="mt-1">
-            Tibbiy yozuvlarni faqat sizni davolayotgan shifokorlar ko‘radi. Qabulxona, boshqa
-            xodimlar, bot va sun‘iy intellekt ularni ko‘rmaydi.
+            Tibbiy yozuvlaringiz klinikadagi yagona tibbiy tarixingizni tashkil qiladi. Uni sizni
+            davolayotgan shifokorlar ko‘radi: siz qabulida bo‘lgan yoki qabuliga yozilgan shifokor,
+            sizni yo‘llanma bilan qabul qilayotgan shifokor va — yo‘llanma bo‘limga berilgan bo‘lsa —
+            shu bo‘lim shifokorlari. Ular tarixingizni boshqa shifokordan ruxsat so‘ramasdan ko‘radi,
+            shuning uchun har qabulda kasallik tarixingizni qaytadan aytib berishingiz shart emas.
           </p>
           <p className="mt-1">
-            Shifokor sizni klinikadagi boshqa shifokorga yo‘llasa, yo‘llanma sababi va hamkasbi uchun
-            izohni faqat shu ikki shifokor ko‘radi; qabulxona esa faqat sizni kim kimga yo‘llaganini,
-            yo‘llanma holati, muhimligi va sanalarini hamda shu yo‘llanma bo‘yicha qabul vaqtini ko‘radi.
+            Qabulxona, boshqa xodimlar, bot va sun‘iy intellekt tibbiy yozuvlarni ko‘rmaydi; siz bilan
+            bog‘liq qabul yoki yo‘llanmasi bo‘lmagan shifokor ham ko‘rmaydi.
           </p>
           <p className="mt-1">
-            Qabul qiluvchi shifokor yo‘llanmani qabul qilish-qilmaslikni hal qilishi uchun yo‘llanma
-            yozilgan qabulni va unda yozilgan tibbiy yozuvlarni ko‘radi. Yo‘llanmani qabul qilgach,
-            u amal qilayotgan paytda yo‘llagan shifokor bilan bo‘lgan qabullaringizni va ularning
-            tibbiy yozuvlarini ko‘radi, lekin ularni o‘zgartira olmaydi. Yo‘llagan shifokor esa shu
-            yo‘llanma bo‘yicha qabulni va unda yozilgan yozuvlarni ko‘radi. Yo‘llanma sizning
-            to‘lovlaringiz va yozishmalaringizni ochib bermaydi.
+            Shifokor sizni boshqa shifokorga yoki bo‘limga yo‘llasa, yo‘llanma sababi va izohi ham
+            tibbiy tarixingizga kiradi. Qabulxona esa faqat sizni kim kimga yo‘llaganini, yo‘llanma
+            holati, muhimligi va sanalarini hamda shu yo‘llanma bo‘yicha qabul vaqtini ko‘radi.
           </p>
           <p className="mt-1">
-            Qabul qiluvchi shifokorning bu kirishi yo‘llanma rad etilganda, bekor qilinganda,
-            yakunlanganda yoki muddati tugaganda (ko‘pi bilan 180 kun) to‘xtaydi; yo‘llagan
-            shifokorniki — yo‘llanma bekor qilinganda yoki muddati tugaganda. Tibbiy yozuvlarni
+            Faqat yo‘llanmaga asoslangan kirish yo‘llanma rad etilganda, bekor qilinganda yoki
+            muddati tugaganda (ko‘pi bilan 180 kun) to‘xtaydi. Siz qabulida bo‘lgan yoki qabuliga
+            yozilgan shifokor esa davolashni davom ettirish uchun tarixingizni keyinchalik ham ko‘ra oladi.
+          </p>
+          <p className="mt-1">
+            Shifokorlar to‘lovlaringiz tarixini ko‘rmaydi — faqat ular bilan bo‘layotgan qabulning
+            to‘lov holatini ko‘radi. Yozishmalaringiz shifokorlarga ko‘rsatilmaydi. Tibbiy yozuvlarni
             ko‘rish kirish jurnalida qayd etiladi.
           </p>
         </div>

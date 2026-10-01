@@ -11,12 +11,14 @@ import { logger } from "@/lib/logger";
 import { assertFollowUpBookable, linkFollowUp } from "@/lib/referrals/service";
 import { IDEMPOTENCY_KEY_PATTERN, bookingError, createAppointment } from "@/lib/booking/engine";
 import { formatInClinicTz, fromClinicTime } from "@/lib/timezone";
+import { normalizePhone } from "@/lib/patients/phone";
 
 export const dynamic = "force-dynamic";
 
 const createSchema = z
   .object({
-    patientName: nameSchema,
+    // Not needed for a patient picked by patientId or a referral's follow-up: their record has its own name.
+    patientName: nameSchema.optional(),
     phone: phoneSchema.optional(),
     doctorId: uuidSchema,
     serviceId: uuidSchema,
@@ -27,13 +29,20 @@ const createSchema = z
     source: z.enum(["admin", "walk_in"]),
     patientId: uuidSchema.optional(),
     notes: z.string().max(500).optional(),
-    // Books the follow-up of an accepted referral: the referral fixes the
+    // Books the follow-up of an open referral: the referral fixes the
     // patient and the doctor, and the new appointment is linked to it.
     referralId: uuidSchema.optional(),
     /** One key per booking attempt, repeated on retries (double click, network retry). */
     idempotencyKey: z.string().regex(IDEMPOTENCY_KEY_PATTERN).optional(),
+    /**
+     * A new patient whose phone matches an existing patient's is only created
+     * once staff confirm it is a different person (409 possible_duplicate
+     * otherwise, with the matching patients to pick from).
+     */
+    confirmNewPatient: z.boolean().optional(),
   })
-  .refine((b) => !!b.startAt !== !!b.startLocal, { message: "Qabul vaqtini ko‘rsating", path: ["startAt"] });
+  .refine((b) => !!b.startAt !== !!b.startLocal, { message: "Qabul vaqtini ko‘rsating", path: ["startAt"] })
+  .refine((b) => !!b.patientName || !!b.patientId || !!b.referralId, { message: "Bemor ismini kiriting", path: ["patientName"] });
 
 /** The instant a staff member asked for, reading a wall-clock time in the clinic's own timezone (never the browser's). */
 function requestedStart(body: { startAt?: string; startLocal?: string }, clinicTimezone: string): string {
@@ -61,6 +70,32 @@ function walkInPatientId(clinicId: string, idempotencyKey: string): string {
 }
 
 /**
+ * Patients of the clinic with the same phone number (normalized): a
+ * returning patient must be picked, not registered again — their history
+ * lives on their existing record.
+ */
+async function samePhonePatients(
+  supabase: ReturnType<typeof createAdminClient>,
+  clinicId: string,
+  phone: string | undefined,
+  exceptId: string | null,
+): Promise<Array<{ id: string; fullName: string | null; phone: string | null }>> {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return [];
+  let query = supabase
+    .from("patients")
+    .select("id, full_name, phone")
+    .eq("clinic_id", clinicId)
+    .eq("phone_normalized", normalized)
+    .order("last_seen_at", { ascending: false, nullsFirst: false })
+    .limit(10);
+  if (exceptId) query = query.neq("id", exceptId);
+  const { data, error } = await query;
+  if (error) throw new ApiError(500, "Bemorni tekshirib bo‘lmadi");
+  return (data ?? []).map((p) => ({ id: p.id, fullName: p.full_name, phone: p.phone }));
+}
+
+/**
  * Admin-created appointments and walk-ins.
  * Walk-ins are placed in the queue via the same transactional engine, with
  * source recorded truthfully.
@@ -81,6 +116,20 @@ export async function POST(request: NextRequest) {
     // the referred patient. Clinic scoping is checked here and again by the
     // booking operation (the patient must belong to the clinic).
     let patientId = followUp?.patientId ?? body.patientId;
+    // A patient this request registers is removed again if the booking fails,
+    // so a refused slot never leaves an orphan record behind.
+    let registered: string | null = null;
+    if (!patientId && !body.confirmNewPatient) {
+      const ownRetry = body.idempotencyKey ? walkInPatientId(ctx.clinicId, body.idempotencyKey) : null;
+      const matches = await samePhonePatients(supabase, ctx.clinicId, body.phone, ownRetry);
+      if (matches.length > 0) {
+        throw new ApiError(409, "Bu telefon raqami bilan bemor allaqachon bor — o‘sha bemorni tanlang", "possible_duplicate", {
+          candidates: matches,
+        });
+      }
+    }
+    // Who registered the patient and through which channel: the database audits the creation ('patient_created').
+    const registeredBy = { created_by: ctx.profileId, created_via: body.source === "walk_in" ? "walk_in" : "reception" };
     if (patientId) {
       const { data: patient } = await supabase
         .from("patients")
@@ -97,8 +146,9 @@ export async function POST(request: NextRequest) {
       const id = walkInPatientId(ctx.clinicId, body.idempotencyKey);
       const { error } = await supabase
         .from("patients")
-        .insert({ id, clinic_id: ctx.clinicId, full_name: body.patientName, phone: body.phone ?? null });
+        .insert({ id, clinic_id: ctx.clinicId, full_name: body.patientName, phone: body.phone ?? null, ...registeredBy });
       if (error && error.code !== "23505") throw new ApiError(500, "Bemorni yaratib bo‘lmadi");
+      if (!error) registered = id;
       patientId = id;
     } else {
       const { data: created, error } = await supabase
@@ -107,28 +157,41 @@ export async function POST(request: NextRequest) {
           clinic_id: ctx.clinicId,
           full_name: body.patientName,
           phone: body.phone ?? null,
+          ...registeredBy,
         })
         .select("id")
         .single();
       if (error || !created) throw new ApiError(500, "Bemorni yaratib bo‘lmadi");
       patientId = created.id;
+      registered = created.id;
     }
 
     // The one booking operation — the same one the Mini App and the website
     // use. A slot an online patient took first answers SLOT_UNAVAILABLE;
     // reception cannot override it.
-    const booking = await createAppointment({
-      clinicId: ctx.clinicId,
-      patientId,
-      doctorId: body.doctorId,
-      serviceId: body.serviceId,
-      startAt,
-      status: "pending",
-      source: body.source,
-      notes: body.notes ?? null,
-      createdBy: ctx.profileId,
-      idempotencyKey: body.idempotencyKey ?? null,
-    });
+    let booking: Awaited<ReturnType<typeof createAppointment>>;
+    try {
+      booking = await createAppointment({
+        clinicId: ctx.clinicId,
+        patientId,
+        doctorId: body.doctorId,
+        serviceId: body.serviceId,
+        startAt,
+        status: "pending",
+        source: body.source,
+        notes: body.notes ?? null,
+        createdBy: ctx.profileId,
+        idempotencyKey: body.idempotencyKey ?? null,
+      });
+    } catch (e) {
+      if (registered) {
+        // Nothing references a patient registered a moment ago; any other
+        // row would make this refuse (foreign keys), never cascade.
+        // The database audits the removal ('patient_deleted') as it audited the creation.
+        await supabase.from("patients").delete().eq("id", registered).eq("clinic_id", ctx.clinicId);
+      }
+      throw e;
+    }
     const result = { appointment_id: booking.appointmentId };
     if (booking.replayed) return ok({ appointmentId: result.appointment_id, replayed: true });
 

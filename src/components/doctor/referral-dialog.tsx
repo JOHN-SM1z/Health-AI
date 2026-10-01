@@ -5,7 +5,8 @@ import { AButton, AError, AModal, ASelect, ATextArea, LoadingRow } from "@/compo
 import { adminApi, AdminApiError, formatDateTime, REFERRAL_PRIORITY_LABELS } from "@/lib/admin/client";
 import { newIdempotencyKey } from "@/lib/idempotency-key";
 
-type Recipient = { id: string; name: string; title: string | null; specialty: string | null };
+type Recipient = { id: string; name: string; title: string | null; specialtyId: string | null; specialty: string | null };
+type Department = { id: string; name: string };
 
 /** The consultation the referral is raised from — the doctor's own visit with the patient. */
 export type ReferralConsultation = { appointmentId: string; startAt: string; serviceName: string | null };
@@ -27,8 +28,10 @@ function ReviewRow({ label, children }: { label: string; children: ReactNode }) 
 }
 
 /**
- * Refers the patient of one of the doctor's own consultations to a colleague:
- * fill in → review → send. The server decides everything that matters
+ * Refers the patient of one of the doctor's own consultations to a department
+ * and/or a colleague: fill in → review → send. A department referral waits
+ * for any of its doctors; either way the receiving doctor sees the patient's
+ * history at once — nobody has to grant access. The server decides everything that matters
  * (the doctor's access to the consultation, the patient, the recipient's
  * clinic); this dialog only collects the doctor's choices.
  */
@@ -44,6 +47,8 @@ export function ReferralDialog({
   onCreated: (referralId: string) => void;
 }) {
   const [recipients, setRecipients] = useState<Recipient[] | null>(null);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentId, setDepartmentId] = useState("");
   const [doctorId, setDoctorId] = useState("");
   const [priority, setPriority] = useState<"routine" | "urgent">("routine");
   const [validForDays, setValidForDays] = useState("90");
@@ -59,16 +64,22 @@ export function ReferralDialog({
 
   useEffect(() => {
     adminApi
-      .get<{ doctors: Recipient[] }>("/api/doctor/referrals/recipients")
-      .then((res) => setRecipients(res.doctors))
+      .get<{ doctors: Recipient[]; departments: Department[] }>("/api/doctor/referrals/recipients")
+      .then((res) => {
+        setRecipients(res.doctors);
+        setDepartments(res.departments ?? []);
+      })
       .catch((e) => {
         setRecipients([]);
         setError(e instanceof AdminApiError ? e.message : "Shifokorlarni yuklab bo‘lmadi");
       });
   }, []);
 
-  const recipient = recipients?.find((d) => d.id === doctorId) ?? null;
-  const canReview = !!recipient && reason.trim().length >= 3;
+  const department = departments.find((d) => d.id === departmentId) ?? null;
+  // With a department chosen, only its doctors can be picked (or none: any of them).
+  const doctorOptions = (recipients ?? []).filter((d) => !departmentId || d.specialtyId === departmentId);
+  const recipient = doctorOptions.find((d) => d.id === doctorId) ?? null;
+  const canReview = (!!recipient || !!department) && reason.trim().length >= 3;
   const doctorLabel = (d: Recipient) => [d.name, d.specialty ?? d.title].filter(Boolean).join(" — ");
 
   const openReview = () => {
@@ -88,7 +99,8 @@ export function ReferralDialog({
       const res = await adminApi.post<{ referral: { id: string } }>("/api/doctor/referrals", {
         idempotencyKey: review.idempotencyKey,
         appointmentId: consultation.appointmentId,
-        referredToDoctorId: doctorId,
+        ...(recipient ? { referredToDoctorId: recipient.id } : {}),
+        ...(department ? { referredToSpecialtyId: department.id } : {}),
         reason: reason.trim(),
         handoffNote: handoffNote.trim() || undefined,
         priority,
@@ -148,9 +160,12 @@ export function ReferralDialog({
         <LoadingRow />
       ) : recipients.length === 0 ? (
         <p className="text-sm text-ink-muted">Yo‘llanma berish mumkin bo‘lgan shifokor topilmadi.</p>
-      ) : review && recipient ? (
+      ) : review && (recipient || department) ? (
         <div>
-          <ReviewRow label="Qabul qiluvchi shifokor">{doctorLabel(recipient)}</ReviewRow>
+          {department && <ReviewRow label="Bo‘lim">{department.name}</ReviewRow>}
+          <ReviewRow label="Qabul qiluvchi shifokor">
+            {recipient ? doctorLabel(recipient) : "Bo‘limning istalgan shifokori (birinchi qabul qilgan)"}
+          </ReviewRow>
           <ReviewRow label="Muhimlik">{REFERRAL_PRIORITY_LABELS[priority]}</ReviewRow>
           <ReviewRow label="Amal qilish muddati">
             {validForDays} kun (taxminan {review.approxExpiry} gacha)
@@ -158,17 +173,35 @@ export function ReferralDialog({
           <ReviewRow label="Yo‘llanma sababi">{reason.trim()}</ReviewRow>
           <ReviewRow label="Shifokor uchun izoh">{handoffNote.trim() || "—"}</ReviewRow>
           <p className="mt-2 text-xs text-ink-muted">
-            Yuborilgach sabab va izohni o‘zgartirib bo‘lmaydi. Ularni faqat siz va qabul qiluvchi shifokor ko‘radi.
+            Yuborilgach sabab va izohni o‘zgartirib bo‘lmaydi. Ular bemorning tibbiy tarixiga kiradi: uni davolayotgan shifokorlar
+            ko‘radi.
           </p>
         </div>
       ) : (
         <div className="flex flex-col gap-3">
+          {departments.length > 0 && (
+            <div>
+              <p className="mb-1 text-xs font-medium text-ink-muted">Bo‘lim</p>
+              <ASelect
+                value={departmentId}
+                onChange={(v) => {
+                  setDepartmentId(v);
+                  setDoctorId("");
+                }}
+                options={[{ value: "", label: "Bo‘limni tanlang (ixtiyoriy)" }, ...departments.map((d) => ({ value: d.id, label: d.name }))]}
+                aria-label="Bo‘lim"
+              />
+            </div>
+          )}
           <div>
             <p className="mb-1 text-xs font-medium text-ink-muted">Qabul qiluvchi shifokor</p>
             <ASelect
               value={doctorId}
               onChange={setDoctorId}
-              options={[{ value: "", label: "Shifokorni tanlang" }, ...recipients.map((d) => ({ value: d.id, label: doctorLabel(d) }))]}
+              options={[
+                { value: "", label: departmentId ? "Bo‘limning istalgan shifokori" : "Shifokorni tanlang" },
+                ...doctorOptions.map((d) => ({ value: d.id, label: doctorLabel(d) })),
+              ]}
               aria-label="Qabul qiluvchi shifokor"
             />
           </div>
@@ -200,7 +233,7 @@ export function ReferralDialog({
             <p className="mb-1 text-xs font-medium text-ink-muted">Amal qilish muddati</p>
             <ASelect value={validForDays} onChange={setValidForDays} options={VALIDITY_OPTIONS} aria-label="Amal qilish muddati" />
           </div>
-          <p className="text-xs text-ink-muted">Sabab va izohni faqat siz va qabul qiluvchi shifokor ko‘radi.</p>
+          <p className="text-xs text-ink-muted">Sabab va izoh bemorning tibbiy tarixiga kiradi: uni bemorni davolayotgan shifokorlar ko‘radi.</p>
         </div>
       )}
     </AModal>

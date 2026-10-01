@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
@@ -231,11 +232,7 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
         }
       }
       if (clinicB) {
-        try {
-          await admin.from("clinics").delete().eq("id", clinicB);
-        } catch {
-          // already gone
-        }
+        await cleanupTestClinics([clinicB]);
       }
     }
   });

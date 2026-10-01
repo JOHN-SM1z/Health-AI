@@ -130,6 +130,8 @@ export type Database = {
           no_show_reason: string | null
           notes: string | null
           patient_id: string
+          referral_warning_reviewed_at: string | null
+          referral_warning_reviewed_by: string | null
           service_id: string
           source: Database["public"]["Enums"]["appointment_source"]
           start_at: string
@@ -150,6 +152,8 @@ export type Database = {
           no_show_reason?: string | null
           notes?: string | null
           patient_id: string
+          referral_warning_reviewed_at?: string | null
+          referral_warning_reviewed_by?: string | null
           service_id: string
           source?: Database["public"]["Enums"]["appointment_source"]
           start_at: string
@@ -170,6 +174,8 @@ export type Database = {
           no_show_reason?: string | null
           notes?: string | null
           patient_id?: string
+          referral_warning_reviewed_at?: string | null
+          referral_warning_reviewed_by?: string | null
           service_id?: string
           source?: Database["public"]["Enums"]["appointment_source"]
           start_at?: string
@@ -963,11 +969,14 @@ export type Database = {
           consent_given: boolean
           consent_given_at: string | null
           created_at: string
+          created_by: string | null
+          created_via: string | null
           full_name: string | null
           id: string
           last_seen_at: string | null
           operational_notes: string | null
           phone: string | null
+          phone_normalized: string | null
           preferred_language: string
           telegram_first_name: string | null
           telegram_last_name: string | null
@@ -980,11 +989,14 @@ export type Database = {
           consent_given?: boolean
           consent_given_at?: string | null
           created_at?: string
+          created_by?: string | null
+          created_via?: string | null
           full_name?: string | null
           id?: string
           last_seen_at?: string | null
           operational_notes?: string | null
           phone?: string | null
+          phone_normalized?: never
           preferred_language?: string
           telegram_first_name?: string | null
           telegram_last_name?: string | null
@@ -997,11 +1009,14 @@ export type Database = {
           consent_given?: boolean
           consent_given_at?: string | null
           created_at?: string
+          created_by?: string | null
+          created_via?: string | null
           full_name?: string | null
           id?: string
           last_seen_at?: string | null
           operational_notes?: string | null
           phone?: string | null
+          phone_normalized?: never
           preferred_language?: string
           telegram_first_name?: string | null
           telegram_last_name?: string | null
@@ -1215,7 +1230,8 @@ export type Database = {
           patient_id: string
           priority: Database["public"]["Enums"]["referral_priority"]
           reason: string
-          referred_to_doctor_id: string
+          referred_to_doctor_id: string | null
+          referred_to_specialty_id: string | null
           referring_doctor_id: string
           revoked_at: string | null
           revoked_by: string | null
@@ -1245,7 +1261,8 @@ export type Database = {
           patient_id: string
           priority?: Database["public"]["Enums"]["referral_priority"]
           reason: string
-          referred_to_doctor_id: string
+          referred_to_doctor_id?: string | null
+          referred_to_specialty_id?: string | null
           referring_doctor_id: string
           revoked_at?: string | null
           revoked_by?: string | null
@@ -1275,7 +1292,8 @@ export type Database = {
           patient_id?: string
           priority?: Database["public"]["Enums"]["referral_priority"]
           reason?: string
-          referred_to_doctor_id?: string
+          referred_to_doctor_id?: string | null
+          referred_to_specialty_id?: string | null
           referring_doctor_id?: string
           revoked_at?: string | null
           revoked_by?: string | null
@@ -1357,6 +1375,13 @@ export type Database = {
             columns: ["referred_to_doctor_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "doctors"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "referrals_referred_to_specialty_fkey"
+            columns: ["referred_to_specialty_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "specialties"
             referencedColumns: ["id", "clinic_id"]
           },
           {
@@ -1740,14 +1765,21 @@ export type Database = {
         Args: { p_clinic_id: string; p_patient_id: string }
         Returns: boolean
       }
+      review_referral_warning: {
+        Args: { p_actor: string; p_appointment_id: string; p_clinic_id: string }
+        Returns: Json
+      }
+      department_has_receiving_doctor: {
+        Args: { p_clinic_id: string; p_excluding_doctor_id?: string; p_specialty_id: string }
+        Returns: boolean
+      }
       doctor_patient_access: {
         Args: { p_doctor_id: string; p_patient_id: string }
         Returns: {
           active_referral_ids: string[]
           clinic_id: string
-          history_doctor_ids: string[]
+          full_history: boolean
           own_patient: boolean
-          referral_appointment_ids: string[]
         }[]
       }
       expire_due_referrals: {
@@ -1766,6 +1798,7 @@ export type Database = {
         Returns: boolean
       }
       is_linked_doctor: { Args: { p_doctor_id: string }; Returns: boolean }
+      normalize_phone: { Args: { p_phone: string }; Returns: string }
       is_platform_admin: { Args: never; Returns: boolean }
       release_webhook_update: {
         Args: { p_external_id: string; p_source: string }

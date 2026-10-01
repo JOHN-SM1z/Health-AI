@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -5,7 +6,11 @@ import { NextRequest } from "next/server";
 import { localDbAvailable } from "@/test/local-db";
 
 /**
- * Referral-based clinical access — the SERVER and API layers, against the
+ * Clinical access from a treating relationship or an open referral — the
+ * longitudinal history model (20261002000001): a doctor with a legitimate
+ * relationship sees the patient's WHOLE history in the clinic, every doctor's
+ * visits included, from the moment a referral exists — no acceptance, no
+ * approval. The SERVER and API layers, against the
  * local Supabase stack: GET /api/doctor/patients/[id], the referral routes,
  * canDoctorAccessPatientClinicalData(), and (test 10) the Supabase REST API
  * called directly with each doctor's own signed-in session.
@@ -156,13 +161,13 @@ describeDb("referral-based clinical access — server and API layers", () => {
     return data!.id as string;
   }
 
-  /** Patient X: two visits with Dr A (the second is the consultation), one with Dr E. */
+  /** Patient X: two visits with Dr A (the second is the consultation), one with Dr E — `all` is the whole history. */
   async function patientX() {
     const id = await newPatient();
     const earlierWithA = await visit(id, doctors.a);
     const consultation = await visit(id, doctors.a);
     const withE = await visit(id, doctors.e);
-    return { id, consultation, withA: [earlierWithA, consultation].sort(), withE };
+    return { id, consultation, withA: [earlierWithA, consultation].sort(), withE, all: [earlierWithA, consultation, withE].sort() };
   }
 
   /** Dr A refers the patient to Dr B through the API. */
@@ -240,7 +245,7 @@ describeDb("referral-based clinical access — server and API layers", () => {
       await admin.from("staff_roles").delete().eq("clinic_id", clinicId);
       await admin.from("doctors").delete().eq("clinic_id", clinicId);
       await admin.from("services").delete().eq("clinic_id", clinicId);
-      await admin.from("clinics").delete().eq("id", clinicId);
+      await cleanupTestClinics([clinicId]);
     }
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });
@@ -250,55 +255,57 @@ describeDb("referral-based clinical access — server and API layers", () => {
     const res = await record("a", x.id);
     expect(res.status).toBe(200);
     expect(recordOf(res)).toMatchObject({ relationship: "own", patient: { id: x.id, phone: "+998901112233" } });
-    // Their own visits — Dr E's visit with the same patient is not theirs.
-    expect(ids(recordOf(res).appointments)).toEqual(x.withA);
+    // The whole history — Dr E's visit with the same patient included.
+    expect(ids(recordOf(res).appointments)).toEqual(x.all);
 
     expect(await canDoctorAccessPatientClinicalData(doctors.a, x.id)).toMatchObject({
       relationship: "own",
       allowed: true,
-      scope: { patientRecord: true, ownAppointments: true, sharedHistoryDoctorIds: [] },
+      fullHistory: true,
+      activeReferralIds: [],
     });
     const { data: viewed } = await admin
       .from("audit_events")
       .select("actor_id, metadata")
-      .eq("action", "patient_clinical_record_viewed")
+      .eq("action", "clinical_record_viewed")
       .eq("entity_id", x.id);
-    expect(viewed).toEqual([{ actor_id: users.a, metadata: expect.objectContaining({ relationship: "own" }) }]);
+    expect(viewed).toEqual([{ actor_id: users.a, metadata: expect.objectContaining({ via: "workspace", relationship: "own" }) }]);
   });
 
   it("2. Doctor B can access a patient actively referred to Doctor B", async () => {
     const x = await patientX();
     const referral = await refer(x);
 
-    // Pending: the patient record and the consultation it came from — no history yet.
+    // Pending: the whole history at once — every doctor's visits, nothing to approve first.
     const pending = await record("b", x.id);
     expect(pending.status).toBe(200);
     expect(recordOf(pending)).toMatchObject({ relationship: "referred", activeReferralIds: [referral] });
-    expect(ids(recordOf(pending).appointments)).toEqual([x.consultation]);
+    expect(ids(recordOf(pending).appointments)).toEqual(x.all);
 
-    // Accepted: Dr A's visits with X — not Dr E's.
+    // Accepted: nothing changes — acceptance is a care step, never a gate.
     await act("b", referral, { action: "accept" });
     const accepted = await record("b", x.id);
-    expect(ids(recordOf(accepted).appointments)).toEqual(x.withA);
+    expect(ids(recordOf(accepted).appointments)).toEqual(x.all);
     expect(await canDoctorAccessPatientClinicalData(doctors.b, x.id)).toMatchObject({
       relationship: "referred",
-      scope: { patientRecord: true, ownAppointments: false, sharedHistoryDoctorIds: [doctors.a] },
+      allowed: true,
+      fullHistory: true,
       activeReferralIds: [referral],
     });
     const detail = await referralDetail("b", referral);
-    expect(ids((detail.body.data!.referral as { history: Array<{ id: string }> }).history)).toEqual(x.withA);
+    expect(ids((detail.body.data!.referral as { history: Array<{ id: string }> }).history)).toEqual(x.all);
   });
 
   it("3. Doctor C cannot access that patient when not referred", async () => {
     const { x } = await referredAndAccepted();
 
     expect(await record("c", x.id)).toMatchObject({ status: 404, body: { code: "patient_not_found" } });
-    expect(await canDoctorAccessPatientClinicalData(doctors.c, x.id)).toMatchObject({ relationship: "none", allowed: false });
+    expect(await canDoctorAccessPatientClinicalData(doctors.c, x.id)).toMatchObject({ relationship: "none", allowed: false, fullHistory: false });
     // The refusal itself is on the audit trail.
     const { data: denied } = await admin
       .from("audit_events")
       .select("actor_id")
-      .eq("action", "patient_clinical_access_denied")
+      .eq("action", "unauthorized_clinical_access_attempt")
       .eq("entity_id", x.id);
     expect(denied).toEqual([{ actor_id: users.c }]);
   });
@@ -323,7 +330,7 @@ describeDb("referral-based clinical access — server and API layers", () => {
         .single();
       expect(error).toBeNull();
       expect(await act("b", short!.id, { action: "accept" })).toMatchObject({ status: 200 });
-      expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual(x.withA);
+      expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual(x.all);
 
       await new Promise((r) => setTimeout(r, 4_500));
 
@@ -365,30 +372,29 @@ describeDb("referral-based clinical access — server and API layers", () => {
     expect(await canDoctorAccessPatientClinicalData(doctors.b, second.x.id)).toMatchObject({ relationship: "none" });
   });
 
-  it("5b. completing the referral ends the handoff: Dr A's history is no longer shared", async () => {
+  it("5b. completing the referral ends the handoff — the history stays with Dr B through their own consultation", async () => {
     const { x, referral } = await referredAndAccepted();
     // Not before Dr B has seen the patient.
     expect(await act("b", referral, { action: "complete" })).toMatchObject({ status: 409, body: { code: "consultation_not_started" } });
     const own = await visit(x.id, doctors.b, clinicA, "in_progress");
     await admin.from("referrals").update({ follow_up_appointment_id: own }).eq("id", referral);
     expect(await referralStatus(referral)).toBe("in_progress");
-    expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual([...x.withA, own].sort());
+    expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual([...x.all, own].sort());
     expect(await act("b", referral, { action: "complete" })).toMatchObject({ status: 200 });
 
-    // Dr B keeps their own consultation — and nothing of Dr A's.
-    expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual([own]);
+    // The referral is over, but Dr B is now the patient's doctor themselves:
+    // the longitudinal history stays in front of them.
+    expect(recordOf(await record("b", x.id))).toMatchObject({ relationship: "own", activeReferralIds: [] });
+    expect(ids(recordOf(await record("b", x.id)).appointments)).toEqual([...x.all, own].sort());
     const detail = await referralDetail("b", referral);
     expect(detail.status).toBe(200);
-    expect(detail.body.data!.referral).toMatchObject({
-      status: "completed",
-      history: null,
-      consultation: null,
-      followUp: { id: own },
-    });
-    // The referring doctor keeps their own patient.
+    const completed = detail.body.data!.referral as { status: string; consultation: { id: string } | null; followUp: { id: string } | null; history: Array<{ id: string }> };
+    expect(completed).toMatchObject({ status: "completed", consultation: { id: x.consultation }, followUp: { id: own } });
+    expect(ids(completed.history)).toEqual([...x.all, own].sort());
+    // The referring doctor sees the same longitudinal history.
     const asReferrer = await referralDetail("a", referral);
     expect(asReferrer.body.data!.referral).toMatchObject({ patient: { phone: "+998901112233" } });
-    expect(ids((asReferrer.body.data!.referral as { history: Array<{ id: string }> }).history)).toEqual(x.withA);
+    expect(ids((asReferrer.body.data!.referral as { history: Array<{ id: string }> }).history)).toEqual([...x.all, own].sort());
   });
 
   it("6. Doctor B cannot access patients from another clinic", async () => {
@@ -491,9 +497,16 @@ describeDb("referral-based clinical access — server and API layers", () => {
       appointments: ids((await client.from("appointments").select("id").eq("patient_id", x.id)).data ?? []),
     });
 
-    expect(await seen(a)).toEqual({ patient: true, appointments: x.withA });
-    expect(await seen(b)).toEqual({ patient: true, appointments: x.withA });
+    // Both doctors with a relationship read the patient's whole history.
+    expect(await seen(a)).toEqual({ patient: true, appointments: x.all });
+    expect(await seen(b)).toEqual({ patient: true, appointments: x.all });
     for (const denied of [c, k]) expect(await seen(denied)).toEqual({ patient: false, appointments: [] });
+    // Payments are not part of any doctor's clinical scope: no rows for anyone.
+    const paid = await admin.from("payments").insert({ clinic_id: clinicA, appointment_id: x.consultation, patient_id: x.id, amount: 100000, status: "paid" });
+    expect(paid.error).toBeNull();
+    for (const client of [a, b, c, k]) {
+      expect((await client.from("payments").select("id").eq("patient_id", x.id)).data ?? []).toEqual([]);
+    }
     // Clinical text is never read directly — not even by the two doctors on the
     // referral: only through the API, which authorizes and audits every read.
     for (const client of [a, b, c, k]) {
@@ -546,14 +559,17 @@ describeDb("referral-based clinical access — server and API layers", () => {
     await expectParity(); // accepted
     const followUp = await visit(x.id, doctors.b, clinicA, "confirmed");
     await admin.from("referrals").update({ follow_up_appointment_id: followUp }).eq("id", referral);
-    await expectParity(); // follow-up booked: Dr A now sees it, through both layers
+    await expectParity(); // follow-up booked: Dr A sees it too, through both layers
     expect(await viaRls("a")).toContain(followUp);
     await admin.from("appointments").update({ status: "in_progress" }).eq("id", followUp);
     expect(await referralStatus(referral)).toBe("in_progress");
     await expectParity(); // in progress
     await act("b", referral, { action: "complete" });
-    await expectParity(); // completed: Dr B keeps only their own visit
-    expect(await viaRls("b")).toEqual([followUp]);
+    await expectParity(); // completed: Dr B keeps the history through their own visit
+    expect(await viaRls("b")).toEqual([...x.all, followUp].sort());
+    // Dr C never had a relationship: nothing through either layer, at any step.
+    expect(await viaRls("c")).toEqual([]);
+    expect(await viaApi("c")).toEqual([]);
     await Promise.all(Object.values(clients).map((client) => client.auth.signOut()));
   });
 

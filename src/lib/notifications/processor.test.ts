@@ -1,3 +1,4 @@
+import { deleteAppointments } from "@/test/delete-appointments";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
@@ -94,7 +95,7 @@ describeDb("notification processor — atomic claims", () => {
   afterAll(async () => {
     await admin.from("notification_jobs").delete().in("idempotency_key", createdJobKeys);
     await admin.from("payments").delete().eq("appointment_id", appointmentId);
-    await admin.from("appointments").delete().eq("id", appointmentId);
+    await deleteAppointments(admin, (q) => q.eq("id", appointmentId));
   });
 
   it("concurrent claim calls return disjoint job sets (FOR UPDATE SKIP LOCKED)", async () => {

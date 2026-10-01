@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 
 /**
  * The booking engine at the DATABASE layer
@@ -150,12 +151,14 @@ describeDb("booking engine — one authoritative booking, at most one active app
   afterAll(async () => {
     if (!sql) return;
     const clinics = [clinicA, clinicB, clinicBerlin];
+    await sql`delete from public.payments where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.appointments where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.doctor_time_blocks where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.doctor_working_hours where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.patients where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.doctors where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.services where clinic_id in ${sql(clinics)}`;
+    await cleanupTestClinics(clinics);
     await sql.end({ timeout: 5 });
   });
 
