@@ -1,4 +1,4 @@
--- Creating a patient is audited.
+-- Creating and deleting a patient are audited.
 --
 -- The patient record is the key of the longitudinal clinic record: every visit,
 -- referral and clinical record hangs off it, so who created it, through which
@@ -7,7 +7,14 @@
 --
 -- A trigger writes the audit row in the same transaction as the insert, so no
 -- creation path (reception, a walk-in, the Mini App, the website, a path added
--- later) can forget it, and a failed audit write undoes the creation.
+-- later) can forget it, and a failed audit write undoes the creation. The same
+-- goes for deletion: 'patient_deleted' is written by a trigger in the deleting
+-- transaction (a delete the foreign keys refuse writes nothing), so a record
+-- removed again — e.g. a registration whose booking was refused — never
+-- leaves a creation without its end in the trail. A patient removed because
+-- their whole clinic is deleted in the same statement gets no row of its own
+-- (the clinic, and so the audit's tenant, is gone; a clinic with audit rows
+-- cannot be deleted at all since 20261001000003).
 --
 --   * patients.created_by  — the staff profile that registered the patient
 --                            (null for a patient who registered themselves).
@@ -18,8 +25,9 @@
 --                            any Telegram detail: the audit trail holds no
 --                            personal data beyond identifiers.
 --
--- Reversible: drop trigger patients_audit_created on public.patients; drop
--- function public.patients_audit_created(); alter table public.patients drop
+-- Reversible: drop triggers patients_audit_created and patients_audit_deleted
+-- on public.patients; drop functions public.patients_audit_created() and
+-- public.patients_audit_deleted(); alter table public.patients drop
 -- column created_by, drop column created_via. Existing rows are untouched.
 
 alter table public.patients
@@ -81,3 +89,39 @@ revoke all on function public.patients_audit_created() from public, anon, authen
 create trigger patients_audit_created
   after insert on public.patients
   for each row execute function public.patients_audit_created();
+
+create or replace function public.patients_audit_deleted()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if exists (select 1 from public.clinics c where c.id = old.clinic_id) then
+    insert into public.audit_events (
+      clinic_id, actor_id, actor_type, action, entity_type, entity_id, patient_id, new_values, metadata
+    ) values (
+      old.clinic_id,
+      null,
+      'system'::public.actor_type,
+      'patient_deleted',
+      'patients',
+      old.id::text,
+      old.id,
+      null,
+      jsonb_build_object(
+        'created_via', old.created_via,
+        'created_by', old.created_by,
+        'created_at', old.created_at
+      )
+    );
+  end if;
+  return old;
+end;
+$$;
+
+revoke all on function public.patients_audit_deleted() from public, anon, authenticated;
+
+create trigger patients_audit_deleted
+  before delete on public.patients
+  for each row execute function public.patients_audit_deleted();

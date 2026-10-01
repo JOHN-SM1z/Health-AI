@@ -716,7 +716,8 @@ async function assertDepartment(doctor: LinkedDoctor, specialtyId: string): Prom
   const departments = await listReferralDepartments(doctor);
   if (departments.some((d) => d.id === specialtyId)) return;
   // A department of this clinic with nobody to receive the referral is not "not found": the referral would be seen by no one.
-  const { data } = await createAdminClient().from("specialties").select("id").eq("id", specialtyId).eq("clinic_id", doctor.clinicId).maybeSingle();
+  const { data, error } = await createAdminClient().from("specialties").select("id").eq("id", specialtyId).eq("clinic_id", doctor.clinicId).maybeSingle();
+  if (error) throw new ApiError(500, "Bo‘limni tekshirib bo‘lmadi");
   if (data) throw new ApiError(409, "Bu bo‘limda yo‘llanmani qabul qila oladigan faol shifokor yo‘q", "department_unavailable");
   throw new ApiError(404, "Bo‘lim topilmadi", "department_not_found");
 }

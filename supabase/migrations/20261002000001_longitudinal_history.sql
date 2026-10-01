@@ -49,13 +49,19 @@
 --    (earlier rows keep 'clinical_record_corrected'); referral events carry
 --    the department.
 --
--- Reversible: restore doctor_patient_access() / doctor_can_read_appointment()
--- / referrals_audit() and the receiving-doctor policy from 20260929000001,
--- doctor_can_read_patient() from 20260927000003, referrals_validate() from
--- 20260928000002, clinical_records_audit() from 20261001000001, and
--- consultation_started_effects()/start_consultation()/start_walk_in_consultation()
--- from 20260930000001; re-create
--- "payments read for own doctor" (20260927000004); drop
+-- Reversible (restore each function from the LATEST earlier definition — on a
+-- database that has 20261001000002 that migration redefines three of them):
+-- doctor_patient_access(), referrals_validate() and
+-- consultation_started_effects() from 20261001000002 (the no-show rule, the
+-- follow-up of a pending referral), and from 20260930000001 for
+-- start_consultation() / start_walk_in_consultation(); referrals_audit() and
+-- the receiving-doctor policy from 20260929000001, doctor_can_read_patient()
+-- from 20260927000003, doctor_can_read_appointment() from 20260929000001,
+-- clinical_records_audit() from 20261001000001; re-create the policy
+-- "referral history for treating doctor" (20261001000002) only if rolling back
+-- past it; re-create
+-- "payments read for own doctor" (20260927000004); drop trigger
+-- referrals_catch_up_started and its function; drop
 -- referrals.referred_to_specialty_id (after assigning or revoking department
 -- referrals), its constraints and indexes, and set referred_to_doctor_id not
 -- null again; drop patients.phone_normalized, its index and
@@ -436,6 +442,42 @@ end;
 $$;
 
 revoke all on function public.referrals_audit() from public, anon, authenticated;
+
+-- A pending referral whose follow-up visit is already under way (reception
+-- linked it, the visit started, and only now does the receiving doctor accept)
+-- is in progress from its acceptance on: otherwise it would stay 'accepted'
+-- beside a started — later completed — consultation, with no transition left
+-- to take. The acceptance and the start are both audited (two transitions).
+-- Also covers the in-transaction accept in consultation_started_effects().
+create or replace function public.referrals_catch_up_started()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if old.status = 'pending'
+     and new.status = 'accepted'
+     and new.follow_up_appointment_id is not null
+     and exists (
+       select 1 from public.appointments a
+        where a.id = new.follow_up_appointment_id
+          and a.status in ('in_progress', 'completed')
+     ) then
+    update public.referrals r
+       set status = 'in_progress', started_by = new.accepted_by
+     where r.id = new.id
+       and r.status = 'accepted';
+  end if;
+  return null;
+end;
+$$;
+
+revoke all on function public.referrals_catch_up_started() from public, anon, authenticated;
+
+create trigger referrals_catch_up_started
+  after update of status on public.referrals
+  for each row execute function public.referrals_catch_up_started();
 
 -- The receiving doctor's (backstop) view of a referral: also a department
 -- doctor's while nobody has taken it. Signed-in roles still have no SELECT

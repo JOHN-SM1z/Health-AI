@@ -18,7 +18,7 @@ import { localDbAvailable } from "@/test/local-db";
  * every doctor's visits and records, without anyone's approval. Access that
  * rests ONLY on the referral ends when it is declined, revoked or completed
  * and, at the latest, at expires_at (the database clock, before any sweep
- * records it). The receiving doctor's own non-cancelled appointment with the
+ * records it). The receiving doctor's own appointment (not cancelled, not a no-show) with the
  * patient (their consultation, or the follow-up reception booked) is a
  * treating relationship of its own and keeps the history (continuity of care).
  *

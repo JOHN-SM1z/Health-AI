@@ -20,7 +20,7 @@ import { localDbAvailable } from "@/test/local-db";
  * patient or clinical text.
  *
  * The model under attack (supabase/migrations/20261002000001_longitudinal_history.sql):
- * a doctor with a legitimate relationship — a non-cancelled appointment with
+ * a doctor with a legitimate relationship — an appointment that is neither cancelled nor a no-show with
  * the patient or a record they wrote, or an open referral to them (or, while
  * nobody has taken it, to their department) — sees the patient's WHOLE
  * clinical history in the clinic, from the moment a referral exists. What

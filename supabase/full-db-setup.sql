@@ -7450,13 +7450,19 @@ $$;
 --    (earlier rows keep 'clinical_record_corrected'); referral events carry
 --    the department.
 --
--- Reversible: restore doctor_patient_access() / doctor_can_read_appointment()
--- / referrals_audit() and the receiving-doctor policy from 20260929000001,
--- doctor_can_read_patient() from 20260927000003, referrals_validate() from
--- 20260928000002, clinical_records_audit() from 20261001000001, and
--- consultation_started_effects()/start_consultation()/start_walk_in_consultation()
--- from 20260930000001; re-create
--- "payments read for own doctor" (20260927000004); drop
+-- Reversible (restore each function from the LATEST earlier definition — on a
+-- database that has 20261001000002 that migration redefines three of them):
+-- doctor_patient_access(), referrals_validate() and
+-- consultation_started_effects() from 20261001000002 (the no-show rule, the
+-- follow-up of a pending referral), and from 20260930000001 for
+-- start_consultation() / start_walk_in_consultation(); referrals_audit() and
+-- the receiving-doctor policy from 20260929000001, doctor_can_read_patient()
+-- from 20260927000003, doctor_can_read_appointment() from 20260929000001,
+-- clinical_records_audit() from 20261001000001; re-create the policy
+-- "referral history for treating doctor" (20261001000002) only if rolling back
+-- past it; re-create
+-- "payments read for own doctor" (20260927000004); drop trigger
+-- referrals_catch_up_started and its function; drop
 -- referrals.referred_to_specialty_id (after assigning or revoking department
 -- referrals), its constraints and indexes, and set referred_to_doctor_id not
 -- null again; drop patients.phone_normalized, its index and
@@ -7837,6 +7843,42 @@ end;
 $$;
 
 revoke all on function public.referrals_audit() from public, anon, authenticated;
+
+-- A pending referral whose follow-up visit is already under way (reception
+-- linked it, the visit started, and only now does the receiving doctor accept)
+-- is in progress from its acceptance on: otherwise it would stay 'accepted'
+-- beside a started — later completed — consultation, with no transition left
+-- to take. The acceptance and the start are both audited (two transitions).
+-- Also covers the in-transaction accept in consultation_started_effects().
+create or replace function public.referrals_catch_up_started()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if old.status = 'pending'
+     and new.status = 'accepted'
+     and new.follow_up_appointment_id is not null
+     and exists (
+       select 1 from public.appointments a
+        where a.id = new.follow_up_appointment_id
+          and a.status in ('in_progress', 'completed')
+     ) then
+    update public.referrals r
+       set status = 'in_progress', started_by = new.accepted_by
+     where r.id = new.id
+       and r.status = 'accepted';
+  end if;
+  return null;
+end;
+$$;
+
+revoke all on function public.referrals_catch_up_started() from public, anon, authenticated;
+
+create trigger referrals_catch_up_started
+  after update of status on public.referrals
+  for each row execute function public.referrals_catch_up_started();
 
 -- The receiving doctor's (backstop) view of a referral: also a department
 -- doctor's while nobody has taken it. Signed-in roles still have no SELECT
@@ -8396,7 +8438,7 @@ revoke all on function public.clinical_records_audit() from public, anon, authen
 -- =====================================================================
 -- FILE: 20261002000002_patient_creation_audit.sql
 -- =====================================================================
--- Creating a patient is audited.
+-- Creating and deleting a patient are audited.
 --
 -- The patient record is the key of the longitudinal clinic record: every visit,
 -- referral and clinical record hangs off it, so who created it, through which
@@ -8405,7 +8447,14 @@ revoke all on function public.clinical_records_audit() from public, anon, authen
 --
 -- A trigger writes the audit row in the same transaction as the insert, so no
 -- creation path (reception, a walk-in, the Mini App, the website, a path added
--- later) can forget it, and a failed audit write undoes the creation.
+-- later) can forget it, and a failed audit write undoes the creation. The same
+-- goes for deletion: 'patient_deleted' is written by a trigger in the deleting
+-- transaction (a delete the foreign keys refuse writes nothing), so a record
+-- removed again — e.g. a registration whose booking was refused — never
+-- leaves a creation without its end in the trail. A patient removed because
+-- their whole clinic is deleted in the same statement gets no row of its own
+-- (the clinic, and so the audit's tenant, is gone; a clinic with audit rows
+-- cannot be deleted at all since 20261001000003).
 --
 --   * patients.created_by  — the staff profile that registered the patient
 --                            (null for a patient who registered themselves).
@@ -8416,8 +8465,9 @@ revoke all on function public.clinical_records_audit() from public, anon, authen
 --                            any Telegram detail: the audit trail holds no
 --                            personal data beyond identifiers.
 --
--- Reversible: drop trigger patients_audit_created on public.patients; drop
--- function public.patients_audit_created(); alter table public.patients drop
+-- Reversible: drop triggers patients_audit_created and patients_audit_deleted
+-- on public.patients; drop functions public.patients_audit_created() and
+-- public.patients_audit_deleted(); alter table public.patients drop
 -- column created_by, drop column created_via. Existing rows are untouched.
 
 alter table public.patients
@@ -8479,6 +8529,42 @@ revoke all on function public.patients_audit_created() from public, anon, authen
 create trigger patients_audit_created
   after insert on public.patients
   for each row execute function public.patients_audit_created();
+
+create or replace function public.patients_audit_deleted()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if exists (select 1 from public.clinics c where c.id = old.clinic_id) then
+    insert into public.audit_events (
+      clinic_id, actor_id, actor_type, action, entity_type, entity_id, patient_id, new_values, metadata
+    ) values (
+      old.clinic_id,
+      null,
+      'system'::public.actor_type,
+      'patient_deleted',
+      'patients',
+      old.id::text,
+      old.id,
+      null,
+      jsonb_build_object(
+        'created_via', old.created_via,
+        'created_by', old.created_by,
+        'created_at', old.created_at
+      )
+    );
+  end if;
+  return old;
+end;
+$$;
+
+revoke all on function public.patients_audit_deleted() from public, anon, authenticated;
+
+create trigger patients_audit_deleted
+  before delete on public.patients
+  for each row execute function public.patients_audit_deleted();
 
 -- =====================================================================
 -- FILE: 20261002000003_phone_normalization.sql

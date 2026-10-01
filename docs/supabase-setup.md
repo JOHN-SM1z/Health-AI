@@ -67,7 +67,7 @@ records that keep their authors, patient deletion that never cascades into clini
 referral, booking or payment records, and an empty `retention_policies`), and
 independent retention (`20261001000003`: parent deletion — a clinic, a patient with conversations, an
 appointment with a payment — is refused while retained rows exist, never cascaded), longitudinal history
-(`20261002000001`, below) and its follow-ups (`20261002000002`–`20261002000004`, after it).
+(`20261002000001`, below) and its follow-ups (`20261002000002`–`20261002000004`, after it). `20261001000002` is PR #11's care-access migration; `20261002000001` re-creates its functions and drops its `referral history for treating doctor` policy.
 
 ### `20261002000001_longitudinal_history.sql`
 
@@ -101,13 +101,17 @@ Longitudinal patient history, department referrals and registration dedupe. Appl
   [security.md › Audit event names](security.md#audit-event-names)): reports spanning the migration
   match both.
 
-Reversal (from the migration's header): restore `doctor_patient_access()` /
-`doctor_can_read_appointment()` / `referrals_audit()` and the receiving-doctor policy from
-`20260929000001`, `doctor_can_read_patient()` from `20260927000003`, `referrals_validate()` from
-`20260928000002` and `clinical_records_audit()` from `20261001000001`; re-create "payments read for
-own doctor" (`20260927000004`); drop `referrals.referred_to_specialty_id` (after assigning or
-revoking department referrals), its constraints and indexes, and set `referred_to_doctor_id` not
-null again; drop `patients.phone_normalized`, its index and `normalize_phone()`. The application
+Reversal (from the migration's header): restore each function from the LATEST earlier definition —
+`doctor_patient_access()`, `referrals_validate()` and `consultation_started_effects()` from
+`20261001000002` (the no-show rule and the follow-up of a pending referral; its signed-in SELECT
+policy on referrals, dropped here, is re-created only when rolling back past it), and
+`start_consultation()` / `start_walk_in_consultation()` from `20260930000001`; `referrals_audit()`
+and the receiving-doctor policy from `20260929000001`, `doctor_can_read_patient()` from
+`20260927000003`, `clinical_records_audit()` from `20261001000001`; re-create "payments read for
+own doctor" (`20260927000004`); drop the `referrals_catch_up_started` trigger; drop
+`referrals.referred_to_specialty_id` (after assigning or revoking department referrals), its
+constraints and indexes, and set `referred_to_doctor_id` not null again; drop
+`patients.phone_normalized`, its index and `normalize_phone()`. The application
 code of this release no longer matches a reversed schema.
 
 After adding or changing a migration, `supabase/full-db-setup.sql` is regenerated with
@@ -126,9 +130,9 @@ npx supabase gen types typescript --local > src/lib/supabase/database.types.ts
 Apply after `20261002000001`; each is independent and reversible (the reversal is in its header comment).
 
 - **`20261002000002_patient_creation_audit.sql`** — `patients.created_by` (staff profile) and
-  `patients.created_via` (`reception`, `walk_in`, `telegram`, `website`; null for existing rows), and an
-  `AFTER INSERT` trigger that writes `patient_created` (ids and channel, never name or phone) in the
-  same transaction; a creator who is not staff of the patient's clinic is refused.
+  `patients.created_via` (`reception`, `walk_in`, `telegram`, `website`; null for existing rows), an
+  `AFTER INSERT` trigger that writes `patient_created` and a `BEFORE DELETE` trigger that writes
+  `patient_deleted` (ids and channel, never name or phone) in the same transaction; a creator who is not staff of the patient's clinic is refused.
 - **`20261002000003_phone_normalization.sql`** — the new `normalize_phone()` rule (explicit `+`/`00` is
   international; 7–15 digits; otherwise Uzbek national). `patients.phone_normalized` is a stored
   generated column, so it is dropped and added again (one rewrite of `patients`) with its index.

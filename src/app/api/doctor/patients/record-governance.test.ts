@@ -242,8 +242,8 @@ describeDb("clinical record governance — author-only versioned corrections", (
 
   afterAll(async () => {
     if (!admin || !clinicA) return;
-    // Deleting a clinic removes everything it owns in one statement; a
-    // patient on their own can no longer be deleted from under their records.
+    // The retained domains go explicitly (cleanupTestClinics); a patient or
+    // clinic cannot be deleted from under their records.
     for (const clinicId of [clinicA, clinicK]) {
       await admin.from("staff_roles").delete().eq("clinic_id", clinicId);
       await cleanupTestClinics([clinicId]);

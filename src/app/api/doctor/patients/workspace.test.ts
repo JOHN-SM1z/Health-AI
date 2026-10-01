@@ -11,7 +11,7 @@ import { localDbAvailable } from "@/test/local-db";
  * (GET /api/doctor/patients/[id]) — the patient's longitudinal clinic record:
  * every doctor's consultations and current clinical records, the patient's
  * referrals — clinical records (POST …/records) and starting a consultation
- * (POST …/consultations). A treating relationship (a non-cancelled visit or
+ * (POST …/consultations). A treating relationship (a visit that is neither cancelled nor a no-show or
  * an authored record) or an open referral gives a doctor the whole history
  * from the moment it exists; without one a doctor sees nothing. Only the
  * session lookup is mocked; every rule runs for real.

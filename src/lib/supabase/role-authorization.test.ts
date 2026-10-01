@@ -1,3 +1,4 @@
+import { deleteAppointments } from "@/test/delete-appointments";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
@@ -211,6 +212,20 @@ describeDb("role-based authorization (Phase 2)", () => {
       for (const uid of createdUserIds) {
         await admin.auth.admin.deleteUser(uid).catch(() => {});
       }
+      // The fixtures live in the seed clinic: remove what this suite created (retained domains have their own
+      // retention, so the conversation and the payment go explicitly, before the rows they hang on).
+      const steps = [
+        await admin.from("analytics_events").delete().eq("patient_id", patientId),
+        await admin.from("conversations").delete().eq("id", conversationId),
+      ];
+      await deleteAppointments(admin, (q) => q.eq("id", appointmentId));
+      steps.push(
+        await admin.from("patients").delete().eq("id", patientId),
+        await admin.from("doctor_working_hours").delete().eq("doctor_id", doctorId),
+        await admin.from("doctors").delete().eq("id", doctorId),
+        await admin.from("services").delete().eq("id", serviceId),
+      );
+      for (const step of steps) expect(step.error).toBeNull();
     }
   });
 

@@ -158,11 +158,7 @@ describeDb("admin patients directory (Phase 5)", () => {
       }
     }
     if (clinicB) {
-      try {
-        await cleanupTestClinics([clinicB]);
-      } catch {
-        // best effort cleanup
-      }
+      await cleanupTestClinics([clinicB]);
     }
   });
 

@@ -228,15 +228,10 @@ describeDb("referral API (doctor portal + reception)", () => {
 
   afterAll(async () => {
     if (!admin) return;
-    // Erasing the patients cascades their referrals and appointments; the
-    // clinic itself is removed last so its audit rows can still be written.
-    for (const clinicId of [clinicA, clinicB].filter(Boolean)) {
-      await admin.from("patients").delete().eq("clinic_id", clinicId);
-      await admin.from("staff_roles").delete().eq("clinic_id", clinicId);
-      await admin.from("doctors").delete().eq("clinic_id", clinicId);
-      await admin.from("services").delete().eq("clinic_id", clinicId);
-      await cleanupTestClinics([clinicId]);
-    }
+    // The retained domains (referrals, appointments, payments, audit rows…) are
+    // removed explicitly — a patient or clinic cannot be deleted from under
+    // them — and the rest of the fixture goes with the clinic.
+    for (const clinicId of [clinicA, clinicB].filter(Boolean)) await cleanupTestClinics([clinicId]);
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });
 
@@ -833,6 +828,10 @@ describeDb("referral API (doctor portal + reception)", () => {
         ),
       );
     };
+    // Before any booking the receptionist is offered the booking button for the pending referral.
+    as("receptionist", "receptionist");
+    const before = await read(await getPatient(request("GET", `/api/admin/patients?id=${referral!.patient_id}`)));
+    expect((before.body.data!.referrals as Array<Record<string, unknown>>)[0]).toMatchObject({ id, status: "pending", canBookFollowUp: true });
     const booked = await book();
     expect(booked.status).toBe(201);
     const { data: linked } = await admin.from("referrals").select("status, follow_up_appointment_id").eq("id", id).single();

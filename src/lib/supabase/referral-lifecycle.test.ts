@@ -14,7 +14,7 @@ import { asOnlyGlobalSweep } from "@/test/referral-sweep-lock";
  * open (pending, accepted or in progress, unexpired) the receiving doctor has
  * the patient's WHOLE history — every doctor's visits and records — from the
  * moment it is created. When it ends, the receiving doctor keeps that history
- * only through their own relationship (a non-cancelled appointment or a record
+ * only through their own relationship (an appointment that is neither cancelled nor a no-show or a record
  * they wrote); a referral that was their only link takes everything with it.
  *
  *   PENDING → ACCEPTED → IN_PROGRESS → COMPLETED

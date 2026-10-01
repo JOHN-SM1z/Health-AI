@@ -180,6 +180,76 @@ describeDb("department referrals — claim by acceptance, access and revocation 
     await sql.end({ timeout: 5 });
   });
 
+  // ---------- (a0) A department needs a doctor who can receive it (20261002000004) ----------
+
+  it("a department referral is refused unless someone could receive it: active, with a doctor login, not the referrer", async () => {
+    const empty = randomUUID();
+    await sql`insert into public.specialties (id, clinic_id, name) values (${empty}, ${clinicA}, ${`Nevrologiya ${suffix}`})`;
+    const x = await newPatient();
+    const referToEmpty = () =>
+      pgError(() => serverTx((tx) => tx`
+        insert into public.referrals (clinic_id, patient_id, referring_doctor_id, referred_to_specialty_id, originating_appointment_id, reason, created_by)
+        values (${clinicA}, ${x.id}, ${doctors.a}, ${empty}, ${x.consultation}, ${REASON}, ${profiles.a})`));
+    const receivable = async () =>
+      (await serverTx((tx) => tx<{ ok: boolean }[]>`select public.department_has_receiving_doctor(${clinicA}, ${empty}, ${doctors.a}) as ok`))[0].ok;
+    const move = (doctor: string, to: string | null) => sql`update public.doctors set specialty_id = ${to} where id = ${doctor}`;
+    const noDoctor = /has no active doctor to receive it/;
+    const extra = randomUUID();
+    try {
+      // Nobody in the department.
+      expect(await receivable()).toBe(false);
+      expect((await referToEmpty()).message).toMatch(noDoctor);
+
+      // An inactive doctor with a login, the referrer themselves, and a doctor record with no login receive nothing.
+      await move(doctors.bx, empty);
+      await move(doctors.a, empty);
+      await sql`insert into public.doctors (id, clinic_id, name, active, specialty_id) values (${extra}, ${clinicA}, ${`Dr NoLogin ${suffix}`}, true, ${empty})`;
+      expect(await receivable()).toBe(false);
+      expect((await referToEmpty()).message).toMatch(noDoctor);
+
+      // A login that is not a doctor's (the manager's) receives nothing either.
+      await sql`update public.doctors set profile_id = ${profiles.manager} where id = ${extra}`;
+      expect(await receivable()).toBe(false);
+      expect((await referToEmpty()).message).toMatch(noDoctor);
+
+      // One active doctor with a doctor login makes it receivable.
+      await move(doctors.b2, empty);
+      expect(await receivable()).toBe(true);
+      const id = (await serverTx((tx) => tx<{ id: string }[]>`
+        insert into public.referrals (clinic_id, patient_id, referring_doctor_id, referred_to_specialty_id, originating_appointment_id, reason, created_by)
+        values (${clinicA}, ${x.id}, ${doctors.a}, ${empty}, ${x.consultation}, ${REASON}, ${profiles.a}) returning id`))[0].id;
+      await transition(id, { status: "revoked", revoked_by: profiles.a, revoked_reason: "Test cleanup" });
+    } finally {
+      await move(doctors.bx, specialty.cardiology);
+      await move(doctors.a, specialty.general);
+      await move(doctors.b2, specialty.cardiology);
+      await sql`delete from public.doctors where id = ${extra}`;
+    }
+  });
+
+  it("the follow-up of an untaken department referral cannot be linked until a doctor takes it", async () => {
+    const x = await newPatient();
+    const id = await referToCardiology(x);
+    const bookingWith = async (doctor: string) => {
+      const start = new Date(Date.UTC(2026, 0, 5, 5, 0) + day++ * 86_400_000);
+      const [row] = await sql<{ id: string }[]>`
+        insert into public.appointments ${sql({
+          clinic_id: clinicA, patient_id: x.id, doctor_id: doctor, service_id: service,
+          start_at: start, end_at: new Date(start.getTime() + 30 * 60_000), status: "confirmed", source: "admin",
+        })} returning id`;
+      return row.id;
+    };
+    const link = (appointment: string) => transition(id, { follow_up_appointment_id: appointment });
+    // Untaken: no receiving doctor yet, so nothing to schedule with.
+    const early = await bookingWith(doctors.b);
+    expect((await pgError(() => link(early))).message).toMatch(/only be linked to an open handoff/);
+    // Taken (accepted by Dr B): the booking with Dr B links.
+    await claim(id, "b");
+    await link(early);
+    expect(await sql`select follow_up_appointment_id from public.referrals where id = ${id}`).toMatchObject([{ follow_up_appointment_id: early }]);
+    await transition(id, { status: "revoked", revoked_by: profiles.a, revoked_reason: "Test cleanup" });
+  });
+
   // ---------- (a) The recipient rules ----------
 
   it("a referral needs a doctor or a department; a department alone is valid; the doctor must belong to a named department", async () => {

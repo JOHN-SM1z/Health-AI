@@ -232,11 +232,7 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
         }
       }
       if (clinicB) {
-        try {
-          await cleanupTestClinics([clinicB]);
-        } catch {
-          // already gone
-        }
+        await cleanupTestClinics([clinicB]);
       }
     }
   });

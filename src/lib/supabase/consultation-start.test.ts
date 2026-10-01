@@ -262,6 +262,37 @@ describeDb("consultation start — one transaction, exactly once (database layer
     });
   }, 20_000);
 
+  it("a pending referral whose follow-up reception linked: the start accepts it and it is in progress — not left 'accepted' beside a started visit", async () => {
+    const patient = await newPatient();
+    const ref = await acceptedReferral(patient, { pending: true });
+    const followUp = await visit(patient, doctors.b, "confirmed");
+    await asServer((tx) => tx`update public.referrals set follow_up_appointment_id = ${followUp} where id = ${ref}`);
+    expect(await referral(ref)).toMatchObject({ status: "pending", follow_up_appointment_id: followUp });
+
+    expect(await start(followUp, "confirmed", profiles.b, "doctor_queue", true, doctors.b)).toMatchObject({ started: true, referral_id: ref });
+    expect(await referral(ref)).toEqual({ status: "in_progress", follow_up_appointment_id: followUp, started_by: profiles.b });
+    // Both steps are in the trail, as the receiving doctor.
+    const actions = await sql<{ action: string; actor_id: string | null }[]>`
+      select action, actor_id from public.audit_events where referral_id = ${ref} and action in ('referral_accepted', 'referral_in_progress')`;
+    expect(actions.map((a) => a.action).sort()).toEqual(["referral_accepted", "referral_in_progress"]);
+    expect(actions.every((a) => a.actor_id === profiles.b)).toBe(true);
+    // The consultation can go on to completion and the referral with it.
+    await asServer((tx) => tx`update public.referrals set status = 'completed', completed_by = ${profiles.b} where id = ${ref}`);
+    expect((await referral(ref)).status).toBe("completed");
+  });
+
+  it("a pending referral whose visit the front desk started, then accepted by hand: in progress from the acceptance", async () => {
+    const patient = await newPatient();
+    const ref = await acceptedReferral(patient, { pending: true });
+    const followUp = await visit(patient, doctors.b, "confirmed");
+    await asServer((tx) => tx`update public.referrals set follow_up_appointment_id = ${followUp} where id = ${ref}`);
+    expect(await start(followUp, "confirmed", profiles.receptionist, "front_desk")).toMatchObject({ started: true });
+    // Reception's start accepts nothing for the doctor: the referral is still waiting.
+    expect((await referral(ref)).status).toBe("pending");
+    await asServer((tx) => tx`update public.referrals set status = 'accepted', accepted_by = ${profiles.b} where id = ${ref}`);
+    expect(await referral(ref)).toEqual({ status: "in_progress", follow_up_appointment_id: followUp, started_by: profiles.b });
+  });
+
   it("is all or nothing: when the audit row cannot be written, the appointment does not start", async () => {
     const patient = await newPatient();
     const appointment = await visit(patient, doctors.b);

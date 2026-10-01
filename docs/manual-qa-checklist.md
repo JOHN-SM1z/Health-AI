@@ -68,7 +68,7 @@ history at once.
 - [ ] Receiver sees the patient's whole history — every doctor's visits and clinical records, each with its author — while the referral is still *Kutilmoqda*: on the patient's page and, on the referral page, the patient's contact details and last visits. Nothing has to be accepted or approved first
 - [ ] Declining (named doctor only) with or without a reason works; a receiver with no visit or record of their own with the patient can then no longer open the referral or the patient (*Yo‘llanma rad etilgan* / 404 page); a receiver who has their own visit or record keeps the patient's history
 - [ ] A doctor who is not a party gets *Yo‘llanma topilmadi* for the referral URL (they may still read the referral inside the patient's history if they have that access, but see no actions)
-- [ ] Reception: patient panel shows *Yo‘llanmalar* (doctors, status, priority) but never the reason/handoff note; *Qabulga yozish* books with the receiving doctor only once the referral is accepted, then disappears
+- [ ] Reception: patient panel shows *Yo‘llanmalar* (doctors, status, priority) but never the reason/handoff note; *Qabulga yozish* books with the receiving doctor while the referral is pending or accepted (not for a department referral nobody has taken), then disappears
 - [ ] Only owner/admin/manager see *Bekor qilish* on a referral in the patient panel
 - [ ] Owner/manager account linked to a doctor record is refused on `/api/doctor/referrals` (403)
 - [ ] `audit_events` has `referral_created/accepted/follow_up_booked`, `referral_opened` (detail) and `referral_viewed` (lists) rows without the reason/handoff text

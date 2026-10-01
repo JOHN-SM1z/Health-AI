@@ -6,7 +6,6 @@ import { requireRoles } from "@/lib/auth/guards";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { phoneSchema, nameSchema, uuidSchema, parseBody } from "@/lib/api/validate";
 import { trackAnalytics } from "@/lib/analytics";
-import { recordAudit } from "@/lib/audit";
 import { enqueueBookingNotifications } from "@/lib/notifications/jobs";
 import { logger } from "@/lib/logger";
 import { assertFollowUpBookable, linkFollowUp } from "@/lib/referrals/service";
@@ -188,18 +187,8 @@ export async function POST(request: NextRequest) {
       if (registered) {
         // Nothing references a patient registered a moment ago; any other
         // row would make this refuse (foreign keys), never cascade.
-        const { data: removed } = await supabase.from("patients").delete().eq("id", registered).eq("clinic_id", ctx.clinicId).select("id");
-        // The creation was audited ('patient_created'); the record's removal is too, so the trail shows what became of it.
-        if (removed?.length) {
-          await recordAudit({
-            clinicId: ctx.clinicId,
-            action: "patient_discarded",
-            entityType: "patients",
-            entityId: registered,
-            actor: { actorId: ctx.profileId, actorType: "staff" },
-            metadata: { reason: "booking_refused" },
-          });
-        }
+        // The database audits the removal ('patient_deleted') as it audited the creation.
+        await supabase.from("patients").delete().eq("id", registered).eq("clinic_id", ctx.clinicId);
       }
       throw e;
     }

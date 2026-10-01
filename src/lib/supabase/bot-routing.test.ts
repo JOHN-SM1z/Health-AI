@@ -80,11 +80,8 @@ describeDb("per-clinic telegram bots (Phase 3)", () => {
     if (admin) {
       for (const id of [clinicA, clinicB, clinicWithoutBot]) {
         if (!id) continue;
-        try {
-          await cleanupTestClinics([id]);
-        } catch {
-          // cleanup best effort
-        }
+        // A failing cleanup must fail the suite, never leak clinics silently.
+        await cleanupTestClinics([id]);
       }
     }
   });

@@ -313,6 +313,30 @@ describeDb("tenant integrity — every reference stays inside its clinic; the se
     await cleanupTestClinics([doomed]);
   });
 
+  it("every retained domain's parent foreign key refuses deletion (never cascades) — pinned per constraint", async () => {
+    const rows = await sql<{ child: string; parent: string; action: string }[]>`
+      select conrelid::regclass::text as child, confrelid::regclass::text as parent, confdeltype::text as action
+        from pg_constraint where contype = 'f'`;
+    // regclass prints names without the schema while it is on the search path.
+    const deleteAction = (child: string, parent: string) => rows.filter((r) => r.child === child && r.parent === parent).map((r) => r.action);
+    // Deleting a clinic cannot carry any retained domain away.
+    for (const child of ["clinical_records", "referrals", "appointments", "payments", "conversations", "messages", "voice_messages", "audit_events", "retention_policies"]) {
+      const actions = deleteAction(child, "clinics");
+      expect(actions.length, `${child} → clinics`).toBeGreaterThan(0);
+      expect(actions.every((a) => a === "r"), `${child} → clinics must be ON DELETE RESTRICT`).toBe(true);
+    }
+    // Neither can deleting a patient (clinical records, referrals, bookings, payments, conversations) or an appointment (its payments).
+    for (const child of ["clinical_records", "referrals", "appointments", "payments", "conversations"]) {
+      const actions = deleteAction(child, "patients");
+      if (actions.length) expect(actions.every((a) => a === "a" || a === "r"), `${child} → patients must not cascade`).toBe(true);
+    }
+    expect(deleteAction("payments", "appointments").every((a) => a === "r")).toBe(true);
+    expect(deleteAction("payments", "appointments").length).toBeGreaterThan(0);
+    // The conversations → patients key in particular (communications keep their own retention).
+    expect(deleteAction("conversations", "patients").every((a) => a === "r")).toBe(true);
+    expect(deleteAction("conversations", "patients").length).toBeGreaterThan(0);
+  });
+
   it("outside a clinic deletion, audit rows for a missing clinic are still refused", async () => {
     const e = await pgError(() =>
       sql`insert into public.audit_events (clinic_id, actor_type, action, entity_type, entity_id) values (${randomUUID()}, 'system', 'x', 'x', 'x')`,

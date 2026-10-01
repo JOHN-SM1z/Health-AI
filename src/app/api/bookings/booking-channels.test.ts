@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import postgres from "postgres";
 import { localDbAvailable } from "@/test/local-db";
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 
 /**
  * Online and offline booking through the REAL routes and the real database:
@@ -203,6 +204,11 @@ describeDb("online and offline booking share one engine — real routes, real da
   });
 
   afterAll(async () => {
+    if (sql) {
+      // Everything of both clinics, retained domains included, goes explicitly: nothing is left behind.
+      await cleanupTestClinics([clinicA, clinicB]);
+      await sql`delete from auth.users where id in ${sql([receptionist, receptionistB])}`;
+    }
     await sql?.end({ timeout: 5 });
   });
 

@@ -110,7 +110,7 @@ role, unknown ids).
 
 | Relationship | Condition | Sees | Ends |
 | --- | --- | --- | --- |
-| A — treating (`own_patient`) | an appointment of this doctor with the patient whose status is neither `cancelled` nor `no_show` (past, today or booked; a patient who never came is no treating relationship — the visit stays in the history for the doctors who treat them) — except a website booking (`source = 'web'`) that is still `pending`, made without any proof of who the visitor is (it counts once staff confirm it; the doctor queue refuses to advance it with 409 `awaiting_confirmation`, so a doctor cannot make it count themselves) — or a clinical record this doctor wrote | the patient's whole history in the clinic | not by time: kept for continuity of care. It lapses only if every such appointment is cancelled and the doctor has written no record (records are never deleted) |
+| A — treating (`own_patient`) | an appointment of this doctor with the patient whose status is neither `cancelled` nor `no_show` (past, today or booked; a patient who never came is no treating relationship — the visit stays in the history for the doctors who treat them) — except a website booking (`source = 'web'`) that is still `pending`, made without any proof of who the visitor is (it counts once staff confirm it; the doctor queue refuses to advance it with 409 `awaiting_confirmation`, so a doctor cannot make it count themselves) — or a clinical record this doctor wrote | the patient's whole history in the clinic | not by time: kept for continuity of care. It lapses only if every such appointment is cancelled or marked a no-show and the doctor has written no record (records are never deleted) |
 | B — open referral (`active_referral_ids`) | a referral of the patient that is `pending`, `accepted` or `in_progress` with `expires_at > now()`, addressed to this doctor — or, while nobody has taken it (`pending`, no receiving doctor yet), to this doctor's department, unless this doctor raised it | the patient's whole history, from the moment the referral exists | the referral is declined, revoked or completed, or at the latest at `expires_at` (≤ 180 days) — unless A applies |
 | C — none | anything else: no relationship, another clinic, an inactive doctor | nothing | — |
 
@@ -320,7 +320,8 @@ records, and only the author changes their own.
   anything is written: a doctor record in the caller's clinic (otherwise 404, the same answer as for
   an id that exists nowhere), active, linked to an account holding the doctor role, not the caller;
   a department of the caller's clinic that has at least one such doctor other than the caller
-  (otherwise 404 `department_not_found`). The DB trigger and the composite foreign keys (including
+  (otherwise 409 `department_unavailable` for a department of the clinic that nobody can receive
+  for, 404 `department_not_found` for one that is not the clinic's). The DB trigger and the composite foreign keys (including
   `(referred_to_specialty_id, clinic_id)`) enforce the same rules again on insert.
 - Creation is idempotent: every request carries `idempotencyKey` (a UUID generated when the
   doctor opens the review step), stored as `referrals.creation_key`, unique per referring doctor
@@ -367,10 +368,15 @@ records, and only the author changes their own.
   status, priority, dates, follow-up appointment) — never the reason or handoff note. Only
   owner/admin/manager can revoke (`/api/admin/referrals/[id]`).
 - A follow-up appointment is booked through the transactional booking engine and then linked;
-  the DB only accepts it for an accepted, unexpired referral, with the receiving doctor, for the
+  the DB only accepts it for an open (pending or accepted), unexpired referral to a *named* doctor —
+  an untaken department referral has none yet — with the receiving doctor, for the
   referred patient, one active follow-up at a time (a consultation that took place may replace a
   booked follow-up that has not started). If the link loses a race the new appointment
-  is cancelled and the request fails (409).
+  is cancelled and the request fails (409). A booking linked to a still-pending referral gives the
+  doctor a treating relationship like any booked visit (and so outlasts the referral if it is revoked
+  or declined — reception cancels the booking to end it; see `TASKS.md`). When the visit of a
+  pending referral starts, or is already under way when the doctor accepts, the referral is in
+  progress from the acceptance (`referrals_catch_up_started`; both transitions are audited).
 
 ### Department referrals
 
@@ -447,7 +453,7 @@ throughout.
   the *own relationship* gives any doctor. A referral is completed only after B's consultation
   started, so B normally has one — the whole history stays with B through it. A receiving doctor
   whose referral was declined or revoked, or expired, before they saw the patient has no
-  relationship and loses everything. A cancelled booking alone grants nothing.
+  relationship and loses everything. A cancelled booking, or one marked a no-show, alone grants nothing.
 - **Clinical text is server-only.** Signed-in roles have no SELECT on `referrals` or
   `clinical_records`: every read goes through the API, which authorizes it and writes the access
   log first. The RLS policies remain as a backstop and are tested with a rolled-back grant.
@@ -525,7 +531,7 @@ clinical history.
   record keeps its own name and phone whatever the form still holds. Patients of other clinics are
   never candidates. A patient a request registered is deleted again if its booking fails (nothing
   references it; any other row would make the delete refuse, never cascade) — and that removal is
-  audited (`patient_discarded`, ids only), so the trail accounts for every creation.
+  audited (`patient_deleted`, ids only, written by a trigger in the deleting transaction), so the trail accounts for every creation.
 - **Patient creation is audited** (`20261002000002`). A trigger on `patients` writes
   `patient_created` in the same transaction as the insert, so no path (reception, a walk-in, the
   Mini App, the website, one added later) can forget it and a failed audit write undoes the
@@ -535,7 +541,7 @@ clinical history.
   (`reception`, `walk_in`, `telegram`, `website`; `patients.created_via`, set by the server, null on
   rows that predate the migration) and `has_phone` / `has_telegram_identity` booleans. **Never the
   name, phone or any Telegram detail** — identifiers only. A creator who is not staff of the
-  patient's clinic is refused. Deleting a patient is not audited yet (see `TASKS.md`).
+  patient's clinic is refused. Deleting a patient is audited as well: a `BEFORE DELETE` trigger writes `patient_deleted` (ids, channel and creator only) in the deleting transaction, and a delete the foreign keys refuse writes nothing; a patient removed because their whole clinic is deleted in the same statement gets no row of its own.
 - **Reception search** (`GET /api/admin/patients?q=`) also matches `phone_normalized` — by the
   typed digits (at least 5, so part of a number finds it) and by the number's normal form — so a
   number typed any way finds the patient; the search text is a quoted literal, never filter syntax.
@@ -602,7 +608,7 @@ regression test (unit, route, database or E2E):
 | F17 | Reactivating a cancelled appointment skipped the working-hours and time-block checks | validated like a booking in the slot trigger |
 | F18 | Production accepted a one-character `CRON_SECRET` / `TELEGRAM_WEBHOOK_SECRET` | ≥ 32 characters, no placeholders |
 | F19 | SECURITY DEFINER functions without `pg_temp` pinned last; `anon` could execute them | search_path and grants normalised (catalog test) |
-| F20 | Deleting a clinic failed (audit rows written for the clinic being erased) | the erasure is marked for the transaction; its audit trail goes with it |
+| F20 | Deleting a clinic failed (audit rows written for the clinic being erased) | the erasure is marked for the transaction, so rows written by children cascade-deleted in it no longer fail. Since `20261001000003` a clinic that has audit, clinical, referral, booking, payment or communication rows cannot be deleted at all (see [Clinical records](#clinical-records)); nothing is erased with it |
 | F21 | A second click on reception's walk-in booking could fail with 500 (~1 in 40): the upsert on `id` raced the `(id, clinic_id)` key | plain insert; a duplicate means the attempt's patient already exists |
 
 ## Medical safety (non-security but critical)

@@ -119,7 +119,7 @@ describeDb("one booking engine serves every channel, for more than one clinic", 
   });
 
   afterAll(async () => {
-    await cleanupTestClinics([clinicBId]); // cascades doctors/services/patients/appointments/payments
+    await cleanupTestClinics([clinicBId]); // retained domains explicitly, the rest of the fixture with the clinic
     await deleteAppointments(admin, (q) => q.eq("doctor_id", doctorAId).gte("start_at", nextWeekdayAt10(1, 60)));
   });
 

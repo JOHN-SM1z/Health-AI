@@ -177,8 +177,8 @@ What a doctor may see of it is one decision, `public.doctor_patient_access(docto
 which returns `(clinic_id, own_patient, active_referral_ids, full_history)` for an active doctor-role
 doctor of the patient's clinic, and no row otherwise:
 
-- `own_patient` — a treating relationship: any appointment of the doctor with the patient that is not
-  cancelled (past, today or booked), or a record the doctor wrote. It is permanent (continuity of care).
+- `own_patient` — a treating relationship: any appointment of the doctor with the patient that is neither
+  cancelled nor a no-show (past, today or booked), or a record the doctor wrote. It is permanent (continuity of care).
 - `active_referral_ids` — open (pending, accepted, in progress), unexpired referrals of the patient to
   the doctor, plus untaken (pending, no receiving doctor) department referrals to the doctor's
   department that the doctor did not raise.

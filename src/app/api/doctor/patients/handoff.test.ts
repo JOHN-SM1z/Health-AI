@@ -437,6 +437,23 @@ describeDb("clinical handoff workflow", () => {
     expect(await queue("e", web, "checked_in")).toMatchObject({ status: 200 });
   });
 
+  it("a no-show is no treating relationship: the doctor's patient list and the workspace leave the patient out — until a visit actually takes place", async () => {
+    const { data: created } = await admin.from("patients").insert({ clinic_id: clinicA, full_name: `No-show patient ${suffix}`, phone: "+998907770066" }).select("id").single();
+    const patientId = created!.id as string;
+    const missed = await visit(patientId, doctors.e, "no_show");
+    const listed = async () => {
+      as("e");
+      const res = await read(await listPatients(request("GET", "/api/doctor/patients")));
+      return ((res.body.data as { patients: Array<{ id: string }> }).patients ?? []).map((p) => p.id);
+    };
+    expect(await listed()).not.toContain(patientId);
+    expect(await workspace("e", patientId)).toMatchObject({ status: 404, body: { code: "patient_not_found" } });
+    // Marked a no-show by mistake and corrected by reception: the visit counts again.
+    await admin.from("appointments").update({ status: "confirmed" }).eq("id", missed);
+    expect(await listed()).toContain(patientId);
+    expect((await workspace("e", patientId)).status).toBe(200);
+  });
+
   it("the patient page cannot start an unconfirmed website booking either — 409, and the pending referral stays pending", async () => {
     const { data: created } = await admin.from("patients").insert({ clinic_id: clinicA, full_name: `Web-start patient ${suffix}`, phone: "+998907770055" }).select("id").single();
     const patientId = created!.id as string;

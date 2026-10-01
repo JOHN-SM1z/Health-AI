@@ -443,9 +443,9 @@ describeDb("reception registration finds the returning patient — real routes, 
     >`select entity_id, patient_id, actor_id, actor_type, new_values, metadata from public.audit_events where clinic_id = ${clinicA} and action = 'patient_created'`;
 
     // One audit row per patient that exists. A possible duplicate creates nothing; a patient registered for a booking the engine then
-    // refused is removed again — and that is audited too ('patient_discarded'), so every creation is accounted for.
+    // refused is removed again — and that is audited too ('patient_deleted'), so every creation is accounted for.
     const discarded = (
-      await sql<{ entity_id: string }[]>`select entity_id from public.audit_events where clinic_id = ${clinicA} and action = 'patient_discarded'`
+      await sql<{ entity_id: string }[]>`select entity_id from public.audit_events where clinic_id = ${clinicA} and action = 'patient_deleted'`
     ).map((a) => a.entity_id);
     expect(audits.map((a) => a.entity_id).filter((id) => !discarded.includes(id)).sort()).toEqual(patients.map((p) => p.id).sort());
     expect(discarded.every((id) => audits.some((a) => a.entity_id === id))).toBe(true);
