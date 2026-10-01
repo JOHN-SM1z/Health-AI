@@ -400,6 +400,25 @@ as $$
 $$;
 revoke all on function public.lab_is_clinic_staff(uuid, uuid) from public, anon, authenticated;
 
+-- Work on a result continues only while its order is not cancelled and its test is not cancelled.
+create or replace function public.lab_result_work_open(p_result uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select coalesce((
+    select o.status <> 'cancelled' and i.status = 'active'
+      from public.lab_results r
+      join public.lab_orders o on o.id = r.order_id
+      join public.lab_order_items i on i.id = r.order_item_id
+     where r.id = p_result
+  ), false);
+$$;
+revoke all on function public.lab_result_work_open(uuid) from public, anon, authenticated;
+grant execute on function public.lab_result_work_open(uuid) to service_role;
+
 -- "Outside configured reference range" from a value and its snapshotted bounds.
 create or replace function public.lab_flag_for(p_value numeric, p_low numeric, p_high numeric, p_critical_low numeric, p_critical_high numeric)
 returns public.lab_flag
@@ -448,6 +467,11 @@ begin
     if tg_table_name = 'lab_test_parameters' then
       if new.test_id is distinct from old.test_id then
         raise exception 'lab catalog: a parameter cannot move to another test';
+      end if;
+      -- Stored values keep the meaning they were entered with: the type of a parameter that has results is fixed.
+      if new.data_type is distinct from old.data_type
+         and exists (select 1 from public.lab_result_values x where x.parameter_id = new.id) then
+        raise exception 'lab catalog: the data type of a parameter that has results cannot change; add a new parameter';
       end if;
     elsif tg_table_name = 'lab_reference_ranges' then
       if new.parameter_id is distinct from old.parameter_id then
@@ -752,6 +776,12 @@ begin
        or (old.status = 'processing' and new.status = 'rejected')) then
     raise exception 'lab sample: invalid status transition % -> %', old.status, new.status;
   end if;
+  if new.status in ('collected', 'processing') then
+    select o.status into v_order_status from public.lab_orders o where o.id = new.order_id;
+    if v_order_status not in ('ordered', 'in_progress') then
+      raise exception 'lab sample: the order is %, nothing more is collected or processed for it', v_order_status;
+    end if;
+  end if;
   if new.status = 'collected' then
     if new.collected_by is null or not public.lab_is_clinic_staff(new.collected_by, new.clinic_id) then
       raise exception 'lab sample: collected_by must be staff of the clinic';
@@ -781,6 +811,9 @@ declare
   v_item_status public.lab_item_status;
 begin
   select s.status into v_sample_status from public.lab_samples s where s.id = new.sample_id and s.clinic_id = new.clinic_id;
+  if found and exists (select 1 from public.lab_orders o where o.id = new.order_id and o.status in ('cancelled', 'completed')) then
+    raise exception 'lab sample: the order is closed';
+  end if;
   if found and v_sample_status <> 'awaiting_collection' then
     raise exception 'lab sample: tests are attached before collection (the sample is %)', v_sample_status;
   end if;
@@ -872,9 +905,8 @@ begin
     if not found then
       return new; -- the foreign key reports it
     end if;
-    select o.status into v_order from public.lab_orders o where o.id = v_result.order_id;
-    if v_order = 'cancelled' then
-      raise exception 'lab result: the order is cancelled';
+    if not public.lab_result_work_open(new.result_id) then
+      raise exception 'lab result: the order or the test is cancelled';
     end if;
     if new.status is distinct from 'draft' then
       raise exception 'lab result: a version is created as a draft';
@@ -915,6 +947,10 @@ begin
     return new;
   end if;
   new.updated_at := now();
+  -- A cancelled order or test cannot be worked on any further (the system's supersede step is exempt).
+  if not (old.status = 'verified' and new.status = 'superseded') and not public.lab_result_work_open(new.result_id) then
+    raise exception 'lab result: the order or the test is cancelled';
+  end if;
   if old.status = 'draft' and new.status = 'pending_verification' then
     select exists (select 1 from public.lab_result_values x where x.version_id = new.id) into v_has_values;
     if not v_has_values then
@@ -1022,6 +1058,9 @@ begin
     raise exception 'lab result: a value cannot move to another version or parameter';
   end if;
 
+  if not public.lab_result_work_open((select v.result_id from public.lab_result_versions v where v.id = new.version_id)) then
+    raise exception 'lab result: the order or the test is cancelled';
+  end if;
   select * into v_param from public.lab_test_parameters p where p.id = new.parameter_id and p.clinic_id = new.clinic_id;
   if not found then
     return new; -- the foreign key reports it
@@ -1064,6 +1103,9 @@ begin
      where rr.id = new.reference_range_id and rr.clinic_id = new.clinic_id and rr.parameter_id = new.parameter_id;
     if not found then
       raise exception 'lab result: the reference range does not belong to the parameter';
+    end if;
+    if not v_range.active then
+      raise exception 'lab result: the reference range is inactive';
     end if;
     new.ref_low := v_range.low; new.ref_high := v_range.high;
     new.critical_low := v_range.critical_low; new.critical_high := v_range.critical_high;

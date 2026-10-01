@@ -494,6 +494,55 @@ describeDb("laboratory domain model — database layer", () => {
     expect((await audits(version)).filter((a) => a.action === "lab_result_verified")).toHaveLength(1);
   });
 
+  // ---------- adversarial review of phase 2: work cannot continue on cancelled orders or tests ----------
+
+  it("review: a cancelled order or a cancelled test freezes its samples and results — nothing is submitted, verified, collected or added", async () => {
+    // (a) an order cancelled while a result is in draft and a sample awaits collection
+    const o = await order([hb, glu]);
+    const { version } = await draftResult(o.items[0], o.id);
+    const sample = (await svc((tx) => tx<{ id: string }[]>`
+      insert into public.lab_samples (clinic_id, order_id, patient_id, sample_type, sample_code, created_by)
+      values (${clinicA}, ${o.id}, ${patient.x}, 'blood', ${`S-${randomUUID().slice(0, 8)}`}, ${P.lab}) returning id`))[0].id;
+    await svc((tx) => tx`update public.lab_orders set status = 'cancelled', cancelled_by = ${P.lab}, cancel_reason = 'Ordered in error' where id = ${o.id}`);
+    expect((await pgError(() => submit(version))).message).toContain("cancelled");
+    expect((await pgError(() => svc((tx) => tx`update public.lab_result_versions set status = 'verified', verified_by = ${P.mgr} where id = ${version}`))).message).toMatch(/cancelled|invalid version transition/);
+    expect((await pgError(() => svc((tx) => tx`insert into public.lab_result_values (clinic_id, version_id, parameter_id, value_text) values (${clinicA}, ${version}, ${choiceParam}, 'clear')`))).message).toContain("cancelled");
+    expect((await pgError(() => svc((tx) => tx`update public.lab_result_values set value_numeric = 140 where version_id = ${version} and parameter_id = ${hbParam}`))).message).toContain("cancelled");
+    expect((await pgError(() => svc((tx) => tx`update public.lab_samples set status = 'collected', collected_by = ${P.lab} where id = ${sample}`))).message).toContain("cancelled");
+    // The sample itself can still be closed off.
+    await svc((tx) => tx`update public.lab_samples set status = 'cancelled' where id = ${sample}`);
+
+    // (b) a single test cancelled while its result is in draft
+    const o2 = await order([hb, glu]);
+    const r2 = await draftResult(o2.items[0], o2.id);
+    await svc((tx) => tx`update public.lab_order_items set status = 'cancelled', cancel_reason = 'Not needed' where id = ${o2.items[0]}`);
+    expect((await pgError(() => submit(r2.version))).message).toContain("cancelled");
+    expect((await pgError(() => svc((tx) => tx`insert into public.lab_result_versions (clinic_id, result_id, entered_by, corrects_version_id, correction_reason) values (${clinicA}, ${r2.result}, ${P.lab}, ${r2.version}, 'x')`))).code).toMatch(/^(P0001|23514)$/);
+    // (c) an inactive reference range cannot be chosen for a new value.
+    const inactive = (await svc((tx) => tx<{ id: string }[]>`insert into public.lab_reference_ranges (clinic_id, parameter_id, low, high, active) values (${clinicA}, ${hbParam}, 1, 2, false) returning id`))[0].id;
+    const o3 = await order([hb]);
+    const r3 = await svc(async (tx) => {
+      const [r] = await tx<{ id: string }[]>`insert into public.lab_results (clinic_id, order_item_id, order_id, patient_id) values (${clinicA}, ${o3.items[0]}, ${o3.id}, ${patient.x}) returning id`;
+      const [v] = await tx<{ id: string }[]>`insert into public.lab_result_versions (clinic_id, result_id, entered_by) values (${clinicA}, ${r.id}, ${P.lab}) returning id`;
+      return v.id;
+    });
+    expect((await pgError(() => svc((tx) => tx`insert into public.lab_result_values (clinic_id, version_id, parameter_id, value_numeric, reference_range_id) values (${clinicA}, ${r3}, ${hbParam}, 1.5, ${inactive})`))).message).toContain("inactive");
+  });
+
+  it("review: editing the catalog later never changes a stored result — range edits do not re-flag, and a parameter with results keeps its type", async () => {
+    const o = await order([hb]);
+    const { version } = await draftResult(o.items[0], o.id, "110"); // low against 120–160
+    const stored = async () => (await sql<{ flag: string; ref_low: string; value_numeric: string }[]>`select flag, ref_low, value_numeric from public.lab_result_values where version_id = ${version} and parameter_id = ${hbParam}`)[0];
+    expect(await stored()).toMatchObject({ flag: "low", ref_low: "120" });
+    await svc((tx) => tx`update public.lab_reference_ranges set low = 100, critical_low = 50 where id = ${hbRange}`);
+    expect(await stored()).toMatchObject({ flag: "low", ref_low: "120" }); // evaluated against what applied at entry
+    await svc((tx) => tx`update public.lab_reference_ranges set low = 120, critical_low = 70 where id = ${hbRange}`);
+    expect((await pgError(() => svc((tx) => tx`update public.lab_test_parameters set data_type = 'text' where id = ${hbParam}`))).message).toContain("data type");
+    // A parameter nobody has a result for can still be re-typed.
+    const fresh = (await svc((tx) => tx<{ id: string }[]>`insert into public.lab_test_parameters (clinic_id, test_id, code, name, data_type) values (${clinicA}, ${glu}, 'TMP', 'tmp', 'numeric') returning id`))[0].id;
+    await svc((tx) => tx`update public.lab_test_parameters set data_type = 'text' where id = ${fresh}`);
+  });
+
   // ---------- audit privacy ----------
 
   it("the audit trail carries ids and statuses only — never a value, unit, note, price or reason", async () => {

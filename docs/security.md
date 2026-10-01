@@ -249,6 +249,13 @@ delivery yet (phases 3–14, see `docs/labs/`). Everything below is enforced in 
   _version_superseded`, `lab_attachment_added`, `lab_catalog_created/_updated` (column **names** only). A test
   asserts no value, unit, note, price, test name or reason appears in any of these rows.
 
+- **Found by the phase 2 adversarial review (fixed, with tests):** results could still be submitted, verified or
+  edited, and samples collected, after their order or test was cancelled; an inactive reference range could be
+  chosen for a new value; a parameter's data type could change under stored results. Not DB-enforced yet, by
+  design (phase 3/6): any clinic staff role can currently enter or verify a result (the lab role and the
+  verifier-differs-from-enterer policy come with the server workflow), and the server — not the database — picks
+  the age-appropriate reference range.
+
 Tests: `src/lib/supabase/lab-foundation.test.ts`. Fixtures are removed by `cleanupTestClinics()` (the lab tables
 are registered in `FIXTURE_RETENTION_TABLES`).
 
