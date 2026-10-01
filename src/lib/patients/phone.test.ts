@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
@@ -76,8 +77,7 @@ describe.skipIf(!localDbAvailable())("public.normalize_phone() and patients.phon
     if (!admin || !clinic) return;
     const patients = await admin.from("patients").delete().eq("clinic_id", clinic);
     expect(patients.error).toBeNull();
-    const clinics = await admin.from("clinics").delete().eq("id", clinic);
-    expect(clinics.error).toBeNull();
+    await cleanupTestClinics([clinic]);
   });
 
   it.each(CASES)("parity — %s: the database agrees with normalizePhone()", async (_label, input, expected) => {

@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -113,8 +114,8 @@ describeDb("tenant integrity — every reference stays inside its clinic; the se
 
   afterAll(async () => {
     if (!sql) return;
-    // Deleting a clinic erases everything it owns, its audit trail included.
-    await sql`delete from public.clinics where id in ${sql([clinicA, clinicB])}`;
+    // Test-owner cleanup removes explicit fixture domains before their clinic.
+    await cleanupTestClinics([clinicA, clinicB]);
     await sql`delete from public.profiles where id in ${sql(Object.values(profiles))}`;
     await sql`delete from auth.users where id in ${sql(Object.values(profiles))}`;
     await sql.end({ timeout: 5 });
@@ -276,7 +277,7 @@ describeDb("tenant integrity — every reference stays inside its clinic; the se
 
   // ---------- Clinic deletion ----------
 
-  it("deleting a clinic erases everything it owns, its audit trail included — and nothing of another clinic", async () => {
+  it("clinic deletion cannot erase retained domains or either clinic’s audit trail", async () => {
     const doomed = randomUUID();
     const doctor = randomUUID();
     const service = randomUUID();
@@ -297,7 +298,7 @@ describeDb("tenant integrity — every reference stays inside its clinic; the se
     expect(before).toBeGreaterThan(0);
     const [{ othersBefore }] = await sql<{ othersBefore: number }[]>`select count(*)::int as "othersBefore" from public.audit_events where clinic_id = ${clinicB}`;
 
-    await sql`delete from public.clinics where id = ${doomed}`;
+    expect((await pgError(() => sql`delete from public.clinics where id = ${doomed}`)).code).toMatch(/23503|23001/);
 
     const left = await sql<{ table: string; n: number }[]>`
       select 'appointments' as table, count(*)::int as n from public.appointments where clinic_id = ${doomed}
@@ -306,9 +307,10 @@ describeDb("tenant integrity — every reference stays inside its clinic; the se
       union all select 'messages', count(*)::int from public.messages where clinic_id = ${doomed}
       union all select 'notification_jobs', count(*)::int from public.notification_jobs where clinic_id = ${doomed}
       union all select 'audit_events', count(*)::int from public.audit_events where clinic_id = ${doomed}`;
-    expect(left.filter((r) => r.n > 0)).toEqual([]);
+    expect(left.every((r) => r.n > 0)).toBe(true);
     const [{ othersAfter }] = await sql<{ othersAfter: number }[]>`select count(*)::int as "othersAfter" from public.audit_events where clinic_id = ${clinicB}`;
     expect(othersAfter).toBe(othersBefore);
+    await cleanupTestClinics([doomed]);
   });
 
   it("outside a clinic deletion, audit rows for a missing clinic are still refused", async () => {

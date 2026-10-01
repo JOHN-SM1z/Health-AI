@@ -1,3 +1,5 @@
+import { deleteAppointments } from "@/test/delete-appointments";
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
@@ -85,7 +87,7 @@ describeDb("local Supabase booking engine", () => {
     patientId = patient!.id;
     // Wipe leftovers from previous runs so the suite is idempotent.
     // All fixture appointments target this seed doctor.
-    await admin.from("appointments").delete().eq("doctor_id", doctorId);
+    await deleteAppointments(admin, (q) => q.eq("doctor_id", doctorId));
   });
 
   /** Next occurrence of `weekday` (1=Mon..7=Sun) at 10:00 Tashkent, ≥48h ahead. */
@@ -108,7 +110,7 @@ describeDb("local Supabase booking engine", () => {
     expect(result.appointment_id).toBeTruthy();
 
     // Cleanup so other tests run on a fresh schedule.
-    await admin.from("appointments").delete().eq("id", result.appointment_id);
+    await deleteAppointments(admin, (q) => q.eq("id", result.appointment_id));
   });
 
   it("rejects a double booking on the same slot (slot_taken)", async () => {
@@ -137,7 +139,7 @@ describeDb("local Supabase booking engine", () => {
     expect(second.error_code).toBe("slot_taken");
     expect(second.appointment_id).toBeNull();
 
-    await admin.from("appointments").delete().eq("id", first.appointment_id!);
+    await deleteAppointments(admin, (q) => q.eq("id", first.appointment_id!));
   });
 
   it("exactly one of two concurrent RPC bookings wins the same slot (no race)", async () => {
@@ -161,7 +163,7 @@ describeDb("local Supabase booking engine", () => {
     const loser = winners === 1 && ra.error_code !== null ? ra : rb;
     expect(loser.error_code).toBe("slot_taken");
     const winnerId = ra.error_code === null ? ra.appointment_id : rb.appointment_id;
-    await admin.from("appointments").delete().eq("id", winnerId!);
+    await deleteAppointments(admin, (q) => q.eq("id", winnerId!));
   });
 
   it("cancel-after-book race: exactly one active appointment survives at the slot", async () => {
@@ -204,7 +206,7 @@ describeDb("local Supabase booking engine", () => {
     const rebookWon = pending.length === 1 && cancelled.length === 1;
     const cancelWon = pending.length === 0 && cancelled.length === 1 && (all ?? []).length === 1;
     expect(rebookWon || cancelWon).toBe(true);
-    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", startAt);
+    await deleteAppointments(admin, (q) => q.eq("doctor_id", doctorId).eq("start_at", startAt));
   });
 
   it("reschedule-during-booking race: exactly one appointment lands on the target slot", async () => {
@@ -264,8 +266,8 @@ describeDb("local Supabase booking engine", () => {
       .eq("status", "pending");
     expect(onSlot2 ?? []).toHaveLength(1);
 
-    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", slot1);
-    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", slot2);
+    await deleteAppointments(admin, (q) => q.eq("doctor_id", doctorId).eq("start_at", slot1));
+    await deleteAppointments(admin, (q) => q.eq("doctor_id", doctorId).eq("start_at", slot2));
   });
 
   it("rejects booking outside working hours (outside_working_hours)", async () => {
@@ -309,7 +311,7 @@ describeDb("local Supabase booking engine", () => {
     expect(second.error_code).toBeNull();
     expect(second.appointment_id).toBeTruthy();
 
-    await admin.from("appointments").delete().eq("id", second.appointment_id!);
+    await deleteAppointments(admin, (q) => q.eq("id", second.appointment_id!));
   });
 
   it("enforces the no-overlap exclusion constraint on direct inserts", async () => {
@@ -346,7 +348,7 @@ describeDb("local Supabase booking engine", () => {
       expect(["P0001", "23P01"]).toContain(overlap.error.code);
     }
 
-    await admin.from("appointments").delete().eq("id", first.data!.id);
+    await deleteAppointments(admin, (q) => q.eq("id", first.data!.id));
   });
 
   it("rejects a non-existent clinic (clinic_not_found)", async () => {
@@ -390,7 +392,7 @@ describeDb("local Supabase booking engine", () => {
     expect((data as { error_code: string | null }).error_code).toBe("doctor_not_found");
 
     await admin.from("doctors").delete().eq("id", otherDoctor!.id);
-    await admin.from("clinics").delete().eq("id", otherClinic!.id);
+    await cleanupTestClinics([otherClinic!.id]);
   });
 
   it("rejects a patient from a different clinic (patient_not_found)", async () => {
@@ -419,7 +421,7 @@ describeDb("local Supabase booking engine", () => {
     expect((data as { error_code: string | null }).error_code).toBe("patient_not_found");
 
     await admin.from("patients").delete().eq("id", otherPatient!.id);
-    await admin.from("clinics").delete().eq("id", otherClinic!.id);
+    await cleanupTestClinics([otherClinic!.id]);
   });
 
   it("rejects a doctor+service combination the doctor does not offer (service_not_offered)", async () => {
@@ -472,7 +474,7 @@ describeDb("local Supabase booking engine", () => {
     const acceptedResult = accepted.data as { appointment_id: string | null; error_code: string | null };
     expect(acceptedResult.error_code).toBeNull();
 
-    await admin.from("appointments").delete().eq("id", acceptedResult.appointment_id!);
+    await deleteAppointments(admin, (q) => q.eq("id", acceptedResult.appointment_id!));
     await admin.from("doctor_working_hours").delete().eq("doctor_id", restrictedDoctor!.id);
     await admin.from("doctor_services").delete().eq("doctor_id", restrictedDoctor!.id);
     await admin.from("services").delete().eq("id", otherService!.id);
@@ -640,7 +642,7 @@ describeDb("RPC authorization + tenant isolation", () => {
     expect(error).toBeNull();
     expect((data as { error_code: string | null }).error_code).toBeNull();
     if (data?.appointment_id) {
-      await admin.from("appointments").delete().eq("id", data.appointment_id);
+      await deleteAppointments(admin, (q) => q.eq("id", data.appointment_id));
     }
   });
 

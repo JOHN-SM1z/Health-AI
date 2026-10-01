@@ -139,8 +139,8 @@ export function referralError(error: { code?: string; message?: string }): ApiEr
   if (has("only the receiving doctor") || has("only the referring doctor")) {
     return new ApiError(403, "Bu amal uchun ruxsat yo‘q", "forbidden");
   }
-  if (has("only be booked once the referral is accepted")) {
-    return new ApiError(409, "Yo‘llanma hali qabul qilinmagan", "referral_not_accepted");
+  if (has("only be linked to an open handoff") || has("only be booked once the referral is accepted")) {
+    return new ApiError(409, "Yo‘llanma yopilgan, muddati tugagan yoki hali hech bir shifokor qabul qilmagan", "referral_not_accepted");
   }
   if (has("already booked")) return new ApiError(409, "Bu yo‘llanma uchun qabul allaqachon yozilgan", "follow_up_exists");
   if (has("follow-up appointment is cancelled")) {
@@ -919,15 +919,20 @@ export async function listPatientReferrals(clinicId: string, patientId: string):
       referredToDoctor: row.referred_to,
       department: row.department?.name ?? null,
       followUp,
+      // An open handoff to a named doctor can be scheduled at once; a department referral nobody has taken has no doctor yet.
       canBookFollowUp:
-        status === "accepted" && (!followUp || INACTIVE_APPOINTMENT_STATUSES.includes(followUp.status)),
+        (status === "accepted" || status === "pending") &&
+        row.referred_to !== null &&
+        (!followUp || INACTIVE_APPOINTMENT_STATUSES.includes(followUp.status)),
     };
   });
 }
 
 /**
- * Before reception books a referral's follow-up: the referral must be
- * accepted and unexpired, the appointment must be with the receiving doctor
+ * Before reception books a referral's follow-up: the referral must be open
+ * (pending or accepted — acknowledgement is a care step, not a gate) and
+ * unexpired, and have a receiving doctor (a department referral nobody has
+ * taken has none), the appointment must be with the receiving doctor
  * for the referred patient, and no active follow-up may exist yet.
  */
 export async function assertFollowUpBookable(
@@ -956,8 +961,9 @@ export async function assertFollowUpBookable(
       }
     | null;
   if (!row) throw new ApiError(404, "Yo‘llanma topilmadi", "referral_not_found");
-  if (effectiveStatus(row.status, row.expires_at) !== "accepted") {
-    throw new ApiError(409, "Yo‘llanma hali qabul qilinmagan yoki yopilgan", "referral_not_accepted");
+  const status = effectiveStatus(row.status, row.expires_at);
+  if ((status !== "accepted" && status !== "pending") || row.referred_to_doctor_id === null) {
+    throw new ApiError(409, "Yo‘llanma yopilgan, muddati tugagan yoki hali hech bir shifokor qabul qilmagan", "referral_not_accepted");
   }
   if (doctorId !== row.referred_to_doctor_id) {
     throw new ApiError(400, "Qabul yo‘llanma berilgan shifokorga yozilishi kerak", "follow_up_wrong_doctor");

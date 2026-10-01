@@ -7,7 +7,7 @@
 --    a patient sees the patient's whole clinical history in the clinic —
 --    every doctor's consultations and records — without asking anyone. The
 --    relationship (unchanged in kind, widened in what it shows):
---      * a treating relationship: any non-cancelled appointment with the
+--      * a treating relationship: any appointment, neither cancelled nor a no-show, with the
 --        patient (past, today or booked; a website booking not yet confirmed
 --        by staff excepted — its visitor is unverified) or a record the
 --        doctor wrote — kept for continuity of care; or
@@ -150,7 +150,7 @@ begin
       raise exception 'referral: a referral must be created as pending';
     end if;
     if new.follow_up_appointment_id is not null then
-      raise exception 'referral: a follow-up can only be booked once the referral is accepted';
+      raise exception 'referral: a follow-up can only be linked to an open handoff';
     end if;
 
     new.created_at := now();
@@ -209,11 +209,14 @@ begin
     raise exception 'referral: a referral cannot be edited, only moved through its status transitions';
   end if;
 
-  -- UPDATE: status transitions, plus linking the follow-up while accepted.
+  -- UPDATE: status transitions, plus scheduling the follow-up of an open
+  -- handoff (reception need not wait for acknowledgement — a referral is no
+  -- permission request). A department referral nobody has taken has no
+  -- doctor yet, so its visit can only be booked once a doctor took it.
   if new.status = old.status then
     if new.follow_up_appointment_id is distinct from old.follow_up_appointment_id
-       and old.status <> 'accepted' then
-      raise exception 'referral: a follow-up can only be booked once the referral is accepted';
+       and (old.status not in ('pending', 'accepted') or old.referred_to_doctor_id is null) then
+      raise exception 'referral: a follow-up can only be linked to an open handoff';
     end if;
     v_mutable := array['follow_up_appointment_id', 'updated_at'];
   elsif (old.status = 'pending' and new.status in ('accepted', 'declined', 'revoked', 'expired'))
@@ -282,7 +285,7 @@ begin
 
       -- Linking a consultation that has already started: the referral is in
       -- progress from this statement on.
-      if v_new_follow_up_status in ('in_progress', 'completed') then
+      if old.status = 'accepted' and v_new_follow_up_status in ('in_progress', 'completed') then
         if v_target_profile is null or not v_target_active or not v_target_is_doctor then
           raise exception 'referral: only the receiving doctor can mark the referral in_progress';
         end if;
@@ -437,6 +440,12 @@ revoke all on function public.referrals_audit() from public, anon, authenticated
 -- The receiving doctor's (backstop) view of a referral: also a department
 -- doctor's while nobody has taken it. Signed-in roles still have no SELECT
 -- on referrals; every read goes through the server.
+-- 20261001000002 added a SELECT policy for any treating doctor. Referral
+-- rows carry the doctor's clinical handoff text and signed-in roles read no
+-- clinical table directly (reads go through the server, which authorizes and
+-- audits each one), so it is dropped; the receiving doctor's backstop policy
+-- below is the only one.
+drop policy if exists "referral history for treating doctor" on public.referrals;
 drop policy if exists "referrals read for receiving doctor" on public.referrals;
 create policy "referrals read for receiving doctor"
   on public.referrals for select
@@ -482,8 +491,8 @@ as $$
   with decision as (
     select
       d.clinic_id,
-      -- Treating relationship: any appointment that was not cancelled (past,
-      -- today or booked), or a record the doctor wrote. A website booking
+      -- Treating relationship: any appointment that was neither cancelled nor
+      -- a no-show (past, today or booked), or a record the doctor wrote. A website booking
       -- nobody has confirmed yet is not one: it is made without any proof of
       -- who the visitor is, and could name someone else's record. Once staff
       -- confirm it (any status beyond pending) it counts like any other.
@@ -493,7 +502,7 @@ as $$
         where a.clinic_id = d.clinic_id
           and a.patient_id = p.id
           and a.doctor_id = d.id
-          and a.status <> 'cancelled'
+          and a.status not in ('cancelled', 'no_show')
           and not (a.source = 'web' and a.status = 'pending')
       )
       or exists (
@@ -545,7 +554,7 @@ as $$
 $$;
 
 comment on function public.doctor_patient_access(uuid, uuid) is
-  'What an active doctor may see of a patient of their clinic (see 20261002000001): full_history — the patient''s whole clinical history, every doctor''s visits and records — for a treating relationship (a non-cancelled appointment or an authored record) or an open, unexpired referral to them or (while untaken) to their department. No row = other clinic / not an active doctor. Server-only.';
+  'What an active doctor may see of a patient of their clinic (see 20261002000001): full_history — the patient''s whole clinical history, every doctor''s visits and records — for a treating relationship (an appointment that was neither cancelled nor a no-show, or an authored record) or an open, unexpired referral to them or (while untaken) to their department. No row = other clinic / not an active doctor. Server-only.';
 
 revoke all on function public.doctor_patient_access(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.doctor_patient_access(uuid, uuid) to service_role;
@@ -764,7 +773,7 @@ $$;
 --     ('awaiting_confirmation'): its visitor is unverified, and starting it
 --     would make the doctor the patient's treating doctor;
 --   * the doctor's access is decided again, without locks ('access_lost'):
---     their own non-cancelled appointment is itself a permanent relationship,
+--     their own (not cancelled, not no-show) appointment is itself a permanent relationship,
 --     so no referral needs holding for it.
 -- The front desk's start is reception's own act and is not restricted.
 create or replace function public.start_consultation(

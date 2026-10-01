@@ -10,8 +10,9 @@ import type { Database } from "@/lib/supabase/database.types";
  * doctor with a legitimate clinical relationship sees all of it (every
  * doctor's consultations and records) without asking anyone:
  *
- *   A. a treating relationship — any non-cancelled appointment with the
- *      patient (past, today or booked) or a record the doctor wrote;
+ *   A. a treating relationship — any appointment with the patient that was
+ *      neither cancelled nor a no-show (past, today or booked), or a record
+ *      the doctor wrote;
  *   B. an open referral — pending, accepted or in progress and not past
  *      expires_at — to the doctor, or to the doctor's department while no
  *      doctor has taken it. Acceptance is a care step, never a gate;

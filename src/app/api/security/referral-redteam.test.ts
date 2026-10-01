@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -374,7 +375,7 @@ describeDb("RED TEAM — referral-based clinical access", () => {
       await admin.from("staff_roles").delete().eq("clinic_id", c);
       await admin.from("doctors").delete().eq("clinic_id", c);
       await admin.from("services").delete().eq("clinic_id", c);
-      await admin.from("clinics").delete().eq("id", c);
+      await cleanupTestClinics([c]);
     }
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });

@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
@@ -110,7 +111,7 @@ describeDb("dashboard conversation counts (real DB, mocked session)", () => {
     await admin.from("conversations").delete().eq("clinic_id", clinicId);
     await admin.from("conversations").delete().eq("clinic_id", otherClinicId);
     await admin.from("patients").delete().in("id", [patientA, patientB, patientC, patientOther]);
-    await admin.from("clinics").delete().in("id", [clinicId, otherClinicId]);
+    await cleanupTestClinics([clinicId, otherClinicId]);
   });
 
   beforeEach(() => {

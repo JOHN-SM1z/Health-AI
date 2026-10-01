@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -234,7 +235,7 @@ describeDb("referral API (doctor portal + reception)", () => {
       await admin.from("staff_roles").delete().eq("clinic_id", clinicId);
       await admin.from("doctors").delete().eq("clinic_id", clinicId);
       await admin.from("services").delete().eq("clinic_id", clinicId);
-      await admin.from("clinics").delete().eq("id", clinicId);
+      await cleanupTestClinics([clinicId]);
     }
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });
@@ -788,7 +789,8 @@ describeDb("referral API (doctor portal + reception)", () => {
       );
     };
 
-    expect(await book()).toMatchObject({ status: 409, body: { code: "referral_not_accepted" } });
+    // A pending referral is an open handoff: reception need not wait for the receiving doctor to acknowledge it.
+    expect(await book({ doctorId: doctors.bystander })).toMatchObject({ status: 400, body: { code: "follow_up_wrong_doctor" } });
     await act("receiver", id, { action: "accept" });
 
     expect(await book({ doctorId: doctors.bystander })).toMatchObject({ status: 400, body: { code: "follow_up_wrong_doctor" } });
@@ -811,6 +813,44 @@ describeDb("referral API (doctor portal + reception)", () => {
     // Reception sees scheduling metadata only, never the clinical text.
     expect(JSON.stringify(referrals)).not.toContain("arrhythmia");
     expect(referrals[0]).not.toHaveProperty("reason");
+  });
+
+  it("lets reception book the follow-up of a referral still pending, but not of a revoked one", async () => {
+    const id = await freshReferral();
+    const { data: referral } = await admin.from("referrals").select("patient_id").eq("id", id).single();
+    const book = async () => {
+      as("receptionist", "receptionist");
+      return read(
+        await bookAppointment(
+          request("POST", "/api/admin/appointments", {
+            patientName: "Referral follow-up",
+            doctorId: doctors.receiver,
+            serviceId,
+            startAt: futureSlot(),
+            source: "admin",
+            referralId: id,
+          }),
+        ),
+      );
+    };
+    const booked = await book();
+    expect(booked.status).toBe(201);
+    const { data: linked } = await admin.from("referrals").select("status, follow_up_appointment_id").eq("id", id).single();
+    expect(linked).toEqual({ status: "pending", follow_up_appointment_id: booked.body.data!.appointmentId });
+    as("receptionist", "receptionist");
+    const patient = await read(await getPatient(request("GET", `/api/admin/patients?id=${referral!.patient_id}`)));
+    expect((patient.body.data!.referrals as Array<Record<string, unknown>>)[0]).toMatchObject({ id, status: "pending", canBookFollowUp: false });
+
+    const closed = await freshReferral();
+    await admin.from("referrals").update({ status: "revoked", revoked_by: users.referrer, revoked_reason: "No longer needed" }).eq("id", closed);
+    as("receptionist", "receptionist");
+    expect(
+      await read(
+        await bookAppointment(
+          request("POST", "/api/admin/appointments", { patientName: "Referral follow-up", doctorId: doctors.receiver, serviceId, startAt: futureSlot(), source: "admin", referralId: closed }),
+        ),
+      ),
+    ).toMatchObject({ status: 409, body: { code: "referral_not_accepted" } });
   });
 
   describe("when the referral changes between the check and the link", () => {

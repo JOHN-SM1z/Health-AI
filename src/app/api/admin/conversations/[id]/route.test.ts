@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
@@ -115,7 +116,7 @@ describeDb("conversation mark_seen (real DB, mocked session)", () => {
     await admin.from("conversations").delete().in("id", [convId, otherConvId]);
     await admin.from("patients").delete().eq("clinic_id", clinicId);
     await admin.from("patients").delete().eq("clinic_id", otherClinicId);
-    await admin.from("clinics").delete().in("id", [clinicId, otherClinicId]);
+    await cleanupTestClinics([clinicId, otherClinicId]);
     await admin.from("profiles").delete().eq("id", actorProfileId);
     await admin.auth.admin.deleteUser(actorProfileId);
   });

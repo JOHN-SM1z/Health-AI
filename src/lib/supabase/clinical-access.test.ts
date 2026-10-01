@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -272,12 +273,13 @@ describeDb("longitudinal clinical access — database layer (doctor_patient_acce
     await sql`delete from public.clinical_records where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.referrals where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.payments where clinic_id in ${sql(clinics)}`;
+    await sql`delete from public.payments where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.appointments where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.staff_roles where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.doctors where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.patients where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.services where clinic_id in ${sql(clinics)}`;
-    await sql`delete from public.clinics where id in ${sql(clinics)}`;
+    await cleanupTestClinics(clinics);
     await sql`delete from auth.users where id in ${sql(Object.values(profiles))}`;
     await sql.end({ timeout: 5 });
   });
@@ -670,10 +672,9 @@ describeDb("longitudinal clinical access — database layer (doctor_patient_acce
 
   // ---------- The treating relationship and department referrals (20261002000001_longitudinal_history.sql) ----------
 
-  it("15. Any appointment that was not cancelled — past or booked, whatever its status — is a treating relationship with the whole history", async () => {
+  it("15. Any appointment that was neither cancelled nor a no-show — past or booked, whatever its other status — is a treating relationship with the whole history", async () => {
     for (const [status, when] of [
       ["completed", "past"],
-      ["no_show", "past"],
       ["checked_in", "past"],
       ["in_progress", "past"],
       ["confirmed", "booked"],
@@ -685,6 +686,21 @@ describeDb("longitudinal clinical access — database layer (doctor_patient_acce
       expect(await access(doctors.a, p), status).toEqual(ownPatient());
       expect(await seenBy(profiles.a, p), status).toEqual(wholeHistory(mine, withE));
     }
+  });
+
+  it("15b. A no-show is not a treating relationship: the patient never came — it stays in the history for the treating doctors", async () => {
+    const p = await newPatient();
+    const withE = await visit(p, doctors.e);
+    const missed = await visit(p, doctors.a, clinicA, "no_show", "past");
+    expect(await access(doctors.a, p)).toEqual(noRelationship);
+    expect(await seenBy(profiles.a, p)).toEqual(nothing);
+    expect(await seenBy(profiles.e, p)).toEqual(wholeHistory(withE, missed));
+    // Marked a no-show after being booked: the relationship the booking gave ends with it.
+    const q = await newPatient();
+    const booking = await visit(q, doctors.a, clinicA, "confirmed", "booked");
+    expect(await access(doctors.a, q)).toEqual(ownPatient());
+    await sql`update public.appointments set status = 'no_show' where id = ${booking}`;
+    expect(await access(doctors.a, q)).toEqual(noRelationship);
   });
 
   it("16. A doctor whose only appointment with the patient was cancelled has no relationship — and cancelling a booking ends the one it gave", async () => {

@@ -192,7 +192,7 @@ role, unknown ids).
   reading — counted in Postgres (`consume_rate_limit()`), so the limit holds across every server
   instance (falls back to the instance's in-memory limit if the database cannot answer).
 - **Patient list.** `GET /api/doctor/patients` (`listDoctorPatients()`) lists the doctor's own
-  patients (any appointment with them that is not cancelled, or a record they wrote) and those with
+  patients (any appointment with them that is neither cancelled nor a no-show, or a record they wrote) and those with
   an open, unexpired referral to them (`pending`, `accepted` or `in_progress`, including an untaken
   referral to their department other than one they raised) — the decision's own rule, so every
   listed patient opens and nobody else of the clinic is listed. The `?q=` search filters that list
@@ -414,8 +414,8 @@ compares the referral's status and `expires_at` with the database clock.
 | `completed`, after `expires_at` | nothing of the referral; the history only through B's own relationship | — | own relationship |
 | `declined` / `revoked` / `expired` | nothing from that moment through the referral (410 with the reason); the history only through B's own relationship | lose it at once (revoked / expired) | own relationship; the referral stays readable |
 
-"Own relationship" is relationship A of the [decision](#clinical-access-doctors): a non-cancelled
-appointment with the patient or a record the doctor wrote. A referral is raised from the
+"Own relationship" is relationship A of the [decision](#clinical-access-doctors): an appointment, neither cancelled nor a no-show,
+with the patient or a record the doctor wrote. A referral is raised from the
 referring doctor's own consultation, so the referring doctor normally holds relationship A
 throughout.
 

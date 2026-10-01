@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -244,7 +245,7 @@ describeDb("referral-based clinical access — server and API layers", () => {
       await admin.from("staff_roles").delete().eq("clinic_id", clinicId);
       await admin.from("doctors").delete().eq("clinic_id", clinicId);
       await admin.from("services").delete().eq("clinic_id", clinicId);
-      await admin.from("clinics").delete().eq("id", clinicId);
+      await cleanupTestClinics([clinicId]);
     }
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });

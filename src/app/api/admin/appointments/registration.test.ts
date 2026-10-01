@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { createHmac, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
@@ -202,7 +203,7 @@ describeDb("reception registration finds the returning patient — real routes, 
   afterAll(async () => {
     if (!sql) return;
     // Everything of both clinics goes with them; errors fail the suite instead of leaking fixtures.
-    await sql`delete from public.clinics where id in ${sql([clinicA, clinicB])}`;
+    await cleanupTestClinics([clinicA, clinicB]);
     await sql`delete from auth.users where id in ${sql([receptionist, doctorUser])}`;
     const [{ left }] = await sql<{ left: number }[]>`
       select (select count(*)::int from public.clinics where id in ${sql([clinicA, clinicB])})

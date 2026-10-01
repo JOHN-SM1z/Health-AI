@@ -94,7 +94,7 @@ history at once.
 ## Patient profile and clinical records
 
 - [ ] The patient page has the tabs *Umumiy*, *Qabullar*, *Klinik tarix*, *Tashxislar*, *Laboratoriya*, *Retseptlar*, *Yo‘llanmalar*; *Qabullar* lists every visit of the patient in the clinic, whoever held it (*Siz* on your own)
-- [ ] *Bemorlarim* lists own patients (*Mening bemorim*; any visit that is not cancelled, or a record you wrote) and patients with an open referral to you (*Yo‘llanma: …*); patients whose referral was revoked/expired (and no visit or record of yours) and unrelated patients are absent; search by name or phone digits works
+- [ ] *Bemorlarim* lists own patients (*Mening bemorim*; any visit that is neither cancelled nor a no-show, or a record you wrote) and patients with an open referral to you (*Yo‘llanma: …*); patients whose referral was revoked/expired (and no visit or record of yours) and unrelated patients are absent; search by name or phone digits works
 - [ ] *Umumiy* shows *Javob kutayotgan yo‘llanmalar* for a pending referral; *Mening qabulim* lets the receiving doctor start a consultation immediately, without accepting first
 - [ ] *Hozir qabulni boshlash* starts a walk-in (or *Qabulni boshlash* for today's booked visit); records saved there show *Siz yozgansiz* under *Mening qabulim*
 - [ ] *Klinik tarix* shows the journey newest first — every doctor's visits with the records written in them, and the referrals; other doctors' records show *Muallif: …* and are never marked *Siz yozgansiz*
