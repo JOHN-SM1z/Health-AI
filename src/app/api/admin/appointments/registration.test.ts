@@ -406,6 +406,28 @@ describeDb("reception registration finds the returning patient — real routes, 
     expect(await patient(first)).toMatchObject({ full_name: `Aziza Karimova ${suffix}`, phone: PHONE });
     expect(await samePhone()).toEqual([first, second].sort());
   });
+  it("phone matching never merges two people: a foreign number is not read as Uzbek, and an impossible number matches nobody", async () => {
+    // "+298 …" has 9 digits after the plus; the same 9 digits typed without it are an Uzbek local number — two different numbers.
+    const faroe = await book({ patientName: `Faroe ${suffix}`, phone: "+298 123456", confirmNewPatient: false });
+    expect(faroe.status).toBe(201);
+    const faroeId = await patientOf(faroe);
+    expect((await patient(faroeId)).phone_normalized).toBe("298123456");
+    const local = await book({ patientName: `Local ${suffix}`, phone: "298 123 456" });
+    expect(local.status).toBe(201);
+    expect((await patient(await patientOf(local))).phone_normalized).toBe("998298123456");
+    // The same foreign number typed another way is found.
+    const again = await book({ patientName: `Faroe ${suffix}`, phone: "+298-12-34-56" });
+    expect(again).toMatchObject({ status: 409, body: { code: "possible_duplicate" } });
+    expect(again.body.details?.candidates?.map((c) => c.id)).toEqual([faroeId]);
+
+    // More digits than any phone number has (the form allows up to 20 characters): two patients that typed the same junk are not "the same patient".
+    for (const name of ["Uzun Bir", "Uzun Ikki"]) {
+      const res = await book({ patientName: `${name} ${suffix}`, phone: "1234567890123456" });
+      expect(res.status, name).toBe(201);
+      expect((await patient(await patientOf(res))).phone_normalized).toBeNull();
+    }
+  });
+
   it("every patient created above is audited as 'patient_created' — channel and creator, never the name or phone", async () => {
     // A website visitor nobody has seen: a record is created for them.
     const visitorName = `Sayt Mehmoni ${suffix}`;
