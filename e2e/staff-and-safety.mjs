@@ -52,7 +52,10 @@ async function run() {
     const temporary = (await owner.getByTestId("temporary-password").textContent())?.trim() ?? "";
     check(temporary.length >= 12, "the one-time password is shown to the owner once");
     await owner.screenshot({ path: `${SHOTS}/staff-added.png`, fullPage: true });
-    check(await owner.getByText(email, { exact: true }).isVisible(), "the new receptionist is listed with their sign-in email");
+    check(
+      await owner.getByText(email, { exact: true }).waitFor({ timeout: 10_000 }).then(() => true, () => false),
+      "the new receptionist is listed with their sign-in email",
+    );
 
     // ---------- The receptionist signs in and changes the password (phone) ----------
     const { context: newContext, page: newcomer } = await login(browser, email, temporary, "phone");
