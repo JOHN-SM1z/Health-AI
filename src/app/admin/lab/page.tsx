@@ -635,6 +635,19 @@ function SettingsTab() {
                 <span className="text-ink-muted">Yoqilmasa, namuna to‘lovdan qat‘i nazar olinishi mumkin (to‘lov holati alohida saqlanadi).</span>
               </span>
             </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-medium text-foreground">Takroriy tahlil eslatmasi (kun)</span>
+              <span className="text-ink-muted">
+                Shifokor bemorga shu muddat ichida buyurilgan tahlilni yana buyursa, “o‘xshash tahlil bor” eslatmasi ko‘rinadi. Eslatma buyurtmani to‘smaydi. 0 — o‘chirilgan.
+              </span>
+              <AInput
+                type="number"
+                value={String(settings.ordering.recentTestWindowDays)}
+                onChange={(v) => setSettings({ ...settings, ordering: { recentTestWindowDays: Math.max(0, Math.min(365, Math.round(Number(v) || 0))) } })}
+                aria-label="Takroriy tahlil eslatmasi kunlari"
+                className="!w-32"
+              />
+            </label>
             <div className="flex items-center gap-3">
               <AButton loading={busy} onClick={() => void save()}>Saqlash</AButton>
               {saved && <span className="text-sm text-pine-deep" role="status">Saqlandi</span>}

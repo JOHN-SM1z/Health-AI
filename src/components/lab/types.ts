@@ -40,7 +40,11 @@ export type LabTest = {
 };
 export type LabTestDetail = LabTest & { parameters: LabParameter[] };
 export type LabPanel = { id: string; code: string; name: string; description: string | null; price: number | null; active: boolean; testIds: string[] };
-export type LabSettings = { verification: { required: boolean; separateVerifier: boolean }; collection: { requiresPayment: boolean } };
+export type LabSettings = {
+  verification: { required: boolean; separateVerifier: boolean };
+  collection: { requiresPayment: boolean };
+  ordering: { recentTestWindowDays: number };
+};
 
 export const DATA_TYPE_LABELS: Record<LabParameter["data_type"], string> = { numeric: "Son", text: "Matn", choice: "Tanlov" };
 

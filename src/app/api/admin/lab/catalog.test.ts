@@ -281,21 +281,24 @@ describeDb("laboratory configuration — real routes and database", () => {
     expect((await call(settings.GET, "GET", "/api/admin/lab/settings")).body.data!.settings).toEqual({
       verification: { required: true, separateVerifier: false },
       collection: { requiresPayment: false },
+      ordering: { recentTestWindowDays: 30 },
     });
     for (const bad of [
       { verification: { required: "yes", separateVerifier: false }, collection: { requiresPayment: false } },
       { verification: { required: true }, collection: { requiresPayment: false } },
       { verification: { required: true, separateVerifier: false, extra: 1 }, collection: { requiresPayment: false } },
       { verification: { required: true, separateVerifier: false }, collection: { requiresPayment: false }, clinicId: clinicB },
+      { verification: { required: true, separateVerifier: false }, collection: { requiresPayment: false }, ordering: { recentTestWindowDays: -1 } },
+      { verification: { required: true, separateVerifier: false }, collection: { requiresPayment: false }, ordering: { recentTestWindowDays: 400 } },
     ]) {
       expect((await call(settings.PUT, "PUT", "/api/admin/lab/settings", bad)).status, JSON.stringify(bad)).toBe(400);
     }
-    const next = { verification: { required: true, separateVerifier: true }, collection: { requiresPayment: true } };
+    const next = { verification: { required: true, separateVerifier: true }, collection: { requiresPayment: true }, ordering: { recentTestWindowDays: 14 } };
     expect((await call(settings.PUT, "PUT", "/api/admin/lab/settings", next)).status).toBe(200);
     expect((await call(settings.GET, "GET", "/api/admin/lab/settings")).body.data!.settings).toEqual(next);
     // Clinic B is unaffected.
     asOwnerB();
-    expect((await call(settings.GET, "GET", "/api/admin/lab/settings")).body.data!.settings).toEqual({ verification: { required: true, separateVerifier: false }, collection: { requiresPayment: false } });
+    expect((await call(settings.GET, "GET", "/api/admin/lab/settings")).body.data!.settings).toEqual({ verification: { required: true, separateVerifier: false }, collection: { requiresPayment: false }, ordering: { recentTestWindowDays: 30 } });
     // The change is in the trail, with the actor and the flags before and after.
     const trail = await sql<{ actor_id: string; old_values: unknown; new_values: unknown }[]>`
       select actor_id, old_values, new_values from public.audit_events where clinic_id = ${clinicA} and action = 'lab_settings_changed'`;

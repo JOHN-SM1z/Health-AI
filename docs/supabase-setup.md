@@ -137,6 +137,13 @@ rows and stop assigning it.
 `lab_create_panel()` and `lab_set_panel_tests()` (service role only): a panel and its tests are written in one
 transaction, verified to belong to the clinic, so a refused test leaves no half-built panel.
 
+### `20261003000004_lab_create_order.sql` (laboratory, phase 4)
+
+`lab_create_order()` (service role only): an order and all its items in one transaction, idempotent per
+`(ordering doctor, creation_key)` and race-safe (a concurrent duplicate replays the winner). All validation of access, the
+consultation and catalog membership happens in the server before the call; the function's own triggers still enforce clinic
+integrity, active tests and price/name snapshots. Rollback: `drop function public.lab_create_order(...)`.
+
 ### `20261003000002_lab_foundation.sql` (laboratory, phase 2)
 
 The normalized laboratory domain model (decisions: `docs/labs/DECISIONS.md`, design: `docs/labs/PHASE_1_AUDIT.md`;

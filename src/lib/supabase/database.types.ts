@@ -2749,6 +2749,21 @@ export type Database = {
         Args: { p_external_id: string; p_source: string }
         Returns: undefined
       }
+      lab_create_order: {
+        Args: {
+          p_actor: string
+          p_appointment_id: string
+          p_clinic_id: string
+          p_creation_key: string
+          p_doctor_id: string
+          p_items: Json
+          p_notes: string
+          p_patient_id: string
+          p_priority: Database["public"]["Enums"]["lab_priority"]
+          p_referral_id: string
+        }
+        Returns: Json
+      }
       lab_create_panel: {
         Args: {
           p_active: boolean

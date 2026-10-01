@@ -86,6 +86,16 @@ export const labSettingsSchema = z
       })
       .strict(),
     collection: z.object({ requiresPayment: z.boolean() }).strict(),
+    ordering: z
+      .object({
+        /**
+         * A doctor ordering a test the patient already had within this many days sees an advisory notice
+         * ("similar test N days ago"). 0 turns the notice off. Advisory only: it never blocks an order.
+         */
+        recentTestWindowDays: z.number().int().min(0).max(365),
+      })
+      .strict()
+      .default({ recentTestWindowDays: 30 }),
   })
   .strict();
 export type LabSettings = z.infer<typeof labSettingsSchema>;
@@ -93,4 +103,5 @@ export type LabSettings = z.infer<typeof labSettingsSchema>;
 export const DEFAULT_LAB_SETTINGS: LabSettings = {
   verification: { required: true, separateVerifier: false },
   collection: { requiresPayment: false },
+  ordering: { recentTestWindowDays: 30 },
 };

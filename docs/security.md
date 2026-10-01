@@ -292,6 +292,39 @@ Roles (`20261003000001`, `src/lib/auth/staff.ts`, `src/lib/labs/access.ts`):
   (what a technician's own token can read/write), `src/lib/auth/lab-roles.test.ts`, the staff-management test, and
   `e2e/lab-configuration.mjs` (real screens).
 
+## Laboratory ordering (phase 4: doctors)
+
+`src/lib/labs/ordering.ts`, `/api/doctor/lab/{catalog,comparable,orders}`, `/api/doctor/patients/[id]/lab`,
+`20261003000004_lab_create_order.sql`, the *Laboratoriya* tab of the patient workspace.
+
+- **Only a linked doctor orders** (`requireLinkedDoctor`); receptionists, managers, owners and technicians are refused (403).
+  The clinic, the ordering doctor and their login always come from the session; the body is `.strict()`, so a request that
+  names `clinicId`, `doctorId`, a price, a status or a total is refused with 400, never ignored.
+- **Patient access is the existing clinical access decision** (`assertPatientAccess`): a doctor with no relationship, another
+  clinic's patient and a malformed id all answer 404 like any patient read, and the refusal is audited
+  (`unauthorized_clinical_access_attempt`). Nothing is written.
+- **The consultation is the doctor's own.** An order belongs to one of the doctor's consultations with this patient: the one in
+  progress when none is named (409 `consultation_required` when there is none), or a named one of theirs that is in progress or
+  completed (booked/cancelled: 409 `consultation_not_active`; another doctor's or another patient's: 404).
+- **Prices and names come from the catalog**, snapshotted per item by the database. Inactive tests and panels (or a panel with
+  an inactive test) are refused (409); another clinic's ids answer 404 like a missing one. A test chosen directly and through a
+  panel is one item. A referral may be linked only when addressed to this doctor.
+- **Atomic and idempotent.** `lab_create_order()` (service role only) writes the order and all items in one transaction and
+  replays on `(ordering doctor, creation_key)`; the UI makes one key per review step, a repeat answers 200 with the same order, a
+  concurrent burst creates one order, and the same key for different tests is 409 `idempotency_conflict`.
+- **Reading a patient's orders** is for doctors who have the patient's history (every doctor's orders, as the longitudinal record);
+  each read is audited (`lab_order_viewed`, order ids only). The list shows status and per-item result *status*, **never a value**;
+  the ordering doctor's note is clinical text and is returned only here.
+- **Similar-test notice** is advisory: it never blocks an order and carries no value. It compares by test (panels count through
+  their tests) against the patient's non-cancelled orders inside the clinic's `ordering.recentTestWindowDays` (default 30; 0
+  switches it off) and is audited as a history read (`lab_order_viewed`, `via: similar_notice`).
+- **Rate limits** (shared across instances): 30 orders/min and 60 lookups/min per doctor login.
+- **Audit stays free of clinical text**: `lab_order_created` holds ids only — no note, price or test name.
+- **Not applied yet:** the clinic setting `collection.requiresPayment` is stored but nothing consults it before phase 5 (sample
+  collection), and the separate-verifier rule is enforced by the server in phase 6; the database alone still allows the same
+  technician to enter and verify.
+- Tests: `src/app/api/doctor/lab/ordering.test.ts` (real routes and database), `e2e/lab-ordering.mjs` (real screens).
+
 ## Clinical records
 
 `clinical_records` (`20260927000005_clinical_records.sql`, types extended in

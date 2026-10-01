@@ -23,6 +23,7 @@ import { ReferralDialog } from "@/components/doctor/referral-dialog";
 import { ClinicalRecordForm, type RecordDraft } from "@/components/doctor/clinical-record-form";
 import { ReferralLifecycle } from "@/components/doctor/referral-lifecycle";
 import { RecordHistory } from "@/components/doctor/record-history";
+import { LabOrdering } from "@/components/doctor/lab-ordering";
 import { RECORD_CATEGORY_LABELS, type RecordCategory } from "@/lib/clinical-records/categories";
 
 type Appointment = {
@@ -516,6 +517,12 @@ export default function DoctorPatientWorkspacePage() {
               </ul>
             )}
           </Card>
+        </Section>
+      )}
+
+      {tab === "lab" && (
+        <Section title="Laboratoriya buyurtmalari">
+          <LabOrdering patientId={workspace.patient.id} appointmentId={current?.appointmentId ?? null} />
         </Section>
       )}
 
