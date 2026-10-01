@@ -328,6 +328,55 @@ describeDb("doctor laboratory ordering — real routes and database", () => {
     expect((await sql`select count(*)::int as n from public.lab_orders where creation_key = ${burstKey}`)[0].n).toBe(1);
   });
 
+  it("a retry of an order that exists is answered from it even if the catalog or the consultation changed since (a lost response is not a new order)", async () => {
+    as("a");
+    const key = randomUUID();
+    const first = await order({ patientId: patient.x, testIds: [T.glu], idempotencyKey: key });
+    expect(first.status).toBe(201);
+    // The test is retired and the consultation completed between the attempt and its retry.
+    await sql`update public.lab_tests set active = false where id = ${T.glu}`;
+    await sql`update public.appointments set status = 'completed' where id = ${consult}`;
+    try {
+      const retry = await order({ patientId: patient.x, testIds: [T.glu], idempotencyKey: key });
+      expect(retry.status).toBe(200);
+      expect(retry.body.data!.order).toMatchObject({ id: first.body.data!.order.id, replayed: true });
+      // A different test set under the same key is still a conflict, and a new key is refused as an inactive test.
+      expect((await order({ patientId: patient.x, testIds: [T.hb], idempotencyKey: key })).body.code).toBe("idempotency_conflict");
+      expect((await order({ patientId: patient.x, testIds: [T.glu], appointmentId: consultDone })).body.code).toBe("lab_test_inactive");
+    } finally {
+      await sql`update public.lab_tests set active = true where id = ${T.glu}`;
+      await sql`update public.appointments set status = 'in_progress' where id = ${consult}`;
+    }
+  });
+
+  it("a referral can be answered only while it is live: expired, declined or revoked ones cannot be linked", async () => {
+    as("a");
+    // Patient Y, from doctor C: one open referral per pair, so one state at a time.
+    const [ref] = await sql<{ id: string }[]>`insert into public.referrals ${sql({
+      clinic_id: clinicA, patient_id: patient.y, referring_doctor_id: doc.c, referred_to_doctor_id: doc.a,
+      originating_appointment_id: await visit(clinicA, patient.y, doc.c, "completed"), reason: "dead referral", created_by: users.c,
+    })} returning id`;
+    const raw = async (statement: () => Promise<unknown>) => {
+      await sql`alter table public.referrals disable trigger user`;
+      try {
+        await statement();
+      } finally {
+        await sql`alter table public.referrals enable trigger user`;
+      }
+    };
+    const linkable = async () => (await order({ patientId: patient.y, testIds: [T.glu], appointmentId: consultY, referralId: ref.id })).status;
+    // Open and in date: linkable.
+    expect(await linkable()).toBe(201);
+    await raw(() => sql`update public.referrals set created_at = ${new Date(Date.now() - 20 * 86_400_000).toISOString()}, expires_at = ${new Date(Date.now() - 10 * 86_400_000).toISOString()} where id = ${ref.id}`);
+    expect(await linkable(), "expired").toBe(404);
+    await raw(() => sql`update public.referrals set expires_at = now() + interval '30 days' where id = ${ref.id}`);
+    expect(await linkable(), "open again").toBe(201);
+    await raw(() => sql`update public.referrals set status = 'declined', declined_at = now(), declined_by = ${users.a} where id = ${ref.id}`);
+    expect(await linkable(), "declined").toBe(404);
+    await raw(() => sql`update public.referrals set status = 'revoked', declined_at = null, declined_by = null, revoked_at = now(), revoked_by = ${users.c}, revoked_reason = 'test' where id = ${ref.id}`);
+    expect(await linkable(), "revoked").toBe(404);
+  });
+
   it("all or nothing: an order whose item the database refuses leaves no order behind", async () => {
     as("a");
     const before = (await orderRows(patient.x)).length;
@@ -448,8 +497,7 @@ describeDb("doctor laboratory ordering — real routes and database", () => {
     expect(await sql`select 1 from public.audit_events where action = 'lab_order_viewed' and metadata ->> 'via' = 'similar_notice' and patient_id = ${patient.x}`).not.toHaveLength(0);
 
     // A cancelled order no longer counts.
-    const [cancelMe] = await sql<{ id: string }[]>`select id from public.lab_orders where patient_id = ${patient.y} limit 1`;
-    await sql`update public.lab_orders set status = 'cancelled', cancelled_by = ${users.owner}, cancel_reason = 'test' where id = ${cancelMe.id}`;
+    await sql`update public.lab_orders set status = 'cancelled', cancelled_by = ${users.owner}, cancel_reason = 'test' where patient_id = ${patient.y}`;
     as("a");
     expect(((await similar({ patientId: patient.y, testIds: [T.glu] })).body.data!.notices as unknown[]).length).toBe(0);
   });

@@ -318,11 +318,18 @@ Roles (`20261003000001`, `src/lib/auth/staff.ts`, `src/lib/labs/access.ts`):
 - **Similar-test notice** is advisory: it never blocks an order and carries no value. It compares by test (panels count through
   their tests) against the patient's non-cancelled orders inside the clinic's `ordering.recentTestWindowDays` (default 30; 0
   switches it off) and is audited as a history read (`lab_order_viewed`, `via: similar_notice`).
+- **A retry is answered from the order that exists**, before anything is re-validated: a test retired or a consultation completed
+  since the first attempt cannot turn a retry of a lost response into an error. A referral can be linked only while live
+  (pending/accepted/in progress/completed, not expired; never declined or revoked).
 - **Rate limits** (shared across instances): 30 orders/min and 60 lookups/min per doctor login.
 - **Audit stays free of clinical text**: `lab_order_created` holds ids only — no note, price or test name.
 - **Not applied yet:** the clinic setting `collection.requiresPayment` is stored but nothing consults it before phase 5 (sample
   collection), and the separate-verifier rule is enforced by the server in phase 6; the database alone still allows the same
   technician to enter and verify.
+- **Open decisions (not assumed in code):** (1) whether a technician may read the ordering doctor's note — today no route
+  gives it to them, and the screen says it is visible to doctors in the order history; (2) how long after completion a doctor may
+  still order from a finished consultation (today: any completed consultation of their own with that patient); (3) a fixed-price
+  panel's `total` in the order response is the sum of its tests' prices — billing at the panel price is phase 5.
 - Tests: `src/app/api/doctor/lab/ordering.test.ts` (real routes and database), `e2e/lab-ordering.mjs` (real screens).
 
 ## Clinical records

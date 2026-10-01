@@ -337,8 +337,8 @@ function OrderDialog({
             />
           </div>
           <div>
-            <p className="mb-1 text-xs font-medium text-ink-muted">Izoh (ixtiyoriy)</p>
-            <ATextArea value={notes} onChange={setNotes} rows={3} placeholder="Laborant uchun izoh" aria-label="Izoh" />
+            <p className="mb-1 text-xs font-medium text-ink-muted">Izoh (ixtiyoriy) — buyurtma tarixida shifokorlarga ko‘rinadi</p>
+            <ATextArea value={notes} onChange={setNotes} rows={3} placeholder="Buyurtma izohi" aria-label="Izoh" />
           </div>
         </div>
       ) : (

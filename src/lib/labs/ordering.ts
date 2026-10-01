@@ -127,14 +127,14 @@ type Selection = { testIds: string[]; panelIds: string[] };
  * ways is one item (its provenance is the explicit choice). Unknown or other-clinic ids answer 404, an
  * inactive test or panel 409 — never silently dropped.
  */
-async function resolveItems(db: Db, clinicId: string, selection: Selection): Promise<Array<{ test_id: string; panel_id: string | null }>> {
+async function resolveItems(db: Db, clinicId: string, selection: Selection, { allowInactive = false } = {}): Promise<Array<{ test_id: string; panel_id: string | null }>> {
   const items = new Map<string, string | null>();
 
   if (selection.testIds.length) {
     const { data, error } = await db.from("lab_tests").select("id, active").eq("clinic_id", clinicId).in("id", selection.testIds);
     if (error) throw new ApiError(500, "Tahlillarni tekshirib bo‘lmadi");
     if ((data ?? []).length !== new Set(selection.testIds).size) throw notFound();
-    if ((data ?? []).some((t) => !t.active)) throw new ApiError(409, "Nofaol tahlilni buyurib bo‘lmaydi", "lab_test_inactive");
+    if (!allowInactive && (data ?? []).some((t) => !t.active)) throw new ApiError(409, "Nofaol tahlilni buyurib bo‘lmaydi", "lab_test_inactive");
     for (const id of selection.testIds) items.set(id, null);
   }
 
@@ -147,11 +147,11 @@ async function resolveItems(db: Db, clinicId: string, selection: Selection): Pro
     if (error) throw new ApiError(500, "Paketlarni tekshirib bo‘lmadi");
     if ((data ?? []).length !== new Set(selection.panelIds).size) throw notFound();
     for (const panel of data ?? []) {
-      if (!panel.active) throw new ApiError(409, "Nofaol paketni buyurib bo‘lmaydi", "lab_panel_inactive");
+      if (!allowInactive && !panel.active) throw new ApiError(409, "Nofaol paketni buyurib bo‘lmaydi", "lab_panel_inactive");
       const members = (panel.lab_panel_tests ?? []) as Array<{ lab_tests: { id: string; active: boolean } | null }>;
       for (const m of members) {
         if (!m.lab_tests) continue;
-        if (!m.lab_tests.active) throw new ApiError(409, "Paketdagi tahlillardan biri nofaol", "lab_test_inactive");
+        if (!allowInactive && !m.lab_tests.active) throw new ApiError(409, "Paketdagi tahlillardan biri nofaol", "lab_test_inactive");
         if (!items.has(m.lab_tests.id)) items.set(m.lab_tests.id, panel.id);
       }
     }
@@ -196,6 +196,7 @@ export type CreatedLabOrder = {
   priority: string;
   replayed: boolean;
   appointmentId: string;
+  /** The sum of the items' test prices. A fixed-price panel is billed at the panel price in phase 5 — this is not an invoice. */
   total: number;
   items: LabOrderItemSummary[];
 };
@@ -243,6 +244,23 @@ function orderError(error: { code?: string; message?: string }): ApiError {
   return new ApiError(500, "Buyurtmani saqlab bo‘lmadi", "lab_order_failed");
 }
 
+/** Whether an existing order is what this request asks for: same patient, same consultation (when named), same set of tests. */
+function isSameOrder(
+  existing: { patient_id: string; appointment_id: string },
+  existingItems: LabOrderItemSummary[],
+  input: CreateLabOrderInput,
+  asked: Array<{ test_id: string }>,
+): boolean {
+  const have = new Set(existingItems.map((i) => i.testId));
+  const want = new Set(asked.map((i) => i.test_id));
+  return (
+    existing.patient_id === input.patientId &&
+    (!input.appointmentId || existing.appointment_id === input.appointmentId) &&
+    have.size === want.size &&
+    [...want].every((t) => have.has(t))
+  );
+}
+
 /**
  * Creates an order from the doctor's own consultation — all or nothing, and idempotent per
  * `idempotencyKey`: a repeat (double click, retry) returns the first order (`replayed: true`) and writes
@@ -251,6 +269,24 @@ function orderError(error: { code?: string; message?: string }): ApiError {
 export async function createLabOrder(doctor: LinkedDoctor, input: CreateLabOrderInput): Promise<CreatedLabOrder> {
   await assertPatientAccess(doctor, input.patientId);
   const db = createAdminClient();
+
+  // A retry of an order that already exists is answered from that order BEFORE anything is re-validated: a
+  // test deactivated, or a consultation completed, since the first attempt must not turn the retry of a
+  // lost response into an error (and a second order). Same key + different content is still a conflict.
+  const { data: existing } = await db
+    .from("lab_orders")
+    .select("id, patient_id, appointment_id")
+    .eq("clinic_id", doctor.clinicId)
+    .eq("ordering_doctor_id", doctor.doctorId)
+    .eq("creation_key", input.idempotencyKey)
+    .maybeSingle();
+  if (existing) {
+    const asked = await resolveItems(db, doctor.clinicId, { testIds: input.testIds, panelIds: input.panelIds }, { allowInactive: true });
+    const created = await loadOrder(db, doctor.clinicId, existing.id);
+    if (!isSameOrder(existing, created.items, input, asked)) throw new ApiError(409, "Bu kalit boshqa buyurtma uchun ishlatilgan", "idempotency_conflict");
+    return { ...created, replayed: true };
+  }
+
   const appointmentId = await consultationFor(db, doctor, input.patientId, input.appointmentId);
   const items = await resolveItems(db, doctor.clinicId, { testIds: input.testIds, panelIds: input.panelIds });
 
@@ -262,8 +298,10 @@ export async function createLabOrder(doctor: LinkedDoctor, input: CreateLabOrder
       .eq("clinic_id", doctor.clinicId)
       .eq("patient_id", input.patientId)
       .eq("referred_to_doctor_id", doctor.doctorId)
+      .in("status", ["pending", "accepted", "in_progress", "completed"])
+      .gt("expires_at", new Date().toISOString())
       .maybeSingle();
-    // Only a referral addressed to THIS doctor can be answered by their order.
+    // Only a live referral addressed to THIS doctor can be answered by their order (not a declined, revoked or expired one).
     if (!data) throw notFound("Yo‘llanma topilmadi", "referral_not_found");
   }
 
@@ -283,12 +321,8 @@ export async function createLabOrder(doctor: LinkedDoctor, input: CreateLabOrder
   const result = data as { order_id: string; replayed: boolean; patient_id: string; appointment_id: string };
 
   const created = await loadOrder(db, doctor.clinicId, result.order_id);
-  if (result.replayed) {
-    // The same key must mean the same order: another patient, consultation or set of tests is a conflict.
-    const sameTests = new Set(created.items.map((i) => i.testId));
-    const asked = new Set(items.map((i) => i.test_id));
-    const same = result.patient_id === input.patientId && result.appointment_id === appointmentId && sameTests.size === asked.size && [...asked].every((t) => sameTests.has(t));
-    if (!same) throw new ApiError(409, "Bu kalit boshqa buyurtma uchun ishlatilgan", "idempotency_conflict");
+  if (result.replayed && !isSameOrder({ patient_id: result.patient_id, appointment_id: result.appointment_id }, created.items, input, items)) {
+    throw new ApiError(409, "Bu kalit boshqa buyurtma uchun ishlatilgan", "idempotency_conflict");
   }
   return { ...created, replayed: result.replayed };
 }
