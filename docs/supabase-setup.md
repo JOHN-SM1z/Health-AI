@@ -37,7 +37,7 @@ Prerequisite for a full local run: `npm run db:reset-local` (above) and a
 
 ## Migrations
 
-49 migrations in `supabase/migrations/` (ordered, repeatable on any environment; `supabase/full-db-setup.sql` is all of them as one script). The first 21:
+54 migrations in `supabase/migrations/` (ordered, repeatable on any environment; `supabase/full-db-setup.sql` is all of them as one script). The first 21:
 
 1. `0001`–`0008` — schema: clinics, profiles, staff_roles, patients, specialties,
    services, doctors, doctor_services, working hours, time blocks, appointments,
@@ -65,7 +65,9 @@ search_path and grants, reactivation checks, clinic deletion, `urgent_at`, `purg
 clinical record governance (`20261001000001`: versioned author-only corrections, doctor
 records that keep their authors, patient deletion that never cascades into clinical,
 referral, booking or payment records, and an empty `retention_policies`), and
-longitudinal history (`20261002000001`, below).
+independent retention (`20261001000003`: parent deletion — a clinic, a patient with conversations, an
+appointment with a payment — is refused while retained rows exist, never cascaded), longitudinal history
+(`20261002000001`, below) and its follow-ups (`20261002000002`–`20261002000004`, after it).
 
 ### `20261002000001_longitudinal_history.sql`
 
@@ -118,6 +120,22 @@ Regenerate TypeScript types after schema changes:
 npx supabase gen types typescript --local > src/lib/supabase/database.types.ts
 ```
 
+
+### `20261002000002` – `20261002000004` (follow-ups)
+
+Apply after `20261002000001`; each is independent and reversible (the reversal is in its header comment).
+
+- **`20261002000002_patient_creation_audit.sql`** — `patients.created_by` (staff profile) and
+  `patients.created_via` (`reception`, `walk_in`, `telegram`, `website`; null for existing rows), and an
+  `AFTER INSERT` trigger that writes `patient_created` (ids and channel, never name or phone) in the
+  same transaction; a creator who is not staff of the patient's clinic is refused.
+- **`20261002000003_phone_normalization.sql`** — the new `normalize_phone()` rule (explicit `+`/`00` is
+  international; 7–15 digits; otherwise Uzbek national). `patients.phone_normalized` is a stored
+  generated column, so it is dropped and added again (one rewrite of `patients`) with its index.
+- **`20261002000004_department_referral_availability.sql`** — `department_has_receiving_doctor()`
+  (service role only) and a `BEFORE INSERT` trigger on `referrals` refusing a department referral for a
+  department with no doctor who can receive it.
+
 ## Seed data (demo clinic)
 
 `supabase/seed.sql` creates:
@@ -165,8 +183,7 @@ members there too (audited); the owner role itself is only assigned by `create-o
   an active doctor-role doctor of the patient's clinic, none otherwise); RLS reaches it through
   `doctor_can_read_patient()` / `doctor_can_read_appointment()`. See
   [architecture.md › Clinical access](architecture.md#clinical-access-and-the-patients-profile).
-- `normalize_phone(p_phone)` → digits only; a national number (9 digits, or 10 with a leading 8 or 0) is prefixed with `998` and a leading `00` before `998` is dropped; NULL without
-  digits — the expression behind `patients.phone_normalized`.
+- `normalize_phone(p_phone)` → digits for matching one number however typed (`20261002000003`): a `+` before the first digit or a leading `00` marks an international number, kept as typed; otherwise an Uzbek national number (9 digits, or 10 with a leading 8 or 0) is prefixed with `998`; NULL without digits or with fewer than 7 / more than 15 — the expression behind `patients.phone_normalized`.
 
 See [architecture.md › Booking engine](architecture.md#booking-engine-double-booking-protection)
 for the invariant and the constraint that enforces it.

@@ -29,6 +29,8 @@ type Referral = {
   /** Null for a department referral nobody has taken yet. */
   referredToDoctor: { id: string; name: string } | null;
   department: { id: string; name: string } | null;
+  /** An untaken department referral with nobody left to take it (the referring doctor's list). */
+  awaitingDoctor?: boolean;
 };
 
 const TABS: Array<{ box: Box; label: string }> = [
@@ -128,6 +130,11 @@ export default function DoctorReferralsPage() {
                   <ABadge tone={REFERRAL_STATUS_TONES[r.status] ?? "gray"}>{REFERRAL_STATUS_LABELS[r.status] ?? r.status}</ABadge>
                 </div>
               </div>
+              {r.awaitingDoctor && (
+                <p role="alert" className="mt-3 rounded-lg bg-clay-tint px-3 py-2 text-sm text-clay-deep">
+                  Bo‘limda yo‘llanmani qabul qila oladigan faol shifokor yo‘q. Yo‘llanmani bekor qiling yoki boshqa bo‘limga/shifokorga yo‘llang; bo‘limda shifokor paydo bo‘lsa, u avtomatik ko‘rinadi.
+                </p>
+              )}
 
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <Detail label="Yo‘llanma sababi">

@@ -41,6 +41,7 @@ type Referral = {
   /** Null for a department referral nobody has taken yet. */
   referredToDoctor: Doctor | null;
   department: { id: string; name: string } | null;
+  awaitingDoctor?: boolean;
   patientId: string;
   patientRecordAccessible: boolean;
   patient: { fullName: string | null; phone: string | null; preferredLanguage: string | null } | null;
@@ -215,6 +216,11 @@ export default function DoctorReferralPage() {
               {REFERRAL_PRIORITY_LABELS[referral.priority] ?? referral.priority}
             </ABadge>
           </div>
+          {referral.awaitingDoctor && (
+            <p role="alert" className="mb-4 rounded-lg bg-clay-tint px-3 py-2 text-sm text-clay-deep">
+              Bo‘limda yo‘llanmani qabul qila oladigan faol shifokor yo‘q. Yo‘llanmani bekor qiling yoki boshqa bo‘limga/shifokorga yo‘llang; bo‘limda shifokor paydo bo‘lsa, u avtomatik ko‘rinadi.
+            </p>
+          )}
           <div className="mb-4">
             <ReferralLifecycle
               status={referral.status}

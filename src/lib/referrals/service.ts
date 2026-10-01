@@ -102,6 +102,9 @@ export function referralError(error: { code?: string; message?: string }): ApiEr
   if (error.code === "23505" && (has("referrals_one_open_per_pair") || has("referrals_one_open_per_department"))) {
     return new ApiError(409, "Bu bemor u yerga allaqachon yo‘llangan", "referral_already_open");
   }
+  if (has("department has no active doctor")) {
+    return new ApiError(409, "Bu bo‘limda yo‘llanmani qabul qila oladigan faol shifokor yo‘q", "department_unavailable");
+  }
   if (has("does not belong to that department")) {
     return new ApiError(400, "Shifokor tanlangan bo‘limga tegishli emas", "doctor_not_in_department");
   }
@@ -204,6 +207,12 @@ export type ReferralSummary = {
   /** Null for a department referral nobody has taken yet. */
   referredToDoctor: DoctorRef | null;
   department: DepartmentRef | null;
+  /**
+   * An open department referral nobody has taken whose department has no
+   * doctor who could — set for the referring doctor only, so they can revoke
+   * it or refer elsewhere (see 20261002000004).
+   */
+  awaitingDoctor: boolean;
   allowedActions: ReferralAction[];
 };
 
@@ -256,7 +265,13 @@ export async function listReferralsForDoctor(
   if (error) throw new ApiError(500, "Yo‘llanmalarni yuklab bo‘lmadi");
 
   const now = Date.now();
-  const shown = ((data ?? []) as unknown as SummaryRow[])
+  const rows = (data ?? []) as unknown as SummaryRow[];
+  // Departments someone could take a referral for (the caller, as the referrer, excluded): only looked up when it matters.
+  const staffed =
+    box === "outgoing" && rows.some((r) => unclaimed(r))
+      ? new Set((await listReferralDepartments(doctor)).map((d) => d.id))
+      : new Set<string>();
+  const shown = rows
     .map((row) => ({
       id: row.id,
       status: effectiveStatus(row.status, row.expires_at, now),
@@ -270,6 +285,12 @@ export async function listReferralsForDoctor(
       referringDoctor: row.referring,
       referredToDoctor: row.referred_to,
       department: row.department,
+      awaitingDoctor:
+        box === "outgoing" &&
+        unclaimed(row) &&
+        effectiveStatus(row.status, row.expires_at, now) === "pending" &&
+        !!row.referred_to_specialty_id &&
+        !staffed.has(row.referred_to_specialty_id),
       allowedActions: allowedActions(box === "incoming" ? "receiver" : "referrer", effectiveStatus(row.status, row.expires_at, now), unclaimed(row)),
     }))
     .filter((r) => box === "outgoing" || visibleTo("receiver", r.status, r.expiresAt, now))
@@ -314,6 +335,8 @@ export type ReferralDetail = {
   /** Null for a department referral nobody has taken yet. */
   referredToDoctor: DoctorRef | null;
   department: DepartmentRef | null;
+  /** As in the summary: an untaken department referral with nobody left to take it (the referring doctor's view). */
+  awaitingDoctor: boolean;
   patientId: string;
   /** Whether the caller may open the patient's record (clinical access). */
   patientRecordAccessible: boolean;
@@ -464,6 +487,12 @@ export async function getReferralForDoctor(doctor: LinkedDoctor, referralId: str
     referringDoctor: row.referring,
     referredToDoctor: row.referred_to,
     department: row.department,
+    awaitingDoctor:
+      role === "referrer" &&
+      unclaimed(row) &&
+      status === "pending" &&
+      !!row.referred_to_specialty_id &&
+      !(await listReferralDepartments(doctor)).some((d) => d.id === row.referred_to_specialty_id),
     patientId: row.patient_id,
     patientRecordAccessible: contactShared,
     patient: patientRes.data
@@ -685,7 +714,11 @@ async function assertReferralRecipient(doctor: LinkedDoctor, doctorId: string, s
 /** A department of the caller's clinic that has a doctor (other than the caller) to take a referral. */
 async function assertDepartment(doctor: LinkedDoctor, specialtyId: string): Promise<void> {
   const departments = await listReferralDepartments(doctor);
-  if (!departments.some((d) => d.id === specialtyId)) throw new ApiError(404, "Bo‘lim topilmadi", "department_not_found");
+  if (departments.some((d) => d.id === specialtyId)) return;
+  // A department of this clinic with nobody to receive the referral is not "not found": the referral would be seen by no one.
+  const { data } = await createAdminClient().from("specialties").select("id").eq("id", specialtyId).eq("clinic_id", doctor.clinicId).maybeSingle();
+  if (data) throw new ApiError(409, "Bu bo‘limda yo‘llanmani qabul qila oladigan faol shifokor yo‘q", "department_unavailable");
+  throw new ApiError(404, "Bo‘lim topilmadi", "department_not_found");
 }
 
 /**

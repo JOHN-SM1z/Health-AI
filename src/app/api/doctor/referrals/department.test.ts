@@ -45,6 +45,7 @@ type Summary = {
   allowedActions: string[];
   department: { id: string; name: string } | null;
   referredToDoctor: { id: string } | null;
+  awaitingDoctor?: boolean;
 };
 
 describeDb("department referrals — through the real routes", () => {
@@ -215,8 +216,8 @@ describeDb("department referrals — through the real routes", () => {
     expect(await refer("a", z, { referredToDoctorId: doctors.c, referredToSpecialtyId: cardiology })).toMatchObject({ status: 400, body: { code: "doctor_not_in_department" } });
     expect(await refer("a", z, { referredToSpecialtyId: cardiologyOther })).toMatchObject({ status: 404, body: { code: "department_not_found" } });
     expect((await refer("a", z, {})).status).toBe(400);
-    // The department the referring doctor is alone in has no one to receive it.
-    expect(await refer("a", z, { referredToSpecialtyId: general })).toMatchObject({ status: 404, body: { code: "department_not_found" } });
+    // The department the referring doctor is alone in has no one to receive it (a department, so not "not found").
+    expect(await refer("a", z, { referredToSpecialtyId: general })).toMatchObject({ status: 409, body: { code: "department_unavailable" } });
     // The same patient to the same department again while the first is open.
     expect(await refer("a", x, { referredToSpecialtyId: cardiology })).toMatchObject({ status: 409, body: { code: "referral_already_open" } });
     await revoke(referralId(toDepartment));
@@ -368,6 +369,45 @@ describeDb("department referrals — through the real routes", () => {
     expect(await row(department)).toMatchObject({ status: "pending", referred_to_doctor_id: null });
     expect((await incoming("b2")).map((r) => r.id)).toContain(department);
     await revoke(department);
+  });
+
+  it("a department nobody can receive a referral for: refused at creation (route and database) — and flagged to the referrer if it empties later", async () => {
+    const { data: neuro } = await admin.from("specialties").insert({ clinic_id: clinic, name: `Nevrologiya ${suffix}` }).select("id").single();
+    const x = await patientOf();
+
+    // No doctor in the department, or only the referring doctor themselves: nobody would see it.
+    for (const department of [neuro!.id as string, general]) {
+      const refused = await refer("a", x, { referredToSpecialtyId: department });
+      expect(refused, department).toMatchObject({ status: 409, body: { code: "department_unavailable" } });
+    }
+    // A department that does not exist in this clinic is still "not found" (another clinic's, too).
+    expect(await refer("a", x, { referredToSpecialtyId: cardiologyOther })).toMatchObject({ status: 404, body: { code: "department_not_found" } });
+    expect((await admin.from("referrals").select("id").eq("patient_id", x.id)).data).toEqual([]);
+
+    // The database says no on its own: not even the server can insert one.
+    const direct = await admin.from("referrals").insert({
+      clinic_id: clinic, patient_id: x.id, referring_doctor_id: doctors.a, referred_to_specialty_id: neuro!.id,
+      originating_appointment_id: x.consultation, reason: REASON, created_by: users.a,
+    });
+    expect(direct.error?.message).toContain("has no active doctor");
+
+    // Dermatology has Dr C: accepted, and not flagged.
+    const id = referralId(await refer("a", x, { referredToSpecialtyId: dermatology }));
+    expect((await outgoing("a")).find((r) => r.id === id)).toMatchObject({ awaitingDoctor: false });
+    expect((await detail("a", id)).body.data!.referral).toMatchObject({ awaitingDoctor: false });
+
+    // Dr C leaves: the referral stays (the patient's record), the referrer is told nobody can take it.
+    await admin.from("doctors").update({ active: false }).eq("id", doctors.c);
+    try {
+      expect((await outgoing("a")).find((r) => r.id === id)).toMatchObject({ status: "pending", awaitingDoctor: true });
+      expect((await detail("a", id)).body.data!.referral).toMatchObject({ awaitingDoctor: true, role: "referrer" });
+    } finally {
+      await admin.from("doctors").update({ active: true }).eq("id", doctors.c);
+    }
+    // Back (or a new doctor): it reaches them with nobody re-creating it, and the flag clears.
+    expect((await outgoing("a")).find((r) => r.id === id)).toMatchObject({ awaitingDoctor: false });
+    expect((await incoming("c")).map((r) => r.id)).toContain(id);
+    await revoke(id);
   });
 
   it("red team: another department, another clinic's department of the same name — nothing to see, accept or open", async () => {

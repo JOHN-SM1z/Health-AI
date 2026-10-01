@@ -110,7 +110,7 @@ role, unknown ids).
 
 | Relationship | Condition | Sees | Ends |
 | --- | --- | --- | --- |
-| A — treating (`own_patient`) | an appointment of this doctor with the patient whose status is not `cancelled` (past, today or booked) — except a website booking (`source = 'web'`) that is still `pending`, made without any proof of who the visitor is (it counts once staff confirm it; the doctor queue refuses to advance it with 409 `awaiting_confirmation`, so a doctor cannot make it count themselves) — or a clinical record this doctor wrote | the patient's whole history in the clinic | not by time: kept for continuity of care. It lapses only if every such appointment is cancelled and the doctor has written no record (records are never deleted) |
+| A — treating (`own_patient`) | an appointment of this doctor with the patient whose status is neither `cancelled` nor `no_show` (past, today or booked; a patient who never came is no treating relationship — the visit stays in the history for the doctors who treat them) — except a website booking (`source = 'web'`) that is still `pending`, made without any proof of who the visitor is (it counts once staff confirm it; the doctor queue refuses to advance it with 409 `awaiting_confirmation`, so a doctor cannot make it count themselves) — or a clinical record this doctor wrote | the patient's whole history in the clinic | not by time: kept for continuity of care. It lapses only if every such appointment is cancelled and the doctor has written no record (records are never deleted) |
 | B — open referral (`active_referral_ids`) | a referral of the patient that is `pending`, `accepted` or `in_progress` with `expires_at > now()`, addressed to this doctor — or, while nobody has taken it (`pending`, no receiving doctor yet), to this doctor's department, unless this doctor raised it | the patient's whole history, from the moment the referral exists | the referral is declined, revoked or completed, or at the latest at `expires_at` (≤ 180 days) — unless A applies |
 | C — none | anything else: no relationship, another clinic, an inactive doctor | nothing | — |
 
@@ -237,12 +237,18 @@ records, and only the author changes their own.
   corrected (`CRVER`; two concurrent corrections can't both land — unique indexes on
   `corrects_record_id` and `(root_record_id, version)`). Earlier versions stay, superseded, in
   `clinical_record_versions` (status `current` / `superseded`; service role only).
-- **Never erased with the patient.** The foreign keys from `clinical_records`, `referrals`,
-  `appointments` and `payments` to `patients` are NO ACTION: a patient who still has any of them
-  cannot be deleted, while deleting a whole clinic (which removes them in the same statement) still
-  works. (A payment still belongs to its appointment: deleting an appointment — which the application
-  never does — removes its payment; conversations still follow the patient.) There is no
-  anonymisation path for patient identity yet. Retention per data category is recorded in `retention_policies` (service role only),
+- **Never erased with the patient — or with any parent.** The foreign keys from `clinical_records`,
+  `referrals`, `appointments` and `payments` to `patients` are NO ACTION: a patient who still has any
+  of them cannot be deleted. Each retained domain also has its own retention, so a parent's deletion
+  cannot silently carry another domain with it (`20261001000003_independent_retention.sql`): the
+  foreign keys to `clinics` from `clinical_records`, `referrals`, `appointments`, `payments`,
+  `conversations`, `messages`, `voice_messages`, `audit_events` and `retention_policies`, from
+  `patients` to `conversations`, and from `appointments` to `payments` are `ON DELETE RESTRICT`.
+  Deleting a clinic, a patient with conversations, or an appointment with a payment is refused while
+  such rows exist (the application never does any of these); test fixtures remove their own
+  synthetic domains explicitly (`src/test/cleanup-clinics.ts`, `src/test/delete-appointments.ts`).
+  Any external erasure tooling must be reviewed against this. There is no anonymisation path for
+  patient identity yet. Retention per data category is recorded in `retention_policies` (service role only),
   which is empty — no period is assumed and nothing is deleted or anonymised on its basis yet.
 - **Read access = the patient's history access.** Signed-in roles have no SELECT on
   `clinical_records` (`20260929000001`): every read goes through the server, which authorizes it with
@@ -394,10 +400,21 @@ least one of them. A referral to a department alone is *untaken* until one of it
   revoke it, and every department doctor loses it at once; `expires_at` (≤ 180 days) bounds it.
 - **One open referral** per patient, referring doctor and department while untaken
   (`referrals_one_open_per_department`); `referrals_one_open_per_pair` covers named doctors.
-- **No doctor to take it.** Creating a department referral is refused (404) for a department
-  without another active doctor; nothing re-checks it afterwards. If the department later has no
-  active doctor, the referral simply stays `pending`, seen by nobody, until it is revoked or
-  expires.
+- **No doctor to take it** (`20261002000004`). A department referral needs a doctor who can
+  receive it — active, with a doctor login, in the department, and neither the referring doctor nor
+  another record of their login (`public.department_has_receiving_doctor()`). Creating one for a
+  department without such a doctor is refused (409 `department_unavailable`; the same check is a
+  database trigger, so no other path can create it either; a department that is not the clinic's
+  stays 404 `department_not_found`). If the department LATER loses its last receiving doctor the
+  referral stays as it is — it is the patient's record and the doctor may return — and is shown to
+  the **referring doctor** (list and detail, `awaitingDoctor`) with a notice to revoke it or refer
+  elsewhere; when a doctor becomes available it appears for them without anyone re-creating it,
+  and otherwise it ends at `expires_at`. Nobody else is notified (management notification is an
+  open decision in `TASKS.md`).
+- **Booking its follow-up.** Reception may book the follow-up visit of a referral to a *named*
+  doctor while it is still `pending` (acknowledgement is a care step, not a gate); an untaken
+  department referral has no doctor yet, so its visit can only be booked once a doctor took it
+  (409 `referral_not_accepted`, also for a revoked/expired one).
 
 ## Referral lifecycle and access termination
 
@@ -486,12 +503,18 @@ One patient, one record: registration looks a returning patient up before it cre
 overwrites an existing patient's identity from input nobody verified — the record may already hold a
 clinical history.
 
-- **`patients.phone_normalized`** (`20261002000001`) is a *generated* column
-  (`public.normalize_phone(phone)`: digits only; a national number — 9 digits, or 10 with a leading 8 or 0 — gets the `998` prefix, a leading `00` before `998` is dropped; no digits
-  gives NULL), indexed per clinic and **not unique** — two people can share a phone. It cannot be
-  written directly, not even by the service role. `src/lib/patients/phone.ts` implements the same
-  rule for the server's lookups, and a test compares the two on every input. The rule assumes Uzbek
-  numbers (see `TASKS.md`).
+- **`patients.phone_normalized`** (`20261002000001`, rule revised in `20261002000003`) is a
+  *generated* column (`public.normalize_phone(phone)`), indexed per clinic and **not unique** — two
+  people can share a phone. It cannot be written directly, not even by the service role. The rule
+  is made so that two different people are never matched (a wrong match is the dangerous
+  direction — the website reuses a record by phone and name; a missed one only leaves a duplicate):
+  a `+` before the first digit or a leading `00` marks an international number, kept exactly as
+  typed (no national-number guessing, so `+298 123456` is never read as Uzbek); without such a
+  marker the number is read as an Uzbek national number (9 digits, or 10 with the trunk prefix 8 or
+  0, get `998`); fewer than 7 or more than 15 digits (E.164's maximum) is no number to match on
+  and gives NULL, as do no digits. `src/lib/patients/phone.ts` implements the same rule for the
+  server's lookups, and a test compares the two on every input. Still assumed: a number typed
+  without `+` or `00` is Uzbek (a per-clinic country is a later change — see `TASKS.md`).
 - **Reception** (`POST /api/admin/appointments`, owner/admin/manager/receptionist only): with no
   `patientId` and no `confirmNewPatient`, a patient of the same clinic with the same normalized
   phone answers 409 `possible_duplicate` with `details.candidates` (`id`, `fullName`, `phone`), before
@@ -501,16 +524,27 @@ clinical history.
   new patient anyway (the "different person" path); `patientId` books the existing patient and their
   record keeps its own name and phone whatever the form still holds. Patients of other clinics are
   never candidates. A patient a request registered is deleted again if its booking fails (nothing
-  references it; any other row would make the delete refuse, never cascade).
-- **Reception search** (`GET /api/admin/patients?q=`) also matches `phone_normalized` when the query
-  has at least 5 digits, so a number typed any way finds the patient; the search text is a quoted
-  literal, never filter syntax.
+  references it; any other row would make the delete refuse, never cascade) — and that removal is
+  audited (`patient_discarded`, ids only), so the trail accounts for every creation.
+- **Patient creation is audited** (`20261002000002`). A trigger on `patients` writes
+  `patient_created` in the same transaction as the insert, so no path (reception, a walk-in, the
+  Mini App, the website, one added later) can forget it and a failed audit write undoes the
+  creation: `entity_id`/`patient_id` the patient, `actor_id` the staff profile that registered them
+  (`patients.created_by`; null when they registered themselves), `actor_type` `staff`, `telegram`
+  or `system` (a website visitor — nothing proves who they are), `metadata.created_via`
+  (`reception`, `walk_in`, `telegram`, `website`; `patients.created_via`, set by the server, null on
+  rows that predate the migration) and `has_phone` / `has_telegram_identity` booleans. **Never the
+  name, phone or any Telegram detail** — identifiers only. A creator who is not staff of the
+  patient's clinic is refused. Deleting a patient is not audited yet (see `TASKS.md`).
+- **Reception search** (`GET /api/admin/patients?q=`) also matches `phone_normalized` — by the
+  typed digits (at least 5, so part of a number finds it) and by the number's normal form — so a
+  number typed any way finds the patient; the search text is a quoted literal, never filter syntax.
 - **Website booking** (`getOrCreateWebPatient`) finds the patient by `phone_normalized`, and reuses
   the record only if it has no Telegram identity and the name matches; otherwise it creates its own
   record and never edits an existing one (F12).
 - **Mini App booking** (`POST /api/bookings`) resolves the patient from the verified Telegram identity
   and fills name and phone only while they are empty — it never overwrites an existing record's.
-- **Known limits.** Patient creation is not audited. A Telegram patient is keyed by their verified
+- **Known limits.** A Telegram patient is keyed by their verified
   Telegram identity, not by phone, so one who shares a phone with a record reception registered is
   a separate record until someone merges them — there is no merge tool yet. Nothing in this
   section changes deletion: a patient with clinical, referral, booking or payment rows is still not
