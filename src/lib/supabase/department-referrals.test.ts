@@ -1,4 +1,5 @@
 import { cleanupTestClinics } from "@/test/cleanup-clinics";
+import { withoutGlobalSweeps } from "@/test/referral-sweep-lock";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -375,13 +376,16 @@ describeDb("department referrals — claim by acceptance, access and revocation 
   });
 
   it("access to an untaken department referral ends at expires_at, before any sweep runs", async () => {
-    const x = await newPatient();
-    const id = await referToCardiology(x, "2 seconds");
-    expect(await access(doctors.b, x.id)).toMatchObject({ full_history: true });
-    await wait(2_300);
-    for (const doctor of [doctors.b, doctors.b2]) expect(await access(doctor, x.id)).toMatchObject({ active_referral_ids: [], full_history: false });
-    expect((await row(id)).status).toBe("pending");
-  }, 20_000);
+    // The window between expires_at and the sweep: no other suite's global sweep may record the expiry meanwhile.
+    await withoutGlobalSweeps(async () => {
+      const x = await newPatient();
+      const id = await referToCardiology(x, "2 seconds");
+      expect(await access(doctors.b, x.id)).toMatchObject({ full_history: true });
+      await wait(2_300);
+      for (const doctor of [doctors.b, doctors.b2]) expect(await access(doctor, x.id)).toMatchObject({ active_referral_ids: [], full_history: false });
+      expect((await row(id)).status).toBe("pending");
+    });
+  }, 30_000);
 
   // ---------- (f) One open department referral per patient, referring doctor and department ----------
 
