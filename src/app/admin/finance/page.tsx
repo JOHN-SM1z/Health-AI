@@ -34,6 +34,8 @@ type FinanceAnalytics = {
   refunded_total: number | null;
   average_ticket: number | null;
   recent_payments: LedgerEntry[];
+  /** Laboratory payments, reported beside (not inside) the appointment figures. */
+  laboratory: { paid: number; unpaid: number; refunded: number; orders: number } | null;
 };
 
 const RANGES = [
@@ -129,6 +131,18 @@ export default function FinancePage() {
               tone="info"
             />
           </div>
+
+          {data?.laboratory && (
+            <div className="mb-6">
+              <p className="mb-2 text-sm font-bold text-foreground">Laboratoriya (davr ichida buyurtma qilingan tahlillar)</p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <StatCard label="Tushum" value={formatPrice(data.laboratory.paid)} tone="pine" />
+                <StatCard label="To‘lanmagan" value={formatPrice(data.laboratory.unpaid)} tone="clay" />
+                <StatCard label="Qaytarilgan" value={formatPrice(data.laboratory.refunded)} tone="clay" />
+              </div>
+              <p className="mt-1 text-xs text-ink-muted">Yuqoridagi qabullar bo‘yicha jami tushumga kirmaydi; {data.laboratory.orders} ta buyurtma.</p>
+            </div>
+          )}
 
           <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card>

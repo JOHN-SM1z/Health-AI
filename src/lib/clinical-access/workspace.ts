@@ -124,7 +124,8 @@ async function paymentStatusOf(doctor: LinkedDoctor, appointmentIds: string[]): 
     .eq("clinic_id", doctor.clinicId)
     .in("appointment_id", appointmentIds);
   if (error) throw new ApiError(500, "Bemor ma‘lumotlarini yuklab bo‘lmadi");
-  return new Map((data ?? []).map((p) => [p.appointment_id, p.status]));
+  // A laboratory payment has no appointment: it is never a visit's payment.
+  return new Map((data ?? []).flatMap((p) => (p.appointment_id ? [[p.appointment_id, p.status] as const] : [])));
 }
 
 export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: string): Promise<PatientWorkspace> {

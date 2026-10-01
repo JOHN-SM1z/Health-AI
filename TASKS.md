@@ -2,7 +2,7 @@
 
 ## Active
 
-- [ ] **Laboratory module** (branch `feat/lab-system`, on top of PR #13) - phase 1 audit and locked decisions in `docs/labs/`; phases 2 (database model), 3 (lab role, configuration API and screens) and 4 (doctor ordering: catalog search, atomic idempotent orders, similar-test notice, patient order list) done; the payment gate (setting stored) waits for phase 5 and the separate-verifier rule for phase 6; next: phase 6, 7, identity layer, 5, 11, 9, 10, 8, 12, 13, 14 as ordered in `docs/labs/DECISIONS.md`
+- [ ] **Laboratory module** (branch `feat/lab-system`, on top of PR #13) - phase 1 audit and locked decisions in `docs/labs/`; phases 2 (database model), 3 (lab role, configuration API and screens) and 4 (doctor ordering: catalog search, atomic idempotent orders, similar-test notice, patient order list) done; phase 5 (Kassa on the existing payments with server-priced lab orders, minimal non-fiscal receipt, sample worklist and collection with the clinic's payment-before-collection policy applied by the database) done out of order at the owner's request; the separate-verifier rule waits for phase 6; next: phase 6, 7, identity layer, 5, 11, 9, 10, 8, 12, 13, 14 as ordered in `docs/labs/DECISIONS.md`
 
 ## Waiting On
 

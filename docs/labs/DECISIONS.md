@@ -101,3 +101,9 @@ that needs each, and reported explicitly there)
    production until the provider and data-processing route are approved by the owner."*
 3. Identity phase: *"Document identifiers (passport/ID/PINFL) are stored only in `patient_identifiers`,
    encrypted with a blind index; never in logs, audit, analytics or AI input."*
+
+## Phase 5 notes (2026-10-02)
+
+* Phase 5 was built before phases 6, 7 and the identity layer, at the owner's request ("phase 5"). The agreed order is otherwise unchanged.
+* Payments: option B of the audit (polymorphic `payments`), as decided in D2. The receipt is the minimal payment confirmation described in D2 and is never labelled fiscal.
+* Open (not assumed in code): fixed-price panels are billed at the panel price only when the whole panel is on the order; partial payments and order cancellation (with its refund consequences) are not built; lab revenue is reported beside, not inside, the existing appointment-based finance figures.

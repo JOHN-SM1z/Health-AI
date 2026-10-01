@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
 const supabaseMock = { from: vi.fn() };
+// The appointments query goes to supabaseMock; laboratory payments (a separate figure, no appointments) are empty here.
 vi.mock("@/lib/supabase/admin", () => ({
-  createAdminClient: () => supabaseMock,
+  createAdminClient: () => ({ from: (table: string) => (table === "payments" ? chainBuilder([]) : supabaseMock.from(table)) }),
 }));
 
 const staffMock = vi.hoisted(() => ({
@@ -43,7 +44,7 @@ type Recorded = { conditions: Array<{ type: string; args: unknown[] }>; selectAr
 function chainBuilder(result: unknown[]): Recorded & Record<string, unknown> {
   const recorded: Recorded = { conditions: [], selectArgs: [] };
   const builder = {} as Record<string, unknown>;
-  const methods = ["select", "eq", "gte", "lte", "lt", "order", "limit"] as const;
+  const methods = ["select", "eq", "gte", "lte", "lt", "order", "limit", "not"] as const;
   for (const m of methods) {
     builder[m] = (...args: unknown[]) => {
       if (m === "eq" || m === "gte" || m === "lte" || m === "lt") recorded.conditions.push({ type: m, args });

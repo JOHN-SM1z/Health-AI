@@ -64,6 +64,18 @@ export const LAB_CONFIG_ROLES: StaffRole[] = ["owner", "admin", "manager"];
 /** Who may READ the laboratory catalog and settings (configuration, not clinical data). */
 export const LAB_CATALOG_READ_ROLES: StaffRole[] = ["owner", "admin", "manager", "lab_staff"];
 
+/** Who sees the laboratory Kassa (orders and their payment status): the roles RLS already lets read payments. */
+export const LAB_KASSA_READ_ROLES: StaffRole[] = ["owner", "admin", "manager", "receptionist"];
+
+/** Who records that a laboratory order was paid (manual payment, the only production-usable provider). */
+export const LAB_PAYMENT_CONFIRM_ROLES: StaffRole[] = ["owner", "admin", "receptionist"];
+
+/** Who refunds a laboratory payment — the same people who may change any payment's status today. */
+export const LAB_REFUND_ROLES: StaffRole[] = ["owner", "admin"];
+
+/** Who works the laboratory bench (samples, results): laboratory staff only — never reached by weight. */
+export const LAB_WORK_ROLES: StaffRole[] = ["lab_staff"];
+
 /** True when this session works in the laboratory workspace and in no other clinic workspace. */
 export function isLabOnlyStaff(ctx: StaffContext | null): boolean {
   return !!ctx && !ctx.platformAdmin && hasAnyRole(ctx.roles, ["lab_staff"]) && !hasAnyRole(ctx.roles, [...ADMIN_WORKSPACE_ROLES, "doctor"]);

@@ -1996,11 +1996,12 @@ export type Database = {
       payments: {
         Row: {
           amount: number
-          appointment_id: string
+          appointment_id: string | null
           clinic_id: string
           created_at: string
           currency: string
           id: string
+          lab_order_id: string | null
           metadata: Json
           paid_at: string | null
           paid_by: string | null
@@ -2013,11 +2014,12 @@ export type Database = {
         }
         Insert: {
           amount: number
-          appointment_id: string
+          appointment_id?: string | null
           clinic_id: string
           created_at?: string
           currency?: string
           id?: string
+          lab_order_id?: string | null
           metadata?: Json
           paid_at?: string | null
           paid_by?: string | null
@@ -2030,11 +2032,12 @@ export type Database = {
         }
         Update: {
           amount?: number
-          appointment_id?: string
+          appointment_id?: string | null
           clinic_id?: string
           created_at?: string
           currency?: string
           id?: string
+          lab_order_id?: string | null
           metadata?: Json
           paid_at?: string | null
           paid_by?: string | null
@@ -2046,6 +2049,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "payments_lab_order_fkey"
+            columns: ["lab_order_id", "clinic_id", "patient_id"]
+            isOneToOne: true
+            referencedRelation: "lab_orders"
+            referencedColumns: ["id", "clinic_id", "patient_id"]
+          },
           {
             foreignKeyName: "payments_appointment_id_fkey"
             columns: ["appointment_id", "clinic_id"]
@@ -2749,6 +2759,10 @@ export type Database = {
         Args: { p_external_id: string; p_source: string }
         Returns: undefined
       }
+      lab_collection_requires_payment: {
+        Args: { p_clinic: string }
+        Returns: boolean
+      }
       lab_create_order: {
         Args: {
           p_actor: string
@@ -2776,6 +2790,24 @@ export type Database = {
           p_test_ids: string[]
         }
         Returns: string
+      }
+      lab_create_samples: {
+        Args: { p_actor: string; p_clinic: string; p_order: string }
+        Returns: Json
+      }
+      lab_order_amount: {
+        Args: { p_order: string }
+        Returns: number
+      }
+      lab_sample_transition: {
+        Args: {
+          p_actor: string
+          p_clinic: string
+          p_reason: string
+          p_sample: string
+          p_to: Database["public"]["Enums"]["lab_sample_status"]
+        }
+        Returns: Json
       }
       lab_set_panel_tests: {
         Args: { p_clinic_id: string; p_panel_id: string; p_test_ids: string[] }

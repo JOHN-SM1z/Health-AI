@@ -137,6 +137,23 @@ rows and stop assigning it.
 `lab_create_panel()` and `lab_set_panel_tests()` (service role only): a panel and its tests are written in one
 transaction, verified to belong to the clinic, so a refused test leaves no half-built panel.
 
+### `20261003000005_lab_payments.sql` (laboratory, phase 5a)
+
+Makes `payments` polymorphic: `appointment_id` nullable, new `lab_order_id`, `check (num_nonnulls(appointment_id,
+lab_order_id) = 1)` and `provider = 'manual'` for lab payments (added NOT VALID, then validated — only a SHARE UPDATE EXCLUSIVE
+lock), a composite same-clinic/patient FK to `lab_orders`, one payment per order, the `payments_lab_immutable` trigger,
+`lab_order_amount()`, and `lab_create_order()` redefined to create the order's `unpaid` payment in the same transaction. Orders
+that already exist get a payment (none in production: the module is not deployed). The existing appointment constraints are
+unchanged. **Not yet timed at volume** (`scripts/rehearse-upgrade.sh`): the statements are a nullable column, a dropped NOT NULL
+and two validations scanning `payments`. Rollback while no lab payment exists: delete the lab payments, drop the trigger,
+constraints, index and column, `set not null` on `appointment_id`, restore `lab_create_order()` from `…0004`.
+
+### `20261003000006_lab_sample_workflow.sql` (laboratory, phase 5b)
+
+`lab_collection_requires_payment()`, `lab_create_samples()` and `lab_sample_transition()` (service role only): the clinic's payment
+policy and the sample steps, one transaction each, with the payment locked `FOR SHARE` during a collection. Rollback: drop the
+three functions.
+
 ### `20261003000004_lab_create_order.sql` (laboratory, phase 4)
 
 `lab_create_order()` (service role only): an order and all its items in one transaction, idempotent per

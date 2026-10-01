@@ -41,7 +41,7 @@ async function run() {
   try {
     // ---------- The owner configures the laboratory ----------
     const { context: ownerContext, page: owner } = await signIn(browser, report, DEMO.owner, "desktop", { expectDenials: true });
-    const navLink = owner.getByRole("link", { name: "Laboratoriya" }).first();
+    const navLink = owner.getByRole("link", { name: "Laboratoriya", exact: true });
     check(await navLink.isVisible(), "the owner has a Laboratoriya section");
     await navLink.click();
     await owner.getByRole("button", { name: "Yangi tahlil" }).waitFor();
@@ -112,7 +112,7 @@ async function run() {
 
     // ---------- A receptionist has no laboratory configuration ----------
     const { context: recContext, page: reception } = await signIn(browser, report, DEMO.reception, "desktop", { expectDenials: true });
-    check((await reception.getByRole("link", { name: "Laboratoriya" }).count()) === 0, "a receptionist sees no Laboratoriya link");
+    check((await reception.getByRole("link", { name: "Laboratoriya", exact: true }).count()) === 0, "a receptionist sees no Laboratoriya link");
     const denied = await reception.request.get(`${BASE}/api/admin/lab/tests`);
     check(denied.status() === 403, "a receptionist is refused by the laboratory API");
     check((await reception.request.post(`${BASE}/api/admin/lab/tests`, { data: { code: "NO", name: "no", price: 1 } })).status() === 403, "a receptionist cannot create a test");
@@ -121,6 +121,7 @@ async function run() {
     // ---------- The technician works from the laboratory workspace ----------
     const { context: labContext, page: lab } = await loginLab(browser);
     check(new URL(lab.url()).pathname === "/lab", "a technician lands in the laboratory workspace");
+    await lab.goto(`${BASE}/lab/catalog`);
     check(await lab.getByText(TEST_NAME).waitFor({ timeout: 10_000 }).then(() => true, () => false), "the technician sees the clinic's tests");
     check((await lab.getByRole("button", { name: "Yangi tahlil" }).count()) === 0, "…without any way to configure them");
     await lab.getByRole("row", { name: new RegExp(CODE) }).getByRole("button", { name: "Ko‘rish" }).click();

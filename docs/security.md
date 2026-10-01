@@ -332,6 +332,68 @@ Roles (`20261003000001`, `src/lib/auth/staff.ts`, `src/lib/labs/access.ts`):
   panel's `total` in the order response is the sum of its tests' prices — billing at the panel price is phase 5.
 - Tests: `src/app/api/doctor/lab/ordering.test.ts` (real routes and database), `e2e/lab-ordering.mjs` (real screens).
 
+## Laboratory Kassa and samples (phase 5)
+
+`20261003000005_lab_payments.sql`, `20261003000006_lab_sample_workflow.sql`, `src/lib/labs/{kassa,samples}.ts`,
+`/api/admin/lab/kassa/**` (cashier roles), `/api/lab/**` (the bench), `/admin/lab-kassa`, `/lab` (worklist).
+
+**Payments — the existing engine, not a second one.** A lab order is a second billable entity of `payments`:
+`appointment_id` is nullable, `lab_order_id` is new, and a check requires exactly one owner. Every status change still goes
+through `transitionPaymentStatus` (legal transitions, compare-and-set, `payment_status_changed` audit); the
+"server-managed" trigger still blocks every token write.
+- **The amount is computed by the database** (`lab_order_amount`) from the order's price snapshots when the order is
+  written — in the same transaction as the order (`lab_create_order`), `unpaid`, manual provider, the clinic's currency. A
+  fixed-price panel replaces its tests' prices only when the WHOLE panel is on the order; otherwise tests are priced one by
+  one. Changing a price later changes nothing already billed. Nothing about money is read from a request: the confirm/refund
+  body is `.strict()` and carries only the action and a coded method/reason (`cash|card|transfer`,
+  `patient_request|duplicate_payment|order_cancelled|other` — free text could carry clinical detail into an audit row).
+- A lab payment is tied to its order, patient and clinic by a composite FK; its owner, patient, clinic, amount, currency and
+  provider cannot change afterwards (`payments_lab_immutable`); only the `manual` provider can settle it (so the Click
+  webhook, which looks payments up by appointment id, can never touch one). An appointment payment cannot become a lab payment.
+- **Who:** the Kassa list/receipt: owner, admin, manager, receptionist (the roles RLS already lets read payments); recording a
+  payment: owner, admin, receptionist; refunding: owner, admin. Technicians and doctors have no Kassa; the role is decided
+  before the request is read (an unauthenticated request with a bad body is 401, not 400).
+- **A failed payment is never shown as paid**, a payment under review can be confirmed, `failed` must be retried first (the
+  engine's rule), a cancelled order takes no payment (409), another clinic's order is 404.
+- **Refund** (owner/admin, paid → refunded, final) is a money event only: the order, samples and results are not touched, and
+  a collected sample stays collected. Audit: `payment_status_changed` (engine) and `lab_payment_confirmed` /
+  `lab_payment_refunded` (order and patient ids, payment id, coded method/reason).
+- **Receipt** (`GET …/receipt`, `/admin/lab-kassa/receipt/[orderId]`): a minimal payment confirmation — clinic, patient name,
+  number (first 8 hex of the payment id), date/time, items, the server's amount and currency, status, method. `fiscal: false`
+  and a printed disclaimer ("not a fiscal receipt"). Issued only for a payment that was received (paid, or refunded
+  afterwards, and then it says so); an unpaid/failed order has none (409). Never the doctor's note, never a result.
+- **Finance:** the existing figures (Moliya, analytics, dashboard) are derived from appointments and are unchanged — a lab
+  payment has no appointment, so it is not in them. Lab money is reported **beside** them (`laboratory`: paid / unpaid /
+  refunded for orders created in the window, owner/admin only) and is not part of `total_revenue`. Deeper lab analytics: phase 11.
+
+**Samples.** The phase-2 triggers still enforce the lifecycle (awaiting_collection → collected → processing; rejected;
+cancelled; nothing for a cancelled/completed order; lab staff only; one live sample per order and sample type). Phase 5 adds
+three server-only functions and the routes around them, for `lab_staff` only (owner/admin/manager/receptionist/doctor: 403):
+- `lab_create_samples` — one sample per sample type (a test without one: `boshqa`) for the active tests not on a live
+  sample; idempotent and race-safe (the order row is locked); codes `S<yymmdd>-<5 chars>`, unique per clinic.
+- `lab_sample_transition` — every later step in one transaction that locks the sample: a repeat is `unchanged`; collected
+  by someone else is 409; two staff collecting at once is one collection.
+- **The payment policy is the clinic's setting** (`app_settings` key `lab`, `collection.requiresPayment`), read in the database
+  (`lab_collection_requires_payment`): only an explicit JSON `true` requires payment; absent or damaged means not required (the
+  same default as the settings screen). When required, collection needs the order's payment to be `paid` AT THAT MOMENT, and the
+  payment row is locked `FOR SHARE` until the collection commits, so a refund cannot slip in between the check and the collection
+  (tested). A refund after collection does not undo it; samples not yet collected are blocked again.
+- "Ready for collection" is never stored: the worklist derives it (policy + the payment's real status). Order, payment and
+  sample stay three separate states.
+- The worklist shows the technician the patient's name, tests, sample types, priority, ordering doctor's name and the payment
+  STATUS — never an amount, never the doctor's note, never a result. Sample steps are audited by the database
+  (`lab_sample_*`, ids only; the reject reason is not in the trail).
+
+Open decisions (not assumed in code): (1) the Kassa list and the receipt show reception the NAMES of the tests ordered (needed to
+explain a price; a test name can itself be sensitive) — confirm that this is acceptable or reduce them to a count; (2) the
+technician sees the patient's name on the worklist (needed to identify a sample) and no date of birth yet (the identity layer
+adds it).
+
+Not done in this phase (deliberately): cancelling an order (the database allows it, there is no route yet), partial payments,
+Click/Payme for lab (manual only, per the project rules), fiscalisation. A technician cannot yet record results (phase 6).
+Tests: `src/lib/supabase/lab-payments.test.ts`, `src/app/api/lab/kassa-and-samples.test.ts` (roles, amounts, policy, locking,
+concurrency, finance regression), `e2e/lab-kassa-samples.mjs`.
+
 ## Clinical records
 
 `clinical_records` (`20260927000005_clinical_records.sql`, types extended in

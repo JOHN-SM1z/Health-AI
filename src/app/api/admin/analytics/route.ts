@@ -6,6 +6,7 @@ import { canViewPaymentDynamics } from "@/lib/auth/staff";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { aggregateAppointments, type AnalyticsRow } from "@/lib/analytics/aggregate";
 import { localDayWindowForDate } from "@/lib/time/local";
+import { labPaymentTotals } from "@/lib/labs/kassa";
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +59,9 @@ export async function GET(request: NextRequest) {
     if (error) throw error;
 
     const agg = aggregateAppointments((data ?? []) as AnalyticsRow[], ctx.clinicTimezone);
+    // Laboratory payments belong to no appointment, so they are not in the appointment figures above; they are
+    // reported beside them, never mixed in, and only to those who may see money.
+    const laboratory = mayViewPaymentDynamics ? await labPaymentTotals(ctx.clinicId, since, until) : null;
 
     return ok({
       range,
@@ -86,6 +90,7 @@ export async function GET(request: NextRequest) {
       // Individually identifies a patient by name alongside a payment amount
       // — the same financial-data gate as every other money figure here.
       recent_payments: mayViewPaymentDynamics ? agg.recentPayments : [],
+      laboratory,
       top_services: agg.topServices.map(({ name, count, completedCount, revenue }) => ({
         name,
         count,
