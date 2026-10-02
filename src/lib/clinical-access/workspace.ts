@@ -9,6 +9,7 @@ import { canDoctorAccessPatientClinicalData, type ClinicalAccess, type ClinicalR
 import { listVisibleClinicalRecords, type ClinicalRecordView } from "@/lib/clinical-records/service";
 import { listPatientReferralsForDoctor, type PatientReferral } from "@/lib/referrals/service";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
+import { loadFinalisedSummaries, type LabResultSummary } from "@/lib/labs/longitudinal";
 import { recordCategory, type RecordCategory, type RecordStage } from "@/lib/clinical-records/categories";
 
 /**
@@ -65,6 +66,11 @@ export type PatientWorkspace = {
   records: WorkspaceRecord[];
   /** The patient's referrals, with their text — actions only where the doctor is on them. */
   referrals: PatientReferral[];
+  /**
+   * The patient's FINALISED laboratory results (summaries only; values are opened one result at a time), every doctor's, as part of the
+   * same longitudinal record. Work in progress - drafts, unverified, abandoned - is never included.
+   */
+  labResults: LabResultSummary[];
   consultation: {
     /** The doctor's own consultation with the patient that is in progress. */
     current: ConsultationRef | null;
@@ -133,7 +139,7 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
   if (!access.allowed || access.relationship === "none") throw await patientAccessDenied(doctor, patientId);
 
   const supabase = createAdminClient();
-  const [patientRes, appointmentsRes, records, referrals, services] = await Promise.all([
+  const [patientRes, appointmentsRes, records, referrals, services, labResults] = await Promise.all([
     supabase
       .from("patients")
       .select("id, full_name, phone, preferred_language")
@@ -150,6 +156,8 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
     listVisibleClinicalRecords(doctor, patientId, access),
     listPatientReferralsForDoctor(doctor, patientId),
     doctorServices(doctor),
+    // Finalised laboratory results join the same record; the access decision above already allowed the whole history.
+    loadFinalisedSummaries(doctor.doctorId, doctor.clinicId, patientId, 50),
   ]);
   if (patientRes.error || appointmentsRes.error) throw new ApiError(500, "Bemor ma‘lumotlarini yuklab bo‘lmadi");
   if (!patientRes.data) throw new ApiError(404, "Bemor topilmadi", "patient_not_found");
@@ -219,6 +227,7 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
       record_count: records.length,
       record_ids: records.map((r) => r.id),
       other_author_record_ids: records.filter((r) => !r.mine).map((r) => r.id),
+      lab_result_item_ids: labResults.map((r) => r.itemId),
     },
     strict: true,
   });
@@ -239,6 +248,7 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
       return { ...r, stage, category: recordCategory(r.type, stage) };
     }),
     referrals,
+    labResults,
     consultation: {
       current: current ? asRef(current) : null,
       booked: booked ? asRef(booked) : null,

@@ -357,6 +357,7 @@ describeDb("referral lifecycle through the API — transitions, access terminati
           record_count: 1,
           record_ids: [x.aRecord],
           other_author_record_ids: [x.aRecord],
+          lab_result_item_ids: [], // finalised laboratory results shown with the history (ids only)
         },
       }),
     ]);

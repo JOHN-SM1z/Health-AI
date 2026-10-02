@@ -167,7 +167,7 @@ async function resolveItems(db: Db, clinicId: string, selection: Selection, { al
 // ---------------------------------------------------------------------------
 
 /** The patient's clinical history is reachable only through the one access decision; anything else is the same refusal as everywhere. */
-async function assertPatientAccess(doctor: LinkedDoctor, patientId: string): Promise<void> {
+export async function assertPatientAccess(doctor: LinkedDoctor, patientId: string): Promise<void> {
   const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, patientId);
   if (!access.allowed || !access.fullHistory) throw await patientAccessDenied(doctor, patientId);
 }

@@ -299,7 +299,8 @@ describeDb("consultation start — one transaction, exactly once (database layer
     // A failure injected into this appointment's consultation_started row only
     // (the generic appointment-change audit row still goes through).
     const fn = `test_fail_audit_${suffix}`;
-    await sql.unsafe(`
+    // DDL on the hot audit table can deadlock with other suites' audit inserts running in parallel: retry it.
+    const install = () => sql.unsafe(`
       create function public.${fn}() returns trigger language plpgsql as $$
       begin
         if new.entity_id = '${appointment}' and new.action = 'consultation_started' then
@@ -308,6 +309,17 @@ describeDb("consultation start — one transaction, exactly once (database layer
         return new;
       end $$;
       create trigger ${fn} before insert on public.audit_events for each row execute function public.${fn}();`);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await install();
+        break;
+      } catch (e) {
+        const code = (e as { code?: string }).code;
+        if (attempt >= 5 || (code !== "40P01" && code !== "55P03")) throw e;
+        await sql.unsafe(`drop function if exists public.${fn}() cascade`);
+        await new Promise((r) => setTimeout(r, 150 * attempt));
+      }
+    }
     try {
       const error = await pgError(() => start(appointment, "checked_in", profiles.b, "doctor_queue", true, doctors.b));
       expect(error.message).toContain("injected audit failure");

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { PageHeader, Card, ABadge, AError, AButton, AInput, ASelect, ATextArea, AModal, LoadingRow } from "@/components/admin/ui";
 import { adminApi, AdminApiError, formatDateTime } from "@/lib/admin/client";
+import { DOCUMENT_KIND_LABELS, formatBytes } from "@/components/lab/flags";
 import type { ResultDetail, ValueView, ParameterView } from "@/lib/labs/results";
 
 const FLAGS: Record<string, { label: string; tone: "green" | "amber" | "red" | "gray" }> = {
@@ -59,6 +60,8 @@ export default function LabResultPage() {
   const [correcting, setCorrecting] = useState(false);
   const [reason, setReason] = useState("");
   const [abandoning, setAbandoning] = useState(false);
+  const [docKind, setDocKind] = useState("report");
+  const [docFile, setDocFile] = useState<File | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -105,6 +108,19 @@ export default function LabResultPage() {
     run(action, async () => {
       await adminApi.post(`/api/lab/results/versions/${versionId}`, { action });
       return message;
+    });
+
+  const upload = () =>
+    run("upload", async () => {
+      if (!docFile) return;
+      const body = new FormData();
+      body.set("file", docFile);
+      body.set("kind", docKind);
+      const res = await fetch(`/api/lab/results/${itemId}/documents`, { method: "POST", body });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new AdminApiError(res.status, json?.error ?? "Hujjatni yuklab bo‘lmadi", json?.code);
+      setDocFile(null);
+      return "Hujjat qo‘shildi.";
     });
 
   return (
@@ -260,6 +276,45 @@ export default function LabResultPage() {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {(detail.documents.length > 0 || detail.canAttach) && (
+        <div className="mt-4">
+          <p className="mb-2 text-sm font-bold text-foreground">Hujjatlar</p>
+          <Card>
+            {detail.documents.length > 0 && (
+              <ul className="mb-3 divide-y divide-hairline/70 text-sm">
+                {detail.documents.map((d) => (
+                  <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                    <span>
+                      {DOCUMENT_KIND_LABELS[d.kind] ?? d.kind} · {formatBytes(d.sizeBytes)} · {d.uploadedBy ?? "—"} · {formatDateTime(d.addedAt)}
+                    </span>
+                    <a href={`/api/lab/documents/${d.id}`} target="_blank" rel="noopener noreferrer" className="font-medium text-pine hover:underline">
+                      Ochish
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {detail.canAttach ? (
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="w-48">
+                  <p className="mb-1 text-xs font-medium text-ink-muted">Hujjat turi</p>
+                  <ASelect value={docKind} onChange={setDocKind} options={Object.entries(DOCUMENT_KIND_LABELS).map(([value, label]) => ({ value, label }))} aria-label="Hujjat turi" />
+                </div>
+                <div>
+                  <p className="mb-1 text-xs font-medium text-ink-muted">Fayl (PDF, PNG, JPEG · 10 MB gacha)</p>
+                  <input type="file" accept="application/pdf,image/png,image/jpeg" aria-label="Hujjat fayli" onChange={(e) => setDocFile(e.target.files?.[0] ?? null)} className="text-sm" />
+                </div>
+                <AButton disabled={!docFile} loading={busy === "upload"} onClick={() => void upload()}>
+                  Yuklash
+                </AButton>
+              </div>
+            ) : (
+              <p className="text-xs text-ink-muted">Tasdiqlangan natijaga hujjat qo‘shish uchun avval tuzatish kiriting.</p>
+            )}
+          </Card>
         </div>
       )}
 

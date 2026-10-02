@@ -24,6 +24,8 @@ import { ClinicalRecordForm, type RecordDraft } from "@/components/doctor/clinic
 import { ReferralLifecycle } from "@/components/doctor/referral-lifecycle";
 import { RecordHistory } from "@/components/doctor/record-history";
 import { LabOrdering } from "@/components/doctor/lab-ordering";
+import { LabResultCard, LabResultDialog } from "@/components/doctor/lab-results";
+import type { LabResultSummary } from "@/lib/labs/longitudinal";
 import { RECORD_CATEGORY_LABELS, type RecordCategory } from "@/lib/clinical-records/categories";
 
 type Appointment = {
@@ -87,6 +89,8 @@ type Workspace = {
   appointments: Appointment[];
   records: ClinicalRecord[];
   referrals: Referral[];
+  /** Finalised laboratory results of the patient (summaries). Work in progress never appears. */
+  labResults: LabResultSummary[];
   consultation: {
     current: ConsultationRef | null;
     booked: ConsultationRef | null;
@@ -236,6 +240,7 @@ export default function DoctorPatientWorkspacePage() {
   const [declineReason, setDeclineReason] = useState("");
   const [notice, setNotice] = useState<ReactNode | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
+  const [openResult, setOpenResult] = useState<string | null>(null);
 
   const load = useCallback(async (): Promise<Workspace | null> => {
     try {
@@ -353,6 +358,7 @@ export default function DoctorPatientWorkspacePage() {
   const timeline = [
     ...previous.map((a) => ({ kind: "visit" as const, at: a.startAt, visit: a })),
     ...workspace.referrals.map((r) => ({ kind: "referral" as const, at: r.createdAt, referral: r })),
+    ...workspace.labResults.map((l) => ({ kind: "lab" as const, at: l.resultAt, lab: l })),
   ].sort((x, y) => y.at.localeCompare(x.at));
   // The referral this consultation is the handoff for, if any.
   const handoff = current ? workspace.referrals.find((r) => r.role === "receiver" && r.followUpAppointmentId === current.appointmentId) : undefined;
@@ -521,6 +527,16 @@ export default function DoctorPatientWorkspacePage() {
       )}
 
       {tab === "lab" && (
+        <Section title="Laboratoriya tasdiqlagan natijalar" subtitle="Faqat laboratoriya tasdiqlagan natijalar ko‘rinadi; ularni siz o‘zgartira olmaysiz.">
+          {workspace.labResults.length === 0 ? (
+            <p className="text-sm text-ink-muted">Tasdiqlangan natija yo‘q.</p>
+          ) : (
+            workspace.labResults.map((l) => <LabResultCard key={l.itemId} result={l} onOpen={() => setOpenResult(l.itemId)} />)
+          )}
+        </Section>
+      )}
+
+      {tab === "lab" && (
         <Section title="Laboratoriya buyurtmalari">
           <LabOrdering patientId={workspace.patient.id} appointmentId={current?.appointmentId ?? null} />
         </Section>
@@ -680,6 +696,9 @@ export default function DoctorPatientWorkspacePage() {
             </Card>
           ) : (
             timeline.map((item) => {
+              if (item.kind === "lab") {
+                return <LabResultCard key={`lab-${item.lab.itemId}`} result={item.lab} onOpen={() => setOpenResult(item.lab.itemId)} />;
+              }
               if (item.kind === "referral") {
                 const r = item.referral;
                 return (
@@ -751,6 +770,7 @@ export default function DoctorPatientWorkspacePage() {
         </Section>
       )}
 
+      {openResult && <LabResultDialog patientId={workspace.patient.id} itemId={openResult} onClose={() => setOpenResult(null)} />}
       {referFrom && (
         <ReferralDialog
           consultation={{ appointmentId: referFrom.id, startAt: referFrom.startAt, serviceName: referFrom.service?.name ?? null }}

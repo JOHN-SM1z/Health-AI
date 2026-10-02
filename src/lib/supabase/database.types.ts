@@ -1233,6 +1233,7 @@ export type Database = {
           content_type: string
           created_at: string
           id: string
+          kind: string
           result_id: string
           sha256: string
           size_bytes: number
@@ -1244,6 +1245,7 @@ export type Database = {
           content_type: string
           created_at?: string
           id?: string
+          kind?: string
           result_id: string
           sha256: string
           size_bytes: number
@@ -1255,6 +1257,7 @@ export type Database = {
           content_type?: string
           created_at?: string
           id?: string
+          kind?: string
           result_id?: string
           sha256?: string
           size_bytes?: number

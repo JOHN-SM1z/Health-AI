@@ -166,6 +166,14 @@ version/value/audit trigger functions (still `SECURITY DEFINER`/pinned `search_p
 `working_by = entered_by`. Rollback: drop the new table, columns and functions and restore the trigger functions from
 `…0002` / `…0007`; the enum value cannot be removed.
 
+### `20261003000010_lab_documents.sql` (laboratory, phase 7)
+
+The private `lab-documents` bucket (10 MiB, PDF/PNG/JPEG, **service-role policy only**), the `kind` column and a validation trigger on
+`lab_result_attachments` (active uploader, own result folder, ≤ 20 per result, nothing for a cancelled order, nothing for a verified result
+without a correction under way, append-only for the application roles) and a corrected `storage_path` check (phase 2's regex could never be
+evaluated). On a hosted project the bucket and its policy are created by this migration; no dashboard step. Rollback: drop the trigger and
+column, restore the old check, delete the objects and the bucket by hand.
+
 ### `20261003000006_lab_sample_workflow.sql` (laboratory, phase 5b)
 
 `lab_collection_requires_payment()`, `lab_create_samples()` and `lab_sample_transition()` (service role only): the clinic's payment

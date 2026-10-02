@@ -452,6 +452,48 @@ own `clinical_records` entry in their own consultation, as the longitudinal mode
 - Tests: `src/app/api/lab/results.test.ts` (23, real routes and database, with mutation checks on the separate-verifier, stale-version,
   author and lock rules), the doctor-visibility case in `src/app/api/doctor/lab/ordering.test.ts`, and `e2e/lab-results.mjs`.
 
+## Laboratory results in the longitudinal record and result documents (phase 7)
+
+`src/lib/labs/longitudinal.ts`, `src/lib/labs/documents.ts`, `20261003000010_lab_documents.sql`,
+`/api/doctor/patients/[id]/lab/{results,results/[itemId],documents/[docId]}`, `/api/lab/results/[itemId]/documents`, `/api/lab/documents/[docId]`.
+
+- **One record, one access model (D9).** Finalised results are part of the existing longitudinal record, not a second history: a doctor
+  reaches them through `assertPatientAccess` → `canDoctorAccessPatientClinicalData()` → `doctor_patient_access()`, unchanged. A treating
+  relationship or an open referral opens the whole history INCLUDING finalised results; a revoked/expired referral closes it (410/404, with
+  the audited refusal); a same-clinic doctor with no relationship and any other clinic get the same 404. The patient workspace
+  (`/api/doctor/patients/[id]`) now carries `labResults` (summaries, no values) and the doctor's patient page shows them in the
+  *Laboratoriya* tab and in the *Klinik tarix* timeline.
+- **Only finalised work is visible.** A result is part of the record only when it has a VERIFIED version (plus the earlier verified
+  versions it superseded, shown as "previous versions"). A draft, a submitted-but-unverified result, an abandoned draft and a correction in
+  preparation are never returned and their existence is not revealed — while a correction is a draft the doctor keeps seeing the
+  standing version. The doctor's order list collapses every non-final state to "no result yet".
+- **Read-only, and ownership preserved.** The doctor routes have only `GET`; the laboratory routes admit laboratory staff only; no signed-in
+  token can write or read the result and attachment tables. Provenance is kept and shown: ordering doctor, enterer and verifier of each
+  version, order / collection / verification dates, correction reasons. A doctor's own interpretation is their own clinical record.
+  Values carry only the stored comparison flag ("outside the configured reference range"), never an interpretation.
+- **Documents** (PDF, PNG, JPEG, ≤ 10 MB, ≤ 20 per result; kinds report / scan / image / imported) reuse the project's private storage
+  pattern: bucket `lab-documents` (private, size- and type-limited), objects at `<clinic>/<patient>/<result>/<id>.<ext>`, a service-role-only
+  storage policy and — unlike voice files — NO staff read policy. Upload (laboratory staff): size checked before the body is read, type
+  decided by the file's own signature (a text file renamed `.pdf` is 415; the client's content type and file name are never used or kept),
+  sha256 stored, path built from database ids, the object removed again if the row is refused. The database refuses a path outside the
+  result's own folder, an inactive uploader, a cancelled order, a 21st document, and any document added to a verified result that is not
+  under correction (a finalised result is not silently changed). Rows are never edited or deleted by the application roles.
+- **Download = authorisation on every request.** There is no signed, public or guessable URL; the routes re-check clinic, patient (doctor:
+  the clinical access decision for the patient in the path), that the document belongs to that patient's result in that clinic, and — for
+  doctors — that the result is finalised and the document predates the standing version's verification. Wrong patient, wrong or foreign
+  document id and forged links are 404; anonymous 401; reception/management/other clinics refused. The stored sha256 is verified before any
+  byte is served (a tampered object is a 500, tested). Responses are `private, no-store`, `nosniff`, `Content-Security-Policy: sandbox`.
+  Rate-limited (doctors 60/min, laboratory 120/min, uploads 30/min). Audit: `lab_attachment_added` (database trigger), and strict
+  `lab_document_downloaded` / `lab_result_viewed` (ids only; never values or file names).
+- **Defect found and fixed:** phase 2's `lab_result_attachments_storage_path_check` used a regex repetition count of 300, which
+  PostgreSQL rejects (limit 255) — no attachment row could ever have been inserted. Replaced in `20261003000010`.
+- Not built / open: retiring a mistakenly attached document (documents are append-only; only a correction path exists); virus scanning
+  (the type check is a signature check, not malware detection); patient-facing results (phase 8); an external lab's imports (phase 10).
+- Test hygiene: tests in this module never use `alter table ... disable trigger` (it is global and broke referral suites running in
+  parallel); they bypass triggers per transaction with `set local session_replication_role = replica`.
+- Tests: `src/app/api/doctor/lab/longitudinal.test.ts` (9, real routes, database and storage; mutation-checked on the finalised-only rule,
+  the patient match and the checksum) and `e2e/lab-longitudinal.mjs`.
+
 ## Clinical records
 
 `clinical_records` (`20260927000005_clinical_records.sql`, types extended in

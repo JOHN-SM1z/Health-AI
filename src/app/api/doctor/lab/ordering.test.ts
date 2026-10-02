@@ -356,24 +356,24 @@ describeDb("doctor laboratory ordering — real routes and database", () => {
       clinic_id: clinicA, patient_id: patient.y, referring_doctor_id: doc.c, referred_to_doctor_id: doc.a,
       originating_appointment_id: await visit(clinicA, patient.y, doc.c, "completed"), reason: "dead referral", created_by: users.c,
     })} returning id`;
-    const raw = async (statement: () => Promise<unknown>) => {
-      await sql`alter table public.referrals disable trigger user`;
-      try {
-        await statement();
-      } finally {
-        await sql`alter table public.referrals enable trigger user`;
-      }
+    // Triggers are bypassed for THIS transaction only (never `alter table ... disable trigger`: that is global and breaks the
+    // referral tests running in parallel).
+    const raw = async (statement: (tx: postgres.TransactionSql) => Promise<unknown>) => {
+      await sql.begin(async (tx) => {
+        await tx.unsafe("set local session_replication_role = replica");
+        await statement(tx);
+      });
     };
     const linkable = async () => (await order({ patientId: patient.y, testIds: [T.glu], appointmentId: consultY, referralId: ref.id })).status;
     // Open and in date: linkable.
     expect(await linkable()).toBe(201);
-    await raw(() => sql`update public.referrals set created_at = ${new Date(Date.now() - 20 * 86_400_000).toISOString()}, expires_at = ${new Date(Date.now() - 10 * 86_400_000).toISOString()} where id = ${ref.id}`);
+    await raw((tx) => tx`update public.referrals set created_at = ${new Date(Date.now() - 20 * 86_400_000).toISOString()}, expires_at = ${new Date(Date.now() - 10 * 86_400_000).toISOString()} where id = ${ref.id}`);
     expect(await linkable(), "expired").toBe(404);
-    await raw(() => sql`update public.referrals set expires_at = now() + interval '30 days' where id = ${ref.id}`);
+    await raw((tx) => tx`update public.referrals set expires_at = now() + interval '30 days' where id = ${ref.id}`);
     expect(await linkable(), "open again").toBe(201);
-    await raw(() => sql`update public.referrals set status = 'declined', declined_at = now(), declined_by = ${users.a} where id = ${ref.id}`);
+    await raw((tx) => tx`update public.referrals set status = 'declined', declined_at = now(), declined_by = ${users.a} where id = ${ref.id}`);
     expect(await linkable(), "declined").toBe(404);
-    await raw(() => sql`update public.referrals set status = 'revoked', declined_at = null, declined_by = null, revoked_at = now(), revoked_by = ${users.c}, revoked_reason = 'test' where id = ${ref.id}`);
+    await raw((tx) => tx`update public.referrals set status = 'revoked', declined_at = null, declined_by = null, revoked_at = now(), revoked_by = ${users.c}, revoked_reason = 'test' where id = ${ref.id}`);
     expect(await linkable(), "revoked").toBe(404);
   });
 

@@ -213,6 +213,10 @@ export type ResultDetail = {
   events: DraftEvent[];
   canCorrect: boolean;
   canEnter: boolean;
+  /** Documents attached to this result (work in progress included) - for laboratory staff. */
+  documents: Array<{ id: string; kind: string; contentType: string; sizeBytes: number; addedAt: string; uploadedBy: string | null }>;
+  /** A document can be added while the result is in work or under correction; a finalised one needs a correction first. */
+  canAttach: boolean;
 };
 
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
@@ -270,12 +274,17 @@ export async function getResultDetail(staff: Staff, itemId: string): Promise<Res
       values = vals ?? [];
     }
   }
+  let attachments: Array<{ id: string; kind: string; content_type: string; size_bytes: number; created_at: string; uploaded_by: string }> = [];
+  if (resultRow) {
+    const { data: att } = await db.from("lab_result_attachments").select("id, kind, content_type, size_bytes, created_at, uploaded_by").eq("clinic_id", staff.clinicId).eq("result_id", resultRow.id).order("created_at");
+    attachments = (att ?? []) as typeof attachments;
+  }
   let events: Array<Database["public"]["Tables"]["lab_result_version_events"]["Row"]> = [];
   if (versions.length) {
     const { data: ev } = await db.from("lab_result_version_events").select("*").eq("clinic_id", staff.clinicId).in("version_id", versions.map((v) => v.id)).order("created_at");
     events = ev ?? [];
   }
-  const people = [...new Set([...versions.flatMap((v) => [v.entered_by, v.working_by, v.verified_by, v.cancelled_by].filter((x): x is string => !!x)), ...events.flatMap((e) => [e.actor_id, e.previous_holder].filter((x): x is string => !!x))])];
+  const people = [...new Set([...versions.flatMap((v) => [v.entered_by, v.working_by, v.verified_by, v.cancelled_by].filter((x): x is string => !!x)), ...events.flatMap((e) => [e.actor_id, e.previous_holder].filter((x): x is string => !!x)), ...attachments.map((a) => a.uploaded_by)])];
   const names = new Map<string, string | null>();
   if (people.length) {
     const { data: profiles } = await db.from("profiles").select("id, full_name").in("id", people);
@@ -360,6 +369,8 @@ export async function getResultDetail(staff: Staff, itemId: string): Promise<Res
       reason: e.reason,
       version: versions.find((v) => v.id === e.version_id)?.version ?? 0,
     })),
+    documents: attachments.map((a) => ({ id: a.id, kind: a.kind, contentType: a.content_type, sizeBytes: Number(a.size_bytes), addedAt: a.created_at, uploadedBy: names.get(a.uploaded_by) ?? null })),
+    canAttach: !closed && !!resultRow && (!!open || !verified),
     canCorrect: !closed && !!verified && !open,
     // The author's own draft (a first entry or a correction) can be edited; with nothing open, only a result that was never verified is entered.
     canEnter: !closed && sampleCollected && (open ? open.status === "draft" && mine : !verified),
