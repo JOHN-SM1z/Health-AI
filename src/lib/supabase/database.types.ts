@@ -2809,6 +2809,34 @@ export type Database = {
         }
         Returns: Json
       }
+      lab_pick_range: {
+        Args: { p_parameter: string }
+        Returns: string
+      }
+      lab_result_correct: {
+        Args: { p_actor: string; p_clinic: string; p_expected_version: number; p_reason: string; p_result: string }
+        Returns: Json
+      }
+      lab_result_return: {
+        Args: { p_actor: string; p_clinic: string; p_version: string }
+        Returns: Json
+      }
+      lab_result_save: {
+        Args: { p_actor: string; p_clinic: string; p_item: string; p_values: Json }
+        Returns: Json
+      }
+      lab_result_submit: {
+        Args: { p_actor: string; p_clinic: string; p_version: string }
+        Returns: Json
+      }
+      lab_result_verify: {
+        Args: { p_actor: string; p_clinic: string; p_version: string }
+        Returns: Json
+      }
+      lab_setting_bool: {
+        Args: { p_clinic: string; p_default: boolean; p_path: string[] }
+        Returns: boolean
+      }
       lab_set_panel_tests: {
         Args: { p_clinic_id: string; p_panel_id: string; p_test_ids: string[] }
         Returns: undefined

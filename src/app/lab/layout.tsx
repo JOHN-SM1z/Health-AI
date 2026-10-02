@@ -30,6 +30,7 @@ export default async function LabLayout({ children }: { children: React.ReactNod
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 text-sm">
           <NavLink href="/lab" exact icon={<ClipboardList className="h-4 w-4" />}>Ish ro‘yxati</NavLink>
+          <NavLink href="/lab/results" icon={<FlaskConical className="h-4 w-4" />}>Natijalar</NavLink>
           <NavLink href="/lab/catalog" icon={<FlaskConical className="h-4 w-4" />}>Tahlillar</NavLink>
           <NavLink href="/lab/password" icon={<KeyRound className="h-4 w-4" />}>Parolim</NavLink>
         </nav>

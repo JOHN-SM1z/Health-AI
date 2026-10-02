@@ -394,6 +394,48 @@ Click/Payme for lab (manual only, per the project rules), fiscalisation. A techn
 Tests: `src/lib/supabase/lab-payments.test.ts`, `src/app/api/lab/kassa-and-samples.test.ts` (roles, amounts, policy, locking,
 concurrency, finance regression), `e2e/lab-kassa-samples.mjs`.
 
+## Laboratory results (phase 6)
+
+`20261003000007_lab_result_workflow.sql`, `src/lib/labs/results.ts`, `/api/lab/results/**`, `/lab/results` (laboratory staff only).
+Results are clinical: **owner, admin, manager, receptionist and doctors have no route** (403), and the result tables have no
+grant for any signed-in token. A doctor reading a result (phase 7) will never gain write access; their different reading is their
+own `clinical_records` entry in their own consultation, as the longitudinal model already requires.
+
+- **Entry uses the configured parameters.** A result can be entered only once the test's sample is collected/processing.
+  Typed values are checked against the parameters of THIS test (numeric / choice from the configured list / text); the bounds and
+  the flag are copied/computed by the database from the configured range — the request cannot send a flag, range, status, author or
+  clinic (`.strict()`, 400). A flag (`normal`, `low`, `high`, `critical_low`, `critical_high`, `unclassified`) is a comparison with
+  the configured range, shown as "outside the configured reference range" and explicitly "not a diagnosis". Nothing in the product
+  names a condition. The range that applies is the parameter's single generic (no age bounds) active range (`lab_pick_range`); with
+  none or several generic ranges, or only age-specific ones, the value is stored without a range and shows "no configured range" —
+  never a guess. Age-specific selection needs the patient's age (identity layer). Stored bounds are a snapshot: editing a range later
+  never re-flags a stored result.
+- **Workflow** (each step is one database function that locks what it changes): draft → submitted (only the author, only when every
+  active parameter has a value) → verified. A draft belongs to its author (nobody else edits or submits it); a submitted result is
+  not edited (it is returned to draft first, by any lab staff). The clinic's settings are now enforced: `verification.required =
+  false` makes the submission itself verify (recorded, same person); `verification.separateVerifier = true` forbids verifying what you
+  entered (403, tested). Only an explicit JSON false switches verification off and only an explicit true requires a separate verifier;
+  a damaged setting never loosens either. **Without the separate-verifier setting the same person may enter and verify** — allowed,
+  and both identities are recorded.
+- **Finalised results are never overwritten.** A verified result changes only through a correction: a NEW draft version (copying the
+  verified values) that names the version number the caller saw and gives a reason (≤ 300 chars, lab text, not in audit). The old
+  version stays verified and readable until the correction is itself verified, then becomes `superseded`; its author, verifier and
+  timestamps are untouched; each version keeps its own author and verifier. A stale version number, a correction already open and two
+  simultaneous corrections are 409 (one open draft per result — database index plus the result-row lock). Two people verifying at once:
+  one wins, the other gets 409 `already_verified` (the same person repeating is a no-op).
+- **The order completes** (database trigger) once every active test has a verified result; a cancelled order or test takes no result
+  or correction.
+- **Audit** (ids and statuses only — never a value, unit, reason, note or file name; tested): `lab_result_entered`,
+  `lab_result_submitted`, `lab_result_verified`, `lab_result_version_created`, `lab_result_version_superseded`,
+  `lab_result_returned_to_draft` (database triggers, with the acting login), and `lab_result_viewed` on every opening of a result's
+  detail (strict: the read fails if the log cannot be written). The result LIST shows states only, never a value, and is not audited.
+- Open (not assumed in code): (1) a draft whose author has left the clinic cannot be taken over — it can only be left; a
+  take-over/discard action needs a decision about who may do it; (2) completeness is "every ACTIVE parameter has a value" — there is no
+  per-parameter "optional"; (3) no critical-value alert exists: a `critical_*` flag is shown and stored but nobody is notified — a
+  clinical-safety workflow (who is told, how fast) is the owner's decision; (4) doctors cannot see results until phase 7.
+- Tests: `src/app/api/lab/results.test.ts` (17, real routes and database, with mutation checks on the separate-verifier, stale-version,
+  author and lock rules) and `e2e/lab-results.mjs`.
+
 ## Clinical records
 
 `clinical_records` (`20260927000005_clinical_records.sql`, types extended in

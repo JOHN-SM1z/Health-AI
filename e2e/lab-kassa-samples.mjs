@@ -50,7 +50,7 @@ async function run() {
 
   await db`update public.appointments a set status = 'cancelled', cancelled_at = now(), cancelled_reason = 'E2E: an earlier run'
              from public.patients p
-            where p.id = a.patient_id and p.full_name like 'E2E %' and a.doctor_id = ${doctor.id}
+            where p.id = a.patient_id and a.clinic_id = ${clinic} and a.doctor_id = ${doctor.id}
               and a.status not in ('cancelled', 'no_show')
               and tstzrange(a.start_at, a.end_at) && tstzrange(now() - interval '3 hours', now() + interval '3 hours')`;
   const [t1] = await db`insert into public.lab_tests (clinic_id, code, name, price, sample_type) values (${clinic}, ${`E2E-K1-${suffix}`.toUpperCase()}, ${`Qon ${suffix}`}, 85000, 'qon') returning id`;

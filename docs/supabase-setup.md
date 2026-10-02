@@ -148,6 +148,13 @@ unchanged. **Not yet timed at volume** (`scripts/rehearse-upgrade.sh`): the stat
 and two validations scanning `payments`. Rollback while no lab payment exists: delete the lab payments, drop the trigger,
 constraints, index and column, `set not null` on `appointment_id`, restore `lab_create_order()` from `…0004`.
 
+### `20261003000007_lab_result_workflow.sql` (laboratory, phase 6)
+
+`lab_result_save()`, `lab_result_submit()`, `lab_result_verify()`, `lab_result_return()`, `lab_result_correct()` (service role only),
+the range picker `lab_pick_range()` and the settings reader `lab_setting_bool()`: result entry, verification and correction as one locked
+transaction per step, enforcing the clinic's `verification.required` / `verification.separateVerifier` settings. No table changes.
+Rollback: drop the functions.
+
 ### `20261003000006_lab_sample_workflow.sql` (laboratory, phase 5b)
 
 `lab_collection_requires_payment()`, `lab_create_samples()` and `lab_sample_transition()` (service role only): the clinic's payment
