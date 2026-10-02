@@ -116,7 +116,7 @@ export default function LabKassaPage() {
                       <ABadge tone={s.tone}>{s.label}</ABadge>
                     </div>
                   </div>
-                  <p className="mt-2 text-sm text-ink-muted">{o.items.map((i) => i.name).join(", ")}</p>
+                  <p className="mt-2 text-sm text-ink-muted">{o.itemCount} ta tahlil</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {data.can.confirm && !cancelled && ["unpaid", "pending", "manual_review"].includes(o.payment.status) && (
                       <AButton size="sm" onClick={() => { setChoice("cash"); setActing({ order: o, kind: "confirm" }); }}>

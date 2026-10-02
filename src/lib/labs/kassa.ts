@@ -40,7 +40,8 @@ export type KassaOrder = {
   orderStatus: string;
   priority: string;
   patient: { id: string; fullName: string | null };
-  items: Array<{ name: string; price: number }>;
+  /** How many tests the order has — never their names: the list is browsed by everyone at the desk. */
+  itemCount: number;
   payment: { id: string; status: PaymentStatus; amount: number; currency: string; paidAt: string | null };
 };
 
@@ -52,7 +53,7 @@ export async function listKassaOrders(clinicId: string, filter: KassaFilter, lim
   let query = db
     .from("payments")
     .select(
-      "id, status, amount, currency, paid_at, lab_order_id, patient_id, lab_orders!payments_lab_order_fkey(id, status, priority, created_at, lab_order_items(test_name, price_snapshot, status)), patients(id, full_name)",
+      "id, status, amount, currency, paid_at, lab_order_id, patient_id, lab_orders!payments_lab_order_fkey(id, status, priority, created_at, lab_order_items(status)), patients(id, full_name)",
     )
     .eq("clinic_id", clinicId)
     .not("lab_order_id", "is", null)
@@ -78,7 +79,7 @@ export async function listKassaOrders(clinicId: string, filter: KassaFilter, lim
       status: string;
       priority: string;
       created_at: string;
-      lab_order_items: Array<{ test_name: string; price_snapshot: number; status: string }>;
+      lab_order_items: Array<{ status: string }>;
     } | null;
   };
   return ((data ?? []) as unknown as Row[])
@@ -90,7 +91,7 @@ export async function listKassaOrders(clinicId: string, filter: KassaFilter, lim
       orderStatus: r.lab_orders!.status,
       priority: r.lab_orders!.priority,
       patient: { id: r.patients?.id ?? "", fullName: r.patients?.full_name ?? null },
-      items: r.lab_orders!.lab_order_items.filter((i) => i.status === "active").map((i) => ({ name: i.test_name, price: Number(i.price_snapshot) })),
+      itemCount: r.lab_orders!.lab_order_items.filter((i) => i.status === "active").length,
       payment: { id: r.id, status: r.status, amount: Number(r.amount), currency: r.currency, paidAt: r.paid_at },
     }));
 }

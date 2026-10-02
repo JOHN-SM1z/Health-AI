@@ -384,10 +384,11 @@ three server-only functions and the routes around them, for `lab_staff` only (ow
   STATUS — never an amount, never the doctor's note, never a result. Sample steps are audited by the database
   (`lab_sample_*`, ids only; the reject reason is not in the trail).
 
-Open decisions (not assumed in code): (1) the Kassa list and the receipt show reception the NAMES of the tests ordered (needed to
-explain a price; a test name can itself be sensitive) — confirm that this is acceptable or reduce them to a count; (2) the
-technician sees the patient's name on the worklist (needed to identify a sample) and no date of birth yet (the identity layer
-adds it).
+Decisions applied by default (2026-10-02, reversible): (1) the Kassa LIST — browsed by everyone at the desk — shows a count of tests,
+never their names (a test name can itself be sensitive); the printed payment confirmation keeps the item names (D2) because it is
+the patient's own document, issued once, for a payment that was received. (2) The technician sees the patient's name on the worklist
+(needed to identify a sample) and no date of birth yet (the identity layer adds it); technicians still never see the ordering
+doctor's note. Say so if reception should see names on the list, or if the receipt should show a count only.
 
 Not done in this phase (deliberately): cancelling an order (the database allows it, there is no route yet), partial payments,
 Click/Payme for lab (manual only, per the project rules), fiscalisation. A technician cannot yet record results (phase 6).

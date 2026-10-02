@@ -173,6 +173,10 @@ describeDb("laboratory Kassa and sample collection — real routes and database"
     const listed = (await kassa("unpaid")).body.data!.orders.find((o: { orderId: string }) => o.orderId === orderId);
     expect(listed).toMatchObject({ orderStatus: "ordered", payment: { status: "unpaid", amount: 15000, currency: "UZS" }, patient: { fullName: `Kassa patient ${suffix}` } });
     expect(JSON.stringify(listed)).not.toContain(NOTE);
+    // The desk list carries a count, never the tests' names (a test name can itself be sensitive).
+    expect(listed.itemCount).toBe(2);
+    expect(JSON.stringify(listed)).not.toMatch(/Blood one|Urine one|Blood two/);
+    expect(listed).not.toHaveProperty("items");
     // Whatever the request claims about money is refused, not ignored.
     for (const extra of [{ amount: 1 }, { status: "paid" }, { paid: true }, { currency: "USD" }, { clinicId: clinicB }, { patientId: randomUUID() }]) {
       expect((await pay(orderId, { action: "confirm", method: "cash", ...extra })).status, JSON.stringify(extra)).toBe(400);
