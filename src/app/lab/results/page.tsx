@@ -74,6 +74,7 @@ export default function LabResultsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     {i.priority === "urgent" && <ABadge tone="red">Shoshilinch</ABadge>}
+                    {i.orphaned && <ABadge tone="amber">Egasi faol emas</ABadge>}
                     <ABadge tone={STATE[i.state]?.tone ?? "neutral"}>{STATE[i.state]?.label ?? i.state}</ABadge>
                     <Link href={`/lab/results/${i.itemId}`} className="inline-flex items-center rounded-lg border border-hairline px-3 py-1.5 text-sm font-medium text-foreground hover:bg-sand">
                       Ochish

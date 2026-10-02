@@ -2,11 +2,13 @@
 
 ## Active
 
-- [ ] **Laboratory module** (branch `feat/lab-system`, on top of PR #13) - phase 1 audit and locked decisions in `docs/labs/`; phases 2 (database model), 3 (lab role, configuration API and screens) and 4 (doctor ordering: catalog search, atomic idempotent orders, similar-test notice, patient order list) done; phase 5 (Kassa on the existing payments with server-priced lab orders, minimal non-fiscal receipt, sample worklist and collection with the clinic's payment-before-collection policy applied by the database) done out of order at the owner's request; phase 6 (result entry against the configured parameters, database-computed flags, submit/verify with the clinic's settings including the separate verifier, append-only corrections, audit) done; next: phase 7 (doctor longitudinal view and documents), then the identity layer, 11, 9, 10, 8, 12, 13, 14 as ordered in `docs/labs/DECISIONS.md`
+- [ ] **Laboratory module** (branch `feat/lab-system`, on top of PR #13) - phase 1 audit and locked decisions in `docs/labs/`; phases 2 (database model), 3 (lab role, configuration API and screens) and 4 (doctor ordering: catalog search, atomic idempotent orders, similar-test notice, patient order list) done; phase 5 (Kassa on the existing payments with server-priced lab orders, minimal non-fiscal receipt, sample worklist and collection with the clinic's payment-before-collection policy applied by the database) done out of order at the owner's request; phase 6 (result entry against the configured parameters, database-computed flags, submit/verify with the clinic's settings including the separate verifier, append-only corrections, audit) done (amended 2026-10-02: orphaned-draft takeover, audited abandonment, comparator values, doctor-visibility boundary); next: phase 7 (finalised results into the #13 longitudinal history and access model, documents), then the identity layer, 11, 9, 10, 8, 12, 13, 14 as ordered in `docs/labs/DECISIONS.md`
 
 ## Waiting On
 
 ## Someday
+
+- [ ] **Critical lab alerts (deferred)** - deferred until validated with doctors and clinical managers (D6, `docs/labs/DECISIONS.md`): which results are critical, who is notified, whether alerts are appropriate and how urgent. Today a `critical_*` flag is stored and shown, nothing is notified
 
 - [ ] **Click / Payme payment adapters** - signature verification, idempotent webhooks, merchant credentials; only `manual` payment is production-usable
 - [ ] **Production Telegram setup** - real bot tokens via `/admin/settings` and `CRON_SECRET` env before go-live

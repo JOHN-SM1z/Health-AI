@@ -501,4 +501,41 @@ describeDb("doctor laboratory ordering — real routes and database", () => {
     as("a");
     expect(((await similar({ patientId: patient.y, testIds: [T.glu] })).body.data!.notices as unknown[]).length).toBe(0);
   });
+
+  it("a doctor sees a result only once it is finalised: drafts, submitted-but-unverified and abandoned work show as no result, whatever its state", async () => {
+    as("a");
+    const created = await order({ patientId: patient.x, testIds: [T.hb] });
+    expect(created.status).toBe(201);
+    const orderId = created.body.data!.order.id as string;
+    const itemId = created.body.data!.order.items[0].id as string;
+    const resultOf = async () => {
+      const mine = ((await listFor(patient.x)).body.data!.orders as Array<{ id: string; items: Array<{ id: string; resultStatus: string }> }>).find((o) => o.id === orderId)!;
+      return mine.items.find((i) => i.id === itemId)!.resultStatus;
+    };
+    expect(await resultOf()).toBe("none");
+    await sql`select public.lab_create_samples(${clinicA}, ${users.lab}, ${orderId})`;
+    const [sample] = await sql<{ id: string }[]>`select id from public.lab_samples where order_id = ${orderId}`;
+    await sql`select public.lab_sample_transition(${clinicA}, ${users.lab}, ${sample.id}, 'collected', null)`;
+    const [hgb] = await sql<{ id: string }[]>`select id from public.lab_test_parameters where test_id = ${T.hb} and code = 'HGB'`;
+    const draft = await sql<{ r: { version_id: string } }[]>`select public.lab_result_save(${clinicA}, ${users.lab}, ${itemId}, ${sql.json([{ parameter_id: hgb.id, value_numeric: 111.11 }])}) as r`;
+    const v1 = draft[0].r.version_id;
+    expect(await resultOf(), "a draft").toBe("none");
+    await sql`select public.lab_result_submit(${clinicA}, ${users.lab}, ${v1})`;
+    expect(await resultOf(), "submitted, awaiting verification").toBe("none");
+    // Sent back and abandoned: still nothing a doctor can see as a result.
+    await sql`select public.lab_result_return(${clinicA}, ${users.lab}, ${v1})`;
+    await sql`select public.lab_result_abandon(${clinicA}, ${users.lab}, ${v1}, 'Entered on the wrong sample')`;
+    expect(await resultOf(), "abandoned").toBe("none");
+    const again = await sql<{ r: { version_id: string } }[]>`select public.lab_result_save(${clinicA}, ${users.lab}, ${itemId}, ${sql.json([{ parameter_id: hgb.id, value_numeric: 122.22 }])}) as r`;
+    await sql`select public.lab_result_submit(${clinicA}, ${users.lab}, ${again[0].r.version_id})`;
+    expect(await resultOf(), "a new draft submitted").toBe("none");
+    await sql`select public.lab_result_verify(${clinicA}, ${users.ver}, ${again[0].r.version_id})`;
+    expect(await resultOf(), "finalised").toBe("verified");
+    // A correction in preparation does not make the finalised result vanish, nor does its draft appear.
+    await sql`select public.lab_result_correct(${clinicA}, ${users.lab}, (select id from public.lab_results where order_item_id = ${itemId}), 2, 'Typing mistake')`;
+    expect(await resultOf(), "while a correction is a draft").toBe("verified");
+    // Nothing in the doctor's answer carries a value or a lab-internal text.
+    const text = JSON.stringify((await listFor(patient.x)).body);
+    expect(text).not.toMatch(/111\.11|122\.22|wrong sample|Typing mistake/);
+  });
 });

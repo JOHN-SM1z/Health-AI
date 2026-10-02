@@ -155,6 +155,17 @@ the range picker `lab_pick_range()` and the settings reader `lab_setting_bool()`
 transaction per step, enforcing the clinic's `verification.required` / `verification.separateVerifier` settings. No table changes.
 Rollback: drop the functions.
 
+### `20261003000008_lab_version_cancelled_status.sql` and `20261003000009_lab_draft_governance.sql` (laboratory, phase 6 amendment)
+
+The `cancelled` version status (its own migration: a new enum value cannot be used in the transaction that adds it), then: `working_by`
+(the draft's holder), `cancelled_by/at/reason` on `lab_result_versions`; `comparator` on `lab_result_values`; the append-only
+`lab_result_version_events` table (takeovers and abandonments, server-only); `lab_staff_is_active()`, `lab_is_management()`,
+`lab_result_take_over()`, `lab_result_abandon()`, `lab_orphaned_drafts()`; and re-created `lab_result_save/submit/correct`, the
+version/value/audit trigger functions (still `SECURITY DEFINER`/pinned `search_path` where they were) and the header sync. The old
+"version > 1 means correction" check becomes "a correction names a version and has a reason". Existing versions get
+`working_by = entered_by`. Rollback: drop the new table, columns and functions and restore the trigger functions from
+`…0002` / `…0007`; the enum value cannot be removed.
+
 ### `20261003000006_lab_sample_workflow.sql` (laboratory, phase 5b)
 
 `lab_collection_requires_payment()`, `lab_create_samples()` and `lab_sample_transition()` (service role only): the clinic's payment

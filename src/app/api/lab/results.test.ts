@@ -25,6 +25,8 @@ import * as resultList from "@/app/api/lab/results/route";
 import * as resultItem from "@/app/api/lab/results/[itemId]/route";
 import * as resultCorrection from "@/app/api/lab/results/[itemId]/correction/route";
 import * as resultVersion from "@/app/api/lab/results/versions/[versionId]/route";
+import * as draftsList from "@/app/api/admin/lab/drafts/route";
+import * as draftsAbandon from "@/app/api/admin/lab/drafts/[versionId]/route";
 
 const DB_URL = process.env.SUPABASE_DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const describeDb = describe.skipIf(!localDbAvailable());
@@ -59,7 +61,11 @@ describeDb("laboratory results — real routes and database", () => {
   const list = async (filter = "all") => read(await resultList.GET(req("GET", `/api/lab/results?filter=${filter}`)));
   const detail = async (itemId: string) => read(await resultItem.GET(req("GET", `/api/lab/results/${itemId}`), ctx("itemId", itemId)));
   const save = async (itemId: string, body: unknown) => read(await resultItem.PUT(req("PUT", `/api/lab/results/${itemId}`, body), ctx("itemId", itemId)));
-  const move = async (versionId: string, action: string) => read(await resultVersion.POST(req("POST", `/api/lab/results/versions/${versionId}`, { action }), ctx("versionId", versionId)));
+  const move = async (versionId: string, action: string, extra: Record<string, unknown> = {}) =>
+    read(await resultVersion.POST(req("POST", `/api/lab/results/versions/${versionId}`, { action, ...extra }), ctx("versionId", versionId)));
+  const drafts = async () => read(await draftsList.GET());
+  const abandonByManagement = async (versionId: string, body: unknown) =>
+    read(await draftsAbandon.POST(req("POST", `/api/admin/lab/drafts/${versionId}`, body), ctx("versionId", versionId)));
   const correct = async (itemId: string, body: unknown) => read(await resultCorrection.POST(req("POST", `/api/lab/results/${itemId}/correction`, body), ctx("itemId", itemId)));
 
   const setPolicy = async (verification: unknown) => {
@@ -154,6 +160,7 @@ describeDb("laboratory results — real routes and database", () => {
     const ins = async (table: string, row: Record<string, unknown>) => (await sql<{ id: string }[]>`insert into ${sql(`public.${table}`)} ${sql(row as never)} returning id`)[0].id;
     T.cbc = await ins("lab_tests", { clinic_id: clinicA, code: `CBC-${suffix}`, name: "Complete blood count", price: 85000, sample_type: "blood" });
     T.glu = await ins("lab_tests", { clinic_id: clinicA, code: `GLU-${suffix}`, name: "Glucose", price: 25000, sample_type: "blood" });
+    T.pcr = await ins("lab_tests", { clinic_id: clinicA, code: `PCR-${suffix}`, name: "Viral load", price: 90000, sample_type: "blood" });
     const param = (test: string, code: string, extra: Record<string, unknown>) => ins("lab_test_parameters", { clinic_id: clinicA, test_id: test, code, name: code, ...extra });
     P.hgb = await param(T.cbc, "HGB", { unit: "g/L", data_type: "numeric", display_order: 1 });
     P.wbc = await param(T.cbc, "WBC", { unit: "10^9/L", data_type: "numeric", display_order: 2 });
@@ -162,6 +169,8 @@ describeDb("laboratory results — real routes and database", () => {
     P.plt = await param(T.cbc, "PLT", { unit: "10^9/L", data_type: "numeric", display_order: 5 }); // two generic ranges: ambiguous
     P.age = await param(T.cbc, "AGEONLY", { unit: "x", data_type: "numeric", display_order: 6 }); // only an age-specific range
     P.gluc = await param(T.glu, "GLUC", { unit: "mmol/L", data_type: "numeric" });
+    P.detect = await param(T.pcr, "DETECT", { data_type: "choice", choices: ["detected", "not detected"], display_order: 1 });
+    P.load = await param(T.pcr, "LOAD", { unit: "copies/mL", data_type: "numeric", display_order: 2 });
     const range = (parameter: string, row: Record<string, unknown>) => ins("lab_reference_ranges", { clinic_id: clinicA, parameter_id: parameter, ...row });
     P.hgbRange = await range(P.hgb, { low: 120, high: 160, critical_low: 70, critical_high: 200 });
     await range(P.wbc, { low: 4, high: 10 });
@@ -573,5 +582,245 @@ describeDb("laboratory results — real routes and database", () => {
     expect(trail.find((t) => t.action === "lab_result_viewed")).toMatchObject({ actor_id: users.lab2, patient_id: patient });
     const text = JSON.stringify(trail);
     for (const secret of ["117.31", "119.44", REASON, NOTE, "clear", "negative"]) expect(text, secret).not.toContain(secret);
+  });
+
+  // ------------------------------------------------------------------ parameter completeness (every active parameter, server-side)
+
+  it("completeness is enforced by the server: only an ABSENT parameter is missing - zero, negative, a comparator, 'not detected' and text are values", async () => {
+    const { item } = await collectedOrder([T.pcr]);
+    const itemId = item(T.pcr);
+    as("lab1", "lab_staff");
+    // One of two parameters: saved as a draft, but never finalised.
+    const partial = await save(itemId, { values: [{ parameterId: P.detect, value: "not detected" }] });
+    expect(partial.status).toBe(200);
+    expect(await move(partial.body.data!.versionId, "submit")).toMatchObject({ status: 400, body: { code: "incomplete" } });
+    // Blank is not a value; zero is.
+    expect((await save(itemId, { values: [{ parameterId: P.detect, value: "not detected" }, { parameterId: P.load, value: "" }] })).status).toBe(400);
+    expect((await save(itemId, { values: [{ parameterId: P.detect, value: "not detected" }, { parameterId: P.load, value: "   " }] })).status).toBe(400);
+    for (const [typed, stored, comparator] of [["0", 0, null], [0, 0, null], ["-0.5", -0.5, null], ["-12", -12, null], ["<0,5", 0.5, "<"], [" > 1000000 ", 1000000, ">"], ["<= 20", 20, "<="], ["≥5", 5, ">="], ["≤ 1", 1, "<="]] as const) {
+      const r = await save(itemId, { values: [{ parameterId: P.detect, value: "detected" }, { parameterId: P.load, value: typed }] });
+      expect(r.status, String(typed)).toBe(200);
+      const v = (await detail(itemId)).body.data!.detail.working.values.find((x: { code: string }) => x.code === "LOAD");
+      expect(v, String(typed)).toMatchObject({ value: stored, comparator, flag: "unclassified" });
+    }
+    // Comparator and text that are not numbers stay refused / stay text.
+    expect((await save(itemId, { values: [{ parameterId: P.detect, value: "detected" }, { parameterId: P.load, value: "<<5" }] })).status).toBe(400);
+    expect((await save(itemId, { values: [{ parameterId: P.detect, value: "detected" }, { parameterId: P.load, value: "<abc" }] })).status).toBe(400);
+    expect((await save(itemId, { values: [{ parameterId: P.detect, value: "<5" }, { parameterId: P.load, value: 1 }] })).status, "a comparator is not a configured choice").toBe(400);
+    // Complete with zero: the submission goes through.
+    const done = await save(itemId, { values: [{ parameterId: P.detect, value: "not detected" }, { parameterId: P.load, value: 0 }] });
+    expect(await move(done.body.data!.versionId, "submit")).toMatchObject({ status: 200, body: { data: { status: "pending_verification" } } });
+    // A comparator never reaches the database on a text parameter (the trigger refuses it as well).
+    const err = await sql`insert into public.lab_result_values (clinic_id, version_id, parameter_id, parameter_code, parameter_name, value_text, comparator) values (${clinicA}, ${done.body.data!.versionId}, ${P.detect}, 'x', 'x', 'detected', '<')`.then(() => "inserted", (e: postgres.PostgresError) => e.message);
+    expect(err).toMatch(/draft|comparator|permission/);
+    // A parameter retired AFTER the draft was started is no longer required; one added later is.
+    const { item: item2 } = await collectedOrder([T.pcr]);
+    const d2 = await save(item2(T.pcr), { values: [{ parameterId: P.detect, value: "detected" }] });
+    await sql`update public.lab_test_parameters set active = false where id = ${P.load}`;
+    try {
+      expect((await move(d2.body.data!.versionId, "submit")).status).toBe(200);
+    } finally {
+      await sql`update public.lab_test_parameters set active = true where id = ${P.load}`;
+    }
+  });
+
+  // ------------------------------------------------------------------ orphaned drafts, abandonment
+
+  const orphanBy = async (user: string, how: "role" | "ban", run: () => Promise<void>) => {
+    if (how === "role") {
+      await sql`delete from public.staff_roles where profile_id = ${users[user]} and clinic_id = ${clinicA}`;
+    } else {
+      await sql`update auth.users set banned_until = now() + interval '1 day' where id = ${users[user]}`;
+    }
+    try {
+      await run();
+    } finally {
+      if (how === "role") await sql`insert into public.staff_roles (clinic_id, profile_id, role) values (${clinicA}, ${users[user]}, 'lab_staff')`;
+      else await sql`update auth.users set banned_until = null where id = ${users[user]}`;
+    }
+  };
+
+  it.each(["role", "ban"] as const)("an orphaned draft (author %s removed) is taken over by another member of staff: the author and the creation time stay, the takeover is recorded and audited", async (how) => {
+    const { item } = await collectedOrder();
+    const itemId = item(T.cbc);
+    as("lab1", "lab_staff");
+    const saved = await save(itemId, fullCbc(131.25));
+    const versionId = saved.body.data!.versionId as string;
+    const [before] = await sql<{ entered_at: string; entered_by: string }[]>`select entered_at, entered_by from public.lab_result_versions where id = ${versionId}`;
+
+    // While the author is active nobody takes the draft.
+    as("lab2", "lab_staff");
+    expect(await move(versionId, "take_over")).toMatchObject({ status: 409, body: { code: "not_orphaned" } });
+    expect((await detail(itemId)).body.data!.detail.working).toMatchObject({ orphaned: false, canTakeOver: false, mine: false });
+
+    await orphanBy("lab1", how, async () => {
+      as("lab2", "lab_staff");
+      const d = (await detail(itemId)).body.data!.detail;
+      expect(d.working).toMatchObject({ orphaned: true, canTakeOver: true, mine: false, canSubmit: false });
+      expect(d.canEnter).toBe(false);
+      expect((await list("todo")).body.data!.items.find((i: { itemId: string }) => i.itemId === itemId)).toMatchObject({ orphaned: true, state: "draft" });
+      // Not editable before the takeover.
+      expect(await save(itemId, fullCbc(140))).toMatchObject({ status: 403, body: { code: "not_author" } });
+      expect(await move(versionId, "submit")).toMatchObject({ status: 403, body: { code: "not_author" } });
+      // Not for management (results are clinical) and not across clinics.
+      as("owner", "owner");
+      expect((await move(versionId, "take_over")).status).toBe(403);
+      as("labB", "lab_staff", clinicB);
+      expect((await move(versionId, "take_over")).status).toBe(404);
+      // The takeover.
+      as("lab2", "lab_staff");
+      expect(await move(versionId, "take_over")).toMatchObject({ status: 200, body: { data: { unchanged: false } } });
+      expect(await move(versionId, "take_over")).toMatchObject({ status: 200, body: { data: { unchanged: true } } });
+      // Someone else cannot now take it from its (active) new holder.
+      as("lab3", "lab_staff");
+      expect(await move(versionId, "take_over")).toMatchObject({ status: 409, body: { code: "not_orphaned" } });
+    });
+
+    const [after] = await sql<{ entered_at: string; entered_by: string; working_by: string; status: string }[]>`select entered_at, entered_by, working_by, status from public.lab_result_versions where id = ${versionId}`;
+    expect(after).toMatchObject({ entered_by: users.lab1, working_by: users.lab2, status: "draft" });
+    expect(new Date(after.entered_at).getTime()).toBe(new Date(before.entered_at).getTime());
+    const events = await sql<{ kind: string; actor_id: string; previous_holder: string; created_at: string }[]>`select kind, actor_id, previous_holder, created_at from public.lab_result_version_events where version_id = ${versionId}`;
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: "takeover", actor_id: users.lab2, previous_holder: users.lab1 });
+    const audit = await sql<{ actor_id: string; patient_id: string; new_values: Record<string, string> }[]>`select actor_id, patient_id, new_values from public.audit_events where action = 'lab_result_draft_taken_over' and entity_id = ${versionId}`;
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ actor_id: users.lab2, patient_id: patient, new_values: { from: users.lab1, to: users.lab2, author: users.lab1 } });
+    expect(JSON.stringify(audit)).not.toContain("131.25");
+
+    // The new holder works the draft; the history shows the original author AND the takeover.
+    as("lab2", "lab_staff");
+    const d = (await detail(itemId)).body.data!.detail;
+    expect(d.working).toMatchObject({ mine: true, orphaned: false, canSubmit: true, enteredBy: { id: users.lab1 }, heldBy: { id: users.lab2 } });
+    expect(d.events).toMatchObject([{ kind: "takeover", by: { id: users.lab2 }, from: { id: users.lab1 }, version: 1 }]);
+    expect((await save(itemId, fullCbc(132))).status).toBe(200);
+    expect((await move(versionId, "submit")).status).toBe(200);
+    as("lab3", "lab_staff");
+    expect((await move(versionId, "verify")).status).toBe(200);
+    const [v] = await versionsOf(itemId);
+    expect(v).toMatchObject({ entered_by: users.lab1, verified_by: users.lab3, status: "verified" }); // the author is never rewritten
+  });
+
+  it("a draft is abandoned, never deleted: who, when, why and whose it was are kept, it can never be finalised, and a fresh draft can follow", async () => {
+    const { item } = await collectedOrder();
+    const itemId = item(T.cbc);
+    as("lab1", "lab_staff");
+    const first = await save(itemId, fullCbc(117.31));
+    const v1 = first.body.data!.versionId as string;
+    // Not by a colleague while the holder is active; not without a reason; the reason is a real one.
+    as("lab2", "lab_staff");
+    expect(await move(v1, "abandon", { reason: REASON })).toMatchObject({ status: 403, body: { code: "not_holder" } });
+    as("owner", "owner");
+    expect((await abandonByManagement(v1, { action: "abandon", reason: REASON })).status, "management cannot abandon an ACTIVE colleague's draft").toBe(403);
+    as("lab1", "lab_staff");
+    expect((await move(v1, "abandon", {})).status).toBe(400);
+    expect((await move(v1, "abandon", { reason: "x" })).status).toBe(400);
+    expect(await move(v1, "abandon", { reason: REASON })).toMatchObject({ status: 200, body: { data: { status: "cancelled", unchanged: false } } });
+    expect(await move(v1, "abandon", { reason: REASON })).toMatchObject({ status: 200, body: { data: { unchanged: true } } });
+
+    // Still there, fully reconstructable.
+    const [row] = await sql<{ status: string; entered_by: string; working_by: string; cancelled_by: string; cancelled_at: string; cancellation_reason: string }[]>`
+      select status, entered_by, working_by, cancelled_by, cancelled_at, cancellation_reason from public.lab_result_versions where id = ${v1}`;
+    expect(row).toMatchObject({ status: "cancelled", entered_by: users.lab1, working_by: users.lab1, cancelled_by: users.lab1, cancellation_reason: REASON });
+    expect(row.cancelled_at).toBeTruthy();
+    expect((await sql<{ n: number }[]>`select count(*)::int as n from public.lab_result_values where version_id = ${v1}`)[0].n).toBe(6);
+    expect(await sql`select 1 from public.lab_result_version_events where version_id = ${v1} and kind = 'abandon' and actor_id = ${users.lab1} and reason = ${REASON}`).toHaveLength(1);
+    const audit = await sql<{ action: string; actor_id: string; new_values: unknown }[]>`select action, actor_id, new_values from public.audit_events where entity_id = ${v1} and action = 'lab_result_draft_cancelled'`;
+    expect(audit).toHaveLength(1);
+    expect(audit[0].actor_id).toBe(users.lab1);
+    expect(JSON.stringify(audit)).not.toMatch(/117\.31|Wrong decimal/);
+
+    // It can never be finalised or changed.
+    expect((await move(v1, "submit")).status).toBe(409);
+    as("lab2", "lab_staff");
+    expect((await move(v1, "verify")).status).toBe(409);
+    expect((await move(v1, "return")).status).toBe(409);
+    expect((await sql`update public.lab_result_values set value_numeric = 1 where version_id = ${v1}`.then(() => "updated", (e: postgres.PostgresError) => e.code))).toBeTruthy();
+    // Nothing of it is a result: the list says "none", the header is not verified.
+    expect((await list("all")).body.data!.items.find((i: { itemId: string }) => i.itemId === itemId)).toMatchObject({ state: "none" });
+    expect((await detail(itemId)).body.data!.detail).toMatchObject({ working: null, verified: null, canEnter: true });
+
+    // A new draft is allowed (version 2, not a correction) and carries on normally.
+    as("lab2", "lab_staff");
+    const second = await save(itemId, fullCbc(131));
+    expect(second.body.data!.version).toBe(2);
+    const vs = await versionsOf(itemId);
+    expect(vs.map((v) => `${v.version}:${v.status}`)).toEqual(["1:cancelled", "2:draft"]);
+    expect(vs[1].corrects_version_id).toBeNull();
+    await move(second.body.data!.versionId, "submit");
+    as("lab3", "lab_staff");
+    expect((await move(second.body.data!.versionId, "verify")).status).toBe(200);
+    expect((await detail(itemId)).body.data!.detail.history.map((h: { version: number; status: string }) => `${h.version}:${h.status}`)).toEqual(["1:cancelled", "2:verified"]);
+    // A submitted (not draft) version is not abandoned.
+    expect((await move(second.body.data!.versionId, "abandon", { reason: REASON })).status).toBe(409);
+  });
+
+  it("management unblocks an orphaned draft by abandoning it - it sees the test and who held it, never a patient or a value - and cannot take it over", async () => {
+    const { item } = await collectedOrder();
+    const itemId = item(T.cbc);
+    as("lab1", "lab_staff");
+    const saved = await save(itemId, fullCbc(117.31));
+    const versionId = saved.body.data!.versionId as string;
+    for (const [user, role] of [["rec", "receptionist"], ["lab2", "lab_staff"], ["doc", "doctor"]] as const) {
+      as(user, role);
+      expect((await drafts()).status, role).toBe(403);
+      expect((await abandonByManagement(versionId, { action: "abandon", reason: REASON })).status, role).toBe(403);
+    }
+    session.ctx = null;
+    expect((await drafts()).status).toBe(401);
+
+    await orphanBy("lab1", "role", async () => {
+      as("mgr", "manager");
+      const res = await drafts();
+      expect(res.status).toBe(200);
+      const found = (res.body.data!.drafts as Array<{ versionId: string; testName: string; holder: string }>).find((d) => d.versionId === versionId);
+      expect(found).toMatchObject({ testName: "Complete blood count", holder: "Person lab1" });
+      const text = JSON.stringify(res.body);
+      expect(text).not.toContain(`Results patient ${suffix}`);
+      expect(text).not.toMatch(/117\.31|negative|clear/);
+      // Management abandons - it cannot take over (that would be writing a clinical value), and the body is strict.
+      expect((await abandonByManagement(versionId, { action: "take_over" })).status).toBe(400);
+      expect((await abandonByManagement(versionId, { action: "abandon" })).status).toBe(400);
+      expect((await abandonByManagement(versionId, { action: "abandon", reason: REASON, cancelledBy: users.lab2 })).status).toBe(400);
+      as("labB", "lab_staff", clinicB);
+      expect((await drafts()).status).toBe(403);
+      as("owner", "owner", clinicB);
+      expect((await abandonByManagement(versionId, { action: "abandon", reason: REASON })).status, "another clinic's owner").toBe(404);
+      as("admin", "admin");
+      expect(await abandonByManagement(versionId, { action: "abandon", reason: REASON })).toMatchObject({ status: 200, body: { data: { status: "cancelled" } } });
+      expect((await drafts()).body.data!.drafts.some((d: { versionId: string }) => d.versionId === versionId)).toBe(false);
+    });
+    const [row] = await sql<{ status: string; cancelled_by: string; entered_by: string }[]>`select status, cancelled_by, entered_by from public.lab_result_versions where id = ${versionId}`;
+    expect(row).toMatchObject({ status: "cancelled", cancelled_by: users.admin, entered_by: users.lab1 });
+    expect(await sql`select 1 from public.audit_events where action = 'lab_result_draft_cancelled' and entity_id = ${versionId} and actor_id = ${users.admin}`).toHaveLength(1);
+  });
+
+  it("the laboratory trigger functions stay privileged with a pinned search_path, and the new functions are for the server only", async () => {
+    const fns = await sql<{ proname: string; prosecdef: boolean; proconfig: string[] | null; authed: boolean; anon: boolean }[]>`
+      select proname, prosecdef, proconfig,
+             has_function_privilege('authenticated', oid, 'execute') as authed, has_function_privilege('anon', oid, 'execute') as anon
+        from pg_proc where pronamespace = 'public'::regnamespace and proname in
+         ('lab_result_versions_validate', 'lab_result_versions_sync', 'lab_workflow_audit', 'lab_result_values_validate')`;
+    expect(fns).toHaveLength(4);
+    for (const f of fns) {
+      expect(f.proconfig?.join(), f.proname).toMatch(/search_path/);
+      if (f.proname !== "lab_result_values_validate") expect(f.prosecdef, f.proname).toBe(true);
+    }
+    const rpcs = await sql<{ proname: string; authed: boolean; anon: boolean }[]>`
+      select proname, has_function_privilege('authenticated', oid, 'execute') as authed, has_function_privilege('anon', oid, 'execute') as anon
+        from pg_proc where pronamespace = 'public'::regnamespace and proname in
+         ('lab_result_save','lab_result_submit','lab_result_verify','lab_result_return','lab_result_correct','lab_result_take_over','lab_result_abandon','lab_orphaned_drafts','lab_staff_is_active','lab_is_management','lab_pick_range','lab_setting_bool')`;
+    expect(rpcs).toHaveLength(12);
+    expect(rpcs.filter((r) => r.authed || r.anon)).toEqual([]);
+    // The event history is append-only for the application roles.
+    let err = "none";
+    try {
+      await sql.begin(async (tx) => {
+        await tx.unsafe("set local role service_role");
+        await tx`delete from public.lab_result_version_events`;
+      });
+    } catch (e) {
+      err = (e as postgres.PostgresError).code ?? String(e);
+    }
+    expect(err).toBe("42501");
   });
 });

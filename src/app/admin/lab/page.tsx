@@ -15,10 +15,11 @@ import {
   type LabTestDetail,
 } from "@/components/lab/types";
 
-type Tab = "tests" | "panels" | "settings";
+type Tab = "tests" | "panels" | "drafts" | "settings";
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: "tests", label: "Tahlillar" },
   { key: "panels", label: "Paketlar" },
+  { key: "drafts", label: "Qoralamalar" },
   { key: "settings", label: "Ish tartibi" },
 ];
 
@@ -54,7 +55,101 @@ export default function AdminLabPage() {
       </div>
       {tab === "tests" && <TestsTab />}
       {tab === "panels" && <PanelsTab />}
+      {tab === "drafts" && <DraftsTab />}
       {tab === "settings" && <SettingsTab />}
+    </div>
+  );
+}
+
+type OrphanedDraft = { versionId: string; testCode: string; testName: string; version: number; holder: string | null; enteredAt: string };
+
+/**
+ * Drafts whose holder is no longer an active laboratory user (left the clinic, role removed, account disabled). Management sees
+ * the test, the version and who held it - never a patient or a value - and can abandon the draft (it is kept, cancelled, with
+ * who/when/why). Another laboratory user takes it over from the results screen instead.
+ */
+function DraftsTab() {
+  const [drafts, setDrafts] = useState<OrphanedDraft[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [target, setTarget] = useState<OrphanedDraft | null>(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setDrafts((await adminApi.get<{ drafts: OrphanedDraft[] }>("/api/admin/lab/drafts")).drafts);
+    } catch (e) {
+      setError(errorText(e, "Qoralamalarni yuklab bo‘lmadi"));
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const abandon = async () => {
+    if (!target) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await adminApi.post(`/api/admin/lab/drafts/${target.versionId}`, { action: "abandon", reason: reason.trim() });
+      setTarget(null);
+    } catch (e) {
+      setError(errorText(e, "Amalni bajarib bo‘lmadi"));
+      setTarget(null);
+    } finally {
+      setBusy(false);
+      await load();
+    }
+  };
+
+  return (
+    <div>
+      {error && <AError message={error} />}
+      {drafts === null ? (
+        <Card>
+          <LoadingRow />
+        </Card>
+      ) : drafts.length === 0 ? (
+        <Card>
+          <AEmpty title="Egasiz qoralama yo‘q" subtitle="Faol bo‘lmagan xodimning tugallanmagan natijalari shu yerda ko‘rinadi" icon={<FlaskConical className="h-6 w-6" />} />
+        </Card>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {drafts.map((d) => (
+            <li key={d.versionId}>
+              <Card>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-foreground">
+                    <span className="font-medium">{d.testName}</span> <span className="font-numeric text-xs text-ink-muted">{d.testCode}</span> · versiya {d.version} · egasi: {d.holder ?? "—"}
+                  </p>
+                  <AButton size="sm" variant="outline" onClick={() => { setReason(""); setTarget(d); }}>
+                    Bekor qilish
+                  </AButton>
+                </div>
+              </Card>
+            </li>
+          ))}
+        </ul>
+      )}
+      {target && (
+        <AModal
+          title="Qoralamani bekor qilish"
+          onClose={() => setTarget(null)}
+          footer={
+            <>
+              <AButton variant="ghost" onClick={() => setTarget(null)} disabled={busy}>
+                Orqaga
+              </AButton>
+              <AButton loading={busy} disabled={reason.trim().length < 3} onClick={() => void abandon()}>
+                Bekor qilish
+              </AButton>
+            </>
+          }
+        >
+          <p className="mb-2 text-sm text-ink-muted">Qoralama o‘chirilmaydi: kim, qachon va nima sababdan bekor qilgani saqlanadi. Qiymatlarni siz ko‘rmaysiz. Laborantlar uni bekor qilish o‘rniga o‘zlariga olishi ham mumkin.</p>
+          <ATextArea value={reason} onChange={setReason} rows={3} aria-label="Bekor qilish sababi" />
+        </AModal>
+      )}
     </div>
   );
 }

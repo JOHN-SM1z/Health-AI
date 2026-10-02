@@ -1288,6 +1288,7 @@ export type Database = {
       lab_result_values: {
         Row: {
           clinic_id: string
+          comparator: string | null
           created_at: string
           critical_high: number | null
           critical_low: number | null
@@ -1306,6 +1307,7 @@ export type Database = {
         }
         Insert: {
           clinic_id: string
+          comparator?: string | null
           created_at?: string
           critical_high?: number | null
           critical_low?: number | null
@@ -1324,6 +1326,7 @@ export type Database = {
         }
         Update: {
           clinic_id?: string
+          comparator?: string | null
           created_at?: string
           critical_high?: number | null
           critical_low?: number | null
@@ -1371,8 +1374,52 @@ export type Database = {
           },
         ]
       }
+      lab_result_version_events: {
+        Row: {
+          actor_id: string
+          clinic_id: string
+          created_at: string
+          id: string
+          kind: string
+          previous_holder: string | null
+          reason: string | null
+          version_id: string
+        }
+        Insert: {
+          actor_id: string
+          clinic_id: string
+          created_at?: string
+          id?: string
+          kind: string
+          previous_holder?: string | null
+          reason?: string | null
+          version_id: string
+        }
+        Update: {
+          actor_id?: string
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          previous_holder?: string | null
+          reason?: string | null
+          version_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_result_version_events_version_fkey"
+            columns: ["version_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_result_versions"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
       lab_result_versions: {
         Row: {
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
           clinic_id: string
           correction_reason: string | null
           corrects_version_id: string | null
@@ -1386,8 +1433,12 @@ export type Database = {
           verified_at: string | null
           verified_by: string | null
           version: number
+          working_by: string
         }
         Insert: {
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           clinic_id: string
           correction_reason?: string | null
           corrects_version_id?: string | null
@@ -1401,8 +1452,12 @@ export type Database = {
           verified_at?: string | null
           verified_by?: string | null
           version: number
+          working_by?: string
         }
         Update: {
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           clinic_id?: string
           correction_reason?: string | null
           corrects_version_id?: string | null
@@ -1416,6 +1471,7 @@ export type Database = {
           verified_at?: string | null
           verified_by?: string | null
           version?: number
+          working_by?: string
         }
         Relationships: [
           {
@@ -2809,9 +2865,31 @@ export type Database = {
         }
         Returns: Json
       }
+      lab_is_management: {
+        Args: { p_clinic: string; p_profile: string }
+        Returns: boolean
+      }
+      lab_orphaned_drafts: {
+        Args: { p_clinic: string }
+        Returns: Array<{
+          author: string
+          entered_at: string
+          holder: string
+          holder_name: string | null
+          item_id: string
+          test_code: string
+          test_name: string
+          version: number
+          version_id: string
+        }>
+      }
       lab_pick_range: {
         Args: { p_parameter: string }
         Returns: string
+      }
+      lab_result_abandon: {
+        Args: { p_actor: string; p_clinic: string; p_reason: string; p_version: string }
+        Returns: Json
       }
       lab_result_correct: {
         Args: { p_actor: string; p_clinic: string; p_expected_version: number; p_reason: string; p_result: string }
@@ -2829,9 +2907,17 @@ export type Database = {
         Args: { p_actor: string; p_clinic: string; p_version: string }
         Returns: Json
       }
+      lab_result_take_over: {
+        Args: { p_actor: string; p_clinic: string; p_version: string }
+        Returns: Json
+      }
       lab_result_verify: {
         Args: { p_actor: string; p_clinic: string; p_version: string }
         Returns: Json
+      }
+      lab_staff_is_active: {
+        Args: { p_clinic: string; p_profile: string }
+        Returns: boolean
       }
       lab_setting_bool: {
         Args: { p_clinic: string; p_default: boolean; p_path: string[] }
@@ -2940,6 +3026,7 @@ export type Database = {
         | "pending_verification"
         | "verified"
         | "superseded"
+        | "cancelled"
       notification_job_status:
         | "pending"
         | "in_progress"
@@ -3170,6 +3257,7 @@ export const Constants = {
         "pending_verification",
         "verified",
         "superseded",
+        "cancelled",
       ],
       notification_job_status: [
         "pending",

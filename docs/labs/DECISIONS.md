@@ -107,3 +107,28 @@ that needs each, and reported explicitly there)
 * Phase 5 was built before phases 6, 7 and the identity layer, at the owner's request ("phase 5"). The agreed order is otherwise unchanged.
 * Payments: option B of the audit (polymorphic `payments`), as decided in D2. The receipt is the minimal payment confirmation described in D2 and is never labelled fiscal.
 * Open (not assumed in code): fixed-price panels are billed at the panel price only when the whole panel is on the order; partial payments and order cancellation (with its refund consequences) are not built; lab revenue is reported beside, not inside, the existing appointment-based finance figures.
+
+## D6-D9 — decisions of 2026-10-02 (owner), applied in the phase-6 amendment
+
+* **D6 — Critical-value alerts: DEFERRED.** "Critical lab alerts — deferred until validated with doctors and clinical managers."
+  For the MVP the product stores → verifies → shows the result normally. No alert, notification workflow, acknowledgement or escalation
+  chain is built, and none of the earlier draft rules (5/10/15-minute targets, escalation order) is implemented. What exists is only
+  what was already there: critical bounds are laboratory configuration (never hard-coded), the database stores a `critical_low` /
+  `critical_high` flag beside the value, and nothing happens automatically because of it (no diagnosis, treatment, prescription or
+  test cancellation). *The decision text contained both a detailed alert state machine and, at its end, "do not implement critical-result
+  alerts in the MVP"; the later, explicit instruction was followed.* Which results are critical, who is told and how urgently is to be
+  decided after clinical interviews.
+* **D7 — Orphaned drafts.** A draft never becomes permanently inaccessible. If its holder is no longer an ACTIVE laboratory user
+  (role removed, account banned or deleted), another laboratory user may take it over; the original author and creation time are kept,
+  the new holder and time are recorded in an append-only event table and audited. Drafts are never hard-deleted: discarding is an
+  audited abandonment (`cancelled`, by whom, when, why, whose draft). Owner/admin/manager may abandon an ORPHANED draft; they may not
+  take it over, because that would mean writing a clinical value and results are not theirs under the current RBAC ("where permitted by
+  RBAC"). A cancelled draft stays reconstructable and can never be finalised.
+* **D8 — Parameter completeness.** For the MVP every ACTIVE parameter of an active test is mandatory for finalisation; there is no
+  optional-per-parameter concept and none is inferred. The server (never only the UI) refuses a submission with a missing parameter, and
+  distinguishes "missing" from legitimate values: zero, negative numbers, configured choices such as "not detected", free text, and
+  values with a comparator (`<`, `<=`, `>`, `>=`), which are stored as a bound and never compared with the range.
+* **D9 — Doctor visibility boundary.** Doctors have no access to results during entry/verification. Doctor-facing visibility begins in
+  Phase 7 and must reuse the existing longitudinal access model (`doctor_patient_access()` / `canDoctorAccessPatientClinicalData()`) -
+  no parallel laboratory access model. Only finalised (verified) results are ever visible to doctors; a draft, a submitted-but-unverified
+  result and an abandoned one are never shown as a result - not even by status (the doctor's order list says "no result yet" for all of them).

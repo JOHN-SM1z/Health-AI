@@ -38,6 +38,10 @@ function resultError(error: { code?: string; message?: string }): ApiError {
   if (m.includes("already verified by another")) return new ApiError(409, "Natija boshqa xodim tomonidan tasdiqlangan", "already_verified");
   if (m.includes("already verified; start a correction")) return new ApiError(409, "Natija tasdiqlangan — o‘zgartirish uchun tuzatish kiriting", "already_verified");
   if (m.includes("awaiting verification")) return new ApiError(409, "Natija tasdiq kutmoqda — avval qoralamaga qaytaring", "awaiting_verification");
+  if (m.includes("not orphaned")) return new ApiError(409, "Qoralama egasi hali faol — uni olib bo‘lmaydi", "not_orphaned");
+  if (m.includes("only the holder abandons")) return new ApiError(403, "Faol xodimning qoralamasini faqat o‘zi bekor qiladi", "not_holder");
+  if (m.includes("abandonment needs a reason")) return new ApiError(400, "Bekor qilish sababini yozing", "validation");
+  if (m.includes("only a draft is")) return new ApiError(409, "Faqat qoralama bilan bu amalni bajarish mumkin", "invalid_transition");
   if (m.includes("belongs to another") || m.includes("only the author")) return new ApiError(403, "Bu qoralama boshqa xodimniki", "not_author");
   if (m.includes("verifier must be a different person")) return new ApiError(403, "Tasdiqlovchi natijani kiritgan xodimdan boshqa bo‘lishi kerak", "separate_verifier_required");
   if (m.includes("every active parameter")) return new ApiError(400, "Barcha ko‘rsatkichlar uchun qiymat kiriting", "incomplete");
@@ -73,7 +77,10 @@ export type ResultListItem = {
   state: ResultState;
   /** The sample of this test is collected (or processing): a result can be entered. */
   sampleCollected: boolean;
+  /** Who holds the open draft / the submitted result (the author, or whoever took an orphaned draft over). */
   enteredBy: string | null;
+  /** The open draft's holder is no longer an active laboratory user: another member of staff may take it over. */
+  orphaned: boolean;
 };
 
 export type ResultListFilter = "todo" | "review" | "verified" | "all";
@@ -83,7 +90,7 @@ export async function listResultItems(staff: Staff, filter: ResultListFilter, li
   const { data, error } = await db
     .from("lab_order_items")
     .select(
-      "id, order_id, test_code, test_name, created_at, lab_orders!inner(status, priority, patients(full_name)), lab_sample_items(lab_samples(status)), lab_results(status, lab_result_versions(version, status, entered_by))",
+      "id, order_id, test_code, test_name, created_at, lab_orders!inner(status, priority, patients(full_name)), lab_sample_items(lab_samples(status)), lab_results(status, lab_result_versions(id, version, status, working_by))",
     )
     .eq("clinic_id", staff.clinicId)
     .eq("status", "active")
@@ -102,19 +109,24 @@ export async function listResultItems(staff: Staff, filter: ResultListFilter, li
     created_at: string;
     lab_orders: { status: string; priority: string; patients: { full_name: string | null } | null };
     lab_sample_items: Array<{ lab_samples: { status: string } | null }>;
-    lab_results: Array<{ status: ResultState; lab_result_versions: Array<{ version: number; status: string; entered_by: string }> }>;
+    lab_results: Array<{ status: ResultState; lab_result_versions: Array<{ id: string; version: number; status: string; working_by: string }> }>;
   };
   const rows = (data ?? []) as unknown as Row[];
-  const authors = [...new Set(rows.flatMap((r) => r.lab_results.flatMap((x) => x.lab_result_versions.filter((v) => v.status === "draft" || v.status === "pending_verification").map((v) => v.entered_by))))];
+  const authors = [...new Set(rows.flatMap((r) => r.lab_results.flatMap((x) => x.lab_result_versions.filter((v) => v.status === "draft" || v.status === "pending_verification").map((v) => v.working_by))))];
   const names = new Map<string, string | null>();
   if (authors.length) {
     const { data: profiles } = await db.from("profiles").select("id, full_name").in("id", authors);
     for (const p of profiles ?? []) names.set(p.id, p.full_name);
   }
 
+  const { data: orphanRows } = await db.rpc("lab_orphaned_drafts", { p_clinic: staff.clinicId });
+  const orphaned = new Set((orphanRows ?? []).map((o) => o.version_id));
+
   const items = rows.map((r): ResultListItem => {
     const result = r.lab_results[0];
     const open = result?.lab_result_versions.find((v) => v.status === "draft" || v.status === "pending_verification");
+    // The state comes from the versions: an abandoned draft is not a result, and a standing verified version is.
+    const state: ResultState = open ? (open.status as ResultState) : result?.lab_result_versions.some((v) => v.status === "verified") ? "verified" : "none";
     return {
       itemId: r.id,
       orderId: r.order_id,
@@ -123,9 +135,10 @@ export async function listResultItems(staff: Staff, filter: ResultListFilter, li
       patientName: r.lab_orders.patients?.full_name ?? null,
       testCode: r.test_code,
       testName: r.test_name,
-      state: result?.status ?? "none",
+      state,
       sampleCollected: r.lab_sample_items.some((s) => s.lab_samples && ["collected", "processing"].includes(s.lab_samples.status)),
-      enteredBy: open ? names.get(open.entered_by) ?? null : null,
+      enteredBy: open ? names.get(open.working_by) ?? null : null,
+      orphaned: !!open && orphaned.has(open.id),
     };
   });
   const wanted = items.filter((i) => {
@@ -158,6 +171,8 @@ export type ValueView = {
   name: string;
   unit: string | null;
   value: string | number;
+  /** "<", "<=", ">" or ">=" when the value is a bound ("<0.5"): such a value is never compared with the range. */
+  comparator: string | null;
   /** A comparison with the configured range — not an interpretation. */
   flag: Flag;
   refLow: number | null;
@@ -169,24 +184,33 @@ export type ValueView = {
 export type VersionView = {
   id: string;
   version: number;
-  status: "draft" | "pending_verification" | "verified" | "superseded";
+  status: "draft" | "pending_verification" | "verified" | "superseded" | "cancelled";
   enteredBy: { id: string; name: string | null };
   enteredAt: string;
   verifiedBy: { id: string; name: string | null } | null;
   verifiedAt: string | null;
   correctsVersion: number | null;
   correctionReason: string | null;
+  /** Who holds the version now (the author until a draft is taken over). */
+  heldBy: { id: string; name: string | null };
+  cancelledBy: { id: string; name: string | null } | null;
+  cancelledAt: string | null;
+  cancellationReason: string | null;
 };
+
+export type DraftEvent = { kind: "takeover" | "abandon"; at: string; by: { id: string; name: string | null }; from: { id: string; name: string | null } | null; reason: string | null; version: number };
 
 export type ResultDetail = {
   item: { id: string; orderId: string; testCode: string; testName: string; patientName: string | null };
   parameters: ParameterView[];
   settings: { verificationRequired: boolean; separateVerifier: boolean };
   /** The draft/awaiting-verification version being worked on, if any. */
-  working: (VersionView & { values: ValueView[]; mine: boolean; canSubmit: boolean; canVerify: boolean; canReturn: boolean }) | null;
+  working: (VersionView & { values: ValueView[]; mine: boolean; orphaned: boolean; canSubmit: boolean; canVerify: boolean; canReturn: boolean; canTakeOver: boolean; canAbandon: boolean }) | null;
   /** The current verified version, if any (kept and shown while a correction is being prepared). */
   verified: (VersionView & { values: ValueView[] }) | null;
   history: VersionView[];
+  /** Takeovers and abandonments of drafts, oldest first. */
+  events: DraftEvent[];
   canCorrect: boolean;
   canEnter: boolean;
 };
@@ -246,7 +270,12 @@ export async function getResultDetail(staff: Staff, itemId: string): Promise<Res
       values = vals ?? [];
     }
   }
-  const people = [...new Set(versions.flatMap((v) => [v.entered_by, v.verified_by].filter((x): x is string => !!x)))];
+  let events: Array<Database["public"]["Tables"]["lab_result_version_events"]["Row"]> = [];
+  if (versions.length) {
+    const { data: ev } = await db.from("lab_result_version_events").select("*").eq("clinic_id", staff.clinicId).in("version_id", versions.map((v) => v.id)).order("created_at");
+    events = ev ?? [];
+  }
+  const people = [...new Set([...versions.flatMap((v) => [v.entered_by, v.working_by, v.verified_by, v.cancelled_by].filter((x): x is string => !!x)), ...events.flatMap((e) => [e.actor_id, e.previous_holder].filter((x): x is string => !!x))])];
   const names = new Map<string, string | null>();
   if (people.length) {
     const { data: profiles } = await db.from("profiles").select("id, full_name").in("id", people);
@@ -264,6 +293,10 @@ export async function getResultDetail(staff: Staff, itemId: string): Promise<Res
     verifiedAt: v.verified_at,
     correctsVersion: v.corrects_version_id ? versionNumber.get(v.corrects_version_id) ?? null : null,
     correctionReason: v.correction_reason,
+    heldBy: who(v.working_by),
+    cancelledBy: v.cancelled_by ? who(v.cancelled_by) : null,
+    cancelledAt: v.cancelled_at,
+    cancellationReason: v.cancellation_reason,
   });
   const valuesOf = (versionId: string): ValueView[] =>
     values
@@ -274,6 +307,7 @@ export async function getResultDetail(staff: Staff, itemId: string): Promise<Res
         name: x.parameter_name,
         unit: x.unit,
         value: x.value_numeric !== null ? Number(x.value_numeric) : x.value_text ?? "",
+        comparator: x.comparator,
         flag: x.flag,
         refLow: num(x.ref_low),
         refHigh: num(x.ref_high),
@@ -285,7 +319,8 @@ export async function getResultDetail(staff: Staff, itemId: string): Promise<Res
   const open = versions.find((v) => v.status === "draft" || v.status === "pending_verification");
   const verified = versions.find((v) => v.status === "verified");
   const closed = order.status === "cancelled" || item.status !== "active";
-  const mine = !!open && open.entered_by === staff.profileId;
+  const mine = !!open && open.working_by === staff.profileId;
+  const orphaned = !!open && open.status === "draft" && (await db.rpc("lab_staff_is_active", { p_profile: open.working_by, p_clinic: staff.clinicId })).data === false;
 
   await recordAudit({
     clinicId: staff.clinicId,
@@ -307,13 +342,24 @@ export async function getResultDetail(staff: Staff, itemId: string): Promise<Res
           ...toVersion(open),
           values: valuesOf(open.id),
           mine,
+          orphaned,
           canSubmit: !closed && open.status === "draft" && mine,
           canVerify: !closed && open.status === "pending_verification" && !(settings.separateVerifier && open.entered_by === staff.profileId),
           canReturn: !closed && open.status === "pending_verification",
+          canTakeOver: !closed && orphaned && !mine,
+          canAbandon: open.status === "draft" && (mine || orphaned),
         }
       : null,
     verified: verified ? { ...toVersion(verified), values: valuesOf(verified.id) } : null,
     history: versions.map(toVersion),
+    events: events.map((e) => ({
+      kind: e.kind as "takeover" | "abandon",
+      at: e.created_at,
+      by: who(e.actor_id),
+      from: e.previous_holder ? who(e.previous_holder) : null,
+      reason: e.reason,
+      version: versions.find((v) => v.id === e.version_id)?.version ?? 0,
+    })),
     canCorrect: !closed && !!verified && !open,
     // The author's own draft (a first entry or a correction) can be edited; with nothing open, only a result that was never verified is entered.
     canEnter: !closed && sampleCollected && (open ? open.status === "draft" && mine : !verified),
@@ -343,10 +389,19 @@ export const saveResultSchema = z
   .strict();
 export type SaveResultInput = z.infer<typeof saveResultSchema>;
 
-export const versionActionSchema = z.object({ action: z.enum(["submit", "verify", "return"]) }).strict();
+export const versionActionSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("submit") }).strict(),
+  z.object({ action: z.literal("verify") }).strict(),
+  z.object({ action: z.literal("return") }).strict(),
+  z.object({ action: z.literal("take_over") }).strict(),
+  z.object({ action: z.literal("abandon"), reason: z.string().trim().min(3).max(300) }).strict(),
+]);
+export type VersionAction = z.infer<typeof versionActionSchema>;
 export const correctionSchema = z.object({ expectedVersion: z.number().int().min(1), reason: z.string().trim().min(3).max(300) }).strict();
 
-const NUMBER = /^-?\d+([.,]\d+)?$/;
+// A number, optionally with a comparator ("<0.5", ">= 200"): zero and negative numbers are values like any other.
+const NUMBER = /^\s*(<=|>=|<|>|≤|≥)?\s*(-?\d+(?:[.,]\d+)?)\s*$/;
+const COMPARATOR: Record<string, string> = { "<": "<", "<=": "<=", ">": ">", ">=": ">=", "≤": "<=", "≥": ">=" };
 
 /** Saves the author's draft: the values typed, checked against the configured parameters of THIS test. */
 export async function saveResultDraft(staff: Staff, itemId: string, input: SaveResultInput) {
@@ -369,8 +424,9 @@ export async function saveResultDraft(staff: Staff, itemId: string, input: SaveR
     seen.add(p.id);
     if (p.data_type === "numeric") {
       const raw = typeof v.value === "number" ? String(v.value) : v.value;
-      if (!NUMBER.test(raw)) throw new ApiError(400, `${p.code}: son kiriting`, "validation");
-      return { parameter_id: p.id, value_numeric: Number(raw.replace(",", ".")) };
+      const m = NUMBER.exec(raw);
+      if (!m) throw new ApiError(400, `${p.code}: son kiriting`, "validation");
+      return { parameter_id: p.id, value_numeric: Number(m[2].replace(",", ".")), ...(m[1] ? { comparator: COMPARATOR[m[1]] } : {}) };
     }
     if (typeof v.value !== "string") throw new ApiError(400, `${p.code}: matn kiriting`, "validation");
     if (p.data_type === "choice" && !(p.choices ?? []).includes(v.value)) throw new ApiError(400, `${p.code}: ro‘yxatdagi qiymatlardan birini tanlang`, "validation");
@@ -383,13 +439,36 @@ export async function saveResultDraft(staff: Staff, itemId: string, input: SaveR
   return { resultId: r.result_id, versionId: r.version_id, version: r.version };
 }
 
-/** submit / verify / return-to-draft of a version. Repeating a step is not an error (`unchanged`). */
-export async function moveResultVersion(staff: Staff, versionId: string, action: "submit" | "verify" | "return") {
-  const fn = action === "submit" ? "lab_result_submit" : action === "verify" ? "lab_result_verify" : "lab_result_return";
-  const { data, error } = await createAdminClient().rpc(fn, { p_clinic: staff.clinicId, p_actor: staff.profileId, p_version: versionId });
+/** submit / verify / return-to-draft / take over an orphaned draft / abandon a draft. Repeating a step is not an error (`unchanged`). */
+export async function moveResultVersion(staff: Staff, versionId: string, input: VersionAction) {
+  const db = createAdminClient();
+  const base = { p_clinic: staff.clinicId, p_actor: staff.profileId, p_version: versionId };
+  const { data, error } =
+    input.action === "submit"
+      ? await db.rpc("lab_result_submit", base)
+      : input.action === "verify"
+        ? await db.rpc("lab_result_verify", base)
+        : input.action === "return"
+          ? await db.rpc("lab_result_return", base)
+          : input.action === "take_over"
+            ? await db.rpc("lab_result_take_over", base)
+            : await db.rpc("lab_result_abandon", { ...base, p_reason: input.reason });
   if (error) throw resultError(error);
-  const r = data as { status: string; unchanged: boolean };
-  return { status: r.status, unchanged: r.unchanged };
+  const r = data as { status?: string; holder?: string; unchanged: boolean };
+  return { status: r.status ?? "draft", unchanged: r.unchanged };
+}
+
+// ---------------------------------------------------------------------------
+// Orphaned drafts for management (no patient, no value)
+// ---------------------------------------------------------------------------
+
+export type OrphanedDraft = { versionId: string; testCode: string; testName: string; version: number; holder: string | null; enteredAt: string };
+
+/** Drafts whose holder is no longer an active laboratory user — what owner/admin/manager need to unblock work. */
+export async function listOrphanedDrafts(clinicId: string): Promise<OrphanedDraft[]> {
+  const { data, error } = await createAdminClient().rpc("lab_orphaned_drafts", { p_clinic: clinicId });
+  if (error) throw new ApiError(500, "Qoralamalarni yuklab bo‘lmadi");
+  return (data ?? []).map((d) => ({ versionId: d.version_id, testCode: d.test_code, testName: d.test_name, version: d.version, holder: d.holder_name, enteredAt: d.entered_at }));
 }
 
 /** Starts a correction of the current verified version: a new draft that keeps the old version intact. */

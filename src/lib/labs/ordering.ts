@@ -366,7 +366,11 @@ export type PatientLabOrder = {
   isOwn: boolean;
   /** Clinical text written by the ordering doctor — readable by doctors with the history, never by staff. */
   notes: string | null;
-  items: Array<LabOrderItemSummary & { resultStatus: "none" | "draft" | "pending_verification" | "verified" }>;
+  /**
+   * "verified" once a finalised result stands, otherwise "none". A draft, a submitted-but-unverified or an abandoned result
+   * is laboratory work in progress and is never shown to a doctor as a result — not even by status.
+   */
+  items: Array<LabOrderItemSummary & { resultStatus: "none" | "verified" }>;
 };
 
 /** The patient's laboratory orders (every doctor's, as the longitudinal record), newest first. Every read is audited. */
@@ -385,7 +389,7 @@ export async function listPatientLabOrders(doctor: LinkedDoctor, patientId: stri
   if (error) throw new ApiError(500, "Buyurtmalarni yuklab bo‘lmadi");
 
   const orders: PatientLabOrder[] = (data ?? []).map((o) => {
-    const resultByItem = new Map(((o.lab_results ?? []) as Array<{ order_item_id: string; status: PatientLabOrder["items"][number]["resultStatus"] }>).map((r) => [r.order_item_id, r.status]));
+    const resultByItem = new Map(((o.lab_results ?? []) as Array<{ order_item_id: string; status: string }>).map((r) => [r.order_item_id, r.status]));
     return {
       id: o.id,
       status: o.status,
@@ -401,7 +405,7 @@ export async function listPatientLabOrders(doctor: LinkedDoctor, patientId: stri
         name: i.test_name,
         price: Number(i.price_snapshot),
         status: i.status,
-        resultStatus: resultByItem.get(i.id) ?? "none",
+        resultStatus: resultByItem.get(i.id) === "verified" ? "verified" : "none",
       })),
     };
   });

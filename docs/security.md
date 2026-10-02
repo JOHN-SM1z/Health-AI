@@ -430,12 +430,27 @@ own `clinical_records` entry in their own consultation, as the longitudinal mode
   `lab_result_submitted`, `lab_result_verified`, `lab_result_version_created`, `lab_result_version_superseded`,
   `lab_result_returned_to_draft` (database triggers, with the acting login), and `lab_result_viewed` on every opening of a result's
   detail (strict: the read fails if the log cannot be written). The result LIST shows states only, never a value, and is not audited.
-- Open (not assumed in code): (1) a draft whose author has left the clinic cannot be taken over — it can only be left; a
-  take-over/discard action needs a decision about who may do it; (2) completeness is "every ACTIVE parameter has a value" — there is no
-  per-parameter "optional"; (3) no critical-value alert exists: a `critical_*` flag is shown and stored but nobody is notified — a
-  clinical-safety workflow (who is told, how fast) is the owner's decision; (4) doctors cannot see results until phase 7.
-- Tests: `src/app/api/lab/results.test.ts` (17, real routes and database, with mutation checks on the separate-verifier, stale-version,
-  author and lock rules) and `e2e/lab-results.mjs`.
+- **Orphaned drafts and abandonment** (D7, `20261003000008/9`): a draft has a holder (`working_by`, the author until taken over). If the
+  holder is not an ACTIVE laboratory user of the clinic (`lab_staff_is_active`: role present, account neither banned nor deleted) another
+  laboratory user takes it over - `entered_by` and `entered_at` never change, the takeover is a row in the append-only
+  `lab_result_version_events` and an audit event (`lab_result_draft_taken_over`, ids only); a draft whose holder is active cannot be
+  taken (409). A draft is never deleted: `abandon` sets status `cancelled` with who, when, why (≤ 300 chars) and keeps the values; the
+  holder abandons their own, an orphaned one may be abandoned by laboratory staff or by owner/admin/manager (`/api/admin/lab/drafts`,
+  which shows the test, version and holder - no patient, no value - and cannot take over). A cancelled version can never be submitted,
+  verified or returned, a fresh draft may follow (it is version N+1 and not a correction), and it is not a result anywhere (the list
+  and the doctor view treat it as none). Audit: `lab_result_draft_cancelled` (database trigger).
+- **Completeness and values** (D8): every ACTIVE parameter must have a value to submit (server and database). Present means a row
+  exists: zero, negatives, a configured choice ("not detected"), text and comparator values count; blank is refused at the boundary. A
+  comparator value (`<0.5`, `>=200`, also `≤`/`≥`) is stored as a number plus comparator on numeric parameters only and is flagged
+  `unclassified` - never compared with the range.
+- **The result header** is `verified` whenever a verified version stands (also during a correction) and never follows an abandoned
+  version.
+- **Critical-value alerts are DEFERRED** (D6): a `critical_*` flag is stored and shown, nothing is notified or escalated, and nothing
+  happens automatically because of it. Deferred until validated with doctors and clinical managers.
+- Open (not assumed in code): (1) there is no per-parameter "optional" (D8, by decision); (2) the same laboratory login may enter and
+  verify unless the clinic sets `separateVerifier`; (3) doctors see results from phase 7 only (D9).
+- Tests: `src/app/api/lab/results.test.ts` (23, real routes and database, with mutation checks on the separate-verifier, stale-version,
+  author and lock rules), the doctor-visibility case in `src/app/api/doctor/lab/ordering.test.ts`, and `e2e/lab-results.mjs`.
 
 ## Clinical records
 

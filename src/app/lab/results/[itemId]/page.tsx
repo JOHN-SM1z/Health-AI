@@ -15,7 +15,7 @@ const FLAGS: Record<string, { label: string; tone: "green" | "amber" | "red" | "
   critical_high: { label: "Kritik yuqori", tone: "red" },
   unclassified: { label: "Me‘yor belgilanmagan", tone: "gray" },
 };
-const VERSION_LABELS: Record<string, string> = { draft: "Qoralama", pending_verification: "Tasdiq kutmoqda", verified: "Tasdiqlangan", superseded: "Almashtirilgan" };
+const VERSION_LABELS: Record<string, string> = { draft: "Qoralama", pending_verification: "Tasdiq kutmoqda", verified: "Tasdiqlangan", superseded: "Almashtirilgan", cancelled: "Bekor qilingan" };
 
 const rangeText = (p: ParameterView["range"]) => {
   if (!p) return "Me‘yor belgilanmagan";
@@ -31,7 +31,7 @@ function ValueTable({ values }: { values: ValueView[] }) {
           <span className="text-foreground">{v.name}</span>
           <span className="flex items-center gap-2">
             <span className="font-numeric font-medium text-foreground">
-              {v.value} {v.unit ?? ""}
+              {v.comparator ?? ""}{v.value} {v.unit ?? ""}
             </span>
             <span className="text-xs text-ink-muted">
               {v.refLow !== null || v.refHigh !== null ? `(${v.refLow ?? "…"} – ${v.refHigh ?? "…"})` : ""}
@@ -58,6 +58,7 @@ export default function LabResultPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [correcting, setCorrecting] = useState(false);
   const [reason, setReason] = useState("");
+  const [abandoning, setAbandoning] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -100,7 +101,7 @@ export default function LabResultPage() {
       });
       return "Qoralama saqlandi.";
     });
-  const step = (versionId: string, action: "submit" | "verify" | "return", message: string) =>
+  const step = (versionId: string, action: "submit" | "verify" | "return" | "take_over", message: string) =>
     run(action, async () => {
       await adminApi.post(`/api/lab/results/versions/${versionId}`, { action });
       return message;
@@ -125,6 +126,19 @@ export default function LabResultPage() {
             </p>
           </div>
           {working.correctionReason && <p className="mb-3 text-sm text-ink-muted">Tuzatish sababi: {working.correctionReason}</p>}
+          {working.orphaned && (
+            <div className="mb-3 rounded-lg border border-clay/40 bg-clay-tint p-3 text-sm text-clay-deep" role="status">
+              <p className="font-medium">Bu qoralamaning egasi endi laboratoriyada faol emas.</p>
+              <p className="mt-1">Muallif ({working.enteredBy.name ?? "—"}) va yaratilgan vaqt saqlanadi; qoralamani olsangiz, yangi egasi va vaqti qayd etiladi.</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {working.canTakeOver && (
+                  <AButton size="sm" loading={busy === "take_over"} onClick={() => void step(working.id, "take_over", "Qoralama sizga o‘tdi.")}>
+                    Qoralamani olish
+                  </AButton>
+                )}
+              </div>
+            </div>
+          )}
 
           {working.status === "draft" && editable && working.mine ? (
             <div className="flex flex-col gap-3">
@@ -167,6 +181,14 @@ export default function LabResultPage() {
                 </div>
               )}
             </>
+          )}
+          {working.canAbandon && (
+            <div className="mt-3 border-t border-hairline pt-3">
+              <AButton size="sm" variant="ghost" onClick={() => { setReason(""); setAbandoning(true); }}>
+                Qoralamani bekor qilish
+              </AButton>
+              <span className="ml-2 text-xs text-ink-muted">O‘chirilmaydi: sabab bilan bekor qilingan deb qoladi.</span>
+            </div>
           )}
         </Card>
       )}
@@ -229,6 +251,7 @@ export default function LabResultPage() {
                   Versiya {h.version} · {VERSION_LABELS[h.status]}
                   {h.correctsVersion ? ` · ${h.correctsVersion}-versiyani tuzatadi` : ""}
                   {h.correctionReason ? ` · sabab: ${h.correctionReason}` : ""}
+                  {h.cancelledAt ? ` · bekor qilgan: ${h.cancelledBy?.name ?? "—"}, ${formatDateTime(h.cancelledAt)}, sabab: ${h.cancellationReason ?? ""}` : ""}
                 </span>
                 <span className="text-xs text-ink-muted">
                   {h.enteredBy.name ?? "—"} · {formatDateTime(h.enteredAt)}
@@ -238,6 +261,51 @@ export default function LabResultPage() {
             ))}
           </ul>
         </div>
+      )}
+
+      {detail.events.length > 0 && (
+        <div className="mt-4">
+          <p className="mb-2 text-sm font-bold text-foreground">Qoralama harakatlari</p>
+          <ul className="divide-y divide-hairline/70 rounded-lg border border-hairline text-sm">
+            {detail.events.map((e, i) => (
+              <li key={i} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                <span>
+                  Versiya {e.version} · {e.kind === "takeover" ? `qoralama ${e.from?.name ?? "—"} dan ${e.by.name ?? "—"} ga o‘tdi` : `${e.by.name ?? "—"} bekor qildi (egasi: ${e.from?.name ?? "—"})`}
+                </span>
+                <span className="text-xs text-ink-muted">{formatDateTime(e.at)}{e.reason ? ` · sabab: ${e.reason}` : ""}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {abandoning && working && (
+        <AModal
+          title="Qoralamani bekor qilish"
+          onClose={() => setAbandoning(false)}
+          footer={
+            <>
+              <AButton variant="ghost" onClick={() => setAbandoning(false)}>
+                Orqaga
+              </AButton>
+              <AButton
+                disabled={reason.trim().length < 3}
+                onClick={() => {
+                  setAbandoning(false);
+                  void run("abandon", async () => {
+                    await adminApi.post(`/api/lab/results/versions/${working.id}`, { action: "abandon", reason: reason.trim() });
+                    return "Qoralama bekor qilindi (saqlanib qoladi).";
+                  });
+                }}
+              >
+                Bekor qilish
+              </AButton>
+            </>
+          }
+        >
+          <p className="mb-2 text-sm text-ink-muted">Qoralama o‘chirilmaydi: kim, qachon va nima sababdan bekor qilgani saqlanadi, lekin u tasdiqlana olmaydi. Sababni qisqa yozing (kasallik haqida emas).</p>
+          <ATextArea value={reason} onChange={setReason} rows={3} aria-label="Bekor qilish sababi" />
+        </AModal>
       )}
 
       {correcting && verified && (

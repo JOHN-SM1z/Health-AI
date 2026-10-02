@@ -17,11 +17,9 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
   completed: "Yakunlandi",
   cancelled: "Bekor qilingan",
 };
-const RESULT_LABELS: Record<string, { label: string; tone: "neutral" | "amber" | "green" }> = {
-  none: { label: "Natija yo‘q", tone: "neutral" },
-  draft: { label: "Kiritilmoqda", tone: "amber" },
-  pending_verification: { label: "Tasdiq kutilmoqda", tone: "amber" },
-  verified: { label: "Tasdiqlangan", tone: "green" },
+const RESULT_LABELS: Record<string, { label: string; tone: "neutral" | "green" }> = {
+  none: { label: "Natija kutilmoqda", tone: "neutral" },
+  verified: { label: "Natija tayyor", tone: "green" },
 };
 
 /**
