@@ -3,7 +3,7 @@ import Link from "next/link";
 import { adminWorkspaceRedirect, getStaffContext, hasRole, isCallCenterStaff, canViewPaymentDynamics } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
-import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound } from "lucide-react";
+import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical } from "lucide-react";
 
 export const metadata = { title: "Boshqaruv paneli" };
 
@@ -29,6 +29,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin/patients", label: "Bemorlar", icon: <Users className="h-4 w-4" />, show: true },
     { href: "/admin/doctors", label: "Shifokorlar", icon: <Stethoscope className="h-4 w-4" />, show: isManagement },
     { href: "/admin/services", label: "Xizmatlar", icon: <Scissors className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/lab", label: "Laboratoriya", icon: <FlaskConical className="h-4 w-4" />, show: isManagement },
     { href: "/admin/specialties", label: "Yo‘nalishlar", icon: <Sparkles className="h-4 w-4" />, show: isManagement },
     { href: "/admin/faqs", label: "Savol-javoblar", icon: <MessagesSquare className="h-4 w-4" />, show: isManagement },
     { href: "/admin/analytics", label: "Tahlillar", icon: <BarChart3 className="h-4 w-4" />, show: isManagement },

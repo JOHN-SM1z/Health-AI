@@ -33,6 +33,10 @@ patient-facing code.
 
 ## Verification
 
+> Update (Phase 4): the whole suite has since run against the real Supabase
+> stack locally — 774/774 tests, nothing skipped — and in CI. See
+> `PHASE_4_CONFIGURATION.md`.
+
 Run locally on 2026-10-05:
 
 | Check | Result |
