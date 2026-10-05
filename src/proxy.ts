@@ -4,7 +4,7 @@ import { createServerClient } from "@supabase/ssr";
 
 /**
  * Next.js 16 proxy (the replacement for the deprecated middleware).
- * Refreshes staff sessions and applies security headers for admin/doctor
+ * Refreshes staff sessions and applies security headers for admin/doctor/lab
  * routes. Patient Mini App routes and public webhooks are intentionally
  * NOT proxied — the Telegram webhook must receive the raw request.
  */
@@ -42,5 +42,6 @@ export const config = {
     // Staff areas only. Webhook endpoints must bypass the proxy.
     "/admin/:path*",
     "/doctor/:path*",
+    "/lab/:path*",
   ],
 };

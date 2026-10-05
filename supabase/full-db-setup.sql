@@ -8563,3 +8563,56 @@ create policy "lab-documents service role access"
 
 -- No policy for anon or authenticated: lab files are delivered only through
 -- short-lived signed URLs the server issues after authorization (Phase 11).
+
+-- =====================================================================
+-- FILE: 20261005000005_lab_staff_role.sql
+-- =====================================================================
+-- Laboratory (Phase 3, 1 of 2): the lab staff role.
+--
+-- docs/labs/PHASE_1_DOMAIN_MODEL.md §2.2. Kept in a migration of its own: a
+-- value added with ALTER TYPE … ADD VALUE cannot be used in the transaction
+-- that added it, and 20261005000006 uses it.
+--
+--   lab — laboratory staff ("Laboratoriya xodimi"): sees the lab work queue
+--         and the lab data needed to perform tests and enter results; never
+--         patient lists, appointments, conversations, payments, analytics or
+--         doctors' clinical text. Every existing policy on those tables names
+--         its roles explicitly, so the new value gains nothing there.
+--
+-- Reversible only by recreating the type (Postgres cannot drop enum values).
+
+alter type public.staff_role add value if not exists 'lab' after 'receptionist';
+
+-- New enum values must be committed before any later statement uses them.
+commit;
+
+-- =====================================================================
+-- FILE: 20261005000006_lab_role_access.sql
+-- =====================================================================
+-- Laboratory (Phase 3, 2 of 2): the lab role in the database access model.
+--
+-- Lab work tables stay server-only (no table privileges for signed-in roles,
+-- 20261005000003); these policies are the backstop that matches the
+-- AGENTS.md access model if a privilege is ever granted:
+--   * lab staff see their clinic's orders, items, samples and sample links —
+--     the lab work queue;
+--   * result tables keep RLS without policies (20261005000004): nobody signed
+--     in reads them directly, lab staff included — the server authorizes and
+--     audits every result read.
+-- The catalog is already readable by every staff member of the clinic.
+
+create policy "lab orders read for lab staff" on public.lab_orders
+  for select to authenticated
+  using (public.is_clinic_staff(clinic_id, array['lab']::public.staff_role[]));
+
+create policy "lab order items read for lab staff" on public.lab_order_items
+  for select to authenticated
+  using (public.is_clinic_staff(clinic_id, array['lab']::public.staff_role[]));
+
+create policy "lab samples read for lab staff" on public.lab_samples
+  for select to authenticated
+  using (public.is_clinic_staff(clinic_id, array['lab']::public.staff_role[]));
+
+create policy "lab sample items read for lab staff" on public.lab_sample_items
+  for select to authenticated
+  using (public.is_clinic_staff(clinic_id, array['lab']::public.staff_role[]));

@@ -17,7 +17,8 @@ import postgres from "postgres";
  * token. Server statements run as service_role, like the app's admin client.
  *
  * Cast: Dr A (patient X's doctor), Dr C (no relationship), Dr K (clinic B),
- * the receptionist, the manager and the owner of clinic A.
+ * the receptionist, the manager and the owner of clinic A, two lab staff of
+ * clinic A and one of clinic B.
  */
 
 const DB_URL = process.env.SUPABASE_DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -73,6 +74,9 @@ describeDb("lab domain — database layer", () => {
     manager: randomUUID(),
     owner: randomUUID(),
     outsider: randomUUID(),
+    labA1: randomUUID(),
+    labA2: randomUUID(),
+    labB: randomUUID(),
   };
   const doctors = { a: randomUUID(), c: randomUUID(), k: randomUUID() };
   let day = 0;
@@ -268,6 +272,9 @@ describeDb("lab domain — database layer", () => {
       { clinic_id: clinicA, profile_id: profiles.receptionist, role: "receptionist" },
       { clinic_id: clinicA, profile_id: profiles.manager, role: "manager" },
       { clinic_id: clinicA, profile_id: profiles.owner, role: "owner" },
+      { clinic_id: clinicA, profile_id: profiles.labA1, role: "lab" },
+      { clinic_id: clinicA, profile_id: profiles.labA2, role: "lab" },
+      { clinic_id: clinicB, profile_id: profiles.labB, role: "lab" },
     ])}`;
     await sql`insert into public.doctors ${sql([
       { id: doctors.a, clinic_id: clinicA, profile_id: profiles.a, name: `Dr A ${suffix}`, active: true },
@@ -845,6 +852,86 @@ describeDb("lab domain — database layer", () => {
              + (select count(*) from public.lab_orders where clinic_id = ${clinic})
              + (select count(*) from public.lab_tests where clinic_id = ${clinic})::int as n`;
       expect(Number(n)).toBe(0);
+    });
+  });
+
+  // ---------- the lab role (Phase 3) ----------
+
+  describe("lab staff", () => {
+    it("run the lab work end to end, with a second lab person verifying", async () => {
+      const patient = await newPatient();
+      const test = await newTest();
+      const parameter = await newParameter(test);
+      const order = await newOrder(patient, { ordered_by: profiles.labA1 });
+      const item = (await newItem(order, patient, test)).id;
+      await moveItem(item, "ready_for_collection", profiles.labA1);
+      const sampleId = randomUUID();
+      await asServer(async (tx) => {
+        await tx`insert into public.lab_samples ${tx({ id: sampleId, clinic_id: clinicA, patient_id: patient, order_id: order, sample_code: `S-L-${suffix}-${codeSeq++}`, sample_type: "Blood", collected_by: profiles.labA1 })}`;
+        await tx`insert into public.lab_sample_items ${tx({ sample_id: sampleId, order_item_id: item, clinic_id: clinicA })}`;
+      });
+      await moveItem(item, "collected", profiles.labA1);
+      const result = await newResult(item, patient, { entered_by: profiles.labA1 });
+      await addValue(result, parameter, { value_numeric: 140 });
+      await submit(result, profiles.labA1);
+      expect((await pgError(() => verify(result, profiles.labA1))).message).toMatch(/second person/);
+      // Lab staff of another clinic cannot verify it.
+      expect((await pgError(() => verify(result, profiles.labB))).message).toMatch(/staff member/);
+      await verify(result, profiles.labA2);
+      expect(await itemStatus(item)).toBe("verified");
+    });
+
+    it("see their clinic's lab work queue (backstop) but never another clinic's, and never result rows", async () => {
+      const fx = await verifiedResult();
+      const ROLLBACK = Symbol("rollback");
+      async function visible(profile: string, table: string): Promise<number> {
+        let n = -1;
+        await sql
+          .begin(async (tx) => {
+            await tx.unsafe(`grant select on public.${table} to authenticated`);
+            await tx.unsafe("set local role authenticated");
+            await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: profile, role: "authenticated" })}, true)`;
+            n = (await tx.unsafe(`select 1 from public.${table} where patient_id = $1`, [fx.patient])).length;
+            throw ROLLBACK;
+          })
+          .catch((e) => {
+            if (e !== ROLLBACK) throw e;
+          });
+        return n;
+      }
+      expect(await visible(profiles.labA1, "lab_order_items")).toBe(1);
+      expect(await visible(profiles.labA1, "lab_samples")).toBe(1);
+      expect(await visible(profiles.labB, "lab_order_items")).toBe(0);
+      expect(await visible(profiles.labA1, "lab_results")).toBe(0);
+    });
+
+    it("read the catalog but no patient lists, appointments, payments, conversations, analytics or audit", async () => {
+      await newPatient();
+      const test = await newTest();
+      const catalog = await asUser(profiles.labA1, (tx) => tx<{ id: string }[]>`select id from public.lab_tests where id = ${test}`);
+      expect(catalog).toHaveLength(1);
+      for (const table of ["patients", "appointments", "payments", "conversations", "messages", "audit_events", "analytics_events", "notification_jobs", "voice_messages"]) {
+        let rows = 0;
+        try {
+          rows = (await asUser(profiles.labA1, (tx) => tx.unsafe(`select 1 from public.${table} where clinic_id = $1 limit 5`, [clinicA]))).length;
+        } catch (e) {
+          // No privilege at all is an even stronger "no".
+          expect((e as postgres.PostgresError).code).toBe("42501");
+        }
+        expect({ table, rows }).toEqual({ table, rows: 0 });
+      }
+    });
+
+    it("cannot write anything directly, and a result's author can never be rewritten", async () => {
+      const fx = await collectedItem();
+      const result = await newResult(fx.item, fx.patient, { entered_by: profiles.labA1 });
+      const direct = await pgError(() =>
+        asUser(profiles.labA1, (tx) => tx`update public.lab_order_items set status = 'processing' where id = ${fx.item}`),
+      );
+      expect(direct.code).toBe("42501");
+      // Even the server cannot reassign who entered a result (doctor A vs doctor B).
+      const reassign = await pgError(() => asServer((tx) => tx`update public.lab_results set entered_by = ${profiles.labA2} where id = ${result}`));
+      expect(reassign.message).toMatch(/entered_by cannot be changed/);
     });
   });
 });

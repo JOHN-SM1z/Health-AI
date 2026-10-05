@@ -2758,7 +2758,13 @@ export type Database = {
         | "completed"
         | "revoked"
         | "expired"
-      staff_role: "owner" | "manager" | "admin" | "receptionist" | "doctor"
+      staff_role:
+        | "owner"
+        | "manager"
+        | "admin"
+        | "receptionist"
+        | "lab"
+        | "doctor"
       telegram_bot_status: "disabled" | "active" | "error"
       time_block_reason: "break" | "absence" | "reservation" | "admin_hold"
       voice_status: "none" | "pending" | "transcribed" | "failed"
@@ -2984,7 +2990,14 @@ export const Constants = {
         "revoked",
         "expired",
       ],
-      staff_role: ["owner", "manager", "admin", "receptionist", "doctor"],
+      staff_role: [
+        "owner",
+        "manager",
+        "admin",
+        "receptionist",
+        "lab",
+        "doctor",
+      ],
       telegram_bot_status: ["disabled", "active", "error"],
       time_block_reason: ["break", "absence", "reservation", "admin_hold"],
       voice_status: ["none", "pending", "transcribed", "failed"],

@@ -86,3 +86,16 @@ describe("adminWorkspaceRedirect", () => {
     expect(adminWorkspaceRedirect(ctx({ roles: ["doctor", "receptionist"] }))).toBeNull();
   });
 });
+
+describe("lab staff", () => {
+  it("sends lab staff to the lab workspace", () => {
+    expect(adminWorkspaceRedirect(ctx({ roles: ["lab"] }))).toBe("/lab");
+  });
+
+  it("never passes a weight-based role check, not even the lowest one", () => {
+    const lab = ctx({ roles: ["lab"] });
+    for (const role of ["owner", "admin", "manager", "doctor", "receptionist"] as const) {
+      expect(hasRole(lab, role)).toBe(false);
+    }
+  });
+});

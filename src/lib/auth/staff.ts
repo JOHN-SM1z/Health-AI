@@ -20,6 +20,9 @@ export type StaffContext = {
  * "doctor" and "receptionist" are below management: they cannot manage the
  * catalog, analytics or bot configuration. requireStaff("doctor") therefore
  * only passes for literal doctors (receptionist weight 0 < doctor weight 1).
+ * Lab staff weigh -1: no weight-based check ever admits them, not even
+ * requireStaff("receptionist"); lab routes name their roles exactly
+ * (requireLabCapability / requireRoles).
  */
 const ROLE_WEIGHT: Record<StaffRole, number> = {
   owner: 4,
@@ -27,6 +30,7 @@ const ROLE_WEIGHT: Record<StaffRole, number> = {
   manager: 3,
   doctor: 1,
   receptionist: 0,
+  lab: -1,
 };
 
 export function roleAtLeast(roles: StaffRole[], min: StaffRole): boolean {
@@ -65,9 +69,9 @@ const ADMIN_WORKSPACE_ROLES: StaffRole[] = ["owner", "admin", "manager", "recept
  * them to their own working portal instead, mirroring the equivalent
  * doctor-only guard in doctor/layout.tsx.
  */
-export function adminWorkspaceRedirect(ctx: StaffContext): "/platform" | "/doctor" | null {
+export function adminWorkspaceRedirect(ctx: StaffContext): "/platform" | "/doctor" | "/lab" | null {
   if (ctx.platformAdmin) return "/platform";
-  if (!hasAnyRole(ctx.roles, ADMIN_WORKSPACE_ROLES)) return "/doctor";
+  if (!hasAnyRole(ctx.roles, ADMIN_WORKSPACE_ROLES)) return hasAnyRole(ctx.roles, ["lab"]) ? "/lab" : "/doctor";
   return null;
 }
 
