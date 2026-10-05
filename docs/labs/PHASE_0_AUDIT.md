@@ -8,6 +8,34 @@ relative to the repository root; migrations are under `supabase/migrations/`.
 Explicitly **deferred**: critical lab-result alerts (deferred until validated
 with doctors and clinical managers). Phase 0–21 designs must not assume them.
 
+## Owner decisions (2026-10-05) — resolve P1–P3, U5-adjacent, U6, U8, U9
+
+1. **Access is "minimum necessary by role and purpose"**, replacing the blanket
+   "no clinical text" rule for laboratory data. `AGENTS.md` is updated:
+   - Lab staff see lab orders and the lab data needed to perform the test and
+     enter results — not unrelated doctor notes, diagnoses, prescriptions,
+     referrals or history.
+   - Patients see only their own **finalized** results, through verified
+     Telegram identity.
+   - AI may later process only structured lab-result data for the approved
+     summary feature — not notes/history, not unnecessary identifiers.
+   - Doctor-authored clinical text (`referrals`, `clinical_records`) keeps its
+     existing doctor-only rule unchanged.
+2. **Lab ordering has no role restriction.** Any authenticated staff member of
+   the clinic (owner, manager, admin, receptionist, doctor, lab staff) may
+   order any active test for a patient of that clinic. No per-role or per-test
+   ordering permissions. Requirements are only: authenticated, member of the
+   clinic, valid patient/order data. Three entry paths are supported: doctor
+   consultation, walk-in (reception/lab), and external result import.
+   Ordering does not by itself grant access to result values.
+3. **Patients gain `date_of_birth` and `sex`.** DOB is strongly preferred and
+   required for patients entering the lab workflow; `sex` is a clinical
+   attribute for reference-range selection and may be unknown/null — staff
+   must not be forced to guess. Identity capture at reception: ID/passport,
+   name, DOB, phone, sex.
+
+These decisions supersede §6 P1–P3 and §9 U6, U8 and U9 below.
+
 ---
 
 ## 1. Current architecture (relevant slice)
