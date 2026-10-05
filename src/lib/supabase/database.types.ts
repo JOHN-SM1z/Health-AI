@@ -1958,11 +1958,12 @@ export type Database = {
       payments: {
         Row: {
           amount: number
-          appointment_id: string
+          appointment_id: string | null
           clinic_id: string
           created_at: string
           currency: string
           id: string
+          lab_order_id: string | null
           metadata: Json
           paid_at: string | null
           paid_by: string | null
@@ -1975,11 +1976,12 @@ export type Database = {
         }
         Insert: {
           amount: number
-          appointment_id: string
+          appointment_id?: string | null
           clinic_id: string
           created_at?: string
           currency?: string
           id?: string
+          lab_order_id?: string | null
           metadata?: Json
           paid_at?: string | null
           paid_by?: string | null
@@ -1992,11 +1994,12 @@ export type Database = {
         }
         Update: {
           amount?: number
-          appointment_id?: string
+          appointment_id?: string | null
           clinic_id?: string
           created_at?: string
           currency?: string
           id?: string
+          lab_order_id?: string | null
           metadata?: Json
           paid_at?: string | null
           paid_by?: string | null
@@ -2021,6 +2024,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "clinics"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_lab_order_fkey"
+            columns: ["lab_order_id", "clinic_id", "patient_id"]
+            isOneToOne: false
+            referencedRelation: "lab_orders"
+            referencedColumns: ["id", "clinic_id", "patient_id"]
           },
           {
             foreignKeyName: "payments_paid_by_fkey"

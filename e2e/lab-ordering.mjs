@@ -84,6 +84,21 @@ async function run() {
     const [{ n }] = await db`select count(*)::int as n from public.lab_orders where patient_id = ${patient.id}`;
     check(n === 2, "the warning did not block: the second order was placed");
 
+    // ---------- the owner takes the payment at the lab Kassa ----------
+    const { context: ownerContext, page: kassa } = await signIn(browser, report, DEMO.owner);
+    await kassa.goto(`${BASE}/admin/lab-kassa`);
+    await kassa.waitForLoadState("networkidle");
+    const row = kassa.getByRole("row", { name: new RegExp(`E2E Lab bemor ${suffix}`) }).first();
+    check(await row.getByText("95 000").isVisible().catch(() => false) || (await row.textContent())?.includes("95"), "the Kassa lists the order at its stored price");
+    await row.getByRole("button", { name: "To‘lovni qabul qilish" }).click();
+    await kassa.getByRole("dialog", { name: "To‘lovni qabul qilish" }).getByRole("button", { name: "Naqd" }).click();
+    await kassa.waitForLoadState("networkidle");
+    await kassa.waitForTimeout(500);
+    const [paid] = await db`select p.status, p.amount, p.metadata->>'method' as method from public.payments p
+      join public.lab_orders o on o.id = p.lab_order_id where o.patient_id = ${patient.id} and p.status = 'paid'`;
+    check(paid?.status === "paid" && Number(paid.amount) === 95000 && paid.method === "cash", "a cash payment is recorded for the order's stored amount");
+    await ownerContext.close();
+
     // The lab verifies the first order's result (two different people).
     const [first] = await db`select i.id, i.order_id from public.lab_order_items i join public.lab_orders o on o.id = i.order_id
       where o.patient_id = ${patient.id} order by o.created_at limit 1`;

@@ -242,4 +242,81 @@ describe.skipIf(unavailable !== null)("create_lab_order — database", () => {
       expect(err.code).toBe("42501");
     }
   });
+
+  // ---------- Phase 6: the order's bill in the existing payment engine ----------
+
+  const bill = async (orderId: string) =>
+    (await sql<{ id: string; amount: string; status: string; provider: string; appointment_id: string | null }[]>`
+      select id, amount, status, provider, appointment_id from public.payments where lab_order_id = ${orderId}`)[0];
+
+  it("bills every order once, at the stored item prices, as an unpaid manual payment", async () => {
+    const p = await patient();
+    const a = await test(100000);
+    const b = await test(50000);
+    const pnl = await panel(120000, [await test(80000), await test(60000)]);
+    const { lab_order_id } = await order({ patient: p, tests: [a, b], panels: [pnl] });
+    expect(await bill(lab_order_id)).toMatchObject({ amount: "270000.00", status: "unpaid", provider: "manual", appointment_id: null });
+    const [{ n }] = await sql<{ n: number }[]>`select count(*)::int as n from public.payments where lab_order_id = ${lab_order_id}`;
+    expect(n).toBe(1);
+  });
+
+  it("refuses a forged or changed amount, even from the server, and freezes it once paid", async () => {
+    const { lab_order_id } = await order({ patient: await patient(), tests: [await test(40000)] });
+    const payment = await bill(lab_order_id);
+    const asService = (run: (tx: postgres.TransactionSql) => Promise<unknown>) =>
+      sql.begin(async (tx) => {
+        await tx.unsafe("set local role service_role");
+        await run(tx);
+      });
+    expect((await pgError(() => asService((tx) => tx`update public.payments set amount = 1 where id = ${payment.id}`))).message).toMatch(
+      /must equal its order/,
+    );
+    await asService((tx) => tx`update public.payments set status = 'paid', paid_at = now(), paid_by = ${staff} where id = ${payment.id}`);
+    expect((await pgError(() => asService((tx) => tx`update public.payments set amount = 40001 where id = ${payment.id}`))).message).toMatch(
+      /cannot change/,
+    );
+    // A payment never moves between subjects, and needs exactly one.
+    expect((await pgError(() => asService((tx) => tx`update public.payments set lab_order_id = null where id = ${payment.id}`))).message).toMatch(/subject/);
+    // Signed-in roles cannot touch payments at all.
+    const signedIn = await pgError(() =>
+      sql.begin(async (tx) => {
+        await tx.unsafe("set local role authenticated");
+        await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: staff, role: "authenticated" })}, true)`;
+        await tx`update public.payments set status = 'paid' where id = ${payment.id}`;
+      }),
+    );
+    expect(["42501", "P0001"]).toContain(signedIn.code);
+  });
+
+  it("lowers an unpaid bill when items are cancelled, and leaves a paid one for refund", async () => {
+    const { lab_order_id } = await order({ patient: await patient(), tests: [await test(30000), await test(20000)] });
+    await sql`update public.lab_orders set status = 'cancelled', cancelled_by = ${staff}, cancel_reason = 'Bemor ketdi' where id = ${lab_order_id}`;
+    expect((await bill(lab_order_id)).amount).toBe("0.00");
+
+    const paid = await order({ patient: await patient(), tests: [await test(30000)] });
+    const p = await bill(paid.lab_order_id);
+    await sql`update public.payments set status = 'paid', paid_at = now(), paid_by = ${staff} where id = ${p.id}`;
+    await sql`update public.lab_orders set status = 'cancelled', cancelled_by = ${staff} where id = ${paid.lab_order_id}`;
+    expect(await bill(paid.lab_order_id)).toMatchObject({ amount: "30000.00", status: "paid" });
+  });
+
+  it("releases items waiting for payment once the bill is paid (clinic policy before_collection)", async () => {
+    await sql`insert into public.app_settings ${sql({ clinic_id: clinic, key: "lab", value: { paymentPolicy: "before_collection", releaseToPatient: true } })}
+              on conflict (clinic_id, key) do update set value = excluded.value`;
+    const { lab_order_id } = await order({ patient: await patient(), tests: [await test(10000)] });
+    expect((await items(lab_order_id))[0].status).toBe("ordered");
+    const p = await bill(lab_order_id);
+    await sql`update public.payments set status = 'paid', paid_at = now(), paid_by = ${staff} where id = ${p.id}`;
+    expect((await items(lab_order_id))[0].status).toBe("ready_for_collection");
+    await sql`delete from public.app_settings where clinic_id = ${clinic} and key = 'lab'`;
+  });
+
+  it("keeps a lab bill inside its clinic and patient", async () => {
+    const { lab_order_id } = await order({ patient: await patient(), tests: [await test(1000)] });
+    const other = await patient();
+    const err = await pgError(() => sql`insert into public.payments ${sql({ clinic_id: clinic, patient_id: other, lab_order_id, amount: 1000 })}`);
+    expect(["23503", "23505"]).toContain(err.code);
+    const crossClinic = await pgError(() => sql`insert into public.payments ${sql({ clinic_id: otherClinic, patient_id: other, lab_order_id, amount: 1000 })}`);
+    expect(["23503", "23505"]).toContain(crossClinic.code);
+  });
 });
