@@ -1481,6 +1481,7 @@ export type Database = {
           collected_at: string
           collected_by: string
           created_at: string
+          creation_key: string | null
           id: string
           notes: string | null
           order_id: string
@@ -1500,6 +1501,7 @@ export type Database = {
           collected_at?: string
           collected_by: string
           created_at?: string
+          creation_key?: string | null
           id?: string
           notes?: string | null
           order_id: string
@@ -1519,6 +1521,7 @@ export type Database = {
           collected_at?: string
           collected_by?: string
           created_at?: string
+          creation_key?: string | null
           id?: string
           notes?: string | null
           order_id?: string
@@ -2602,6 +2605,21 @@ export type Database = {
         Args: { p_external_id: string; p_source: string }
         Returns: boolean
       }
+      collect_lab_sample: {
+        Args: {
+          p_clinic_id: string
+          p_collected_by: string
+          p_creation_key?: string
+          p_item_ids: string[]
+          p_notes?: string
+          p_order_id: string
+        }
+        Returns: {
+          lab_sample_id: string
+          replayed: boolean
+          sample_code: string
+        }[]
+      }
       current_doctor_id: { Args: { p_clinic_id: string }; Returns: string }
       consume_rate_limit: {
         Args: { p_key: string; p_limit: number; p_window_seconds: number }
@@ -2664,6 +2682,23 @@ export type Database = {
       }
       is_linked_doctor: { Args: { p_doctor_id: string }; Returns: boolean }
       is_platform_admin: { Args: never; Returns: boolean }
+      receive_lab_sample: {
+        Args: {
+          p_clinic_id: string
+          p_received_by: string
+          p_sample_id: string
+        }
+        Returns: boolean
+      }
+      reject_lab_sample: {
+        Args: {
+          p_clinic_id: string
+          p_reason: string
+          p_rejected_by: string
+          p_sample_id: string
+        }
+        Returns: boolean
+      }
       release_webhook_update: {
         Args: { p_external_id: string; p_source: string }
         Returns: undefined

@@ -184,7 +184,7 @@ export type CreateLabOrderInput = {
   creationKey: string;
 };
 
-const ORDER_ERRORS: Array<[RegExp, number, string, string]> = [
+export const ORDER_ERRORS: Array<[RegExp, number, string, string]> = [
   [/date of birth/, 422, "Bemorning tug‘ilgan sanasi kiritilmagan — buyurtmadan oldin qabulxona uni to‘ldirishi kerak", "dob_required"],
   [/lab_order_empty/, 400, "Kamida bitta tahlil yoki panel tanlang", "empty_order"],
   [/lab_order_too_large/, 400, "Bitta buyurtmada ko‘pi bilan 50 ta tahlil", "order_too_large"],

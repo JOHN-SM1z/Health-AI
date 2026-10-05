@@ -73,6 +73,10 @@ describe("lab permission model", () => {
     expect(holders("sample.process")).toEqual(["lab"]);
   });
 
+  it("keeps the clinic-wide work queue away from doctors", () => {
+    expect(holders("queue.read")).toEqual(["owner", "manager", "admin", "receptionist", "lab"]);
+  });
+
   it("grants nothing without a role", () => {
     for (const capability of Object.keys(LAB_CAPABILITIES) as LabCapability[]) {
       expect(labCan([], capability)).toBe(false);

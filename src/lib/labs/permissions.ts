@@ -25,7 +25,7 @@ type StaffRole = Database["public"]["Enums"]["staff_role"];
 
 export const LAB_CAPABILITY_GROUPS = {
   configuration: ["catalog.configure", "settings.configure"],
-  operational: ["catalog.read", "order.create", "order.cancel", "order.status.read", "sample.collect", "sample.process"],
+  operational: ["catalog.read", "order.create", "order.cancel", "order.status.read", "queue.read", "sample.collect", "sample.process"],
   clinical: ["result.enter", "result.verify", "result.read"],
   financial: ["finance.view"],
 } as const;
@@ -47,6 +47,9 @@ export const LAB_CAPABILITIES: Record<LabCapability, readonly StaffRole[]> = {
   // Work status (ordered → collected → processing → verified), never values.
   // Doctors see status only for patients they may access (per patient).
   "order.status.read": ["owner", "manager", "admin", "receptionist", "lab", "doctor"],
+  // The clinic-wide work queue (every active order, status only). Doctors
+  // are left out: they never get clinic-wide patient lists.
+  "queue.read": ["owner", "manager", "admin", "receptionist", "lab"],
   // Collecting a sample is front-desk or lab work; receiving / rejecting /
   // processing specimens is lab work.
   "sample.collect": ["lab", "receptionist"],

@@ -169,7 +169,12 @@ export function LabOrdersSection({ patientId, appointmentId }: { patientId: stri
   );
 }
 
-function LabOrderDialog({
+/**
+ * Choose → review → submit. The doctor workspace orders through the doctor
+ * routes (default); the reception / lab desk passes `desk` to order a walk-in
+ * through /api/lab (no recent-test history there: the desk sees no results).
+ */
+export function LabOrderDialog({
   patientId,
   appointmentId,
   previous,
@@ -177,6 +182,7 @@ function LabOrderDialog({
   onViewResult,
   onClose,
   onOrdered,
+  desk = false,
 }: {
   patientId: string;
   appointmentId: string | null;
@@ -185,6 +191,7 @@ function LabOrderDialog({
   onViewResult: (itemId: string) => void;
   onClose: () => void;
   onOrdered: (count: number) => void;
+  desk?: boolean;
 }) {
   const [catalog, setCatalog] = useState<{ tests: OrderableTest[]; panels: OrderablePanel[] } | null>(null);
   const [query, setQuery] = useState("");
@@ -201,10 +208,10 @@ function LabOrderDialog({
 
   useEffect(() => {
     adminApi
-      .get<{ tests: OrderableTest[]; panels: OrderablePanel[] }>("/api/doctor/lab/catalog")
+      .get<{ tests: OrderableTest[]; panels: OrderablePanel[] }>(desk ? "/api/lab/catalog" : "/api/doctor/lab/catalog")
       .then(setCatalog)
       .catch((e) => setError(errorText(e, "Tahlillar ro‘yxatini yuklab bo‘lmadi")));
-  }, []);
+  }, [desk]);
 
   const testsById = useMemo(() => new Map((catalog?.tests ?? []).map((t) => [t.id, t])), [catalog]);
   const inPanels = useMemo(
@@ -236,7 +243,8 @@ function LabOrderDialog({
     setSaving(true);
     setError(null);
     try {
-      await adminApi.post(`/api/doctor/patients/${patientId}/lab-orders`, { idempotencyKey: key, appointmentId, testIds, panelIds });
+      if (desk) await adminApi.post("/api/lab/orders", { idempotencyKey: key, patientId, testIds, panelIds });
+      else await adminApi.post(`/api/doctor/patients/${patientId}/lab-orders`, { idempotencyKey: key, appointmentId, testIds, panelIds });
       onOrdered(everyTest.length);
     } catch (e) {
       setError(errorText(e, "Buyurtmani saqlab bo‘lmadi"));

@@ -15,6 +15,7 @@ export const DEMO = {
   reception: "reception@e2e.local",
   manager: "manager@e2e.local",
   owner: "owner@e2e.local",
+  lab: "lab@e2e.local",
 };
 export const DEMO_NAMES = {
   referrer: "Aliyev Jasur",
@@ -114,7 +115,7 @@ export async function signIn(browser, report, email, viewport = "desktop", { exp
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Parol").fill(PASSWORD);
   await page.getByRole("button", { name: "Kirish" }).click();
-  await page.waitForURL(/\/(admin|doctor)/, { timeout: 15_000 });
+  await page.waitForURL(/\/(admin|doctor|lab)/, { timeout: 15_000 });
   await page.waitForLoadState("networkidle");
   return { context, page };
 }
