@@ -2597,6 +2597,23 @@ export type Database = {
         Args: { p_key: string; p_limit: number; p_window_seconds: number }
         Returns: Json
       }
+      create_lab_order: {
+        Args: {
+          p_appointment_id?: string
+          p_clinic_id: string
+          p_creation_key?: string
+          p_ordered_by: string
+          p_ordering_doctor_id?: string
+          p_panel_ids: string[]
+          p_patient_id: string
+          p_source: Database["public"]["Enums"]["lab_order_source"]
+          p_test_ids: string[]
+        }
+        Returns: {
+          lab_order_id: string
+          replayed: boolean
+        }[]
+      }
       doctor_can_read_appointment: {
         Args: {
           p_appointment_id: string

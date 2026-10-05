@@ -38,6 +38,7 @@ const FORBIDDEN = [
   /lab_results/,
   /lab_result_values/,
   /lab_documents/,
+  /@\/lib\/labs\/(ordering|guards)/,
 ];
 
 function sourceFiles(dir: string): string[] {

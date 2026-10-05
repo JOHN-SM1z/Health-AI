@@ -177,7 +177,7 @@ history keeps working because items hold snapshots.
 Panel price allocation (**locked, O2**): a panel's price is split across its
 tests in proportion to their standalone prices at order time:
 `allocated_i = panel_price × list_price_i / Σ list_price`. Amounts are rounded
-to whole so'm; the rounding remainder goes to the item with the largest list
+to whole so'm when the panel price is whole (else 0.01); the rounding remainder goes to the item with the largest list
 price (ties: lowest sort order) so `Σ allocated = panel_price` exactly. If all
 list prices are 0, the panel price is split equally the same way. Example:
 panel 240,000 with CBC 100,000 / Glucose 50,000 / Liver 150,000 → 80,000 /
