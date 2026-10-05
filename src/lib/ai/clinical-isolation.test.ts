@@ -31,6 +31,13 @@ const FORBIDDEN = [
   /@\/lib\/clinical-records/,
   /@\/lib\/clinical-access/,
   /@\/lib\/referrals/,
+  // Lab result data (20261005000004). Patients' own finalized results
+  // (Phase 12) and structured AI summaries (Phase 18) will each be allowed
+  // through one narrow, approved module when those phases are built — never
+  // by referencing these tables directly.
+  /lab_results/,
+  /lab_result_values/,
+  /lab_documents/,
 ];
 
 function sourceFiles(dir: string): string[] {

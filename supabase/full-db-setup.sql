@@ -6584,3 +6584,1982 @@ alter table public.voice_messages
     check (telegram_file_id is not null or storage_path is not null or purged_at is not null);
 
 create index voice_messages_retention_idx on public.voice_messages (expires_at) where purged_at is null and expires_at is not null;
+
+-- =====================================================================
+-- FILE: 20261005000001_patient_lab_identity.sql
+-- =====================================================================
+-- Laboratory (Phase 2, 1 of 4): patient identity for lab work.
+--
+-- docs/labs/PHASE_1_DOMAIN_MODEL.md §2.1, owner decisions 2026-10-05:
+--   * date_of_birth and sex select configured reference ranges. sex is a
+--     clinical attribute and may stay NULL (unknown) — staff are never forced
+--     to guess. Lab orders require a date of birth (enforced when an order is
+--     created, 20261005000003); existing patients simply have none yet.
+--   * document_number (passport / ID card) and pinfl are unique WITHIN A
+--     CLINIC (O1) — the same passport in two clinics is two valid patients.
+--     Values are normalised before they are stored or compared: trimmed,
+--     spaces and dashes removed, upper-cased.
+--
+-- O1 rollout order: add the columns, normalise any existing values, list
+-- duplicates per clinic (the migration refuses to continue and names them
+-- rather than guessing which record wins), then create the unique indexes.
+-- The columns are new, so the duplicate check is expected to find nothing;
+-- it stays as the guard the decision asked for.
+--
+-- Nothing here is readable by more roles than before: patients keeps its
+-- existing policies and grants (signed-in roles cannot write it).
+
+create type public.patient_sex as enum ('female', 'male');
+
+comment on type public.patient_sex is
+  'Clinical sex used only to select configured lab reference ranges. NULL on patients.sex means unknown / not recorded.';
+
+alter table public.patients
+  add column date_of_birth date,
+  add column sex public.patient_sex,
+  add column document_number text,
+  add column pinfl text;
+
+alter table public.patients
+  add constraint patients_date_of_birth_check
+    check (date_of_birth is null or (date_of_birth >= date '1900-01-01' and date_of_birth <= current_date)),
+  add constraint patients_document_number_check
+    check (document_number is null or document_number ~ '^[A-Z0-9]{5,20}$'),
+  add constraint patients_pinfl_check
+    check (pinfl is null or pinfl ~ '^[0-9]{14}$');
+
+comment on column public.patients.date_of_birth is 'Required before a lab order is created; selects age-dependent reference ranges.';
+comment on column public.patients.sex is 'NULL = unknown. Never defaulted or guessed.';
+comment on column public.patients.document_number is 'Passport / ID card number, normalised (no spaces or dashes, upper-case). Unique per clinic.';
+comment on column public.patients.pinfl is 'Personal identification number (14 digits), normalised. Unique per clinic.';
+
+-- ---------- Normalisation ----------
+
+create or replace function public.normalize_identity_document(p_value text)
+returns text
+language sql
+immutable
+set search_path = public, pg_temp
+as $$
+  select nullif(upper(regexp_replace(btrim(p_value), '[[:space:]-]+', '', 'g')), '');
+$$;
+
+comment on function public.normalize_identity_document(text) is
+  'Canonical form of a passport / ID / PINFL value: trimmed, spaces and dashes removed, upper-case; empty becomes NULL.';
+
+create or replace function public.patients_normalize_identity()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  new.document_number := public.normalize_identity_document(new.document_number);
+  new.pinfl := public.normalize_identity_document(new.pinfl);
+  return new;
+end;
+$$;
+
+create trigger patients_normalize_identity
+  before insert or update of document_number, pinfl on public.patients
+  for each row execute function public.patients_normalize_identity();
+
+revoke all on function public.patients_normalize_identity() from public, anon, authenticated;
+
+-- ---------- O1: normalise, refuse on duplicates, then enforce ----------
+
+update public.patients
+set document_number = public.normalize_identity_document(document_number),
+    pinfl = public.normalize_identity_document(pinfl)
+where document_number is not null or pinfl is not null;
+
+do $$
+declare
+  v_report text;
+begin
+  select string_agg(format('%s %s in clinic %s: patients %s', kind, value, clinic_id, ids), '; ')
+    into v_report
+  from (
+    select 'document_number' as kind, document_number as value, clinic_id, string_agg(id::text, ', ') as ids
+    from public.patients
+    where document_number is not null
+    group by clinic_id, document_number
+    having count(*) > 1
+    union all
+    select 'pinfl', pinfl, clinic_id, string_agg(id::text, ', ')
+    from public.patients
+    where pinfl is not null
+    group by clinic_id, pinfl
+    having count(*) > 1
+  ) duplicates;
+  if v_report is not null then
+    raise exception 'patients: duplicate identity documents must be resolved before uniqueness is enforced — %', v_report;
+  end if;
+end;
+$$;
+
+create unique index patients_clinic_document_number_key
+  on public.patients (clinic_id, document_number)
+  where document_number is not null;
+
+create unique index patients_clinic_pinfl_key
+  on public.patients (clinic_id, pinfl)
+  where pinfl is not null;
+
+-- =====================================================================
+-- FILE: 20261005000002_lab_catalog.sql
+-- =====================================================================
+-- Laboratory (Phase 2, 2 of 4): the clinic-configured lab catalog.
+--
+-- docs/labs/PHASE_1_DOMAIN_MODEL.md §3.1. Configuration is data: each clinic
+-- defines its own categories, tests, measured parameters, units, reference
+-- ranges, panels and prices. Nothing here interprets a value clinically; a
+-- reference range is a configured bound, and critical bounds are only
+-- configured and displayed (critical-result alerts are deferred).
+--
+--   lab_test_categories  grouping of tests (not a department, not specialties —
+--                        specialties feed the public catalog and AI navigation)
+--   lab_tests            one orderable test, with its price
+--   lab_test_parameters  the measured fields of a test (CBC → Hemoglobin, WBC …)
+--   lab_reference_ranges configured bounds per parameter, optionally per sex
+--                        and age band; overlapping active ranges are refused
+--   lab_panels           a named set of tests ordered together, with its price
+--   lab_panel_tests      panel membership
+--
+-- Every table is clinic-owned; every reference is a composite foreign key
+-- (x_id, clinic_id) so a row can never point into another clinic. Rows that
+-- history references cannot be deleted (no cascade from a test to its
+-- parameters or ranges); clinics deactivate them instead.
+--
+-- Access: clinic staff may read the catalog (it holds no patient data);
+-- nobody signed in may write it — configuration goes through the server
+-- (Phase 4), like services and specialties.
+
+create type public.lab_value_type as enum ('numeric', 'text', 'boolean', 'choice');
+
+comment on type public.lab_value_type is
+  'How a lab parameter is recorded: numeric (with unit), free text, yes/no, or one of configured choices.';
+
+-- ---------------------------------------------------------------------------
+-- Tables
+-- ---------------------------------------------------------------------------
+
+create table public.lab_test_categories (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  name text not null,
+  sort_order integer not null default 0,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint lab_test_categories_id_clinic_id_key unique (id, clinic_id),
+  constraint lab_test_categories_clinic_name_key unique (clinic_id, name),
+  constraint lab_test_categories_name_check check (name ~ '\S' and char_length(name) <= 120)
+);
+
+create table public.lab_tests (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  category_id uuid,
+  code text not null,
+  name text not null,
+  sample_type text not null,
+  preparation_text text,
+  turnaround_hours integer,
+  price numeric(12, 2) not null default 0,
+  sort_order integer not null default 0,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint lab_tests_id_clinic_id_key unique (id, clinic_id),
+  constraint lab_tests_clinic_code_key unique (clinic_id, code),
+  constraint lab_tests_clinic_name_key unique (clinic_id, name),
+  constraint lab_tests_category_fkey
+    foreign key (category_id, clinic_id) references public.lab_test_categories (id, clinic_id)
+    on delete set null (category_id),
+  constraint lab_tests_code_check check (code ~ '^[A-Za-z0-9._-]{1,32}$'),
+  constraint lab_tests_name_check check (name ~ '\S' and char_length(name) <= 200),
+  constraint lab_tests_sample_type_check check (sample_type ~ '\S' and char_length(sample_type) <= 80),
+  constraint lab_tests_preparation_check check (preparation_text is null or char_length(preparation_text) <= 2000),
+  constraint lab_tests_turnaround_check check (turnaround_hours is null or turnaround_hours between 1 and 8760),
+  constraint lab_tests_price_check check (price >= 0)
+);
+
+create table public.lab_test_parameters (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  test_id uuid not null,
+  code text not null,
+  name text not null,
+  value_type public.lab_value_type not null,
+  unit text,
+  decimals smallint,
+  choices text[],
+  sort_order integer not null default 0,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint lab_test_parameters_id_clinic_id_key unique (id, clinic_id),
+  constraint lab_test_parameters_test_code_key unique (test_id, code),
+  constraint lab_test_parameters_test_fkey
+    foreign key (test_id, clinic_id) references public.lab_tests (id, clinic_id),
+  constraint lab_test_parameters_code_check check (code ~ '^[A-Za-z0-9._-]{1,32}$'),
+  constraint lab_test_parameters_name_check check (name ~ '\S' and char_length(name) <= 200),
+  constraint lab_test_parameters_unit_check
+    check (unit is null or (value_type = 'numeric' and unit ~ '\S' and char_length(unit) <= 40)),
+  constraint lab_test_parameters_decimals_check
+    check (decimals is null or (value_type = 'numeric' and decimals between 0 and 6)),
+  constraint lab_test_parameters_choices_check
+    check ((value_type = 'choice') = (choices is not null)
+           and (choices is null or (cardinality(choices) between 2 and 50 and array_position(choices, null) is null)))
+);
+
+create table public.lab_reference_ranges (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  parameter_id uuid not null,
+  -- NULL = applies to any sex.
+  sex public.patient_sex,
+  -- Age band in days, inclusive; NULL bound = open.
+  age_min_days integer,
+  age_max_days integer,
+  low numeric,
+  high numeric,
+  critical_low numeric,
+  critical_high numeric,
+  -- Expected value for text / boolean / choice parameters.
+  normal_text text,
+  -- Free label for the laboratory, method or equipment the range belongs to.
+  method_label text,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint lab_reference_ranges_id_clinic_id_key unique (id, clinic_id),
+  constraint lab_reference_ranges_parameter_fkey
+    foreign key (parameter_id, clinic_id) references public.lab_test_parameters (id, clinic_id),
+  constraint lab_reference_ranges_age_check
+    check ((age_min_days is null or age_min_days >= 0)
+           and (age_max_days is null or age_max_days >= 0)
+           and (age_min_days is null or age_max_days is null or age_min_days <= age_max_days)),
+  constraint lab_reference_ranges_bounds_check
+    check ((low is null or high is null or low <= high)
+           and (critical_low is null or low is null or critical_low <= low)
+           and (critical_high is null or high is null or critical_high >= high)
+           and (critical_low is null or critical_high is null or critical_low < critical_high)),
+  constraint lab_reference_ranges_something_check
+    check (num_nonnulls(low, high, normal_text) > 0),
+  constraint lab_reference_ranges_normal_text_check
+    check (normal_text is null or (normal_text ~ '\S' and char_length(normal_text) <= 200)),
+  constraint lab_reference_ranges_method_check
+    check (method_label is null or (method_label ~ '\S' and char_length(method_label) <= 120))
+);
+
+create table public.lab_panels (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  code text not null,
+  name text not null,
+  price numeric(12, 2) not null default 0,
+  sort_order integer not null default 0,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint lab_panels_id_clinic_id_key unique (id, clinic_id),
+  constraint lab_panels_clinic_code_key unique (clinic_id, code),
+  constraint lab_panels_clinic_name_key unique (clinic_id, name),
+  constraint lab_panels_code_check check (code ~ '^[A-Za-z0-9._-]{1,32}$'),
+  constraint lab_panels_name_check check (name ~ '\S' and char_length(name) <= 200),
+  constraint lab_panels_price_check check (price >= 0)
+);
+
+create table public.lab_panel_tests (
+  panel_id uuid not null,
+  test_id uuid not null,
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  primary key (panel_id, test_id),
+  constraint lab_panel_tests_panel_fkey
+    foreign key (panel_id, clinic_id) references public.lab_panels (id, clinic_id) on delete cascade,
+  constraint lab_panel_tests_test_fkey
+    foreign key (test_id, clinic_id) references public.lab_tests (id, clinic_id)
+);
+
+comment on table public.lab_test_categories is 'Clinic-defined grouping of lab tests (configuration; not a department, not specialties).';
+comment on table public.lab_tests is 'Clinic-configured orderable lab test. Deactivate instead of deleting once ordered.';
+comment on table public.lab_test_parameters is 'A measured field of a lab test with its value type and unit.';
+comment on table public.lab_reference_ranges is 'Configured reference (and optional critical) bounds per parameter, optionally per sex and age band. Configuration only — no clinical interpretation.';
+comment on table public.lab_panels is 'A named set of lab tests ordered together at the panel price.';
+comment on table public.lab_panel_tests is 'Membership of lab tests in a panel.';
+
+create index lab_tests_clinic_active_idx on public.lab_tests (clinic_id, active, sort_order);
+create index lab_tests_category_idx on public.lab_tests (category_id) where category_id is not null;
+create index lab_test_parameters_test_idx on public.lab_test_parameters (test_id, sort_order);
+create index lab_reference_ranges_parameter_idx on public.lab_reference_ranges (parameter_id) where active;
+create index lab_panel_tests_test_idx on public.lab_panel_tests (test_id);
+
+-- ---------------------------------------------------------------------------
+-- Validation
+-- ---------------------------------------------------------------------------
+
+-- Server-stamped timestamps, as everywhere else.
+create or replace function public.lab_touch_timestamps()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'INSERT' then
+    new.created_at := now();
+  else
+    new.created_at := old.created_at;
+  end if;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+revoke all on function public.lab_touch_timestamps() from public, anon, authenticated;
+
+create trigger lab_test_categories_touch before insert or update on public.lab_test_categories
+  for each row execute function public.lab_touch_timestamps();
+create trigger lab_tests_touch before insert or update on public.lab_tests
+  for each row execute function public.lab_touch_timestamps();
+create trigger lab_test_parameters_touch before insert or update on public.lab_test_parameters
+  for each row execute function public.lab_touch_timestamps();
+create trigger lab_reference_ranges_touch before insert or update on public.lab_reference_ranges
+  for each row execute function public.lab_touch_timestamps();
+create trigger lab_panels_touch before insert or update on public.lab_panels
+  for each row execute function public.lab_touch_timestamps();
+
+-- A parameter's identity (test, code, value type) is fixed once created:
+-- stored results are interpreted through it. Name, unit display, choices
+-- (append-only would be a Phase 4 rule), order and active may change.
+create or replace function public.lab_test_parameters_validate()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'UPDATE' and (
+       new.test_id is distinct from old.test_id
+       or new.code is distinct from old.code
+       or new.value_type is distinct from old.value_type
+       or new.clinic_id is distinct from old.clinic_id
+     ) then
+    raise exception 'lab parameter: test, code and value type cannot change; add a new parameter instead';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.lab_test_parameters_validate() from public, anon, authenticated;
+
+create trigger lab_test_parameters_validate
+  before update on public.lab_test_parameters
+  for each row execute function public.lab_test_parameters_validate();
+
+-- Ranges: numeric bounds only for numeric parameters, normal_text only for
+-- the others; and no two ACTIVE ranges of a parameter may both apply to the
+-- same patient (same sex value — NULL counts as its own value — and
+-- overlapping age bands), so range selection is never ambiguous.
+create or replace function public.lab_reference_ranges_validate()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_type public.lab_value_type;
+  v_choices text[];
+  v_clash uuid;
+begin
+  if tg_op = 'UPDATE' and (new.parameter_id is distinct from old.parameter_id or new.clinic_id is distinct from old.clinic_id) then
+    raise exception 'lab reference range: the parameter cannot change; add a new range instead';
+  end if;
+
+  -- Serialise range changes per parameter so the overlap check cannot race.
+  select p.value_type, p.choices into v_type, v_choices
+  from public.lab_test_parameters p
+  where p.id = new.parameter_id and p.clinic_id = new.clinic_id
+  for update;
+
+  if v_type = 'boolean' and new.normal_text is not null and new.normal_text not in ('true', 'false') then
+    raise exception 'lab reference range: the expected value of a yes/no parameter is true or false';
+  end if;
+  if v_type = 'choice' and new.normal_text is not null and not (new.normal_text = any (v_choices)) then
+    raise exception 'lab reference range: the expected value must be one of the parameter''s choices';
+  end if;
+
+  if v_type = 'numeric' then
+    if new.normal_text is not null then
+      raise exception 'lab reference range: numeric parameters use low/high bounds, not normal_text';
+    end if;
+  else
+    if num_nonnulls(new.low, new.high, new.critical_low, new.critical_high) > 0 or new.normal_text is null then
+      raise exception 'lab reference range: % parameters use normal_text only', v_type;
+    end if;
+  end if;
+
+  if new.active then
+    select r.id into v_clash
+    from public.lab_reference_ranges r
+    where r.parameter_id = new.parameter_id
+      and r.active
+      and r.id <> new.id
+      and r.sex is not distinct from new.sex
+      and coalesce(r.age_min_days, 0) <= coalesce(new.age_max_days, 2147483647)
+      and coalesce(new.age_min_days, 0) <= coalesce(r.age_max_days, 2147483647)
+    limit 1;
+    if found then
+      raise exception 'lab reference range: overlaps active range % for the same sex and age band', v_clash;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.lab_reference_ranges_validate() from public, anon, authenticated;
+
+create trigger lab_reference_ranges_validate
+  before insert or update on public.lab_reference_ranges
+  for each row execute function public.lab_reference_ranges_validate();
+
+-- ---------------------------------------------------------------------------
+-- Audit: configuration changes (no patient data in these tables)
+-- ---------------------------------------------------------------------------
+
+create trigger lab_tests_audit after insert or update or delete on public.lab_tests
+  for each row execute function public.audit_track_changes();
+create trigger lab_test_parameters_audit after insert or update or delete on public.lab_test_parameters
+  for each row execute function public.audit_track_changes();
+create trigger lab_reference_ranges_audit after insert or update or delete on public.lab_reference_ranges
+  for each row execute function public.audit_track_changes();
+create trigger lab_panels_audit after insert or update or delete on public.lab_panels
+  for each row execute function public.audit_track_changes();
+
+-- ---------------------------------------------------------------------------
+-- Access: staff read, server writes
+-- ---------------------------------------------------------------------------
+
+alter table public.lab_test_categories enable row level security;
+alter table public.lab_tests enable row level security;
+alter table public.lab_test_parameters enable row level security;
+alter table public.lab_reference_ranges enable row level security;
+alter table public.lab_panels enable row level security;
+alter table public.lab_panel_tests enable row level security;
+
+create policy "lab test categories read for clinic staff" on public.lab_test_categories
+  for select to authenticated using (public.is_clinic_staff(clinic_id));
+create policy "lab tests read for clinic staff" on public.lab_tests
+  for select to authenticated using (public.is_clinic_staff(clinic_id));
+create policy "lab test parameters read for clinic staff" on public.lab_test_parameters
+  for select to authenticated using (public.is_clinic_staff(clinic_id));
+create policy "lab reference ranges read for clinic staff" on public.lab_reference_ranges
+  for select to authenticated using (public.is_clinic_staff(clinic_id));
+create policy "lab panels read for clinic staff" on public.lab_panels
+  for select to authenticated using (public.is_clinic_staff(clinic_id));
+create policy "lab panel tests read for clinic staff" on public.lab_panel_tests
+  for select to authenticated using (public.is_clinic_staff(clinic_id));
+
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['lab_test_categories', 'lab_tests', 'lab_test_parameters',
+                           'lab_reference_ranges', 'lab_panels', 'lab_panel_tests'] loop
+    execute format('revoke all on table public.%I from public, anon, authenticated, service_role', t);
+    execute format('grant select on table public.%I to authenticated', t);
+    execute format('grant select, insert, update, delete on table public.%I to service_role', t);
+  end loop;
+end;
+$$;
+
+-- =====================================================================
+-- FILE: 20261005000003_lab_orders_samples.sql
+-- =====================================================================
+-- Laboratory (Phase 2, 3 of 4): lab orders, order items and samples.
+--
+-- docs/labs/PHASE_1_DOMAIN_MODEL.md §3.2–3.3 and §4, owner decisions
+-- 2026-10-05.
+--
+--   lab_orders        one request for one patient. Any staff member of the
+--                     clinic may order (no per-role or per-test restriction);
+--                     the database records who did. Three sources: a doctor's
+--                     consultation, a walk-in (reception / lab), an external
+--                     import.
+--   lab_order_items   one test in an order — the unit of lab work. It freezes
+--                     the test's code, name and standalone price when ordered,
+--                     plus the price actually charged (a panel's price is
+--                     allocated across its tests by the ordering function,
+--                     Phase 5 — O2). Catalog edits never rewrite history.
+--   lab_samples       a physical specimen of the order's patient.
+--   lab_sample_items  which items a specimen serves (one tube, several tests);
+--                     an item has at most one sample that is not rejected.
+--
+-- Lifecycles are separate columns, each guarded by a trigger:
+--   order   active → completed | cancelled
+--   item    ordered → ready_for_collection → collected → processing → resulted → verified
+--           (ordered | ready_for_collection) → cancelled
+--           collected | processing → ready_for_collection   (sample rejected)
+--           resulted → processing                            (result returned)
+--   sample  collected → received → rejected, collected → rejected
+-- Payment is NOT part of any of these (O6): it stays on payments.
+--
+-- Deletion: nothing here cascades from a patient. Deleting a patient who has
+-- lab history fails (NO ACTION) instead of erasing that history; retention is
+-- an open legal question and this migration does not decide it. Deleting a
+-- clinic still removes everything (its rows cascade from clinics).
+--
+-- Access: no signed-in role may read or write these tables directly in this
+-- phase — the server authorizes every read and write (Phase 3 decides any
+-- direct read). RLS policies are still defined as the backstop, matching the
+-- AGENTS.md access model: operational staff see their clinic's work status,
+-- a doctor only patients doctor_can_read_patient() admits.
+
+create type public.lab_order_source as enum ('consultation', 'walk_in', 'external_import');
+create type public.lab_order_status as enum ('active', 'completed', 'cancelled');
+create type public.lab_item_status as enum (
+  'ordered',
+  'ready_for_collection',
+  'collected',
+  'processing',
+  'resulted',
+  'verified',
+  'cancelled'
+);
+create type public.lab_sample_status as enum ('collected', 'received', 'rejected');
+
+-- appointments (id, clinic_id, patient_id, doctor_id) is already unique
+-- (appointments_id_clinic_id_patient_id_doctor_id_key).
+
+-- ---------------------------------------------------------------------------
+-- Tables
+-- ---------------------------------------------------------------------------
+
+create table public.lab_orders (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  patient_id uuid not null,
+  source public.lab_order_source not null,
+  -- The staff member who placed the order (any role of the clinic).
+  ordered_by uuid not null references public.profiles(id),
+  -- Set when the orderer is a linked doctor; required for a consultation.
+  ordering_doctor_id uuid,
+  -- The consultation the order came from (source = consultation only).
+  appointment_id uuid,
+  status public.lab_order_status not null default 'active',
+  cancelled_at timestamptz,
+  cancelled_by uuid references public.profiles(id),
+  cancel_reason text,
+  -- Provider / import identifier (source = external_import).
+  external_reference text,
+  -- Client idempotency key: a repeated submission resolves to this order.
+  creation_key uuid,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  constraint lab_orders_id_clinic_id_key unique (id, clinic_id),
+  constraint lab_orders_id_clinic_id_patient_id_key unique (id, clinic_id, patient_id),
+  constraint lab_orders_patient_fkey
+    foreign key (patient_id, clinic_id) references public.patients (id, clinic_id),
+  constraint lab_orders_ordering_doctor_fkey
+    foreign key (ordering_doctor_id, clinic_id) references public.doctors (id, clinic_id),
+  -- The ordering doctor's own consultation with this patient in this clinic.
+  constraint lab_orders_consultation_fkey
+    foreign key (appointment_id, clinic_id, patient_id, ordering_doctor_id)
+    references public.appointments (id, clinic_id, patient_id, doctor_id),
+  constraint lab_orders_consultation_source_check
+    check ((source = 'consultation') = (appointment_id is not null)),
+  -- MATCH SIMPLE skips the FK when ordering_doctor_id is NULL: forbid that.
+  constraint lab_orders_consultation_doctor_check
+    check (appointment_id is null or ordering_doctor_id is not null),
+  constraint lab_orders_external_reference_check
+    check ((source = 'external_import') = (external_reference is not null)
+           and (external_reference is null or (external_reference ~ '\S' and char_length(external_reference) <= 120))),
+  constraint lab_orders_cancel_check
+    check ((status = 'cancelled') = (cancelled_at is not null)
+           and (status = 'cancelled') = (cancelled_by is not null)
+           and (cancel_reason is null or (cancel_reason ~ '\S' and char_length(cancel_reason) <= 300)))
+);
+
+create table public.lab_order_items (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  order_id uuid not null,
+  patient_id uuid not null,
+  test_id uuid not null,
+  -- The panel this item was ordered through, if any.
+  panel_id uuid,
+  test_code_snapshot text not null,
+  test_name_snapshot text not null,
+  -- The test's standalone catalog price when ordered.
+  list_price_snapshot numeric(12, 2) not null,
+  -- The price actually charged for this item (= list price for a single test,
+  -- the allocated share of the panel price for a panel item — O2).
+  price_snapshot numeric(12, 2) not null,
+  status public.lab_item_status not null default 'ordered',
+  status_changed_at timestamptz not null default now(),
+  status_changed_by uuid references public.profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  constraint lab_order_items_id_clinic_id_key unique (id, clinic_id),
+  constraint lab_order_items_id_clinic_id_patient_id_key unique (id, clinic_id, patient_id),
+  constraint lab_order_items_order_test_key unique (order_id, test_id),
+  constraint lab_order_items_order_fkey
+    foreign key (order_id, clinic_id, patient_id) references public.lab_orders (id, clinic_id, patient_id),
+  constraint lab_order_items_test_fkey
+    foreign key (test_id, clinic_id) references public.lab_tests (id, clinic_id),
+  constraint lab_order_items_panel_fkey
+    foreign key (panel_id, clinic_id) references public.lab_panels (id, clinic_id),
+  constraint lab_order_items_prices_check
+    check (list_price_snapshot >= 0 and price_snapshot >= 0
+           and (panel_id is not null or price_snapshot = list_price_snapshot))
+);
+
+create table public.lab_samples (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  patient_id uuid not null,
+  order_id uuid not null,
+  -- Human / barcode identifier, unique in the clinic.
+  sample_code text not null,
+  sample_type text not null,
+  status public.lab_sample_status not null default 'collected',
+  collected_at timestamptz not null default now(),
+  collected_by uuid not null references public.profiles(id),
+  received_at timestamptz,
+  received_by uuid references public.profiles(id),
+  rejected_at timestamptz,
+  rejected_by uuid references public.profiles(id),
+  reject_reason text,
+  -- Operational notes only (e.g. "haemolysed", "second attempt").
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  constraint lab_samples_id_clinic_id_key unique (id, clinic_id),
+  constraint lab_samples_clinic_code_key unique (clinic_id, sample_code),
+  constraint lab_samples_order_fkey
+    foreign key (order_id, clinic_id, patient_id) references public.lab_orders (id, clinic_id, patient_id),
+  constraint lab_samples_code_check check (sample_code ~ '^[A-Za-z0-9-]{3,40}$'),
+  constraint lab_samples_type_check check (sample_type ~ '\S' and char_length(sample_type) <= 80),
+  constraint lab_samples_received_check
+    check ((received_at is null) = (received_by is null)),
+  constraint lab_samples_rejected_check
+    check ((status = 'rejected') = (rejected_at is not null)
+           and (status = 'rejected') = (rejected_by is not null)
+           and (status = 'rejected') = (reject_reason is not null)
+           and (reject_reason is null or (reject_reason ~ '\S' and char_length(reject_reason) <= 300))),
+  constraint lab_samples_notes_check check (notes is null or char_length(notes) <= 500)
+);
+
+create table public.lab_sample_items (
+  sample_id uuid not null,
+  order_item_id uuid not null,
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (sample_id, order_item_id),
+  constraint lab_sample_items_sample_fkey
+    foreign key (sample_id, clinic_id) references public.lab_samples (id, clinic_id),
+  constraint lab_sample_items_item_fkey
+    foreign key (order_item_id, clinic_id) references public.lab_order_items (id, clinic_id)
+);
+
+comment on table public.lab_orders is 'A lab request for one patient. Any clinic staff member may order; ordered_by records who. Server-only.';
+comment on table public.lab_order_items is 'One test of a lab order with code, name, list price and charged price frozen at order time. Its status is the lab work position.';
+comment on table public.lab_samples is 'A physical specimen of the order''s patient.';
+comment on table public.lab_sample_items is 'Which order items a specimen serves; an item has at most one non-rejected sample.';
+
+create unique index lab_orders_creation_key_key on public.lab_orders (clinic_id, ordered_by, creation_key)
+  where creation_key is not null;
+create unique index lab_orders_external_reference_key on public.lab_orders (clinic_id, external_reference)
+  where external_reference is not null;
+create index lab_orders_patient_idx on public.lab_orders (clinic_id, patient_id, created_at desc);
+create index lab_orders_status_idx on public.lab_orders (clinic_id, status, created_at);
+create index lab_orders_appointment_idx on public.lab_orders (appointment_id) where appointment_id is not null;
+create index lab_order_items_status_idx on public.lab_order_items (clinic_id, status, created_at);
+create index lab_order_items_patient_test_idx on public.lab_order_items (clinic_id, patient_id, test_id, created_at desc);
+create index lab_order_items_order_idx on public.lab_order_items (order_id);
+create index lab_samples_status_idx on public.lab_samples (clinic_id, status, collected_at);
+create index lab_samples_order_idx on public.lab_samples (order_id);
+create index lab_sample_items_item_idx on public.lab_sample_items (order_item_id);
+
+-- ---------------------------------------------------------------------------
+-- Helpers
+-- ---------------------------------------------------------------------------
+
+-- Any staff role of the clinic (lab ordering has no role restriction).
+create or replace function public.lab_is_clinic_member(p_clinic_id uuid, p_profile_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1 from public.staff_roles sr
+    where sr.clinic_id = p_clinic_id and sr.profile_id = p_profile_id
+  );
+$$;
+
+revoke all on function public.lab_is_clinic_member(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.lab_is_clinic_member(uuid, uuid) to service_role;
+
+-- True while this transaction deletes the clinic (clinics_mark_erasure,
+-- 20260930000006): its lab rows go with it, and only then may append-only
+-- lab rows be deleted.
+create or replace function public.lab_clinic_is_being_erased(p_clinic_id uuid)
+returns boolean
+language sql
+stable
+set search_path = public, pg_temp
+as $$
+  select strpos(coalesce(current_setting('app.erasing_clinics', true), ''), p_clinic_id::text || ',') > 0;
+$$;
+
+revoke all on function public.lab_clinic_is_being_erased(uuid) from public, anon, authenticated;
+
+-- Fails unless only the listed columns differ between OLD and NEW.
+create or replace function public.lab_assert_only_changed(p_old jsonb, p_new jsonb, p_mutable text[], p_what text)
+returns void
+language plpgsql
+immutable
+set search_path = public, pg_temp
+as $$
+declare
+  v_key text;
+begin
+  for v_key in select jsonb_object_keys(p_new) loop
+    if not (v_key = any (p_mutable)) and (p_old -> v_key) is distinct from (p_new -> v_key) then
+      raise exception '%: % cannot be changed', p_what, v_key;
+    end if;
+  end loop;
+end;
+$$;
+
+revoke all on function public.lab_assert_only_changed(jsonb, jsonb, text[], text) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- lab_orders: provenance, lifecycle, immutability
+-- ---------------------------------------------------------------------------
+
+create or replace function public.lab_orders_validate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_dob date;
+  v_doctor_profile uuid;
+  v_doctor_active boolean;
+  v_appointment_status public.appointment_status;
+begin
+  if tg_op = 'INSERT' then
+    new.created_at := now();
+    new.updated_at := now();
+    if new.status <> 'active' then
+      raise exception 'lab order: a new order must be active';
+    end if;
+    if not public.lab_is_clinic_member(new.clinic_id, new.ordered_by) then
+      raise exception 'lab order: ordered_by must be a staff member of the clinic';
+    end if;
+
+    select p.date_of_birth into v_dob
+    from public.patients p
+    where p.id = new.patient_id and p.clinic_id = new.clinic_id;
+    if found and v_dob is null and new.source <> 'external_import' then
+      raise exception 'lab order: the patient''s date of birth is required before ordering lab tests';
+    end if;
+
+    if new.ordering_doctor_id is not null then
+      select d.profile_id, d.active into v_doctor_profile, v_doctor_active
+      from public.doctors d
+      where d.id = new.ordering_doctor_id and d.clinic_id = new.clinic_id;
+      if not found or not v_doctor_active or v_doctor_profile is distinct from new.ordered_by then
+        raise exception 'lab order: ordering_doctor_id must be the orderer''s own active doctor account';
+      end if;
+    end if;
+
+    if new.appointment_id is not null then
+      select a.status into v_appointment_status
+      from public.appointments a
+      where a.id = new.appointment_id and a.clinic_id = new.clinic_id;
+      if found and v_appointment_status not in ('in_progress', 'completed') then
+        raise exception 'lab order: the consultation must be in progress or completed (it is %)', v_appointment_status;
+      end if;
+    end if;
+    return new;
+  end if;
+
+  -- UPDATE: only the lifecycle moves.
+  perform public.lab_assert_only_changed(
+    to_jsonb(old), to_jsonb(new),
+    array['status', 'cancelled_at', 'cancelled_by', 'cancel_reason', 'updated_at'],
+    'lab order');
+  new.updated_at := now();
+
+  if new.status is distinct from old.status then
+    if old.status <> 'active' then
+      raise exception 'lab order: a % order cannot change status', old.status;
+    end if;
+    if new.status = 'cancelled' then
+      new.cancelled_at := now();
+      if new.cancelled_by is null or not public.lab_is_clinic_member(new.clinic_id, new.cancelled_by) then
+        raise exception 'lab order: cancelled_by must be a staff member of the clinic';
+      end if;
+      if exists (
+        select 1 from public.lab_order_items i
+        where i.order_id = new.id
+          and i.status not in ('ordered', 'ready_for_collection', 'cancelled')
+      ) then
+        raise exception 'lab order: an order with collected samples cannot be cancelled';
+      end if;
+    elsif new.status = 'completed' then
+      if exists (
+        select 1 from public.lab_order_items i
+        where i.order_id = new.id and i.status not in ('verified', 'cancelled')
+      ) or not exists (
+        select 1 from public.lab_order_items i
+        where i.order_id = new.id and i.status = 'verified'
+      ) then
+        raise exception 'lab order: completed requires every item verified or cancelled, and at least one verified';
+      end if;
+    end if;
+  elsif new.cancelled_at is distinct from old.cancelled_at
+     or new.cancelled_by is distinct from old.cancelled_by
+     or new.cancel_reason is distinct from old.cancel_reason then
+    raise exception 'lab order: cancellation details change only when the order is cancelled';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.lab_orders_validate() from public, anon, authenticated;
+
+create trigger lab_orders_validate
+  before insert or update on public.lab_orders
+  for each row execute function public.lab_orders_validate();
+
+-- Cancelling an order cancels its open items.
+create or replace function public.lab_orders_cancel_items()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  update public.lab_order_items
+  set status = 'cancelled', status_changed_by = new.cancelled_by
+  where order_id = new.id and status in ('ordered', 'ready_for_collection');
+  return null;
+end;
+$$;
+
+revoke all on function public.lab_orders_cancel_items() from public, anon, authenticated;
+
+create trigger lab_orders_cancel_items
+  after update of status on public.lab_orders
+  for each row when (new.status = 'cancelled' and old.status is distinct from new.status)
+  execute function public.lab_orders_cancel_items();
+
+-- ---------------------------------------------------------------------------
+-- lab_order_items: snapshots from the catalog, lifecycle
+-- ---------------------------------------------------------------------------
+
+create or replace function public.lab_item_transition_allowed(
+  p_from public.lab_item_status,
+  p_to public.lab_item_status,
+  p_source public.lab_order_source
+)
+returns boolean
+language sql
+immutable
+set search_path = public, pg_temp
+as $$
+  select case
+    -- Historical / external results arrive already performed.
+    when p_source = 'external_import' then
+      (p_from, p_to) in (('ordered', 'resulted'), ('ordered', 'verified'), ('resulted', 'verified'),
+                         ('resulted', 'processing'), ('processing', 'resulted'), ('ordered', 'cancelled'))
+    else
+      (p_from, p_to) in (
+        ('ordered', 'ready_for_collection'),
+        ('ordered', 'cancelled'),
+        ('ready_for_collection', 'collected'),
+        ('ready_for_collection', 'cancelled'),
+        ('collected', 'processing'),
+        ('collected', 'ready_for_collection'),
+        ('processing', 'resulted'),
+        ('processing', 'ready_for_collection'),
+        ('resulted', 'verified'),
+        ('resulted', 'processing'))
+  end;
+$$;
+
+revoke all on function public.lab_item_transition_allowed(public.lab_item_status, public.lab_item_status, public.lab_order_source)
+  from public, anon, authenticated;
+
+create or replace function public.lab_order_items_validate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_order public.lab_orders;
+  v_test public.lab_tests;
+begin
+  select * into v_order from public.lab_orders o where o.id = new.order_id and o.clinic_id = new.clinic_id;
+
+  if tg_op = 'INSERT' then
+    new.created_at := now();
+    new.updated_at := now();
+    new.status_changed_at := now();
+    if v_order.status is distinct from 'active' then
+      raise exception 'lab order item: items can only be added to an active order';
+    end if;
+    if new.status <> 'ordered' then
+      raise exception 'lab order item: a new item starts as ordered';
+    end if;
+
+    select * into v_test from public.lab_tests t where t.id = new.test_id and t.clinic_id = new.clinic_id;
+    if not found then
+      raise exception 'lab order item: unknown test';
+    end if;
+    if not v_test.active and v_order.source <> 'external_import' then
+      raise exception 'lab order item: test % is inactive and cannot be ordered', v_test.code;
+    end if;
+    if new.panel_id is not null then
+      if not exists (
+        select 1 from public.lab_panel_tests pt
+        where pt.panel_id = new.panel_id and pt.test_id = new.test_id and pt.clinic_id = new.clinic_id
+      ) then
+        raise exception 'lab order item: test % is not part of the panel', v_test.code;
+      end if;
+      if v_order.source <> 'external_import' and not exists (
+        select 1 from public.lab_panels p where p.id = new.panel_id and p.active
+      ) then
+        raise exception 'lab order item: the panel is inactive and cannot be ordered';
+      end if;
+    end if;
+
+    -- The catalog, never the caller, decides what the item is and costs.
+    new.test_code_snapshot := v_test.code;
+    new.test_name_snapshot := v_test.name;
+    new.list_price_snapshot := v_test.price;
+    if new.panel_id is null then
+      new.price_snapshot := v_test.price;
+    end if;
+    return new;
+  end if;
+
+  -- UPDATE: only the work position moves.
+  perform public.lab_assert_only_changed(
+    to_jsonb(old), to_jsonb(new),
+    array['status', 'status_changed_at', 'status_changed_by', 'updated_at'],
+    'lab order item');
+  new.updated_at := now();
+  if new.status is distinct from old.status then
+    if not public.lab_item_transition_allowed(old.status, new.status, v_order.source) then
+      raise exception 'lab order item: % → % is not allowed', old.status, new.status;
+    end if;
+    if new.status = 'ready_for_collection' and v_order.status <> 'active' then
+      raise exception 'lab order item: the order is %', v_order.status;
+    end if;
+    new.status_changed_at := now();
+    if new.status_changed_by is not null and not public.lab_is_clinic_member(new.clinic_id, new.status_changed_by) then
+      raise exception 'lab order item: status_changed_by must be a staff member of the clinic';
+    end if;
+  else
+    new.status_changed_at := old.status_changed_at;
+    new.status_changed_by := old.status_changed_by;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.lab_order_items_validate() from public, anon, authenticated;
+
+create trigger lab_order_items_validate
+  before insert or update on public.lab_order_items
+  for each row execute function public.lab_order_items_validate();
+
+-- ---------------------------------------------------------------------------
+-- lab_samples and lab_sample_items
+-- ---------------------------------------------------------------------------
+
+create or replace function public.lab_samples_validate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'INSERT' then
+    new.created_at := now();
+    new.updated_at := now();
+    new.collected_at := now();
+    if new.status <> 'collected' or new.received_at is not null or new.rejected_at is not null then
+      raise exception 'lab sample: a new sample starts as collected';
+    end if;
+    if not exists (
+      select 1 from public.lab_orders o
+      where o.id = new.order_id and o.clinic_id = new.clinic_id and o.status = 'active'
+    ) then
+      raise exception 'lab sample: samples can only be collected for an active order';
+    end if;
+    if not public.lab_is_clinic_member(new.clinic_id, new.collected_by) then
+      raise exception 'lab sample: collected_by must be a staff member of the clinic';
+    end if;
+    return new;
+  end if;
+
+  perform public.lab_assert_only_changed(
+    to_jsonb(old), to_jsonb(new),
+    array['status', 'received_at', 'received_by', 'rejected_at', 'rejected_by', 'reject_reason', 'notes', 'updated_at'],
+    'lab sample');
+  new.updated_at := now();
+
+  if new.status is distinct from old.status then
+    if not ((old.status, new.status) in (('collected', 'received'), ('collected', 'rejected'), ('received', 'rejected'))) then
+      raise exception 'lab sample: % → % is not allowed', old.status, new.status;
+    end if;
+    if new.status = 'received' then
+      new.received_at := now();
+      if new.received_by is null or not public.lab_is_clinic_member(new.clinic_id, new.received_by) then
+        raise exception 'lab sample: received_by must be a staff member of the clinic';
+      end if;
+    else
+      new.rejected_at := now();
+      if new.rejected_by is null or not public.lab_is_clinic_member(new.clinic_id, new.rejected_by) then
+        raise exception 'lab sample: rejected_by must be a staff member of the clinic';
+      end if;
+    end if;
+  elsif new.received_at is distinct from old.received_at or new.received_by is distinct from old.received_by
+     or new.rejected_at is distinct from old.rejected_at or new.rejected_by is distinct from old.rejected_by
+     or new.reject_reason is distinct from old.reject_reason then
+    raise exception 'lab sample: receipt and rejection details change only with the status';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.lab_samples_validate() from public, anon, authenticated;
+
+create trigger lab_samples_validate
+  before insert or update on public.lab_samples
+  for each row execute function public.lab_samples_validate();
+
+-- A link is fixed once made; it may only be created for an item of the same
+-- order that is not cancelled and has no other live (non-rejected) sample.
+-- The item row is locked, so two collectors cannot both attach a sample.
+create or replace function public.lab_sample_items_validate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_item public.lab_order_items;
+  v_sample public.lab_samples;
+begin
+  if tg_op = 'DELETE' and public.lab_clinic_is_being_erased(old.clinic_id) then
+    return old;
+  end if;
+  if tg_op <> 'INSERT' then
+    raise exception 'lab sample item: links cannot be changed or removed';
+  end if;
+  new.created_at := now();
+
+  select * into v_item from public.lab_order_items i
+  where i.id = new.order_item_id and i.clinic_id = new.clinic_id
+  for update;
+  select * into v_sample from public.lab_samples s
+  where s.id = new.sample_id and s.clinic_id = new.clinic_id;
+
+  if v_item.id is null or v_sample.id is null then
+    raise exception 'lab sample item: unknown sample or order item';
+  end if;
+  if v_item.order_id <> v_sample.order_id or v_item.patient_id <> v_sample.patient_id then
+    raise exception 'lab sample item: the sample and the order item belong to different orders';
+  end if;
+  if v_sample.status = 'rejected' then
+    raise exception 'lab sample item: the sample was rejected';
+  end if;
+  if v_item.status in ('cancelled', 'verified') then
+    raise exception 'lab sample item: the order item is %', v_item.status;
+  end if;
+  if exists (
+    select 1
+    from public.lab_sample_items si
+    join public.lab_samples s on s.id = si.sample_id
+    where si.order_item_id = new.order_item_id and s.status <> 'rejected'
+  ) then
+    raise exception 'lab sample item: the order item already has a sample';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.lab_sample_items_validate() from public, anon, authenticated;
+
+create trigger lab_sample_items_validate
+  before insert or update or delete on public.lab_sample_items
+  for each row execute function public.lab_sample_items_validate();
+
+-- ---------------------------------------------------------------------------
+-- Audit: ids and states only — never values or free text
+-- ---------------------------------------------------------------------------
+
+create or replace function public.lab_workflow_audit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_action text;
+  v_actor uuid;
+  v_values jsonb;
+begin
+  if tg_table_name = 'lab_orders' then
+    if tg_op = 'INSERT' then
+      v_action := 'lab_order_created';
+      v_actor := new.ordered_by;
+    elsif new.status is distinct from old.status then
+      v_action := 'lab_order_' || new.status::text;
+      v_actor := coalesce(new.cancelled_by, auth.uid());
+    else
+      return null;
+    end if;
+    v_values := jsonb_build_object('status', new.status, 'source', new.source,
+                                   'ordering_doctor_id', new.ordering_doctor_id, 'appointment_id', new.appointment_id);
+  elsif tg_table_name = 'lab_order_items' then
+    if tg_op = 'INSERT' then
+      v_action := 'lab_order_item_created';
+    elsif new.status is distinct from old.status then
+      v_action := 'lab_order_item_status_changed';
+    else
+      return null;
+    end if;
+    v_actor := coalesce(new.status_changed_by, auth.uid());
+    v_values := jsonb_build_object('order_id', new.order_id, 'test_id', new.test_id, 'status', new.status,
+                                   'previous_status', case when tg_op = 'UPDATE' then old.status end);
+  elsif tg_table_name = 'lab_samples' then
+    if tg_op = 'INSERT' then
+      v_action := 'lab_sample_collected';
+      v_actor := new.collected_by;
+    elsif new.status is distinct from old.status then
+      v_action := 'lab_sample_' || new.status::text;
+      v_actor := coalesce(new.rejected_by, new.received_by, auth.uid());
+    else
+      return null;
+    end if;
+    v_values := jsonb_build_object('order_id', new.order_id, 'status', new.status);
+  else
+    return null;
+  end if;
+
+  insert into public.audit_events (clinic_id, actor_id, actor_type, action, entity_type, entity_id, patient_id, new_values)
+  values (
+    new.clinic_id,
+    v_actor,
+    case when v_actor is null then 'system'::public.actor_type else 'staff'::public.actor_type end,
+    v_action,
+    tg_table_name,
+    new.id::text,
+    new.patient_id,
+    v_values
+  );
+  return null;
+end;
+$$;
+
+revoke all on function public.lab_workflow_audit() from public, anon, authenticated;
+
+create trigger lab_orders_audit after insert or update on public.lab_orders
+  for each row execute function public.lab_workflow_audit();
+create trigger lab_order_items_audit after insert or update on public.lab_order_items
+  for each row execute function public.lab_workflow_audit();
+create trigger lab_samples_audit after insert or update on public.lab_samples
+  for each row execute function public.lab_workflow_audit();
+
+-- ---------------------------------------------------------------------------
+-- Access: server only; RLS as the backstop
+-- ---------------------------------------------------------------------------
+
+alter table public.lab_orders enable row level security;
+alter table public.lab_order_items enable row level security;
+alter table public.lab_samples enable row level security;
+alter table public.lab_sample_items enable row level security;
+
+create policy "lab orders read for operational staff" on public.lab_orders
+  for select to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner', 'admin', 'manager', 'receptionist']::public.staff_role[]));
+create policy "lab orders read for authorized doctors" on public.lab_orders
+  for select to authenticated
+  using (public.doctor_can_read_patient(clinic_id, patient_id));
+
+create policy "lab order items read for operational staff" on public.lab_order_items
+  for select to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner', 'admin', 'manager', 'receptionist']::public.staff_role[]));
+create policy "lab order items read for authorized doctors" on public.lab_order_items
+  for select to authenticated
+  using (public.doctor_can_read_patient(clinic_id, patient_id));
+
+create policy "lab samples read for operational staff" on public.lab_samples
+  for select to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner', 'admin', 'manager', 'receptionist']::public.staff_role[]));
+create policy "lab samples read for authorized doctors" on public.lab_samples
+  for select to authenticated
+  using (public.doctor_can_read_patient(clinic_id, patient_id));
+
+create policy "lab sample items read for operational staff" on public.lab_sample_items
+  for select to authenticated
+  using (public.is_clinic_staff(clinic_id, array['owner', 'admin', 'manager', 'receptionist']::public.staff_role[]));
+
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['lab_orders', 'lab_order_items', 'lab_samples', 'lab_sample_items'] loop
+    execute format('revoke all on table public.%I from public, anon, authenticated, service_role', t);
+    execute format('grant select, insert, update on table public.%I to service_role', t);
+  end loop;
+end;
+$$;
+
+-- =====================================================================
+-- FILE: 20261005000004_lab_results_documents.sql
+-- =====================================================================
+-- Laboratory (Phase 2, 4 of 4): results, versions, verification, documents.
+--
+-- docs/labs/PHASE_1_DOMAIN_MODEL.md §3.4–3.5, §4–§7, owner decisions
+-- 2026-10-05.
+--
+--   lab_results        one VERSION of the result of one order item.
+--                      draft → submitted → verified → superseded
+--                      A verified result is never changed. A correction is a
+--                      new version (supersedes_result_id + reason); when the
+--                      correction is verified, the previous version becomes
+--                      superseded in the same statement. One verified version
+--                      and at most one version in progress per item.
+--   lab_result_values  one parameter value of a version. Only drafts accept
+--                      values. The unit, the reference range used and the flag
+--                      are set by the database from the clinic's configuration
+--                      and the patient's sex and age — never by the caller —
+--                      and frozen with the value. The flag only places the
+--                      value against the configured range; nothing here
+--                      interprets it clinically.
+--   lab_documents      report / scan / image metadata; the bytes live in the
+--                      private bucket lab-documents at <clinic_id>/<id>.
+--                      Documents are withdrawn, never deleted.
+--
+-- O4: every result needs a second person. Whoever entered or submitted a
+-- version can never verify it (CHECK constraint + trigger). Doctors may verify.
+--
+-- Access: result data is server-only (AGENTS.md). No signed-in role has any
+-- privilege on these tables and RLS is enabled without policies, so even a
+-- stray grant exposes nothing. The server authorizes and audits every read.
+
+create type public.lab_result_status as enum ('draft', 'submitted', 'verified', 'superseded');
+create type public.lab_result_source as enum ('manual', 'import', 'external');
+create type public.lab_value_flag as enum (
+  'normal',
+  'low',
+  'high',
+  'critical_low',
+  'critical_high',
+  'abnormal',
+  'not_evaluated'
+);
+create type public.lab_document_kind as enum ('report', 'scan', 'image', 'import_source');
+
+comment on type public.lab_value_flag is
+  'Position of a value against the CONFIGURED reference range (low/high/critical bounds or expected text). not_evaluated when no configured range applies. Not a clinical interpretation.';
+
+-- ---------------------------------------------------------------------------
+-- Tables
+-- ---------------------------------------------------------------------------
+
+create table public.lab_results (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  patient_id uuid not null,
+  order_item_id uuid not null,
+  version integer not null default 1,
+  supersedes_result_id uuid,
+  status public.lab_result_status not null default 'draft',
+  source public.lab_result_source not null default 'manual',
+  entered_by uuid not null references public.profiles(id),
+  entered_at timestamptz not null default now(),
+  submitted_by uuid references public.profiles(id),
+  submitted_at timestamptz,
+  verified_by uuid references public.profiles(id),
+  verified_at timestamptz,
+  -- Why a verified result is being corrected (version > 1).
+  correction_reason text,
+  -- Laboratory-technical remark (lab data, not a doctor's note).
+  lab_comment text,
+  -- When the test was performed; for imports, the historical date.
+  performed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  constraint lab_results_id_clinic_id_key unique (id, clinic_id),
+  constraint lab_results_item_version_key unique (order_item_id, version),
+  constraint lab_results_item_fkey
+    foreign key (order_item_id, clinic_id, patient_id) references public.lab_order_items (id, clinic_id, patient_id),
+  constraint lab_results_supersedes_fkey
+    foreign key (supersedes_result_id, clinic_id) references public.lab_results (id, clinic_id),
+  constraint lab_results_version_check
+    check (version >= 1 and (version = 1) = (supersedes_result_id is null)),
+  constraint lab_results_correction_reason_check
+    check ((version > 1) = (correction_reason is not null)
+           and (correction_reason is null or (correction_reason ~ '\S' and char_length(correction_reason) <= 300))),
+  constraint lab_results_comment_check
+    check (lab_comment is null or (lab_comment ~ '\S' and char_length(lab_comment) <= 1000)),
+  constraint lab_results_submitted_check
+    check ((submitted_by is null) = (submitted_at is null)
+           and (status = 'draft' or submitted_by is not null)),
+  constraint lab_results_verified_check
+    check ((verified_by is null) = (verified_at is null)
+           and (status in ('verified', 'superseded')) = (verified_by is not null)),
+  -- O4: a second person verifies.
+  constraint lab_results_second_person_check
+    check (verified_by is null or (verified_by <> entered_by and verified_by <> submitted_by))
+);
+
+create table public.lab_result_values (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  result_id uuid not null,
+  parameter_id uuid not null,
+  value_numeric numeric,
+  value_text text,
+  value_boolean boolean,
+  -- Frozen from configuration when the value was recorded.
+  unit_snapshot text,
+  reference_range_id uuid,
+  range_low numeric,
+  range_high numeric,
+  range_text text,
+  critical_low numeric,
+  critical_high numeric,
+  flag public.lab_value_flag not null default 'not_evaluated',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  constraint lab_result_values_id_clinic_id_key unique (id, clinic_id),
+  constraint lab_result_values_result_parameter_key unique (result_id, parameter_id),
+  constraint lab_result_values_result_fkey
+    foreign key (result_id, clinic_id) references public.lab_results (id, clinic_id) on delete cascade,
+  constraint lab_result_values_parameter_fkey
+    foreign key (parameter_id, clinic_id) references public.lab_test_parameters (id, clinic_id),
+  constraint lab_result_values_range_fkey
+    foreign key (reference_range_id, clinic_id) references public.lab_reference_ranges (id, clinic_id),
+  constraint lab_result_values_one_value_check
+    check (num_nonnulls(value_numeric, value_text, value_boolean) = 1),
+  constraint lab_result_values_text_check
+    check (value_text is null or (value_text ~ '\S' and char_length(value_text) <= 500))
+);
+
+create table public.lab_documents (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  patient_id uuid not null,
+  order_id uuid not null,
+  result_id uuid,
+  kind public.lab_document_kind not null,
+  storage_path text not null,
+  mime_type text not null,
+  size_bytes bigint not null,
+  sha256 text not null,
+  uploaded_by uuid not null references public.profiles(id),
+  created_at timestamptz not null default now(),
+  withdrawn_at timestamptz,
+  withdrawn_by uuid references public.profiles(id),
+  withdraw_reason text,
+
+  constraint lab_documents_id_clinic_id_key unique (id, clinic_id),
+  constraint lab_documents_storage_path_key unique (storage_path),
+  constraint lab_documents_order_fkey
+    foreign key (order_id, clinic_id, patient_id) references public.lab_orders (id, clinic_id, patient_id),
+  constraint lab_documents_result_fkey
+    foreign key (result_id, clinic_id) references public.lab_results (id, clinic_id),
+  constraint lab_documents_path_check
+    check (storage_path = clinic_id::text || '/' || id::text),
+  constraint lab_documents_mime_check
+    check (mime_type in ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')),
+  constraint lab_documents_size_check
+    check (size_bytes > 0 and size_bytes <= 20971520),
+  constraint lab_documents_sha256_check
+    check (sha256 ~ '^[0-9a-f]{64}$'),
+  constraint lab_documents_withdrawn_check
+    check ((withdrawn_at is null) = (withdrawn_by is null)
+           and (withdrawn_at is null) = (withdraw_reason is null)
+           and (withdraw_reason is null or (withdraw_reason ~ '\S' and char_length(withdraw_reason) <= 300)))
+);
+
+comment on table public.lab_results is 'Versioned result of one lab order item. Verified versions are immutable; corrections are new versions. Second-person verification. Server-only.';
+comment on table public.lab_result_values is 'Parameter values of a lab result version with the unit, reference range and flag frozen by the database. Server-only.';
+comment on table public.lab_documents is 'Lab report / scan / image metadata; bytes in private bucket lab-documents. Withdrawn, never deleted. Server-only.';
+
+create unique index lab_results_one_verified_key on public.lab_results (order_item_id) where status = 'verified';
+create unique index lab_results_one_in_progress_key on public.lab_results (order_item_id) where status in ('draft', 'submitted');
+create unique index lab_results_one_correction_key on public.lab_results (supersedes_result_id) where supersedes_result_id is not null;
+create index lab_results_patient_idx on public.lab_results (clinic_id, patient_id, created_at desc);
+create index lab_results_queue_idx on public.lab_results (clinic_id, status, updated_at) where status in ('draft', 'submitted');
+create index lab_result_values_parameter_idx on public.lab_result_values (parameter_id);
+create index lab_documents_order_idx on public.lab_documents (clinic_id, order_id);
+create index lab_documents_result_idx on public.lab_documents (result_id) where result_id is not null;
+
+-- ---------------------------------------------------------------------------
+-- lab_results: versions, second-person verification, immutability
+-- ---------------------------------------------------------------------------
+
+create or replace function public.lab_results_validate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_item public.lab_order_items;
+  v_source public.lab_order_source;
+  v_target public.lab_results;
+begin
+  if tg_op = 'DELETE' then
+    if old.status = 'draft' or public.lab_clinic_is_being_erased(old.clinic_id) then
+      return old;
+    end if;
+    raise exception 'lab result: only a draft can be discarded';
+  end if;
+
+  if tg_op = 'INSERT' then
+    new.created_at := now();
+    new.updated_at := now();
+    new.entered_at := now();
+    if new.status <> 'draft' or new.submitted_by is not null or new.verified_by is not null then
+      raise exception 'lab result: a new result starts as a draft';
+    end if;
+    if not public.lab_is_clinic_member(new.clinic_id, new.entered_by) then
+      raise exception 'lab result: entered_by must be a staff member of the clinic';
+    end if;
+    if new.performed_at is not null and new.performed_at > now() + interval '5 minutes' then
+      raise exception 'lab result: performed_at cannot be in the future';
+    end if;
+
+    -- One writer per item at a time.
+    select * into v_item from public.lab_order_items i
+    where i.id = new.order_item_id and i.clinic_id = new.clinic_id
+    for update;
+    if not found then
+      raise exception 'lab result: unknown order item';
+    end if;
+    select o.source into v_source from public.lab_orders o where o.id = v_item.order_id;
+
+    if new.supersedes_result_id is null then
+      if exists (select 1 from public.lab_results r where r.order_item_id = new.order_item_id) then
+        raise exception 'lab result: the item already has a result; a change to a verified result is a correction';
+      end if;
+      if new.source = 'manual' and v_source = 'external_import' then
+        raise exception 'lab result: results of an imported order are recorded with source import or external';
+      end if;
+      if v_source = 'external_import' then
+        if v_item.status not in ('ordered', 'processing') then
+          raise exception 'lab result: the imported item is %', v_item.status;
+        end if;
+      elsif v_item.status not in ('collected', 'processing') then
+        raise exception 'lab result: results are entered after the sample is collected (the item is %)', v_item.status;
+      end if;
+    else
+      select * into v_target from public.lab_results r
+      where r.id = new.supersedes_result_id and r.clinic_id = new.clinic_id;
+      if v_target.order_item_id is distinct from new.order_item_id or v_target.status <> 'verified' then
+        raise exception 'lab result: a correction supersedes the current verified result of the same item';
+      end if;
+      if new.version <> v_target.version + 1 then
+        raise exception 'lab result: a correction of version % is version %', v_target.version, v_target.version + 1;
+      end if;
+    end if;
+    return new;
+  end if;
+
+  -- UPDATE
+  perform public.lab_assert_only_changed(
+    to_jsonb(old), to_jsonb(new),
+    array['status', 'submitted_by', 'submitted_at', 'verified_by', 'verified_at', 'lab_comment', 'performed_at', 'updated_at'],
+    'lab result');
+  new.updated_at := now();
+
+  if old.status = new.status then
+    if old.status <> 'draft' then
+      raise exception 'lab result: a % result cannot be edited', old.status;
+    end if;
+    if new.submitted_by is distinct from old.submitted_by or new.verified_by is distinct from old.verified_by
+       or new.submitted_at is distinct from old.submitted_at or new.verified_at is distinct from old.verified_at then
+      raise exception 'lab result: submission and verification details change only with the status';
+    end if;
+    if new.performed_at is not null and new.performed_at > now() + interval '5 minutes' then
+      raise exception 'lab result: performed_at cannot be in the future';
+    end if;
+    return new;
+  end if;
+
+  if (old.status, new.status) = ('draft', 'submitted') then
+    if new.submitted_by is null or not public.lab_is_clinic_member(new.clinic_id, new.submitted_by) then
+      raise exception 'lab result: submitted_by must be a staff member of the clinic';
+    end if;
+    if not exists (select 1 from public.lab_result_values v where v.result_id = new.id) then
+      raise exception 'lab result: a result without values cannot be submitted';
+    end if;
+    new.submitted_at := now();
+    if new.lab_comment is distinct from old.lab_comment or new.performed_at is distinct from old.performed_at then
+      raise exception 'lab result: save the draft before submitting it';
+    end if;
+  elsif (old.status, new.status) = ('submitted', 'draft') then
+    -- Returned for correction by the reviewer.
+    new.submitted_by := null;
+    new.submitted_at := null;
+  elsif (old.status, new.status) = ('submitted', 'verified') then
+    if new.verified_by is null or not public.lab_is_clinic_member(new.clinic_id, new.verified_by) then
+      raise exception 'lab result: verified_by must be a staff member of the clinic';
+    end if;
+    if new.verified_by = new.entered_by or new.verified_by = new.submitted_by then
+      raise exception 'lab result: a second person must verify the result';
+    end if;
+    new.verified_at := now();
+    -- A verified correction retires the version it corrects, first, so the
+    -- one-verified-version index holds.
+    if new.supersedes_result_id is not null then
+      perform set_config('app.lab_superseding_result', new.supersedes_result_id::text, true);
+      update public.lab_results set status = 'superseded' where id = new.supersedes_result_id;
+      perform set_config('app.lab_superseding_result', '', true);
+    end if;
+  elsif (old.status, new.status) = ('verified', 'superseded') then
+    if coalesce(current_setting('app.lab_superseding_result', true), '') <> old.id::text then
+      raise exception 'lab result: a verified result is superseded only by verifying its correction';
+    end if;
+  else
+    raise exception 'lab result: % → % is not allowed', old.status, new.status;
+  end if;
+
+  if new.status <> 'draft' and (new.lab_comment is distinct from old.lab_comment or new.performed_at is distinct from old.performed_at) then
+    raise exception 'lab result: only a draft can be edited';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.lab_results_validate() from public, anon, authenticated;
+
+create trigger lab_results_validate
+  before insert or update or delete on public.lab_results
+  for each row execute function public.lab_results_validate();
+
+-- The order item follows its first result version: collected → processing on
+-- entry, → resulted on submission, back to processing when returned, →
+-- verified on verification. Corrections leave a verified item verified.
+create or replace function public.lab_results_sync_item()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_item public.lab_order_items;
+  v_target public.lab_item_status;
+  v_actor uuid;
+begin
+  if new.supersedes_result_id is not null then
+    return null;
+  end if;
+  select * into v_item from public.lab_order_items where id = new.order_item_id;
+
+  if tg_op = 'INSERT' then
+    v_target := case when v_item.status = 'collected' then 'processing'::public.lab_item_status end;
+    v_actor := new.entered_by;
+  elsif new.status = 'submitted' and old.status = 'draft' then
+    v_target := 'resulted';
+    v_actor := new.submitted_by;
+  elsif new.status = 'draft' and old.status = 'submitted' then
+    v_target := 'processing';
+    v_actor := auth.uid();
+  elsif new.status = 'verified' and old.status = 'submitted' then
+    v_target := 'verified';
+    v_actor := new.verified_by;
+  end if;
+
+  if v_target is not null and v_target is distinct from v_item.status then
+    update public.lab_order_items
+    set status = v_target, status_changed_by = v_actor
+    where id = new.order_item_id;
+  end if;
+  return null;
+end;
+$$;
+
+revoke all on function public.lab_results_sync_item() from public, anon, authenticated;
+
+create trigger lab_results_sync_item
+  after insert or update of status on public.lab_results
+  for each row execute function public.lab_results_sync_item();
+
+-- An item is resulted / verified only when its result says so.
+create or replace function public.lab_order_items_result_consistency()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if new.status = 'resulted' and not exists (
+    select 1 from public.lab_results r
+    where r.order_item_id = new.id and r.status = 'submitted' and r.supersedes_result_id is null
+  ) then
+    raise exception 'lab order item: resulted requires a submitted result';
+  end if;
+  if new.status = 'verified' and not exists (
+    select 1 from public.lab_results r where r.order_item_id = new.id and r.status = 'verified'
+  ) then
+    raise exception 'lab order item: verified requires a verified result';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.lab_order_items_result_consistency() from public, anon, authenticated;
+
+create trigger lab_order_items_result_consistency
+  before update of status on public.lab_order_items
+  for each row when (new.status is distinct from old.status and new.status in ('resulted', 'verified'))
+  execute function public.lab_order_items_result_consistency();
+
+-- ---------------------------------------------------------------------------
+-- lab_result_values: drafts only; unit, range and flag from configuration
+-- ---------------------------------------------------------------------------
+
+create or replace function public.lab_result_values_validate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_result public.lab_results;
+  v_param public.lab_test_parameters;
+  v_test_id uuid;
+  v_sex public.patient_sex;
+  v_dob date;
+  v_age integer;
+  v_range public.lab_reference_ranges;
+  v_actual text;
+begin
+  if tg_op = 'DELETE' then
+    select * into v_result from public.lab_results r where r.id = old.result_id;
+    -- Gone (a discarded draft cascading), still a draft, or the clinic is
+    -- being erased.
+    if v_result.id is null or v_result.status = 'draft' or public.lab_clinic_is_being_erased(old.clinic_id) then
+      return old;
+    end if;
+    raise exception 'lab result value: values of a % result cannot be removed', v_result.status;
+  end if;
+
+  select * into v_result from public.lab_results r
+  where r.id = new.result_id and r.clinic_id = new.clinic_id;
+  if v_result.status is distinct from 'draft' then
+    raise exception 'lab result value: only a draft result accepts values';
+  end if;
+  if tg_op = 'UPDATE' and (new.result_id <> old.result_id or new.parameter_id <> old.parameter_id or new.clinic_id <> old.clinic_id) then
+    raise exception 'lab result value: result and parameter cannot change';
+  end if;
+
+  select * into v_param from public.lab_test_parameters p
+  where p.id = new.parameter_id and p.clinic_id = new.clinic_id;
+  select i.test_id into v_test_id from public.lab_order_items i where i.id = v_result.order_item_id;
+  if v_param.test_id is distinct from v_test_id then
+    raise exception 'lab result value: the parameter does not belong to the ordered test';
+  end if;
+  if not v_param.active and v_result.source = 'manual' then
+    raise exception 'lab result value: parameter % is inactive', v_param.code;
+  end if;
+
+  -- The value must match the parameter's type.
+  if (v_param.value_type = 'numeric' and new.value_numeric is null)
+     or (v_param.value_type = 'boolean' and new.value_boolean is null)
+     or (v_param.value_type in ('text', 'choice') and new.value_text is null) then
+    raise exception 'lab result value: % expects a % value', v_param.code, v_param.value_type;
+  end if;
+  if v_param.value_type = 'choice' and not (new.value_text = any (v_param.choices)) then
+    raise exception 'lab result value: % is not one of the configured choices of %', new.value_text, v_param.code;
+  end if;
+
+  -- Configuration, not the caller, sets everything below.
+  new.unit_snapshot := v_param.unit;
+  new.reference_range_id := null;
+  new.range_low := null;
+  new.range_high := null;
+  new.range_text := null;
+  new.critical_low := null;
+  new.critical_high := null;
+  new.flag := 'not_evaluated';
+  if tg_op = 'INSERT' then
+    new.created_at := now();
+  else
+    new.created_at := old.created_at;
+  end if;
+  new.updated_at := now();
+
+  select p.sex, p.date_of_birth into v_sex, v_dob
+  from public.patients p
+  where p.id = v_result.patient_id;
+  if v_dob is not null then
+    v_age := (coalesce(v_result.performed_at, now()) at time zone 'UTC')::date - v_dob;
+  end if;
+
+  -- The most specific active range for this patient: a sex-specific range
+  -- before an any-sex one, an age band before an open one, the narrowest
+  -- band first. Unknown sex only matches any-sex ranges; unknown age only
+  -- matches ranges without an age band.
+  select * into v_range
+  from public.lab_reference_ranges r
+  where r.parameter_id = new.parameter_id
+    and r.active
+    and (r.sex is null or r.sex = v_sex)
+    and (
+      (r.age_min_days is null and r.age_max_days is null)
+      or (v_age is not null
+          and v_age >= coalesce(r.age_min_days, 0)
+          and v_age <= coalesce(r.age_max_days, 2147483647))
+    )
+  order by (r.sex is not null) desc,
+           num_nonnulls(r.age_min_days, r.age_max_days) desc,
+           coalesce(r.age_max_days, 2147483647)::bigint - coalesce(r.age_min_days, 0) asc
+  limit 1;
+
+  if v_range.id is not null then
+    new.reference_range_id := v_range.id;
+    new.range_low := v_range.low;
+    new.range_high := v_range.high;
+    new.range_text := v_range.normal_text;
+    new.critical_low := v_range.critical_low;
+    new.critical_high := v_range.critical_high;
+
+    if v_param.value_type = 'numeric' then
+      new.flag := case
+        when v_range.critical_low is not null and new.value_numeric < v_range.critical_low then 'critical_low'
+        when v_range.critical_high is not null and new.value_numeric > v_range.critical_high then 'critical_high'
+        when v_range.low is not null and new.value_numeric < v_range.low then 'low'
+        when v_range.high is not null and new.value_numeric > v_range.high then 'high'
+        when v_range.low is null and v_range.high is null then 'not_evaluated'
+        else 'normal'
+      end::public.lab_value_flag;
+    elsif v_range.normal_text is not null then
+      v_actual := case when v_param.value_type = 'boolean' then new.value_boolean::text else new.value_text end;
+      new.flag := case
+        when lower(btrim(v_actual)) = lower(btrim(v_range.normal_text)) then 'normal'
+        else 'abnormal'
+      end::public.lab_value_flag;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.lab_result_values_validate() from public, anon, authenticated;
+
+create trigger lab_result_values_validate
+  before insert or update or delete on public.lab_result_values
+  for each row execute function public.lab_result_values_validate();
+
+-- ---------------------------------------------------------------------------
+-- lab_documents: provenance; withdrawn, never deleted
+-- ---------------------------------------------------------------------------
+
+create or replace function public.lab_documents_validate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'DELETE' then
+    if public.lab_clinic_is_being_erased(old.clinic_id) then
+      return old;
+    end if;
+    raise exception 'lab document: documents are withdrawn, never deleted';
+  end if;
+
+  if tg_op = 'INSERT' then
+    new.created_at := now();
+    if new.withdrawn_at is not null then
+      raise exception 'lab document: a new document cannot be withdrawn';
+    end if;
+    if not public.lab_is_clinic_member(new.clinic_id, new.uploaded_by) then
+      raise exception 'lab document: uploaded_by must be a staff member of the clinic';
+    end if;
+    if new.result_id is not null and not exists (
+      select 1
+      from public.lab_results r
+      join public.lab_order_items i on i.id = r.order_item_id
+      where r.id = new.result_id and i.order_id = new.order_id
+    ) then
+      raise exception 'lab document: the result belongs to another order';
+    end if;
+    return new;
+  end if;
+
+  perform public.lab_assert_only_changed(
+    to_jsonb(old), to_jsonb(new), array['withdrawn_at', 'withdrawn_by', 'withdraw_reason'], 'lab document');
+  if old.withdrawn_at is not null then
+    raise exception 'lab document: already withdrawn';
+  end if;
+  if new.withdrawn_by is null or not public.lab_is_clinic_member(new.clinic_id, new.withdrawn_by) then
+    raise exception 'lab document: withdrawn_by must be a staff member of the clinic';
+  end if;
+  new.withdrawn_at := now();
+  return new;
+end;
+$$;
+
+revoke all on function public.lab_documents_validate() from public, anon, authenticated;
+
+create trigger lab_documents_validate
+  before insert or update or delete on public.lab_documents
+  for each row execute function public.lab_documents_validate();
+
+-- ---------------------------------------------------------------------------
+-- Audit: ids and states only — never values, comments or file names
+-- ---------------------------------------------------------------------------
+
+create or replace function public.lab_results_audit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_action text;
+  v_actor uuid;
+  v_row public.lab_results;
+begin
+  if tg_op = 'DELETE' then
+    v_row := old;
+    v_action := 'lab_result_draft_discarded';
+    v_actor := auth.uid();
+  else
+    v_row := new;
+    if tg_op = 'INSERT' then
+      v_action := case when new.supersedes_result_id is null then 'lab_result_entered' else 'lab_result_correction_started' end;
+      v_actor := new.entered_by;
+    elsif new.status = old.status then
+      return null;
+    elsif new.status = 'submitted' then
+      v_action := 'lab_result_submitted';
+      v_actor := new.submitted_by;
+    elsif new.status = 'draft' then
+      v_action := 'lab_result_returned';
+      v_actor := auth.uid();
+    elsif new.status = 'verified' then
+      v_action := case when new.supersedes_result_id is null then 'lab_result_verified' else 'lab_result_corrected' end;
+      v_actor := new.verified_by;
+    else
+      v_action := 'lab_result_superseded';
+      v_actor := auth.uid();
+    end if;
+  end if;
+
+  if public.lab_clinic_is_being_erased(v_row.clinic_id) then
+    return null;
+  end if;
+
+  insert into public.audit_events (clinic_id, actor_id, actor_type, action, entity_type, entity_id, patient_id, new_values)
+  values (
+    v_row.clinic_id,
+    v_actor,
+    case when v_actor is null then 'system'::public.actor_type else 'staff'::public.actor_type end,
+    v_action,
+    'lab_results',
+    v_row.id::text,
+    v_row.patient_id,
+    jsonb_build_object('order_item_id', v_row.order_item_id, 'version', v_row.version, 'status', v_row.status,
+                       'source', v_row.source, 'supersedes_result_id', v_row.supersedes_result_id)
+  );
+  return null;
+end;
+$$;
+
+revoke all on function public.lab_results_audit() from public, anon, authenticated;
+
+create trigger lab_results_audit
+  after insert or update or delete on public.lab_results
+  for each row execute function public.lab_results_audit();
+
+create or replace function public.lab_documents_audit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  insert into public.audit_events (clinic_id, actor_id, actor_type, action, entity_type, entity_id, patient_id, new_values)
+  values (
+    new.clinic_id,
+    case when tg_op = 'INSERT' then new.uploaded_by else new.withdrawn_by end,
+    'staff'::public.actor_type,
+    case when tg_op = 'INSERT' then 'lab_document_uploaded' else 'lab_document_withdrawn' end,
+    'lab_documents',
+    new.id::text,
+    new.patient_id,
+    jsonb_build_object('order_id', new.order_id, 'result_id', new.result_id, 'kind', new.kind)
+  );
+  return null;
+end;
+$$;
+
+revoke all on function public.lab_documents_audit() from public, anon, authenticated;
+
+create trigger lab_documents_audit
+  after insert or update on public.lab_documents
+  for each row execute function public.lab_documents_audit();
+
+-- ---------------------------------------------------------------------------
+-- Access: server only
+-- ---------------------------------------------------------------------------
+
+alter table public.lab_results enable row level security;
+alter table public.lab_result_values enable row level security;
+alter table public.lab_documents enable row level security;
+
+-- No policies: RLS denies every signed-in role even if a privilege is
+-- granted by mistake. Reads go through the server, which authorizes by role
+-- and purpose and audits each read.
+
+revoke all on table public.lab_results from public, anon, authenticated, service_role;
+revoke all on table public.lab_result_values from public, anon, authenticated, service_role;
+revoke all on table public.lab_documents from public, anon, authenticated, service_role;
+grant select, insert, update, delete on table public.lab_results to service_role;
+grant select, insert, update, delete on table public.lab_result_values to service_role;
+grant select, insert, update on table public.lab_documents to service_role;
+
+-- ---------------------------------------------------------------------------
+-- Storage: private bucket, server only
+-- ---------------------------------------------------------------------------
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('lab-documents', 'lab-documents', false, 20971520,
+        array['application/pdf', 'image/jpeg', 'image/png', 'image/webp'])
+on conflict (id) do nothing;
+
+drop policy if exists "lab-documents service role access" on storage.objects;
+create policy "lab-documents service role access"
+  on storage.objects
+  for all
+  to service_role
+  using (bucket_id = 'lab-documents')
+  with check (bucket_id = 'lab-documents');
+
+-- No policy for anon or authenticated: lab files are delivered only through
+-- short-lived signed URLs the server issues after authorization (Phase 11).

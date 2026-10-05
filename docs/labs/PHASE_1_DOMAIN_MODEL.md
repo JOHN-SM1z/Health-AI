@@ -446,6 +446,8 @@ clinics ────────────────────────
 
 ## 10. Phase 2 migration order
 
+> Implemented in Phase 2 as four migrations (see `PHASE_2_DATABASE.md`). Steps 1 and 6 — the `lab` role, the payment and notification subjects — moved to Phases 3, 6 and 16 respectively, so booking, payment and notification code changes ship with their own regression tests.
+
 1. Enum values in their own migrations: `staff_role` `lab`; `notification_job_type` `lab_result_ready`.
 2. New enums + `patients` columns (+ pre-flight for any unique index).
 3. Catalog tables.
