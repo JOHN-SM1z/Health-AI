@@ -2,8 +2,8 @@
 
 Status: **design only** — no migrations or code in this phase. Builds on
 `docs/labs/PHASE_0_AUDIT.md` and the owner decisions recorded there
-(2026-10-05). Phase 2 implements this model; anything marked **Open** must be
-settled before the affected table is migrated.
+(2026-10-05). Phase 2 implements this model. All open questions (O1–O6) are now
+locked (§11).
 
 Deferred, not modelled: critical-result alerts (critical bounds may be
 *configured and displayed*, but nothing alerts or escalates on them).
@@ -56,9 +56,18 @@ limited to a fixed vocabulary.
 | `document_number` | `text` null | Passport/ID card number, normalised upper-case, `^[A-Z0-9]{5,20}$`. |
 | `pinfl` | `text` null | `^[0-9]{14}$`. Partial unique `(clinic_id, pinfl) where pinfl is not null`. |
 
-**Open (O1):** whether `document_number` should also be unique per clinic.
-Existing duplicate patients (no merge tool yet, Phase 14) could make a unique
-index fail on rollout; Phase 2 adds a pre-flight check and only then the index.
+**Locked (O1):** `document_number` and `pinfl` are unique **within a clinic**
+(not globally — the same passport in Clinic A and Clinic B is valid). Values are
+normalised before storage and comparison: trim, remove spaces and dashes,
+upper-case. Rollout order in Phase 2: (1) add the columns, (2) normalise any
+existing values, (3) pre-flight query listing duplicates per clinic — the
+migration raises and names them instead of guessing, (4) only then create the
+partial unique indexes `(clinic_id, document_number)` and `(clinic_id, pinfl)`
+`where … is not null`. The repository has no passport/ID data today, so the
+pre-flight is expected to be empty; it stays in the migration as a guard. All
+future registrations and updates go through the same normalisation and the
+index rejects duplicates (`23505` → 409 with a "patient already exists"
+message).
 
 ### 2.2 `staff_role` — new value `lab`
 
@@ -75,7 +84,8 @@ index fail on rollout; Phase 2 adds a pre-flight check and only then the index.
 - `check (num_nonnulls(appointment_id, lab_order_id) = 1)`.
 - Unique `(lab_order_id) where lab_order_id is not null`; composite FK
   `(lab_order_id, clinic_id, patient_id) → lab_orders (id, clinic_id, patient_id)`.
-- Amount = sum of the order's non-cancelled item `price_snapshot`s, computed
+- Amount = sum of the order's non-cancelled item `price_snapshot`s (the
+  allocated prices, §3.2), computed
   in the database when the payment row is created; never from the browser.
 - Status machine, providers, `payments_block_direct_write`, audit trigger and
   `transitionPaymentStatus()` are reused unchanged.
@@ -92,14 +102,14 @@ index fail on rollout; Phase 2 adds a pre-flight check and only then the index.
 
 ```json
 {
-  "verification_mode": "single_step" | "two_step",
-  "payment_policy":    "before_collection" | "not_required",
+  "payment_policy":    "not_required" | "before_collection",
   "release_to_patient": true
 }
 ```
 
 Validated server-side (zod) like the existing settings route. Defaults when
-absent: `two_step`, `not_required`, `true`.
+absent: `not_required`, `true`. There is **no** verification-mode setting:
+second-person verification is always required (O4).
 
 ---
 
@@ -158,9 +168,22 @@ history keeps working because items hold snapshots.
 | `order_id`, `patient_id` | composite FK `(order_id, clinic_id, patient_id) → lab_orders` |
 | `test_id` | composite FK to `lab_tests` |
 | `panel_id` null | the panel it was ordered through |
-| `test_code_snapshot`, `test_name_snapshot`, `price_snapshot` | frozen at order time; panel items carry the panel price split rule chosen in Phase 5 (**Open O2**: allocate panel price to the first item vs. proportional) |
+| `test_code_snapshot`, `test_name_snapshot` | frozen at order time |
+| `list_price_snapshot` | the test's standalone catalog price at order time |
+| `price_snapshot` | the **allocated** price actually charged for this item (= list price for a single test; proportional share for a panel item, O2). Never recalculated later. |
 | `status lab_item_status` | see §4 |
 | unique | `(order_id, test_id)` — a test once per order |
+
+Panel price allocation (**locked, O2**): a panel's price is split across its
+tests in proportion to their standalone prices at order time:
+`allocated_i = panel_price × list_price_i / Σ list_price`. Amounts are rounded
+to whole so'm; the rounding remainder goes to the item with the largest list
+price (ties: lowest sort order) so `Σ allocated = panel_price` exactly. If all
+list prices are 0, the panel price is split equally the same way. Example:
+panel 240,000 with CBC 100,000 / Glucose 50,000 / Liver 150,000 → 80,000 /
+40,000 / 120,000. Allocation runs once, in the database, inside the
+order-creation function; refunds of individual items use the stored
+`price_snapshot`.
 
 Ordering authorization (decision 2): any authenticated staff member of the
 clinic, any active test. Server derives clinic, patient and orderer; validates
@@ -248,7 +271,7 @@ ITEM (lab_order_items.status) — the lab work position
      │              │                      │              │
      └──────────────┴──────────────────────┴──────────────┴──► cancelled
   ready_for_collection: entered automatically when the clinic payment policy
-  is satisfied (payment_policy = not_required ⇒ immediately).
+  is satisfied (default payment_policy = not_required ⇒ immediately, O6).
   A rejected sample returns the item to ready_for_collection.
 
 SAMPLE (lab_samples.status)
@@ -256,9 +279,9 @@ SAMPLE (lab_samples.status)
       └──────────┴──► rejected
 
 RESULT VERSION (lab_results.status)
-  draft ──► submitted ──► verified ──► superseded (only by a verified correction)
-    single_step mode: submit and verify happen in one server action by the enterer
-    two_step mode:    verifier ≠ enterer
+  draft ──► submitted (pending verification) ──► verified ──► superseded
+                                                     (only by a verified correction)
+  verified_by <> entered_by — always (DB CHECK + trigger), no single-person mode
 
 PAYMENT (payments.status, existing machine, subject = lab_order)
   unpaid ──► pending ──► paid ──► refunded
@@ -291,6 +314,12 @@ Transitions are compare-and-swap in server-only SQL functions (pattern:
 | Verify | — | — | ✓ | ✓ | — | — |
 | Payment | existing payment roles | (Phase 6 decides Kassa roles) | — | — | own status | — |
 
+Payment and collection are independent (**locked, O6**): with the default
+`payment_policy = not_required`, an unpaid order can be collected and
+processed; payment status is tracked separately on `payments`. A clinic can
+later switch to `before_collection`, which blocks the move to
+`ready_for_collection` until the order's payment is `paid`.
+
 ### 5.1 Database layer
 
 - Catalog tables: `SELECT` to `authenticated` where `is_clinic_staff(clinic_id)`; no write grants (writes via server routes, like `services`).
@@ -304,7 +333,7 @@ New `src/lib/labs/access.ts` with explicit functions (`canEnterLabResult`,
 `canReadLabResults`, `canVerifyLabResult`…), each scoping by the session's
 clinic. Every result read is audited strictly (`lab_result_viewed`, ids only).
 
-### 5.3 Doctor read scope — **proposal, Open O3**
+### 5.3 Doctor read scope — **locked (O3)**
 
 A doctor sees the **verified** lab results of a patient when
 `doctor_patient_access()` admits them (own patient, or active unexpired
@@ -315,11 +344,31 @@ per-appointment. Access still ends with the referral. Doctors cannot edit
 results they did not enter, and write their interpretation as their own
 `clinical_records` entry.
 
-### 5.4 Verification — **proposal, Open O4**
+Clarification: this is **not** "a doctor can see anything of any patient".
+The authorization layer first decides which patients the doctor may access
+(`doctor_patient_access()` — own patient or active, unexpired referral; never
+clinic-wide). Only for those patients does the doctor get all **verified**
+results across the patient's history, regardless of which appointment or
+orderer produced them. Unverified results show status only.
 
-Clinic setting `verification_mode`:
-- `single_step`: the person who enters (lab staff or doctor) also verifies.
-- `two_step` (default): a different lab staff member or a doctor verifies.
+### 5.4 Verification — **locked (O4)**
+
+- Every result needs a second person: `entered_by` (and the submitter) can
+  never be `verified_by`. Enforced by a CHECK constraint
+  (`verified_by is null or verified_by <> entered_by`) and the transition
+  function; corrections follow the same rule.
+- Authorized verifiers: lab staff and doctors of the clinic (doctors need no
+  extra role).
+- Consequence: a clinic with a single lab person needs a doctor (or a second
+  lab user) to verify.
+
+### 5.5 Receptionist / operational view — **locked (O5)**
+
+Receptionists (including one who ordered the test), managers, admins and
+owners see workflow status only — e.g. "CBC — Namuna olindi — Jarayonda" and
+later "CBC — Tasdiqlandi" — never parameter values, flags, ranges, lab
+comments or documents. They have no grants on result tables; status comes from
+`lab_order_items.status`.
 
 ---
 
@@ -408,11 +457,13 @@ clinics ────────────────────────
 
 ---
 
-## 11. Open questions
+## 11. Decisions (locked 2026-10-05)
 
-- **O1** Unique `document_number` per clinic (depends on existing duplicates).
-- **O2** How a panel's price is split across its items for the payment total and refunds.
-- **O3** Doctor read scope: patient-level within `doctor_patient_access()` (proposed) vs. per-appointment like `clinical_records`.
-- **O4** Default verification mode (`two_step` proposed) and whether doctors may verify.
-- **O5** Whether a receptionist who orders a test may see its result values (proposed: no — status only, per minimum-necessary).
-- **O6** Payment policy default (`not_required` proposed, so no clinic is blocked by an unconfigured Kassa).
+- **O1** Passport/ID number and PINFL unique per clinic after normalisation; duplicate pre-flight before the index (§2.1).
+- **O2** Panel price allocated proportionally to standalone prices, stored per item at order time (§3.2).
+- **O3** Doctors see all verified results of patients `doctor_patient_access()` admits — not clinic-wide (§5.3).
+- **O4** Second-person verification always; `entered_by <> verified_by`; doctors may verify (§5.4).
+- **O5** Receptionists (even the orderer) see status only, never values (§5.5).
+- **O6** Payment not required before collection by default; clinic may opt into `before_collection` (§5).
+
+No open questions remain for Phase 2.
