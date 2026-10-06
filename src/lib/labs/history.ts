@@ -78,7 +78,8 @@ export type HistoryResult = {
 
 const num = (v: number | string | null) => (v === null ? null : Number(v));
 
-export async function getPatientLabHistory(doctor: LinkedDoctor, patientId: string): Promise<HistoryResult[]> {
+/** `via` names the screen that read the results, for the audit trail. */
+export async function getPatientLabHistory(doctor: LinkedDoctor, patientId: string, opts: { via?: "doctor_history" | "lab_summary" } = {}): Promise<HistoryResult[]> {
   await requireAccess(doctor, patientId);
   const db = createAdminClient();
   // The person's merged record group (Phase 14).
@@ -171,7 +172,7 @@ export async function getPatientLabHistory(doctor: LinkedDoctor, patientId: stri
       entityId: r.id,
       patientId: r.patient_id,
       actor: { actorId: doctor.profileId, actorType: "staff" as const },
-      metadata: { order_item_id: r.order_item_id, version: r.version, via: "doctor_history" },
+      metadata: { order_item_id: r.order_item_id, version: r.version, via: opts.via ?? "doctor_history" },
     })),
     { strict: true },
   );

@@ -62,6 +62,7 @@ type Settings = {
   verifiers: "lab_and_doctor" | "lab_only" | "doctor_only";
   notifyStaff: boolean;
   notifyPatientOnCancel: boolean;
+  aiSummaries: boolean;
 };
 
 const VALUE_TYPE_LABELS: Record<ValueType, string> = {
@@ -815,6 +816,15 @@ function SettingsTab({ onError }: { onError: (m: string) => void }) {
       <label className="flex items-center gap-2 text-sm text-foreground">
         <input type="checkbox" checked={settings.notifyPatientOnCancel} onChange={(e) => setSettings({ ...settings, notifyPatientOnCancel: e.target.checked })} />
         Buyurtma bekor qilinganda bemorga Telegram orqali xabar berish
+      </label>
+      <label className="flex items-start gap-2 text-sm text-foreground">
+        <input className="mt-1" type="checkbox" checked={settings.aiSummaries} onChange={(e) => setSettings({ ...settings, aiSummaries: e.target.checked })} />
+        <span>
+          Shifokorning laboratoriya xulosasini AI yordamida qayta yozish
+          <span className="block text-xs text-ink-muted">
+            AI provayderga faqat tasdiqlangan qiymatlardan hisoblangan bayonotlar yuboriladi (bemor ismi, izohlar va matnli qiymatlar yuborilmaydi). O‘chirilgan bo‘lsa, xulosa AIsiz tuziladi.
+          </span>
+        </span>
       </label>
       <div className="flex items-center justify-end gap-3">
         {savedAt && <span className="text-xs text-ink-muted">Saqlandi {savedAt}</span>}

@@ -33,8 +33,9 @@ const FORBIDDEN = [
   /@\/lib\/referrals/,
   // Lab result data (20261005000004). Never referenced directly: patients'
   // own released, verified results reach the Mini App and the notification
-  // worker only through the one approved gateway below (Phase 12); a
-  // structured AI summary (Phase 18) will get its own narrow module.
+  // worker only through the one approved gateway below (Phase 12); the
+  // structured AI summary (Phase 18) lives in src/lib/labs/ai, which calls
+  // the AI provider — never the other way round (its own guard test).
   /lab_results/,
   /lab_result_values/,
   /lab_documents/,

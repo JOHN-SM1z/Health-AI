@@ -23,7 +23,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   - Lab staff see the lab orders and the laboratory data needed to perform the test and enter results — never unrelated doctor notes, diagnoses, prescriptions, referrals or history.
   - Doctors see lab results only for patients `doctor_patient_access()` admits (own patient or active referral).
   - Patients see only their own **finalized** lab results, through verified Telegram identity — never another patient's, never unfinalized ones.
-  - AI may process only structured lab-result data for the approved lab-summary feature (not before that phase is approved and built) — never clinical notes or history, never unnecessary identifiers, never diagnosis or treatment advice.
+  - AI may process only structured lab-result data for the approved lab-summary feature (built in Phase 18: `src/lib/labs/ai`) — never clinical notes or history, never unnecessary identifiers, never diagnosis or treatment advice. The facts are computed from verified values without AI; the model may only reword them, and its answer is shown only if every value, date and statement checks out against those facts (otherwise the computed text is shown). Nothing in the lab workflow depends on AI.
   - Operational staff (reception/cashier) may see order, test and payment status needed for their work, not result values.
   - Lab data never goes into logs, audit row values or analytics; audit rows carry ids and types only.
 - AI must only provide clinic information or non-diagnostic booking navigation. Urgent wording must trigger the approved urgent-care message and human-admin escalation.

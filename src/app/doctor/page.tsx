@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, LoadingRow } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AModal, LoadingRow } from "@/components/admin/ui";
 import { ListOrdered } from "lucide-react";
 import {
   STATUS_LABELS,
@@ -18,6 +18,7 @@ import {
 } from "@/lib/admin/client";
 import { localDayWindow } from "@/lib/time/local";
 import { ReferralDialog } from "@/components/doctor/referral-dialog";
+import { LabSummaryPanel } from "@/components/doctor/lab-summary";
 
 const WEEKDAYS = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
 const MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
@@ -46,6 +47,7 @@ export default function DoctorQueuePage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [doctorName, setDoctorName] = useState<string | null>(null);
   const [referFor, setReferFor] = useState<Row | null>(null);
+  const [labFor, setLabFor] = useState<Row | null>(null);
   const [sentReferralId, setSentReferralId] = useState<string | null>(null);
   const [pendingReferrals, setPendingReferrals] = useState<PendingReferral[] | null>(null);
   const [referralsError, setReferralsError] = useState<string | null>(null);
@@ -258,6 +260,9 @@ export default function DoctorQueuePage() {
                       {r.status === "in_progress" ? "Yakunlash" : r.status === "checked_in" ? "Boshlash" : "Jarayonga olish"}
                     </AButton>
                   )}
+                  <AButton size="sm" variant="ghost" onClick={() => setLabFor(r)}>
+                    Laboratoriya xulosasi
+                  </AButton>
                   {(r.status === "in_progress" || r.status === "completed") && (
                     <AButton size="sm" variant="outline" onClick={() => setReferFor(r)}>
                       Yo‘llanma
@@ -268,6 +273,12 @@ export default function DoctorQueuePage() {
             </tr>
           ))}
         </ATable>
+      )}
+
+      {labFor && (
+        <AModal title={`Laboratoriya xulosasi — ${labFor.patients?.full_name ?? "bemor"}`} onClose={() => setLabFor(null)} maxWidth="max-w-2xl">
+          <LabSummaryPanel patientId={labFor.patient_id} />
+        </AModal>
       )}
 
       {referFor && (

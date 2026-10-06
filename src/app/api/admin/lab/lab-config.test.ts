@@ -214,17 +214,17 @@ describeDb("lab configuration API (real database)", () => {
 
   it("stores lab settings, validates them, and reads malformed stored values as safe defaults", async () => {
     const get = async () => ((await (await getSettings()).json()) as { data: { settings: unknown } }).data.settings;
-    expect(await get()).toEqual({ paymentPolicy: "not_required", releaseToPatient: true, verifiers: "lab_and_doctor", notifyStaff: true, notifyPatientOnCancel: false });
+    expect(await get()).toEqual({ paymentPolicy: "not_required", releaseToPatient: true, verifiers: "lab_and_doctor", notifyStaff: true, notifyPatientOnCancel: false, aiSummaries: false });
     expect((await call(PUT_SETTINGS, "PUT", "settings", { paymentPolicy: "always", releaseToPatient: true, verifiers: "lab_and_doctor" })).status).toBe(400);
     expect((await call(PUT_SETTINGS, "PUT", "settings", { paymentPolicy: "not_required", releaseToPatient: true, verifiers: "nobody" })).status).toBe(400);
     expect((await call(PUT_SETTINGS, "PUT", "settings", { paymentPolicy: "before_collection", releaseToPatient: false, verifiers: "lab_only" })).status).toBe(200);
-    expect(await get()).toEqual({ paymentPolicy: "before_collection", releaseToPatient: false, verifiers: "lab_only", notifyStaff: true, notifyPatientOnCancel: false });
+    expect(await get()).toEqual({ paymentPolicy: "before_collection", releaseToPatient: false, verifiers: "lab_only", notifyStaff: true, notifyPatientOnCancel: false, aiSummaries: false });
     // Written around the API (management can write app_settings directly).
-    await admin.from("app_settings").upsert({ clinic_id: clinicA, key: "lab", value: { paymentPolicy: 42, releaseToPatient: "yes", verifiers: "everyone", notifyStaff: "no", notifyPatientOnCancel: 1 } });
-    expect(await get()).toEqual({ paymentPolicy: "not_required", releaseToPatient: true, verifiers: "lab_and_doctor", notifyStaff: true, notifyPatientOnCancel: false });
+    await admin.from("app_settings").upsert({ clinic_id: clinicA, key: "lab", value: { paymentPolicy: 42, releaseToPatient: "yes", verifiers: "everyone", notifyStaff: "no", notifyPatientOnCancel: 1, aiSummaries: "true" } });
+    expect(await get()).toEqual({ paymentPolicy: "not_required", releaseToPatient: true, verifiers: "lab_and_doctor", notifyStaff: true, notifyPatientOnCancel: false, aiSummaries: false });
     // One malformed field never resets the others.
     await admin.from("app_settings").upsert({ clinic_id: clinicA, key: "lab", value: { paymentPolicy: "before_collection", releaseToPatient: false, verifiers: "everyone" } });
-    expect(await get()).toEqual({ paymentPolicy: "before_collection", releaseToPatient: false, verifiers: "lab_and_doctor", notifyStaff: true, notifyPatientOnCancel: false });
+    expect(await get()).toEqual({ paymentPolicy: "before_collection", releaseToPatient: false, verifiers: "lab_and_doctor", notifyStaff: true, notifyPatientOnCancel: false, aiSummaries: false });
   });
 });
 

@@ -19,6 +19,10 @@ import type { ClinicStaff } from "@/lib/labs/guards";
  *   notifyStaff       in-app lab notifications to staff (Phase 16). Default true.
  *   notifyPatientOnCancel  a Telegram message to the patient when a lab
  *                     order is cancelled (Phase 16). Default false.
+ *   aiSummaries       let the AI provider reword the doctor's laboratory
+ *                     summary (Phase 18). Only computed statements from
+ *                     structured, verified values are sent. Default false:
+ *                     the summary is then shown as computed, without AI.
  *   verifiers         who may verify a result (Phase 9): "lab_and_doctor"
  *                     (default), "lab_only" or "doctor_only". Whoever it is,
  *                     it is never the person who entered or submitted the
@@ -35,6 +39,7 @@ export const labSettingsSchema = z.object({
   verifiers: z.enum(["lab_and_doctor", "lab_only", "doctor_only"]),
   notifyStaff: z.boolean().default(true),
   notifyPatientOnCancel: z.boolean().default(false),
+  aiSummaries: z.boolean().default(false),
 });
 
 export type LabSettings = z.infer<typeof labSettingsSchema>;
@@ -45,6 +50,7 @@ export const LAB_SETTINGS_DEFAULTS: LabSettings = {
   verifiers: "lab_and_doctor",
   notifyStaff: true,
   notifyPatientOnCancel: false,
+  aiSummaries: false,
 };
 
 // Field by field: one malformed field falls back to its own default and

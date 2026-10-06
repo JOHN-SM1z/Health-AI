@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ABadge, AButton, AEmpty, AError } from "@/components/admin/ui";
 import { adminApi, AdminApiError, formatDateTime } from "@/lib/admin/client";
 import { LAB_FLAG, LabOrdersSection } from "@/components/doctor/lab-orders";
+import { LabSummaryPanel } from "@/components/doctor/lab-summary";
 import { formatRange } from "@/lib/labs/values";
 import { buildSeries, type Series } from "@/lib/labs/trends";
 import { FlaskConical, LineChart, Paperclip } from "lucide-react";
@@ -54,7 +55,7 @@ const DOC_KIND: Record<string, string> = { report: "Hisobot", scan: "Skan", imag
 const errorText = (e: unknown, fallback: string) => (e instanceof AdminApiError ? e.message : fallback);
 const formatDate = (iso: string) => new Date(iso).toLocaleDateString("uz-UZ", { day: "2-digit", month: "2-digit", year: "numeric" });
 
-type Tab = "orders" | "results" | "trends";
+type Tab = "orders" | "results" | "trends" | "summary";
 
 export function LabWorkspace({ patientId, appointmentId }: { patientId: string; appointmentId: string | null }) {
   const [tab, setTab] = useState<Tab>("orders");
@@ -63,7 +64,7 @@ export function LabWorkspace({ patientId, appointmentId }: { patientId: string; 
 
   // Results are read (and audited) only when the doctor opens them.
   useEffect(() => {
-    if (tab === "orders" || results !== null) return;
+    if (tab === "orders" || tab === "summary" || results !== null) return;
     adminApi
       .get<{ results: Result[] }>(`/api/doctor/patients/${patientId}/lab-history`)
       .then((res) => setResults(res.results))
@@ -77,6 +78,7 @@ export function LabWorkspace({ patientId, appointmentId }: { patientId: string; 
           ["orders", "Buyurtmalar"],
           ["results", "Natijalar tarixi"],
           ["trends", "Dinamika"],
+          ["summary", "Xulosa"],
         ] as const).map(([value, label]) => (
           <button
             key={value}
@@ -91,8 +93,9 @@ export function LabWorkspace({ patientId, appointmentId }: { patientId: string; 
         ))}
       </div>
       {tab === "orders" && <LabOrdersSection patientId={patientId} appointmentId={appointmentId} />}
-      {tab !== "orders" && error && <AError message={error} />}
-      {tab !== "orders" && !error && results === null && <div className="h-2 w-full animate-pulse rounded bg-hairline" />}
+      {tab === "summary" && <LabSummaryPanel patientId={patientId} />}
+      {(tab === "results" || tab === "trends") && error && <AError message={error} />}
+      {(tab === "results" || tab === "trends") && !error && results === null && <div className="h-2 w-full animate-pulse rounded bg-hairline" />}
       {tab === "results" && results && <ResultsHistory patientId={patientId} results={results} />}
       {tab === "trends" && results && <Trends results={results} />}
     </div>
