@@ -33,10 +33,42 @@ type Parameter = {
 type Entry = {
   item: { id: string; testName: string; testCode: string; status: string; orderedAt: string };
   patient: { fullName: string | null; dateOfBirth: string | null; sex: string | null };
-  result: { id: string; status: string; version: number; mine: boolean; enteredByName: string | null; enteredAt: string; submittedAt: string | null; labComment: string | null } | null;
+  result: (VersionMeta & { mine: boolean; labComment: string | null }) | null;
   parameters: Parameter[];
+  versions: Version[];
+  can: { verify: boolean; giveBack: boolean; correct: boolean };
 };
+type VersionMeta = {
+  id: string;
+  status: string;
+  version: number;
+  enteredByName: string | null;
+  enteredAt: string;
+  submittedByName: string | null;
+  submittedAt: string | null;
+  verifiedByName: string | null;
+  verifiedAt: string | null;
+  correctionReason: string | null;
+};
+type Version = VersionMeta & { values: Array<{ parameter: string; value: string; unit: string | null; flag: string }> };
 type Input = string | boolean | null;
+
+const VERSION_STATUS: Record<string, { label: string; tone: "neutral" | "purple" | "green" | "gray" }> = {
+  draft: { label: "Qoralama", tone: "neutral" },
+  submitted: { label: "Tekshiruvda", tone: "purple" },
+  verified: { label: "Tasdiqlangan", tone: "green" },
+  superseded: { label: "Almashtirilgan", tone: "gray" },
+};
+
+function Provenance({ v }: { v: VersionMeta }) {
+  return (
+    <p className="text-xs text-ink-muted">
+      Kiritdi: {v.enteredByName ?? "—"} ({formatDateTime(v.enteredAt)})
+      {v.submittedAt && ` · Yubordi: ${v.submittedByName ?? "—"} (${formatDateTime(v.submittedAt)})`}
+      {v.verifiedAt && ` · Tasdiqladi: ${v.verifiedByName ?? "—"} (${formatDateTime(v.verifiedAt)})`}
+    </p>
+  );
+}
 
 const SEX: Record<string, string> = { male: "erkak", female: "ayol", unknown: "jinsi noma’lum" };
 const errorText = (e: unknown, fallback: string) => (e instanceof AdminApiError ? e.message : fallback);
@@ -68,7 +100,10 @@ export function ResultEntryDialog({ itemId, onClose, onChanged }: { itemId: stri
   const [inputs, setInputs] = useState<Record<string, Input>>({});
   const [comment, setComment] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState<"save" | "submit" | "discard" | null>(null);
+  const [saving, setSaving] = useState<"save" | "submit" | "discard" | "verify" | "return" | "correct" | null>(null);
+  const [correcting, setCorrecting] = useState(false);
+  const [reason, setReason] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   const load = async () => {
@@ -107,10 +142,22 @@ export function ResultEntryDialog({ itemId, onClose, onChanged }: { itemId: stri
     return res.resultId;
   };
 
-  const run = async (kind: "save" | "submit" | "discard") => {
+  const run = async (kind: "save" | "submit" | "discard" | "verify" | "return" | "correct") => {
     setSaving(kind);
     setError(null);
     try {
+      if ((kind === "verify" || kind === "return") && result) {
+        await adminApi.post(`/api/lab/results/${result.id}`, { action: kind });
+        onChanged(kind === "verify" ? `${entry!.item.testName}: natija tasdiqlandi` : `${entry!.item.testName}: natija qayta ishlashga qaytarildi`);
+        return;
+      }
+      if (kind === "correct" && result) {
+        await adminApi.post(`/api/lab/results/${result.id}`, { action: "correct", reason: reason.trim() });
+        setCorrecting(false);
+        setReason("");
+        await load();
+        return;
+      }
       if (kind === "discard" && result) {
         await adminApi.post(`/api/lab/results/${result.id}`, { action: "discard" });
         onChanged(`${entry!.item.testName}: qoralama o‘chirildi`);
@@ -144,6 +191,23 @@ export function ResultEntryDialog({ itemId, onClose, onChanged }: { itemId: stri
             <AButton variant="outline" onClick={() => void run("save")} loading={saving === "save"} disabled={hasProblem || saving !== null}>Qoralamani saqlash</AButton>
             <AButton onClick={() => void run("submit")} loading={saving === "submit"} disabled={hasProblem || missing > 0 || saving !== null}>Saqlash va tekshiruvga yuborish</AButton>
           </>
+        ) : entry && result?.status === "submitted" && (entry.can.verify || entry.can.giveBack) ? (
+          <>
+            <AButton variant="ghost" onClick={onClose}>Yopish</AButton>
+            {entry.can.giveBack && (
+              <AButton variant="outline" onClick={() => void run("return")} loading={saving === "return"} disabled={saving !== null}>
+                {entry.can.verify ? "Qayta ishlashga qaytarish" : "Qaytarib olish"}
+              </AButton>
+            )}
+            {entry.can.verify && (
+              <AButton onClick={() => void run("verify")} loading={saving === "verify"} disabled={saving !== null}>Tasdiqlash</AButton>
+            )}
+          </>
+        ) : entry && result?.status === "verified" && entry.can.correct && !correcting ? (
+          <>
+            <AButton variant="ghost" onClick={onClose}>Yopish</AButton>
+            <AButton variant="outline" onClick={() => setCorrecting(true)}>Tuzatish</AButton>
+          </>
         ) : entry && result?.status === "draft" && !result.mine ? (
           <>
             <AButton variant="ghost" onClick={onClose}>Yopish</AButton>
@@ -168,9 +232,23 @@ export function ResultEntryDialog({ itemId, onClose, onChanged }: { itemId: stri
               {SEX[entry.patient.sex ?? "unknown"] ?? "jinsi noma’lum"}
             </span>
           </p>
+          {result && (
+            <div className="flex flex-col gap-1">
+              <p className="flex flex-wrap items-center gap-2 text-sm">
+                <ABadge tone={VERSION_STATUS[result.status]?.tone ?? "neutral"}>{VERSION_STATUS[result.status]?.label ?? result.status}</ABadge>
+                {result.version > 1 && <span className="text-ink-muted">{result.version}-versiya (tuzatish): {result.correctionReason}</span>}
+              </p>
+              <Provenance v={result} />
+            </div>
+          )}
           {result?.status === "submitted" && (
             <p className="rounded-lg bg-sand px-3 py-2 text-sm text-foreground" role="status">
-              Tekshiruvga yuborilgan ({formatDateTime(result.submittedAt)}). Natijani boshqa xodim tasdiqlaydi; o‘zgartirib bo‘lmaydi.
+              Tekshiruvga yuborilgan ({formatDateTime(result.submittedAt)}). Natijani kiritgan va yuborgan xodimdan boshqa xodim tasdiqlaydi; o‘zgartirib bo‘lmaydi.
+            </p>
+          )}
+          {result?.status === "verified" && (
+            <p className="rounded-lg bg-pine-tint px-3 py-2 text-sm text-pine-deep" role="status">
+              Tasdiqlangan natija o‘zgartirilmaydi. Xato bo‘lsa, tuzatish yangi versiya sifatida kiritiladi va avvalgi versiya saqlanib qoladi.
             </p>
           )}
           {result?.status === "draft" && !result.mine && (
@@ -236,6 +314,46 @@ export function ResultEntryDialog({ itemId, onClose, onChanged }: { itemId: stri
             Belgi saqlangandan keyin qo‘yiladi va faqat klinikada sozlangan me’yor oralig‘iga nisbatan joylashuvni ko‘rsatadi — bu tashxis emas.
             {editable && missing > 0 && ` Yuborish uchun barcha ko‘rsatkichlarni to‘ldiring (${missing} ta qoldi).`}
           </p>
+
+          {correcting && result?.status === "verified" && (
+            <div className="flex flex-col gap-2 rounded-xl border border-hairline p-3" role="group" aria-label="Tuzatish">
+              <ATextArea value={reason} onChange={setReason} rows={2} placeholder="Tuzatish sababi (masalan: namuna aralashib ketgan)" aria-label="Tuzatish sababi" />
+              <div className="flex gap-2">
+                <AButton size="sm" onClick={() => void run("correct")} loading={saving === "correct"} disabled={!reason.trim() || saving !== null}>Tuzatishni boshlash</AButton>
+                <AButton size="sm" variant="ghost" onClick={() => setCorrecting(false)}>Bekor qilish</AButton>
+              </div>
+            </div>
+          )}
+
+          {entry.versions.length > 0 && (
+            <div className="rounded-xl border border-hairline p-3">
+              <button type="button" className="text-sm font-medium text-foreground" onClick={() => setShowHistory((v) => !v)} aria-expanded={showHistory}>
+                Oldingi versiyalar ({entry.versions.length}) {showHistory ? "▴" : "▾"}
+              </button>
+              {showHistory && (
+                <ul className="mt-2 flex flex-col gap-3">
+                  {entry.versions.map((v) => (
+                    <li key={v.id} className="text-sm">
+                      <p className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{v.version}-versiya</span>
+                        <ABadge tone={VERSION_STATUS[v.status]?.tone ?? "neutral"}>{VERSION_STATUS[v.status]?.label ?? v.status}</ABadge>
+                        {v.correctionReason && <span className="text-xs text-ink-muted">Tuzatish sababi: {v.correctionReason}</span>}
+                      </p>
+                      <Provenance v={v} />
+                      <ul className="mt-1 text-xs text-foreground">
+                        {v.values.map((x) => (
+                          <li key={x.parameter}>
+                            {x.parameter}: <span className="font-numeric">{x.value}{x.unit ? ` ${x.unit}` : ""}</span>{" "}
+                            <span className="text-ink-muted">({LAB_FLAG[x.flag]?.label ?? x.flag})</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
           {confirmDiscard && result && (
             <div className="rounded-xl border border-danger/40 p-3 text-sm" role="alertdialog" aria-label="Qoralamani o‘chirishni tasdiqlang">

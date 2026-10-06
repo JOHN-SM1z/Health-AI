@@ -260,6 +260,8 @@ export type LabResultView = {
   performedAt: string | null;
   verifiedAt: string;
   version: number;
+  /** Why this version corrected the previous one (version > 1). */
+  correctionReason: string | null;
   labComment: string | null;
   values: LabResultValueView[];
 };
@@ -293,7 +295,7 @@ export async function getVerifiedLabResultForDoctor(doctor: LinkedDoctor, patien
   const { data: result, error } = await db
     .from("lab_results")
     .select(
-      "id, version, performed_at, verified_at, lab_comment, " +
+      "id, version, performed_at, verified_at, lab_comment, correction_reason, " +
         "lab_result_values(value_numeric, value_text, value_boolean, unit_snapshot, range_low, range_high, range_text, flag, lab_test_parameters(name, sort_order))",
     )
     .eq("order_item_id", itemId)
@@ -309,6 +311,7 @@ export async function getVerifiedLabResultForDoctor(doctor: LinkedDoctor, patien
     performed_at: string | null;
     verified_at: string;
     lab_comment: string | null;
+    correction_reason: string | null;
     lab_result_values: Array<{
       value_numeric: number | null;
       value_text: string | null;
@@ -341,6 +344,7 @@ export async function getVerifiedLabResultForDoctor(doctor: LinkedDoctor, patien
     performedAt: r.performed_at,
     verifiedAt: r.verified_at,
     version: r.version,
+    correctionReason: r.correction_reason,
     labComment: r.lab_comment,
     values: [...r.lab_result_values]
       .sort((a, b) => (a.lab_test_parameters?.sort_order ?? 0) - (b.lab_test_parameters?.sort_order ?? 0))

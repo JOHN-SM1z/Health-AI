@@ -55,7 +55,11 @@ type Range = {
 };
 type Panel = { id: string; code: string; name: string; price: number; sort_order: number; active: boolean; test_ids: string[] };
 type Catalog = { categories: Category[]; tests: Test[]; parameters: Parameter[]; ranges: Range[]; panels: Panel[] };
-type Settings = { paymentPolicy: "not_required" | "before_collection"; releaseToPatient: boolean };
+type Settings = {
+  paymentPolicy: "not_required" | "before_collection";
+  releaseToPatient: boolean;
+  verifiers: "lab_and_doctor" | "lab_only" | "doctor_only";
+};
 
 const VALUE_TYPE_LABELS: Record<ValueType, string> = {
   numeric: "Son",
@@ -784,6 +788,19 @@ function SettingsTab({ onError }: { onError: (m: string) => void }) {
         />
         Tasdiqlangan natijalarni bemorga Telegram ilovasida ko‘rsatish
       </label>
+      <div>
+        <p className="font-medium text-foreground">Natijani kim tasdiqlaydi</p>
+        <ASelect
+          value={settings.verifiers}
+          onChange={(v) => setSettings({ ...settings, verifiers: v as Settings["verifiers"] })}
+          options={[
+            { value: "lab_and_doctor", label: "Laboratoriya xodimi yoki shifokor" },
+            { value: "lab_only", label: "Faqat laboratoriya xodimi" },
+            { value: "doctor_only", label: "Faqat shifokor (o‘z bemorlari)" },
+          ]}
+          aria-label="Tasdiqlovchilar"
+        />
+      </div>
       <p className="text-xs text-ink-muted">Har bir natijani kiritgan xodimdan boshqa vakolatli xodim tasdiqlaydi — bu o‘zgarmas qoida.</p>
       <div className="flex items-center justify-end gap-3">
         {savedAt && <span className="text-xs text-ink-muted">Saqlandi {savedAt}</span>}

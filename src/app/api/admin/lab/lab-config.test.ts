@@ -107,7 +107,7 @@ describeDb("lab configuration API (real database)", () => {
     ] as const) {
       as(profile, role);
       expect((await post("tests", { code: "X1", name: "X", sampleType: "Blood", price: 1 })).status).toBe(403);
-      expect((await call(PUT_SETTINGS, "PUT", "settings", { paymentPolicy: "not_required", releaseToPatient: true })).status).toBe(403);
+      expect((await call(PUT_SETTINGS, "PUT", "settings", { paymentPolicy: "not_required", releaseToPatient: true, verifiers: "lab_and_doctor" })).status).toBe(403);
       // Everyone on the staff may read the catalog (it holds no patient data).
       expect((await catalog()).status).toBe(200);
     }
@@ -214,13 +214,17 @@ describeDb("lab configuration API (real database)", () => {
 
   it("stores lab settings, validates them, and reads malformed stored values as safe defaults", async () => {
     const get = async () => ((await (await getSettings()).json()) as { data: { settings: unknown } }).data.settings;
-    expect(await get()).toEqual({ paymentPolicy: "not_required", releaseToPatient: true });
-    expect((await call(PUT_SETTINGS, "PUT", "settings", { paymentPolicy: "always", releaseToPatient: true })).status).toBe(400);
-    expect((await call(PUT_SETTINGS, "PUT", "settings", { paymentPolicy: "before_collection", releaseToPatient: false })).status).toBe(200);
-    expect(await get()).toEqual({ paymentPolicy: "before_collection", releaseToPatient: false });
+    expect(await get()).toEqual({ paymentPolicy: "not_required", releaseToPatient: true, verifiers: "lab_and_doctor" });
+    expect((await call(PUT_SETTINGS, "PUT", "settings", { paymentPolicy: "always", releaseToPatient: true, verifiers: "lab_and_doctor" })).status).toBe(400);
+    expect((await call(PUT_SETTINGS, "PUT", "settings", { paymentPolicy: "not_required", releaseToPatient: true, verifiers: "nobody" })).status).toBe(400);
+    expect((await call(PUT_SETTINGS, "PUT", "settings", { paymentPolicy: "before_collection", releaseToPatient: false, verifiers: "lab_only" })).status).toBe(200);
+    expect(await get()).toEqual({ paymentPolicy: "before_collection", releaseToPatient: false, verifiers: "lab_only" });
     // Written around the API (management can write app_settings directly).
-    await admin.from("app_settings").upsert({ clinic_id: clinicA, key: "lab", value: { paymentPolicy: 42, releaseToPatient: "yes" } });
-    expect(await get()).toEqual({ paymentPolicy: "not_required", releaseToPatient: true });
+    await admin.from("app_settings").upsert({ clinic_id: clinicA, key: "lab", value: { paymentPolicy: 42, releaseToPatient: "yes", verifiers: "everyone" } });
+    expect(await get()).toEqual({ paymentPolicy: "not_required", releaseToPatient: true, verifiers: "lab_and_doctor" });
+    // One malformed field never resets the others.
+    await admin.from("app_settings").upsert({ clinic_id: clinicA, key: "lab", value: { paymentPolicy: "before_collection", releaseToPatient: false, verifiers: "everyone" } });
+    expect(await get()).toEqual({ paymentPolicy: "before_collection", releaseToPatient: false, verifiers: "lab_and_doctor" });
   });
 });
 

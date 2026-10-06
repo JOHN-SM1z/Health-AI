@@ -37,6 +37,8 @@ export type QueueItem = {
   preparationText: string | null;
   status: string;
   sampleId: string | null;
+  /** A correction of the verified result in progress (status only, never values). */
+  correction: "draft" | "submitted" | null;
 };
 
 export type QueueSample = {
@@ -54,33 +56,54 @@ export type QueueOrder = {
   id: string;
   createdAt: string;
   source: string;
+  status: string;
   patient: { id: string; fullName: string | null; dateOfBirth: string | null };
   items: QueueItem[];
   samples: QueueSample[];
 };
 
 export const QUEUE_LIMIT = 200;
+/** Completed orders stay in the queue this long (to review or correct a verified result). */
+export const RECENTLY_COMPLETED_DAYS = 14;
 
-/** Active lab orders of the clinic, newest first, with status and specimens only. */
+/** Active (and recently completed) lab orders of the clinic, newest first, with status and specimens only. */
 export async function getWorkQueue(staff: ClinicStaff): Promise<QueueOrder[]> {
   const { data, error } = await createAdminClient()
     .from("lab_orders")
     .select(
-      "id, created_at, source, " +
+      "id, created_at, source, status, " +
         "patients!lab_orders_patient_fkey(id, full_name, date_of_birth), " +
         "lab_order_items!lab_order_items_order_fkey(id, test_code_snapshot, test_name_snapshot, status, lab_tests!lab_order_items_test_fkey(sample_type, preparation_text)), " +
         "lab_samples!lab_samples_order_fkey(id, sample_code, sample_type, status, collected_at, notes, reject_reason, lab_sample_items!lab_sample_items_sample_fkey(order_item_id))",
     )
     .eq("clinic_id", staff.clinicId)
-    .eq("status", "active")
+    .or(`status.eq.active,and(status.eq.completed,updated_at.gte.${new Date(Date.now() - RECENTLY_COMPLETED_DAYS * 86_400_000).toISOString()})`)
     .order("created_at", { ascending: false })
     .limit(QUEUE_LIMIT);
   if (error) throw loadFailed("queue", error);
+
+  // Corrections in progress on verified tests: statuses only (no values).
+  const verifiedItems = ((data ?? []) as unknown as Array<{ lab_order_items: Array<{ id: string; status: string }> }>)
+    .flatMap((o) => o.lab_order_items)
+    .filter((i) => i.status === "verified")
+    .map((i) => i.id);
+  const corrections = new Map<string, "draft" | "submitted">();
+  if (verifiedItems.length > 0) {
+    const { data: pending, error: pendingError } = await createAdminClient()
+      .from("lab_results")
+      .select("order_item_id, status")
+      .eq("clinic_id", staff.clinicId)
+      .in("order_item_id", verifiedItems)
+      .in("status", ["draft", "submitted"]);
+    if (pendingError) throw loadFailed("queue corrections", pendingError);
+    for (const r of pending ?? []) corrections.set(r.order_item_id, r.status as "draft" | "submitted");
+  }
 
   type Row = {
     id: string;
     created_at: string;
     source: string;
+    status: string;
     patients: { id: string; full_name: string | null; date_of_birth: string | null } | null;
     lab_order_items: Array<{
       id: string;
@@ -119,6 +142,7 @@ export async function getWorkQueue(staff: ClinicStaff): Promise<QueueOrder[]> {
       id: o.id,
       createdAt: o.created_at,
       source: o.source,
+      status: o.status,
       patient: { id: o.patients?.id ?? "", fullName: o.patients?.full_name ?? null, dateOfBirth: o.patients?.date_of_birth ?? null },
       items: o.lab_order_items
         .map((i) => ({
@@ -129,6 +153,7 @@ export async function getWorkQueue(staff: ClinicStaff): Promise<QueueOrder[]> {
           preparationText: i.lab_tests?.preparation_text ?? null,
           status: i.status,
           sampleId: liveSampleOf(i.id),
+          correction: corrections.get(i.id) ?? null,
         }))
         .sort((a, b) => a.testName.localeCompare(b.testName)),
       samples,

@@ -46,6 +46,7 @@ type Result = {
   performedAt: string | null;
   verifiedAt: string;
   version: number;
+  correctionReason: string | null;
   labComment: string | null;
   values: ResultValue[];
 };
@@ -426,6 +427,9 @@ export function LabResultDialog({ patientId, itemId, onClose }: { patientId: str
               })}
             </tbody>
           </table>
+          {result.version > 1 && result.correctionReason && (
+            <p className="text-sm text-ink-muted">Tuzatish sababi: {result.correctionReason}. Avvalgi versiya laboratoriyada saqlanadi.</p>
+          )}
           {result.labComment && <p className="text-sm text-ink-muted">Laboratoriya izohi: {result.labComment}</p>}
           <p className="text-xs text-ink-muted">Holat klinikada sozlangan me’yorga nisbatan ko‘rsatiladi; bu tashxis emas.</p>
         </>

@@ -16,6 +16,10 @@ import type { ClinicStaff } from "@/lib/labs/guards";
  *                     for collection only once the order is paid.
  *   releaseToPatient  whether verified results are shown to the patient in
  *                     the Mini App (Phase 12). Default true.
+ *   verifiers         who may verify a result (Phase 9): "lab_and_doctor"
+ *                     (default), "lab_only" or "doctor_only". Whoever it is,
+ *                     it is never the person who entered or submitted the
+ *                     result, and a doctor only for patients they may access.
  *
  * Management roles can also write app_settings directly (an existing RLS
  * policy), so every read re-validates and falls back to the defaults: a
@@ -25,15 +29,27 @@ import type { ClinicStaff } from "@/lib/labs/guards";
 export const labSettingsSchema = z.object({
   paymentPolicy: z.enum(["not_required", "before_collection"]),
   releaseToPatient: z.boolean(),
+  verifiers: z.enum(["lab_and_doctor", "lab_only", "doctor_only"]),
 });
 
 export type LabSettings = z.infer<typeof labSettingsSchema>;
 
-export const LAB_SETTINGS_DEFAULTS: LabSettings = { paymentPolicy: "not_required", releaseToPatient: true };
+export const LAB_SETTINGS_DEFAULTS: LabSettings = {
+  paymentPolicy: "not_required",
+  releaseToPatient: true,
+  verifiers: "lab_and_doctor",
+};
 
+// Field by field: one malformed field falls back to its own default and
+// never resets the others (e.g. a stricter payment policy).
 export function parseLabSettings(value: unknown): LabSettings {
-  const parsed = labSettingsSchema.partial().safeParse(value);
-  return { ...LAB_SETTINGS_DEFAULTS, ...(parsed.success ? parsed.data : {}) };
+  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const result: LabSettings = { ...LAB_SETTINGS_DEFAULTS };
+  for (const key of Object.keys(labSettingsSchema.shape) as Array<keyof LabSettings>) {
+    const parsed = labSettingsSchema.shape[key].safeParse(raw[key]);
+    if (parsed.success) (result as Record<string, unknown>)[key] = parsed.data;
+  }
+  return result;
 }
 
 export async function getLabSettings(clinicId: string): Promise<LabSettings> {

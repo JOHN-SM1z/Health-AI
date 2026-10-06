@@ -19,12 +19,22 @@ import { ListChecks, Plus, TestTube } from "lucide-react";
  * "collect" for the same test still produce one sample.
  */
 
-type Item = { id: string; testCode: string; testName: string; sampleType: string; preparationText: string | null; status: string; sampleId: string | null };
+type Item = {
+  id: string;
+  testCode: string;
+  testName: string;
+  sampleType: string;
+  preparationText: string | null;
+  status: string;
+  sampleId: string | null;
+  correction: "draft" | "submitted" | null;
+};
 type Sample = { id: string; code: string; sampleType: string; status: string; collectedAt: string; notes: string | null; rejectReason: string | null; itemIds: string[] };
 type Order = {
   id: string;
   createdAt: string;
   source: string;
+  status: string;
   patient: { id: string; fullName: string | null; dateOfBirth: string | null };
   items: Item[];
   samples: Sample[];
@@ -37,11 +47,13 @@ const SAMPLE_STATUS: Record<string, { label: string; tone: "blue" | "green" | "g
   rejected: { label: "Rad etilgan", tone: "gray" },
 };
 
-type View = "collect" | "receive" | "processing" | "all";
+type View = "collect" | "receive" | "processing" | "review" | "verified" | "all";
 const VIEWS: Array<{ value: View; label: string }> = [
   { value: "collect", label: "Namuna olish" },
   { value: "receive", label: "Qabul kutilmoqda" },
   { value: "processing", label: "Jarayonda" },
+  { value: "review", label: "Tekshiruvda" },
+  { value: "verified", label: "Tasdiqlangan" },
   { value: "all", label: "Barchasi" },
 ];
 
@@ -52,7 +64,9 @@ function inView(order: Order, view: View): boolean {
   if (view === "all") return true;
   if (view === "collect") return order.items.some((i) => i.status === "ready_for_collection" || i.status === "ordered");
   if (view === "receive") return order.samples.some((s) => s.status === "collected");
-  return order.items.some((i) => i.status === "processing" || i.status === "resulted");
+  if (view === "review") return order.items.some((i) => i.status === "resulted" || i.correction === "submitted");
+  if (view === "verified") return order.items.some((i) => i.status === "verified");
+  return order.items.some((i) => i.status === "processing");
 }
 
 export function LabWorkQueue({
@@ -253,6 +267,7 @@ function QueueCard({
             <p className="text-xs text-ink-muted">{dob(order.patient.dateOfBirth)} · buyurtma {formatDateTime(order.createdAt)}</p>
           </div>
           {awaitingPayment && <ABadge tone="amber">To‘lov kutilmoqda</ABadge>}
+          {order.status === "completed" && <ABadge tone="green">Yakunlangan</ABadge>}
         </div>
 
         <ul className="flex flex-col gap-1 text-sm">
@@ -270,7 +285,13 @@ function QueueCard({
                     <AButton size="sm" onClick={() => onEnter(i.id)}>Natija kiritish</AButton>
                   )}
                   {canEnter && i.status === "resulted" && (
-                    <AButton size="sm" variant="outline" onClick={() => onEnter(i.id)}>Natijani ko‘rish</AButton>
+                    <AButton size="sm" variant="outline" onClick={() => onEnter(i.id)}>Ko‘rib chiqish</AButton>
+                  )}
+                  {i.correction && <ABadge tone="purple">{i.correction === "submitted" ? "Tuzatish tekshiruvda" : "Tuzatilmoqda"}</ABadge>}
+                  {canEnter && i.status === "verified" && (
+                    <AButton size="sm" variant={i.correction === "submitted" ? "outline" : "ghost"} onClick={() => onEnter(i.id)}>
+                      {i.correction === "submitted" ? "Ko‘rib chiqish" : "Natija"}
+                    </AButton>
                   )}
                 </span>
               </li>

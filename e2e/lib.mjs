@@ -16,6 +16,7 @@ export const DEMO = {
   manager: "manager@e2e.local",
   owner: "owner@e2e.local",
   lab: "lab@e2e.local",
+  lab2: "lab2@e2e.local",
 };
 export const DEMO_NAMES = {
   referrer: "Aliyev Jasur",

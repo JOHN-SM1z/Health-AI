@@ -2718,6 +2718,10 @@ export type Database = {
         Args: { p_external_id: string; p_source: string }
         Returns: undefined
       }
+      return_lab_result: {
+        Args: { p_by: string; p_clinic_id: string; p_result_id: string }
+        Returns: boolean
+      }
       reschedule_appointment: {
         Args: {
           p_actor?: string
@@ -2753,6 +2757,18 @@ export type Database = {
         }
         Returns: Json
       }
+      start_lab_result_correction: {
+        Args: {
+          p_by: string
+          p_clinic_id: string
+          p_reason: string
+          p_result_id: string
+        }
+        Returns: {
+          created: boolean
+          lab_result_id: string
+        }[]
+      }
       start_walk_in_consultation: {
         Args: {
           p_actor: string
@@ -2766,6 +2782,10 @@ export type Database = {
       }
       submit_lab_result: {
         Args: { p_clinic_id: string; p_result_id: string; p_submitted_by: string }
+        Returns: boolean
+      }
+      verify_lab_result: {
+        Args: { p_clinic_id: string; p_result_id: string; p_verified_by: string }
         Returns: boolean
       }
     }

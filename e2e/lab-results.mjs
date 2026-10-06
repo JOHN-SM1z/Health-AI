@@ -95,7 +95,8 @@ async function run() {
       "lab: the database holds exactly the typed values with flags from configuration",
     );
 
-    await card.getByRole("button", { name: "Natijani ko‘rish" }).click();
+    await l.getByRole("button", { name: "Tekshiruvda", exact: true }).click();
+    await card.getByRole("button", { name: "Ko‘rib chiqish" }).click();
     const view = l.getByRole("dialog", { name: `${testName} — natija` });
     await view.getByText(/Tekshiruvga yuborilgan/).waitFor();
     check((await view.getByLabel("Gemoglobin qiymati").count()) === 0 && (await view.getByText("118 g/L").isVisible()), "lab: a submitted result is read-only");
