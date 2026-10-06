@@ -1810,6 +1810,7 @@ export type Database = {
           error: string | null
           id: string
           idempotency_key: string
+          lab_result_id: string | null
           max_attempts: number
           patient_telegram_user_id: number | null
           recipient_type: string
@@ -1830,6 +1831,7 @@ export type Database = {
           error?: string | null
           id?: string
           idempotency_key: string
+          lab_result_id?: string | null
           max_attempts?: number
           patient_telegram_user_id?: number | null
           recipient_type?: string
@@ -1850,6 +1852,7 @@ export type Database = {
           error?: string | null
           id?: string
           idempotency_key?: string
+          lab_result_id?: string | null
           max_attempts?: number
           patient_telegram_user_id?: number | null
           recipient_type?: string
@@ -1880,6 +1883,13 @@ export type Database = {
             columns: ["conversation_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "notification_jobs_lab_result_fkey"
+            columns: ["lab_result_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_results"
             referencedColumns: ["id", "clinic_id"]
           },
         ]
@@ -2584,6 +2594,7 @@ export type Database = {
           error: string | null
           id: string
           idempotency_key: string
+          lab_result_id: string | null
           max_attempts: number
           patient_telegram_user_id: number | null
           recipient_type: string
@@ -2697,6 +2708,7 @@ export type Database = {
           range_text: string
         }[]
       }
+      lab_release_to_patient: { Args: { p_clinic_id: string }; Returns: boolean }
       receive_lab_sample: {
         Args: {
           p_clinic_id: string
@@ -2855,6 +2867,7 @@ export type Database = {
         | "cancellation"
         | "reschedule"
         | "human_takeover"
+        | "lab_result_ready"
       patient_sex: "female" | "male"
       payment_provider: "manual" | "click" | "payme" | "cash" | "card_terminal"
       payment_status:
@@ -3084,6 +3097,7 @@ export const Constants = {
         "cancellation",
         "reschedule",
         "human_takeover",
+        "lab_result_ready",
       ],
       patient_sex: ["female", "male"],
       payment_provider: ["manual", "click", "payme", "cash", "card_terminal"],

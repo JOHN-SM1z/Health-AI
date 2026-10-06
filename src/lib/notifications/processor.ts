@@ -4,6 +4,9 @@ import { logger } from "@/lib/logger";
 import { sendTelegramMessage } from "@/lib/telegram/bot";
 import { formatInClinicTz } from "@/lib/timezone";
 import type { Database } from "@/lib/supabase/database.types";
+import { resolveHttpsAppUrl } from "@/lib/telegram/bots";
+// The one approved gateway from patient-facing code to lab results (Phase 12).
+import { loadLabResultNotice } from "@/lib/labs/patient-results";
 
 
 const MESSAGE_TEMPLATES: Record<
@@ -38,6 +41,8 @@ const MESSAGE_TEMPLATES: Record<
     `📅 Yangi vaqt: ${formatInClinicTz(a.startAt, tz, "dd.MM.yyyy, HH:mm")}`,
   human_takeover: () =>
     `Operatorlarimiz siz bilan bog‘lanadi. Biroz kuting.`,
+  // Lab jobs carry no appointment; their text is built by processLabResultJob.
+  lab_result_ready: () => "",
 };
 
 type AppointmentContext = {
@@ -134,6 +139,13 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
         continue;
       }
 
+      if (job.type === "lab_result_ready") {
+        const outcome = await processLabResultJob(supabase, job);
+        if (outcome === "sent") sent += 1;
+        else if (outcome === "failed") failed += 1;
+        continue;
+      }
+
       if (job.appointment_id) {
         const ctx = await loadAppointmentContext(supabase, job.appointment_id);
         if (!ctx) {
@@ -219,6 +231,87 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
 
   logger.info("notification jobs processed", { processed: jobs.length, sent, failed });
   return { processed: jobs.length, sent, failed };
+}
+
+type ClaimedJob = Database["public"]["Tables"]["notification_jobs"]["Row"];
+
+/**
+ * "Your laboratory result is ready" (Phase 12). Sent only while the result is
+ * still the current verified version, the clinic still releases results to
+ * patients and the recipient is still the patient's Telegram identity. The
+ * message names the test and the date — never values; the button opens the
+ * result in the Mini App, where the patient's identity is verified again.
+ */
+async function processLabResultJob(
+  supabase: ReturnType<typeof createAdminClient>,
+  job: ClaimedJob,
+): Promise<"sent" | "failed" | "skipped" | "retry"> {
+  const nextAttempts = job.attempts + 1;
+  const notice = await loadLabResultNotice(job.clinic_id, job.lab_result_id ?? "");
+  if (!notice || !notice.current) {
+    await markJob(job.id, "skipped", nextAttempts, "result no longer current", supabase);
+    return "skipped";
+  }
+  if (!notice.released) {
+    await markJob(job.id, "skipped", nextAttempts, "results not released to patients", supabase);
+    return "skipped";
+  }
+  if (!job.patient_telegram_user_id || notice.telegramUserId === null || Number(notice.telegramUserId) !== Number(job.patient_telegram_user_id)) {
+    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    return "skipped";
+  }
+  const { data: clinic } = await supabase.from("clinics").select("timezone").eq("id", job.clinic_id).maybeSingle();
+  const date = formatInClinicTz(notice.date, clinic?.timezone ?? "Asia/Tashkent", "dd.MM.yyyy");
+  const text =
+    (notice.corrected ? `🧪 Laboratoriya natijangiz yangilandi (tuzatilgan).\n\n` : `🧪 Laboratoriya natijangiz tayyor.\n\n`) +
+    `Tahlil: ${notice.testName}\n` +
+    `Sana: ${date}\n\n` +
+    `Natija qiymatlari faqat ilovada, sizning Telegram hisobingiz tasdiqlangandan keyin ko‘rsatiladi.`;
+  const url = labResultUrl(job.clinic_id, notice.itemId);
+  const messageId = await sendTelegramMessage(
+    {
+      chatId: job.patient_telegram_user_id,
+      text,
+      replyMarkup: url ? { inline_keyboard: [[url.webApp ? { text: "📄 Natijani ko‘rish", web_app: { url: url.href } } : { text: "📄 Natijani ko‘rish", url: url.href }]] } : undefined,
+    },
+    job.clinic_id,
+  );
+  if (messageId !== null) {
+    try {
+      await supabase
+        .from("notification_jobs")
+        .update({ status: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, attempts: nextAttempts })
+        .eq("id", job.id);
+    } catch (e) {
+      logger.error("notification sent but not recorded", { jobId: job.id, error: e instanceof Error ? e.message : String(e) });
+      await markJob(job.id, "failed", nextAttempts, "sent but not recorded", supabase);
+      return "failed";
+    }
+    return "sent";
+  }
+  if (nextAttempts >= (job.max_attempts ?? 3)) {
+    await markJob(job.id, "failed", nextAttempts, "send failed after retries", supabase);
+    return "failed";
+  }
+  await markJob(job.id, "pending", nextAttempts, "send failed, retrying", supabase);
+  return "retry";
+}
+
+/**
+ * The Mini App page of one result: a web_app button to an HTTPS app URL
+ * (opens inside Telegram with verified initData), or — when the app is only
+ * reachable as a t.me Mini App link — that link with startapp=lab_<item id>.
+ */
+export function labResultUrl(clinicId: string, itemId: string): { href: string; webApp: boolean } | null {
+  const https = resolveHttpsAppUrl(`/lab-results/${itemId}?clinic=${encodeURIComponent(clinicId)}`);
+  if (https) return { href: https, webApp: true };
+  const base = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
+  if (base.startsWith("https://t.me/")) {
+    const url = new URL(base);
+    url.searchParams.set("startapp", `lab_${itemId}`);
+    return { href: url.toString(), webApp: false };
+  }
+  return null;
 }
 
 /** Absolute booking URL for a clinic, or null when NEXT_PUBLIC_APP_URL is unset/invalid. */

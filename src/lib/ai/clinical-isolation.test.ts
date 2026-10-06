@@ -31,15 +31,21 @@ const FORBIDDEN = [
   /@\/lib\/clinical-records/,
   /@\/lib\/clinical-access/,
   /@\/lib\/referrals/,
-  // Lab result data (20261005000004). Patients' own finalized results
-  // (Phase 12) and structured AI summaries (Phase 18) will each be allowed
-  // through one narrow, approved module when those phases are built — never
-  // by referencing these tables directly.
+  // Lab result data (20261005000004). Never referenced directly: patients'
+  // own released, verified results reach the Mini App and the notification
+  // worker only through the one approved gateway below (Phase 12); a
+  // structured AI summary (Phase 18) will get its own narrow module.
   /lab_results/,
   /lab_result_values/,
   /lab_documents/,
-  /@\/lib\/labs\/(ordering|guards|results|collection|history)/,
+  /@\/lib\/labs\/(ordering|guards|results|collection|history|documents)/,
 ];
+
+// The approved gateway for patients' own results (Phase 12) — allowed only in
+// the Mini App and the notification worker, never in AI, the chat bot,
+// safety or transcription code.
+const PATIENT_RESULTS_GATEWAY = /@\/lib\/labs\/patient-results/;
+const MAY_USE_PATIENT_RESULTS = ["src/lib/notifications", "src/app/api/me", "src/app/(mini-app)"];
 
 function sourceFiles(dir: string): string[] {
   let entries: string[];
@@ -63,10 +69,26 @@ describe("clinical data never reaches AI or patient-facing code", () => {
   });
 
   it.each(PATIENT_FACING_AND_AI)("%s never references clinical tables or modules", (dir) => {
+    const forbidden = MAY_USE_PATIENT_RESULTS.includes(dir) ? FORBIDDEN : [...FORBIDDEN, PATIENT_RESULTS_GATEWAY];
     const offenders = sourceFiles(dir).flatMap((file) => {
       const text = readFileSync(file, "utf8");
-      return FORBIDDEN.filter((pattern) => pattern.test(text)).map((pattern) => `${file}: ${pattern}`);
+      return forbidden.filter((pattern) => pattern.test(text)).map((pattern) => `${file}: ${pattern}`);
     });
     expect(offenders).toEqual([]);
+  });
+
+  it("the patient-results gateway reads only released, verified results and no clinical text", () => {
+    const text = readFileSync("src/lib/labs/patient-results.ts", "utf8");
+    // Every result query is pinned to the verified version, the patient and the clinic, except
+    // the worker's notice, which reports whether the version is still current.
+    const resultQueries = text.split('.from("lab_results")').slice(1).map((q) => q.slice(0, 600));
+    expect(resultQueries.length).toBeGreaterThanOrEqual(3);
+    for (const q of resultQueries) expect(q).toMatch(/\.eq\("clinic_id", clinicId\)/);
+    expect(resultQueries.filter((q) => /\.eq\("status", "verified"\)/.test(q) && /\.eq\("patient_id", patientId\)/.test(q)).length).toBe(2);
+    expect(text).toMatch(/lab_release_to_patient/);
+    expect(text).toMatch(/\.is\("withdrawn_at", null\)/);
+    for (const pattern of [/clinical_records/, /referrals/, /handoff_note/, /lab_comment/, /correction_reason/, /@\/lib\/labs\/(ordering|guards|results|collection|history|documents)/]) {
+      expect(text).not.toMatch(pattern);
+    }
   });
 });

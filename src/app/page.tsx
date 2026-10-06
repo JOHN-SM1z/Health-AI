@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { HeartPulse, CalendarCheck, MessageCircleQuestion, UserRound } from "lucide-react";
+import { HeartPulse, CalendarCheck, FlaskConical, MessageCircleQuestion, UserRound } from "lucide-react";
 import { Card, Eyebrow } from "@/components/mini-app/ui";
+import { StartParamRouter } from "@/components/mini-app/start-param-router";
 
 /**
  * Patient landing page. In production this is a Mini App entry point and a
@@ -9,6 +10,7 @@ import { Card, Eyebrow } from "@/components/mini-app/ui";
 export default function HomePage() {
   return (
     <div className="mx-auto flex w-full max-w-md flex-col gap-7 px-4 pb-10 pt-6">
+      <StartParamRouter />
       <div className="flex flex-col items-center pt-6 text-center">
         <div className="brand-tile mb-5 flex h-16 w-16 items-center justify-center rounded-[1.25rem] text-white">
           <HeartPulse className="h-8 w-8" />
@@ -46,6 +48,19 @@ export default function HomePage() {
                 Mening qabullarim
               </p>
               <p className="mt-0.5 text-xs text-[var(--tg-hint,#8a9699)]">Qabullarni ko‘rish va boshqarish</p>
+            </div>
+          </Card>
+        </Link>
+        <Link href="/lab-results" className="w-full">
+          <Card className="card-hover flex items-center gap-3.5 p-4">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--pine-tint)] text-[var(--pine-deep)]">
+              <FlaskConical className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="font-display font-semibold text-[var(--tg-text,var(--foreground))]">
+                Tahlil natijalari
+              </p>
+              <p className="mt-0.5 text-xs text-[var(--tg-hint,#8a9699)]">Tasdiqlangan laboratoriya natijalari</p>
             </div>
           </Card>
         </Link>
