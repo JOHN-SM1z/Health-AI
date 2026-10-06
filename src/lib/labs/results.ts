@@ -32,6 +32,7 @@ function loadFailed(what: string, error: { code?: string }) {
 const ENTRY_ERRORS: Array<[RegExp, number, string, string]> = [
   [/lab_result_unknown_item/, 404, "Tahlil topilmadi", "not_found"],
   [/lab_result_not_found/, 404, "Natija topilmadi", "result_not_found"],
+  [/lab_result_external_pending/, 409, "Tahlil tashqi laboratoriyaga yuborilgan — natija u yerdan keladi", "sent_out"],
   [/lab_result_imported/, 409, "Import qilingan buyurtma natijalari import orqali kiritiladi", "imported_order"],
   [/lab_result_submitted/, 409, "Natija tekshiruvga yuborilgan — uni o‘zgartirib bo‘lmaydi", "result_submitted"],
   [/lab_result_verified/, 409, "Natija tasdiqlangan — o‘zgartirish faqat tuzatish orqali", "result_verified"],

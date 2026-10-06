@@ -31,6 +31,7 @@ function loadFailed(what: string, error: { code?: string }) {
 
 export type QueueItem = {
   id: string;
+  testId: string;
   testCode: string;
   testName: string;
   sampleType: string;
@@ -73,7 +74,7 @@ export async function getWorkQueue(staff: ClinicStaff): Promise<QueueOrder[]> {
     .select(
       "id, created_at, source, status, " +
         "patients!lab_orders_patient_fkey(id, full_name, date_of_birth), " +
-        "lab_order_items!lab_order_items_order_fkey(id, test_code_snapshot, test_name_snapshot, status, lab_tests!lab_order_items_test_fkey(sample_type, preparation_text)), " +
+        "lab_order_items!lab_order_items_order_fkey(id, test_id, test_code_snapshot, test_name_snapshot, status, lab_tests!lab_order_items_test_fkey(sample_type, preparation_text)), " +
         "lab_samples!lab_samples_order_fkey(id, sample_code, sample_type, status, collected_at, notes, reject_reason, lab_sample_items!lab_sample_items_sample_fkey(order_item_id))",
     )
     .eq("clinic_id", staff.clinicId)
@@ -109,6 +110,7 @@ export async function getWorkQueue(staff: ClinicStaff): Promise<QueueOrder[]> {
     patients: { id: string; full_name: string | null; date_of_birth: string | null } | null;
     lab_order_items: Array<{
       id: string;
+      test_id: string;
       test_code_snapshot: string;
       test_name_snapshot: string;
       status: string;
@@ -149,6 +151,7 @@ export async function getWorkQueue(staff: ClinicStaff): Promise<QueueOrder[]> {
       items: o.lab_order_items
         .map((i) => ({
           id: i.id,
+          testId: i.test_id,
           testCode: i.test_code_snapshot,
           testName: i.test_name_snapshot,
           sampleType: i.lab_tests?.sample_type ?? "",

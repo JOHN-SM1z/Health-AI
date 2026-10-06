@@ -21,6 +21,7 @@ import { ListChecks, Plus, TestTube } from "lucide-react";
 
 type Item = {
   id: string;
+  testId: string;
   testCode: string;
   testName: string;
   sampleType: string;
@@ -57,6 +58,29 @@ const VIEWS: Array<{ value: View; label: string }> = [
   { value: "all", label: "Barchasi" },
 ];
 
+// Send-outs to external laboratories (Phase 15): status only, never values.
+type SendOut = { id: string; itemId: string; providerName: string; status: string; lastErrorCode: string | null; reviewReason: string | null };
+type SendOutProvider = { id: string; name: string; testIds: string[] };
+const SEND_OUT_STATUS: Record<string, { label: string; tone: "blue" | "green" | "amber" | "gray" | "red" }> = {
+  queued: { label: "navbatda", tone: "amber" },
+  sent: { label: "yuborilgan", tone: "blue" },
+  in_progress: { label: "bajarilmoqda", tone: "blue" },
+  resulted: { label: "natija keldi", tone: "green" },
+  failed: { label: "yuborilmadi", tone: "red" },
+  rejected: { label: "rad etildi", tone: "red" },
+  cancelled: { label: "to‘xtatildi", tone: "gray" },
+};
+const SEND_OUT_REVIEW: Record<string, string> = {
+  unmapped_parameter: "natijada tanilmagan ko‘rsatkich — tekshiring",
+  duplicate_parameter: "natijada ko‘rsatkich takrorlangan — tekshiring",
+  unit_mismatch: "o‘lchov birligi mos emas — tekshiring",
+  invalid_value: "qiymat sozlamalarga mos emas — tekshiring",
+  value_rejected: "qiymat sozlamalarga mos emas — tekshiring",
+  result_incomplete: "natija to‘liq emas — qolganini kiriting",
+  result_conflict: "laboratoriya boshqa natija yubordi — tekshiring",
+};
+const LIVE_SEND_OUT = new Set(["queued", "sent", "in_progress"]);
+
 const errorText = (e: unknown, fallback: string) => (e instanceof AdminApiError ? e.message : fallback);
 const dob = (d: string | null) => (d ? d.split("-").reverse().join(".") : "tug‘ilgan sana yo‘q");
 
@@ -90,12 +114,29 @@ export function LabWorkQueue({
   const [rejecting, setRejecting] = useState<Sample | null>(null);
   const [ordering, setOrdering] = useState<"search" | PatientMatch | null>(null);
   const [entering, setEntering] = useState<string | null>(null);
+  const [sendOuts, setSendOuts] = useState<Map<string, SendOut>>(new Map());
+  const [providers, setProviders] = useState<SendOutProvider[]>([]);
+
+  const loadSendOuts = async (list: Order[]) => {
+    const itemIds = list.flatMap((o) => o.items.filter((i) => i.status === "processing" || i.status === "resulted").map((i) => i.id)).slice(0, 300);
+    if (!canProcess) return;
+    try {
+      const res = await adminApi.get<{ sendOuts: SendOut[]; providers: SendOutProvider[] }>(`/api/lab/send-outs?items=${itemIds.join(",")}`);
+      const latest = new Map<string, SendOut>();
+      for (const so of res.sendOuts) if (!latest.has(so.itemId)) latest.set(so.itemId, so); // newest first
+      setSendOuts(latest);
+      setProviders(res.providers);
+    } catch {
+      // Send-out status is a convenience here; the queue itself still works.
+    }
+  };
 
   const load = async () => {
     try {
       const res = await adminApi.get<{ orders: Order[]; limit: number }>("/api/lab/queue");
       setOrders(res.orders);
       setLimit(res.limit);
+      await loadSendOuts(res.orders);
     } catch (e) {
       setError(errorText(e, "Ish navbatini yuklab bo‘lmadi"));
     }
@@ -103,6 +144,7 @@ export function LabWorkQueue({
 
   useEffect(() => {
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
   }, []);
 
   const q = query.trim().toLowerCase();
@@ -117,6 +159,29 @@ export function LabWorkQueue({
       setNotice(`${sample.code} qabul qilindi`);
     } catch (e) {
       setError(errorText(e, "Namunani qabul qilib bo‘lmadi"));
+    }
+  };
+
+  const sendOut = async (itemId: string, providerId: string) => {
+    setError(null);
+    setNotice(null);
+    try {
+      await adminApi.post(`/api/lab/items/${itemId}/send-out`, { providerId });
+      await load();
+      setNotice("Tahlil tashqi laboratoriyaga yuborildi");
+    } catch (e) {
+      setError(errorText(e, "Tashqi laboratoriyaga yuborib bo‘lmadi"));
+    }
+  };
+  const stopSendOut = async (requestId: string) => {
+    setError(null);
+    setNotice(null);
+    try {
+      await adminApi.post(`/api/lab/send-outs/${requestId}`, { action: "cancel" });
+      await load();
+      setNotice("Yuborish to‘xtatildi — natijani laboratoriya o‘zi kiritishi mumkin");
+    } catch (e) {
+      setError(errorText(e, "To‘xtatib bo‘lmadi"));
     }
   };
 
@@ -163,6 +228,10 @@ export function LabWorkQueue({
               onCollect={(items) => { setError(null); setNotice(null); setCollecting({ order: o, items }); }}
               onReceive={receive}
               onReject={(s) => { setError(null); setNotice(null); setRejecting(s); }}
+              sendOuts={sendOuts}
+              providers={providers}
+              onSendOut={sendOut}
+              onStopSendOut={stopSendOut}
             />
           ))}
           {orders.length >= limit && <p className="text-xs text-ink-muted">Eng yangi {limit} ta faol buyurtma ko‘rsatilmoqda.</p>}
@@ -236,6 +305,10 @@ function QueueCard({
   onCollect,
   onReceive,
   onReject,
+  sendOuts,
+  providers,
+  onSendOut,
+  onStopSendOut,
 }: {
   order: Order;
   canCollect: boolean;
@@ -245,6 +318,10 @@ function QueueCard({
   onCollect: (items: Item[]) => void;
   onReceive: (s: Sample) => void;
   onReject: (s: Sample) => void;
+  sendOuts: Map<string, SendOut>;
+  providers: SendOutProvider[];
+  onSendOut: (itemId: string, providerId: string) => Promise<void>;
+  onStopSendOut: (requestId: string) => Promise<void>;
 }) {
   // Ready tests grouped by the sample they need: one tube per group.
   const groups = useMemo(() => {
@@ -281,8 +358,25 @@ function QueueCard({
                 </span>
                 <span className="flex items-center gap-1">
                   <ABadge tone={i.status === "ordered" ? "amber" : status.tone}>{i.status === "ordered" ? "To‘lov kutilmoqda" : status.label}</ABadge>
-                  {canEnter && i.status === "processing" && (
+                  {(() => {
+                    const so = sendOuts.get(i.id);
+                    if (!so || (so.status !== "resulted" && !LIVE_SEND_OUT.has(so.status) && i.status !== "processing")) return null;
+                    const st = SEND_OUT_STATUS[so.status] ?? { label: so.status, tone: "gray" as const };
+                    return (
+                      <>
+                        <ABadge tone={st.tone}>Tashqi lab · {so.providerName}: {st.label}</ABadge>
+                        {so.reviewReason && <span className="text-xs text-danger">{SEND_OUT_REVIEW[so.reviewReason] ?? so.reviewReason}</span>}
+                        {canProcess && LIVE_SEND_OUT.has(so.status) && (
+                          <AButton size="sm" variant="ghost" onClick={() => void onStopSendOut(so.id)}>To‘xtatish</AButton>
+                        )}
+                      </>
+                    );
+                  })()}
+                  {canEnter && i.status === "processing" && !LIVE_SEND_OUT.has(sendOuts.get(i.id)?.status ?? "") && (
                     <AButton size="sm" onClick={() => onEnter(i.id)}>Natija kiritish</AButton>
+                  )}
+                  {canProcess && i.status === "processing" && !LIVE_SEND_OUT.has(sendOuts.get(i.id)?.status ?? "") && (
+                    <SendOutControl item={i} providers={providers.filter((p) => p.testIds.includes(i.testId))} onSend={onSendOut} />
                   )}
                   {canEnter && i.status === "resulted" && (
                     <AButton size="sm" variant="outline" onClick={() => onEnter(i.id)}>Ko‘rib chiqish</AButton>
@@ -489,5 +583,25 @@ function PatientPicker({ onClose, onPick }: { onClose: () => void; onPick: (p: P
         </ul>
       )}
     </AModal>
+  );
+}
+
+/** Choose an external laboratory that has a code for this test, and send it there. */
+function SendOutControl({ item, providers, onSend }: { item: Item; providers: SendOutProvider[]; onSend: (itemId: string, providerId: string) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [providerId, setProviderId] = useState(providers[0]?.id ?? "");
+  const [busy, setBusy] = useState(false);
+  if (providers.length === 0) return null;
+  if (!open) {
+    return <AButton size="sm" variant="outline" onClick={() => setOpen(true)}>Tashqi laboratoriyaga</AButton>;
+  }
+  return (
+    <span className="flex items-center gap-1" role="group" aria-label={`${item.testName}: tashqi laboratoriya`}>
+      <select aria-label="Tashqi laboratoriya" value={providerId} onChange={(e) => setProviderId(e.target.value)} className="rounded-lg border border-hairline bg-surface px-2 py-1 text-xs">
+        {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      <AButton size="sm" loading={busy} onClick={async () => { setBusy(true); await onSend(item.id, providerId); setBusy(false); setOpen(false); }}>Yuborish</AButton>
+      <AButton size="sm" variant="ghost" onClick={() => setOpen(false)}>Bekor</AButton>
+    </span>
   );
 }

@@ -80,6 +80,8 @@ jobs:
             echo "TELEGRAM_WEBHOOK_SECRET=$(openssl rand -hex 32)"
             echo "CRON_SECRET=$(openssl rand -hex 32)"
             echo "ENABLE_TELEGRAM_DEV_MODE=false"
+            # The mock external laboratory for the e2e run (local database only; see providers/registry.ts).
+            echo "ALLOW_MOCK_LAB_PROVIDER=true"
           } > .env
       - name: Clinic owner account (used by the session tests)
         run: npm run create-owner

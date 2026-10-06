@@ -888,6 +888,226 @@ export type Database = {
           },
         ]
       }
+      lab_external_requests: {
+        Row: {
+          attempts: number
+          cancelled_at: string | null
+          cancelled_by: string | null
+          clinic_id: string
+          external_order_id: string | null
+          external_result_id: string | null
+          id: string
+          last_error_code: string | null
+          lease_until: string | null
+          next_attempt_at: string
+          order_item_id: string
+          patient_id: string
+          provider_id: string
+          requested_at: string
+          requested_by: string
+          result_id: string | null
+          resulted_at: string | null
+          review_reason: string | null
+          sent_at: string | null
+          status: Database["public"]["Enums"]["lab_external_status"]
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          clinic_id: string
+          external_order_id?: string | null
+          external_result_id?: string | null
+          id?: string
+          last_error_code?: string | null
+          lease_until?: string | null
+          next_attempt_at?: string
+          order_item_id: string
+          patient_id: string
+          provider_id: string
+          requested_at?: string
+          requested_by: string
+          result_id?: string | null
+          resulted_at?: string | null
+          review_reason?: string | null
+          sent_at?: string | null
+          status?: Database["public"]["Enums"]["lab_external_status"]
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          clinic_id?: string
+          external_order_id?: string | null
+          external_result_id?: string | null
+          id?: string
+          last_error_code?: string | null
+          lease_until?: string | null
+          next_attempt_at?: string
+          order_item_id?: string
+          patient_id?: string
+          provider_id?: string
+          requested_at?: string
+          requested_by?: string
+          result_id?: string | null
+          resulted_at?: string | null
+          review_reason?: string | null
+          sent_at?: string | null
+          status?: Database["public"]["Enums"]["lab_external_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_external_requests_cancelled_by_fkey"
+            columns: ["cancelled_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_external_requests_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_external_requests_item_fkey"
+            columns: ["order_item_id", "clinic_id", "patient_id"]
+            isOneToOne: false
+            referencedRelation: "lab_order_items"
+            referencedColumns: ["id", "clinic_id", "patient_id"]
+          },
+          {
+            foreignKeyName: "lab_external_requests_provider_fkey"
+            columns: ["provider_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_providers"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_external_requests_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_external_requests_result_fkey"
+            columns: ["result_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_results"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
+      lab_provider_codes: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          external_code: string
+          id: string
+          internal_id: string
+          kind: string
+          provider_id: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          external_code: string
+          id?: string
+          internal_id: string
+          kind: string
+          provider_id: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          external_code?: string
+          id?: string
+          internal_id?: string
+          kind?: string
+          provider_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_provider_codes_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_provider_codes_provider_fkey"
+            columns: ["provider_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_providers"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
+      lab_providers: {
+        Row: {
+          active: boolean
+          adapter: string
+          clinic_id: string
+          code: string
+          config: Json
+          created_at: string
+          created_by: string
+          credential_ref: string | null
+          id: string
+          name: string
+          send_patient_name: boolean
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          adapter: string
+          clinic_id: string
+          code: string
+          config?: Json
+          created_at?: string
+          created_by: string
+          credential_ref?: string | null
+          id?: string
+          name: string
+          send_patient_name?: boolean
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          adapter?: string
+          clinic_id?: string
+          code?: string
+          config?: Json
+          created_at?: string
+          created_by?: string
+          credential_ref?: string | null
+          id?: string
+          name?: string
+          send_patient_name?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_providers_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_providers_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       lab_import_batches: {
         Row: {
           analysed_at: string | null
@@ -3053,6 +3273,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      claim_external_lab_requests: {
+        Args: { p_lease_seconds?: number; p_limit?: number }
+        Returns: Database["public"]["Tables"]["lab_external_requests"]["Row"][]
+      }
       merge_patients: {
         Args: {
           p_actor: string
@@ -3075,6 +3299,20 @@ export type Database = {
         Returns: Json
       }
       patient_record_group: { Args: { p_patient_id: string }; Returns: string[] }
+      record_external_lab_result: {
+        Args: {
+          p_clinic_id: string
+          p_external_result_id: string
+          p_performed_at?: string
+          p_request_id: string
+          p_values: Json
+        }
+        Returns: { lab_result_id: string; replayed: boolean; submitted: boolean }[]
+      }
+      request_external_lab: {
+        Args: { p_actor: string; p_clinic_id: string; p_order_item_id: string; p_provider_id: string }
+        Returns: { lab_external_request_id: string; replayed: boolean }[]
+      }
       reject_lab_sample: {
         Args: {
           p_clinic_id: string
@@ -3219,6 +3457,14 @@ export type Database = {
       conversation_channel: "telegram" | "mini_app"
       conversation_status: "open" | "assigned" | "closed"
       lab_document_kind: "report" | "scan" | "image" | "import_source"
+      lab_external_status:
+        | "queued"
+        | "sent"
+        | "in_progress"
+        | "resulted"
+        | "failed"
+        | "rejected"
+        | "cancelled"
       lab_import_row_status:
         | "pending"
         | "ready"
@@ -3463,6 +3709,15 @@ export const Constants = {
       conversation_channel: ["telegram", "mini_app"],
       conversation_status: ["open", "assigned", "closed"],
       lab_document_kind: ["report", "scan", "image", "import_source"],
+      lab_external_status: [
+        "queued",
+        "sent",
+        "in_progress",
+        "resulted",
+        "failed",
+        "rejected",
+        "cancelled",
+      ],
       lab_import_row_status: [
         "pending",
         "ready",

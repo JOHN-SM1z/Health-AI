@@ -38,7 +38,9 @@ const FORBIDDEN = [
   /lab_results/,
   /lab_result_values/,
   /lab_documents/,
-  /@\/lib\/labs\/(ordering|guards|results|collection|history|documents|imports|import\/)/,
+  /@\/lib\/labs\/(ordering|guards|results|collection|history|documents|imports|import\/|providers)/,
+  // External laboratory send-outs and provider configuration (Phase 15).
+  /lab_external_|lab_provider/,
   // Historical import rows hold patient identifiers and result values (Phase 13).
   /lab_import_/,
 ];

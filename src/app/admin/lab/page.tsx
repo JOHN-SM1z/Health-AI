@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ATextArea, ASelect, AModal } from "@/components/admin/ui";
 import { adminApi, AdminApiError, formatPrice } from "@/lib/admin/client";
+import { LabProvidersTab } from "@/components/admin/lab-providers";
 
 /**
  * Clinic laboratory configuration (Phase 4): tests grouped by category, their
@@ -72,6 +73,7 @@ const TABS = [
   { id: "tests", label: "Tahlillar" },
   { id: "panels", label: "Panellar" },
   { id: "settings", label: "Sozlamalar" },
+  { id: "providers", label: "Tashqi laboratoriyalar" },
 ] as const;
 
 const errorText = (e: unknown, fallback: string) => (e instanceof AdminApiError ? e.message : fallback);
@@ -192,6 +194,8 @@ export default function LabConfigurationPage() {
         />
       ) : tab === "panels" ? (
         <PanelsTab catalog={catalog} onEdit={open(setEditingPanel)} />
+      ) : tab === "providers" ? (
+        <LabProvidersTab tests={catalog.tests} parameters={catalog.parameters} />
       ) : (
         <SettingsTab onError={setError} />
       )}
