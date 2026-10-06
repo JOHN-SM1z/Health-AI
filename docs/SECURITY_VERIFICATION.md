@@ -1,3 +1,5 @@
+> **Historical report — superseded for release decisions.** The October 2026 database audit found defects in the audited implementation. Do not use this document as current production approval. See [current revision status](OPERATIONS_REVISION_2026-10-06.md) and [database audit](DATABASE_AUDIT_2026-10-05.md).
+
 # Security Verification Document
 
 This document records the exact security architecture, database-level row policies, authentication mechanisms, secrets management, input sanitization, and compliance controls verified within the **Health AI** repository.

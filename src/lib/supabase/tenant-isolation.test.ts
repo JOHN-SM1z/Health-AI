@@ -187,7 +187,7 @@ describeDb("multi-tenant isolation (Phase 1)", () => {
     const { error: integError } = await admin.from("clinic_telegram_integrations").insert({
       clinic_id: clinicB,
       telegram_bot_token: "123456789:SECRET_BOT_TOKEN_B",
-      telegram_bot_id: 123456789,
+      telegram_bot_id: Date.now(),
       telegram_username: `tenant_b_bot_${suffix}`,
       status: "active",
       enabled: true,

@@ -168,3 +168,14 @@ body {
 .panel-shell {
   background: var(--surface);
 }
+
+@media print {
+  body:has(.print-ticket) * { visibility: hidden; }
+  body:has(.print-ticket) .print-ticket, body:has(.print-ticket) .print-ticket * { visibility: visible; }
+  .print-ticket { position: absolute; inset: 0 auto auto 0; width: 76mm; padding: 4mm; color: black; background: white; }
+}
+@media print {
+  body:has(.print-history) * { visibility: hidden; }
+  body:has(.print-history) .print-history, body:has(.print-history) .print-history * { visibility: visible; }
+  .print-history { position: absolute; left: 0; top: 0; width: 100%; }
+}

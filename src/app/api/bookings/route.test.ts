@@ -1,3 +1,4 @@
+vi.mock("@/lib/operations/server", () => ({ requireScheduledBookings: vi.fn().mockResolvedValue(undefined) }));
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
@@ -53,7 +54,7 @@ function stubSuccess() {
   supabaseMock.from.mockImplementation((table: string) => {
     if (table === "patients") {
       return {
-        update: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })),
+        update: vi.fn(() => ({ eq: vi.fn().mockReturnThis(), then: (resolve: (v: unknown) => void) => resolve({data:null,error:null}) })),
       };
     }
     return {
@@ -147,7 +148,7 @@ describe("POST /api/bookings", () => {
     supabaseMock.from.mockImplementation((table: string) => {
       if (table === "patients") {
         return {
-          update: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })),
+          update: vi.fn(() => ({ eq: vi.fn().mockReturnThis(), then: (resolve: (v: unknown) => void) => resolve({data:null,error:null}) })),
         };
       }
       return {
@@ -240,7 +241,7 @@ describe("POST /api/bookings — appointment source attribution (audit finding)"
     supabaseMock.from.mockImplementation((table: string) => {
       if (table === "patients") {
         return {
-          update: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })),
+          update: vi.fn(() => ({ eq: vi.fn().mockReturnThis(), then: (resolve: (v: unknown) => void) => resolve({data:null,error:null}) })),
         };
       }
       return {

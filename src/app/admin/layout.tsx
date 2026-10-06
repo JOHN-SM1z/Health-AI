@@ -1,3 +1,4 @@
+import { getOperationsSettings } from "@/lib/operations/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { adminWorkspaceRedirect, getStaffContext, hasRole, isCallCenterStaff } from "@/lib/auth/staff";
@@ -15,17 +16,21 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const isManagement = hasRole(ctx, "admin");
   const callCenter = isCallCenterStaff(ctx);
 
+  const scheduled = (await getOperationsSettings(ctx.clinicId!)).mode !== "walk_in";
   const nav = [
-    { href: "/admin", label: "Bugun", icon: <LayoutDashboard className="h-4 w-4" />, show: true },
-    { href: "/admin/appointments", label: "Qabullar", icon: <ClipboardList className="h-4 w-4" />, show: true },
-    { href: "/admin/calendar", label: "Kalendar", icon: <CalendarDays className="h-4 w-4" />, show: true },
+    { href: "/admin", label: "Registratsiya va navbat", icon: <LayoutDashboard className="h-4 w-4" />, show: true },
+    { href: "/admin/appointments", label: "Belgilangan qabullar", icon: <ClipboardList className="h-4 w-4" />, show: scheduled },
+    { href: "/admin/calendar", label: "Kalendar", icon: <CalendarDays className="h-4 w-4" />, show: scheduled },
+    { href: "/admin/cashier", label: "Xizmatlar kassasi", icon: <ClipboardList className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/staff", label: "Xodimlar", icon: <Users className="h-4 w-4" />, show: ctx.roles.includes("owner") },
     { href: "/admin/conversations", label: "Suhbatlar", icon: <MessagesSquare className="h-4 w-4" />, show: true },
     { href: "/admin/patients", label: "Bemorlar", icon: <Users className="h-4 w-4" />, show: true },
     { href: "/admin/doctors", label: "Shifokorlar", icon: <Stethoscope className="h-4 w-4" />, show: isManagement },
     { href: "/admin/services", label: "Xizmatlar", icon: <Scissors className="h-4 w-4" />, show: isManagement },
     { href: "/admin/specialties", label: "Yo‘nalishlar", icon: <Sparkles className="h-4 w-4" />, show: isManagement },
     { href: "/admin/faqs", label: "Savol-javoblar", icon: <MessagesSquare className="h-4 w-4" />, show: isManagement },
-    { href: "/admin/analytics", label: "Tahlillar", icon: <BarChart3 className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/operations", label: "Tashriflar hisoboti", icon: <BarChart3 className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/analytics", label: "Belgilangan qabullar tahlili", icon: <BarChart3 className="h-4 w-4" />, show: isManagement && scheduled },
     { href: "/admin/settings", label: "Sozlamalar", icon: <Settings className="h-4 w-4" />, show: isManagement },
   ].filter((n) => n.show !== false);
 
@@ -43,10 +48,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 text-sm">
           <p className="font-numeric px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.16em] text-ink-muted/80">
-            {callCenter ? "Call Center" : "Klinika boshqaruvi"}
+            {callCenter ? "Registratsiya" : "Klinika boshqaruvi"}
           </p>
           {nav.map((n) => (
-            <NavLink key={n.href} href={n.href} icon={n.icon}>
+            <NavLink key={n.href} href={n.href} icon={n.icon} exact={n.href === "/admin"}>
               {n.label}
             </NavLink>
           ))}
@@ -67,6 +72,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </Link>
           <span className="pulse-dot" title="Jonli" />
         </header>
+        <nav aria-label="Mobil ish bo‘limlari" className="flex gap-2 overflow-x-auto border-b border-hairline bg-surface p-3 md:hidden">{nav.map(n => <NavLink key={n.href} href={n.href} exact={n.href === "/admin"}><span className="whitespace-nowrap">{n.label}</span></NavLink>)}</nav>
         <div className="flex-1 overflow-x-hidden p-4 md:p-8">{children}</div>
       </div>
     </div>

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getStaffContext, hasRole } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
-import { HeartPulse, ListOrdered, CalendarRange } from "lucide-react";
+import { HeartPulse, ListOrdered, CalendarRange, ArrowRightLeft } from "lucide-react";
 
 export const metadata = { title: "Shifokor paneli" };
 
@@ -27,8 +27,10 @@ export default async function DoctorLayout({ children }: { children: React.React
           <p className="font-numeric px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.16em] text-ink-muted/80">
             Ish jarayoni
           </p>
-          <NavLink href="/doctor" icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
+          <NavLink href="/doctor" exact icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
+          <NavLink href="/doctor/laboratory" icon={<ListOrdered className="h-4 w-4" />}>Laboratoriya</NavLink>
           <NavLink href="/doctor/schedule" icon={<CalendarRange className="h-4 w-4" />}>Jadvalim</NavLink>
+          <NavLink href="/doctor/referrals" icon={<ArrowRightLeft className="h-4 w-4" />}>Yo‘llanmalar</NavLink>
           {hasRole(ctx, "admin") && (
             <Link
               href="/admin"
@@ -53,6 +55,7 @@ export default async function DoctorLayout({ children }: { children: React.React
             <span className="font-display text-sm font-bold tracking-tight">Shifokor paneli</span>
           </Link>
         </header>
+        <nav aria-label="Mobil shifokor bo‘limlari" className="flex gap-2 overflow-x-auto border-b border-hairline bg-surface p-3 md:hidden"><NavLink href="/doctor" exact>Navbat</NavLink><NavLink href="/doctor/laboratory">Laboratoriya</NavLink><NavLink href="/doctor/referrals">Yo‘llanmalar</NavLink><NavLink href="/doctor/schedule">Jadval</NavLink></nav>
         <div className="flex-1 overflow-x-hidden p-4 md:p-8">{children}</div>
       </div>
     </div>

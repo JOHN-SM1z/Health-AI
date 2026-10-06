@@ -12,8 +12,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Non-negotiable safety
 
-- This is a real clinic booking product. Prioritize patient safety, privacy, authorization, accurate appointment availability, and payment integrity over speed or UI polish.
-- Never implement diagnosis, treatment advice, prescriptions, clinical records, or claims that AI output is medical advice.
+- This is a real clinic operations product, with walk-in registration and live queues as the default workflow. Prioritize patient safety, privacy, authorization, accurate appointment availability, and payment integrity over speed or UI polish.
+- Clinicians may author and view patient records, diagnoses and prescriptions within their authorized care relationship. This scope was explicitly authorized by the owner on 2026-10-05. Never generate clinical decisions with AI or present AI output as medical advice.
+- A referral is patient guidance and a scoped read-access grant. It must not require an acceptance workflow before the receiving doctor can read authorized history. Reading never grants permission to rewrite another clinician’s records.
+- Walk-in queue tickets are not future appointments. Do not invent time slots to register arrivals. Keep scheduled booking optional per clinic.
+- Financial controls must not erase records or obstruct access to existing clinical history. Any configured prepayment check needs an explicit authorized exception path.
+- Do not invent payroll rates, automatic staff penalties, inpatient per-night charges, medical triage rules or external-system integrations. Clinic policy must determine them.
 - AI must only provide clinic information or non-diagnostic booking navigation. Urgent wording must trigger the approved urgent-care message and human-admin escalation.
 - Never claim a booking, payment, transcription, notification, or Telegram delivery succeeded unless the backend verified it.
 

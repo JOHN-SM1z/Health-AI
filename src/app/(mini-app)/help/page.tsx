@@ -1,45 +1,10 @@
-import type { Metadata } from "next";
-import { Card, SectionTitle } from "@/components/mini-app/ui";
 import Link from "next/link";
-
-export const metadata: Metadata = { title: "Yordam" };
-
-export default function HelpPage() {
-  return (
-    <div className="flex flex-col gap-4">
-      <SectionTitle>Yordam</SectionTitle>
-      <Card className="flex flex-col gap-3 text-sm leading-relaxed text-[var(--tg-text,var(--foreground))]">
-        <div>
-          <p className="font-medium">Qabulga qanday yozilaman?</p>
-          <p className="mt-1 text-[var(--tg-hint,#475569)]">
-            “Qabulga yozilish” tugmasini bosing → xizmatni tanlang → bo‘sh vaqtni belgilang →
-            ma‘lumotlaringizni kiriting → tasdiqlang. Tasdiq va eslatmalar Telegram orqali keladi.
-          </p>
-        </div>
-        <div>
-          <p className="font-medium">Qaysi shifokorga murojaat qilishni bilmayman</p>
-          <p className="mt-1 text-[var(--tg-hint,#475569)]">
-            Botdagi “Shifokor tanlashda yordam” bo‘limidan foydalaning — u yo‘nalishni aniqlashga
-            yordam beradi. Bu tibbiy tashxis emas.
-          </p>
-        </div>
-        <div>
-          <p className="font-medium">Shoshilinch holat</p>
-          <p className="mt-1 text-[var(--tg-hint,#475569)]">
-            Bu xizmat shoshilinch yordam uchun emas. Shoshilinch holatda mahalliy tez yordam
-            xizmatiga murojaat qiling yoki zudlik bilan shifokorga boring.
-          </p>
-        </div>
-        <div>
-          <p className="font-medium">Qabulni bekor qilish</p>
-          <p className="mt-1 text-[var(--tg-hint,#475569)]">
-            “Mening qabullarim” sahifasidan qabulni bekor qilishingiz mumkin.
-          </p>
-        </div>
-        <Link href="/privacy" className="underline">
-          Maxfiylik siyosati
-        </Link>
-      </Card>
-    </div>
-  );
+import {Card,SectionTitle} from "@/components/mini-app/ui";
+import {getClinicById,getDefaultClinic} from "@/lib/clinics/context";
+import {loadClinicKnowledge} from "@/lib/ai/knowledge";
+export const dynamic="force-dynamic";
+export default async function HelpPage({searchParams}:{searchParams:Promise<{clinic?:string}>}){
+ const {clinic:id}=await searchParams;const clinic=id?await getClinicById(id):await getDefaultClinic();
+ const k=await loadClinicKnowledge(clinic.id);const scheduled=k.operatingMode!=="walk_in";
+ return <div className="space-y-4"><SectionTitle>{k.clinicName}</SectionTitle><Card className="space-y-3 text-sm"><p>{scheduled?"Oldindan qabulga yozilish mavjud.":"Jonli navbat: klinikaga kelganingizda registratsiyaga murojaat qiling."}</p><p>Manzil: {k.address||"Operator orqali aniqlashtiring"}</p><p>Telefon: {k.phone||"Operator orqali aniqlashtiring"}</p>{Object.entries(k.openingHours).map(([day,hours])=><p key={day}>{day}: {hours||"Yopiq"}</p>)}<p className="text-xs text-ink-muted">Klinika ish vaqti barcha shifokorlar navbatchilik vaqtini anglatmaydi.</p>{scheduled&&<Link href={`/book?clinic=${clinic.id}`} className="underline">Qabulga yozilish</Link>}</Card><Card className="space-y-3 text-sm"><h2 className="font-semibold">Xizmatlar va narxlar</h2>{k.services.map((s,i)=><div key={`${s.name}-${i}`} className="border-b border-hairline py-2"><p>{s.name} — {s.price.toLocaleString()} {k.currency}</p>{s.preparationText&&<p className="mt-1 text-xs text-ink-muted">{s.preparationText}</p>}</div>)}<p className="text-xs text-ink-muted">Shifokor, paket yoki qo‘shimcha xizmatga qarab yakuniy hisob farq qilishi mumkin. To‘lovdan oldin tarkibini kassada tekshiring.</p></Card>{k.faqs.length>0&&<Card className="space-y-4 text-sm">{k.faqs.map((f,i)=><div key={i}><h2 className="font-semibold">{f.question}</h2><p>{f.answer}</p></div>)}</Card>}<Card className="text-sm"><h2 className="font-semibold">Shoshilinch holat</h2><p>Mahalliy tez yordam xizmatiga murojaat qiling yoki zudlik bilan shifokorga boring. Bot tibbiy tashxis qo‘ymaydi.</p></Card><Link href={`/privacy?clinic=${clinic.id}`} className="text-sm underline">Maxfiylik siyosati</Link></div>;
 }

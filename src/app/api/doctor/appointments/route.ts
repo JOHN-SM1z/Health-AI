@@ -88,3 +88,18 @@ export async function DELETE(request: NextRequest) {
     return handleApiError(e);
   }
 }
+export async function GET() {
+  try {
+    const staff=await requireStaff("doctor");
+    const {requireLinkedDoctor}=await import("@/lib/referrals/access");
+    const doctor=await requireLinkedDoctor(staff);
+    const {localDayWindow}=await import("@/lib/time/local");
+    const day=localDayWindow(staff.clinicTimezone);
+    const {data,error}=await createAdminClient().from("appointments")
+      .select("id,patient_id,start_at,status,patients(full_name,phone),services(name,price),doctors(name)")
+      .eq("clinic_id",staff.clinicId).eq("doctor_id",doctor.id).gte("start_at",day.start).lt("start_at",day.end)
+      .not("status","in","(cancelled,no_show)").order("start_at");
+    if(error) throw new ApiError(503,"Qabullar yuklanmadi");
+    return ok({appointments:data??[],doctorName:data?.[0]?.doctors?.name??"Shifokor"});
+  }catch(e){return handleApiError(e);}
+}

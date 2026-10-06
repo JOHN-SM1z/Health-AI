@@ -15,6 +15,7 @@ const eslintConfig = defineConfig([
     "node_modules/**",
     "coverage/**",
     ".freebuff/**",
+    ".kilo/worktrees/**",
     // Local supabase runtime files (generated, not part of the app).
     "supabase/.temp/**",
     "supabase/seed.sql",

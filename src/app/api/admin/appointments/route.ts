@@ -6,6 +6,7 @@ import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { phoneSchema, nameSchema, uuidSchema, parseBody } from "@/lib/api/validate";
 import { trackAnalytics } from "@/lib/analytics";
 import { enqueueBookingNotifications } from "@/lib/notifications/jobs";
+import { requireScheduledBookings } from "@/lib/operations/server";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +30,7 @@ const createSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const ctx = await requireRoles("owner", "admin", "manager", "receptionist");
+    await requireScheduledBookings(ctx.clinicId);
     const body = await parseBody(request, createSchema);
     const supabase = createAdminClient();
 

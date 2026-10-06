@@ -44,17 +44,19 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
     if (fetchError || !appointment) throw new ApiError(404, "Qabul topilmadi", "appointment_not_found");
     if (appointment.doctor_id !== doctor.id) throw new ApiError(403, "Bu qabul sizga tegishli emas", "not_yours");
 
+    if (["cancelled","no_show"].includes(appointment.status)) throw new ApiError(409,"Yopilgan qabulni qayta ochib bo‘lmaydi","invalid_transition");
     // Only forward transitions are allowed.
     const rank: Record<string, number> = { checked_in: 1, in_progress: 2, completed: 3 };
     if ((rank[body.status] ?? 0) < (rank[appointment.status] ?? 0)) {
       throw new ApiError(409, "Noto‘g‘ri holat o‘tishi", "invalid_transition");
     }
 
-    const { error } = await supabase
+    const { data: changed, error } = await supabase
       .from("appointments")
       .update({ status: body.status })
-      .eq("id", id);
-    if (error) throw new ApiError(500, "Holatni yangilab bo‘lmadi");
+      .eq("id", id).eq("clinic_id",staff.clinicId).eq("doctor_id",doctor.id).eq("status",appointment.status)
+      .select("id").maybeSingle();
+    if (error || !changed) throw new ApiError(409, "Holat o‘zgargan. Yangilang");
 
     await trackAnalytics({
       clinicId: staff.clinicId,

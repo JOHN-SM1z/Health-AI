@@ -213,6 +213,7 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
 
 const MENU_BUTTONS = [
   "Qabulga yozilish",
+  "Klinika ma’lumotlari",
   "Shifokor tanlashda yordam",
   "Narxlar",
   "Manzil",

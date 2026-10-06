@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadTestEnvironment } from "./environment";
 import { createClient } from "@supabase/supabase-js";
 
 /**
@@ -15,8 +16,7 @@ const MARKER = join(tmpdir(), "health-ai-local-db.json");
 const SEED_CLINIC_ID = "11111111-1111-4111-8111-111111111111";
 
 export default async function globalSetup(): Promise<void> {
-  const envFile = resolveEnvFile();
-  if (envFile) applyEnvFile(envFile);
+  loadTestEnvironment();
 
   const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -26,7 +26,7 @@ export default async function globalSetup(): Promise<void> {
   let reason = "";
 
   if (!url || serviceKey.startsWith("test-") || anonKey.startsWith("test-")) {
-    reason = "placeholder/empty Supabase keys — configure .env with local keys (npx supabase status)";
+    reason = "placeholder/empty Supabase keys — configure .env.test with local keys (npx supabase status)";
   } else {
     try {
       const admin = createClient(url, serviceKey, { auth: { persistSession: false } });
@@ -50,28 +50,5 @@ export default async function globalSetup(): Promise<void> {
   writeFileSync(MARKER, JSON.stringify({ available, reason }));
   if (!available) {
     console.warn(`\n⚠️  local Supabase unavailable — integration suites will be SKIPPED (${reason})\n`);
-  }
-}
-
-function resolveEnvFile(): string | null {
-  const candidates = [".env.local", ".env", ".env.test.example"];
-  for (const name of candidates) {
-    const path = join(process.cwd(), name);
-    if (existsSync(path)) return path;
-  }
-  return null;
-}
-
-function applyEnvFile(filePath: string): void {
-  const lines = readFileSync(filePath, "utf8").split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const equalsIndex = trimmed.indexOf("=");
-    if (equalsIndex === -1) continue;
-    const key = trimmed.slice(0, equalsIndex).trim();
-    const rawValue = trimmed.slice(equalsIndex + 1).trim();
-    const value = rawValue.replace(/^['"]|['"]$/g, "");
-    process.env[key] = value;
   }
 }

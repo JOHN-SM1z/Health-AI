@@ -1,3 +1,4 @@
+vi.mock("@/lib/operations/server", () => ({ getOperationsSettings: vi.fn().mockResolvedValue({mode:"scheduled",ticketPrinting:true}) }));
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const supabaseMock = {

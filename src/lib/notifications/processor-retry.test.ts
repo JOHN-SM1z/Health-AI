@@ -9,6 +9,7 @@ const supabaseMock = {
 };
 
 const APPOINTMENT_CTX = {
+  patients: {telegram_user_id:777000},
   start_at: "2026-08-20T05:00:00Z",
   status: "confirmed",
   doctors: { name: "Karimov Alisher" },
@@ -64,12 +65,11 @@ beforeEach(() => {
     if (table === "appointments") {
       return {
         select: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            maybeSingle: vi.fn(async () => {
-              if (supabaseMock.appointmentLookupThrows) throw new Error("db connection reset");
-              return { data: APPOINTMENT_CTX, error: null };
-            }),
-          })),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn(async () => {
+            if (supabaseMock.appointmentLookupThrows) throw new Error("db connection reset");
+            return {data:APPOINTMENT_CTX,error:null};
+          }),
         })),
       };
     }
@@ -85,10 +85,11 @@ beforeEach(() => {
     if (table === "notification_jobs") {
       return {
         update: vi.fn((data: unknown) => ({
-          eq: vi.fn(async () => {
-            if (supabaseMock.notificationJobUpdateThrows) throw new Error("db write failed");
-            return { error: null, data };
-          }),
+          eq: vi.fn().mockReturnThis(),
+          then: (resolve: (value: unknown) => void, reject: (error: Error) => void) => {
+            if (supabaseMock.notificationJobUpdateThrows) return reject(new Error("db write failed"));
+            return resolve({ error: null, data });
+          },
         })),
       };
     }

@@ -1,0 +1,1 @@
+begin;set local role authenticated; set local request.jwt.claim.role='authenticated'; set local request.jwt.claim.sub='00000000-0000-4000-8000-000000000013';update appointments set created_at='2020-01-01' where id='00000000-0000-4000-8000-000000000061';select created_at='2020-01-01' from appointments where id='00000000-0000-4000-8000-000000000061';rollback;

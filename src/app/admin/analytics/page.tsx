@@ -191,7 +191,7 @@ export default function AnalyticsPage() {
     <div>
       <PageHeader
         title="Tahlillar"
-        subtitle="Qabul manbalari, bekor qilish sabablari va hodisalar"
+        subtitle="Faqat belgilangan qabullar. Jonli tashriflar uchun Tashriflar hisoboti sahifasini oching."
         action={
           <div className="flex flex-wrap items-center gap-2">
             {isCustomRange && (
@@ -237,7 +237,7 @@ export default function AnalyticsPage() {
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
         {appointments?.can_view_payment_dynamics && (
           <StatCard
-            label="Jami tushum"
+            label="To‘langan, yakunlangan qabullar"
             value={appointments.total_revenue === null ? "—" : formatPrice(appointments.total_revenue)}
             tone="pine"
           />

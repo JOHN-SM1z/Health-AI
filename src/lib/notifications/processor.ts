@@ -41,6 +41,7 @@ const MESSAGE_TEMPLATES: Record<
 };
 
 type AppointmentContext = {
+  patientTelegramUserId: number | null;
   doctorName: string;
   serviceName: string;
   startAt: string;
@@ -53,14 +54,16 @@ function formatPrice(amount: number, currency: string): string {
   return `${new Intl.NumberFormat("uz-UZ").format(amount)} ${currency}`;
 }
 
-async function loadAppointmentContext(supabase: ReturnType<typeof createAdminClient>, appointmentId: string) {
-  const { data } = await supabase
+async function loadAppointmentContext(supabase: ReturnType<typeof createAdminClient>, appointmentId: string, clinicId: string) {
+  const { data, error } = await supabase
     .from("appointments")
-    .select("start_at, status, doctors!inner(name), services!inner(name), payments!inner(amount, currency)")
-    .eq("id", appointmentId)
+    .select("start_at, status, doctors!inner(name), services!inner(name), payments!inner(amount, currency), patients!inner(telegram_user_id)")
+    .eq("id", appointmentId).eq("clinic_id", clinicId)
     .maybeSingle();
+  if (error) throw new Error("appointment lookup failed");
   if (!data) return null;
   return {
+    patientTelegramUserId: data.patients?.telegram_user_id ?? null,
     doctorName: data.doctors?.name ?? "Shifokor",
     serviceName: data.services?.name ?? "Xizmat",
     startAt: data.start_at,
@@ -116,45 +119,52 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
     try {
       // Pause automated messages while an admin holds the conversation.
       if (job.conversation_id) {
-        const { data: conv } = await supabase
+        const { data: conv, error: conversationError } = await supabase
           .from("conversations")
           .select("status")
-          .eq("id", job.conversation_id)
+          .eq("id", job.conversation_id).eq("clinic_id", job.clinic_id)
           .maybeSingle();
+        if (conversationError) throw new Error("conversation lookup failed");
         if (conv && conv.status === "assigned") {
           // Defer: mark skipped so an admin can retry after release.
-          await markJob(jobId, "skipped", nextAttempts, "conversation held by admin", supabase);
+          await markJob(jobId, job.clinic_id, "skipped", nextAttempts, "conversation held by admin", supabase);
           continue;
         }
       }
 
       if (!job.patient_telegram_user_id) {
-        await markJob(jobId, "failed", nextAttempts, "no telegram recipient", supabase);
+        await markJob(jobId, job.clinic_id, "failed", nextAttempts, "no telegram recipient", supabase);
         failed += 1;
         continue;
       }
 
       if (job.appointment_id) {
-        const ctx = await loadAppointmentContext(supabase, job.appointment_id);
+        const ctx = await loadAppointmentContext(supabase, job.appointment_id, job.clinic_id);
         if (!ctx) {
-          await markJob(jobId, "skipped", nextAttempts, "appointment gone", supabase);
+          await markJob(jobId, job.clinic_id, "skipped", nextAttempts, "appointment gone", supabase);
           continue;
         }
 
+        if (ctx.patientTelegramUserId !== job.patient_telegram_user_id) {
+          await markJob(jobId, job.clinic_id, "failed", nextAttempts, "recipient does not match appointment patient", supabase);
+          failed += 1;
+          continue;
+        }
         // If the appointment was cancelled or closed, skip sending reminders.
         if (
           (job.type === "reminder_24h" || job.type === "reminder_2h") &&
           ["cancelled", "no_show", "completed"].includes(ctx.status)
         ) {
-          await markJob(jobId, "skipped", nextAttempts, `appointment is ${ctx.status}`, supabase);
+          await markJob(jobId, job.clinic_id, "skipped", nextAttempts, `appointment is ${ctx.status}`, supabase);
           continue;
         }
-        const { data: clinic } = await supabase
+        const { data: clinic, error: clinicError } = await supabase
           .from("clinics")
           .select("timezone")
           .eq("id", job.clinic_id)
           .maybeSingle();
 
+        if (clinicError || !clinic) throw new Error("clinic lookup failed");
         const text = MESSAGE_TEMPLATES[job.type](ctx, clinic?.timezone ?? "Asia/Tashkent");
         const bookUrl = miniAppUrl(job.clinic_id);
         const messageId = await sendTelegramMessage(
@@ -180,26 +190,27 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
           // must NOT release the job for retry — that would send the same
           // message to the patient a second time.
           try {
-            await supabase
+            const { error: sentError } = await supabase
               .from("notification_jobs")
               .update({ status: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, attempts: nextAttempts })
-              .eq("id", jobId);
+              .eq("id", jobId).eq("clinic_id",job.clinic_id);
+            if (sentError) throw new Error("delivery status could not be recorded");
           } catch (e) {
             logger.error("notification sent but not recorded", {
               jobId,
               error: e instanceof Error ? e.message : String(e),
             });
-            await markJob(jobId, "failed", nextAttempts, "sent but not recorded", supabase);
+            await markJob(jobId, job.clinic_id, "failed", nextAttempts, "sent but not recorded", supabase);
             failed += 1;
           }
         } else if (nextAttempts >= (job.max_attempts ?? 3)) {
-          await markJob(jobId, "failed", nextAttempts, "send failed after retries", supabase);
+          await markJob(jobId, job.clinic_id, "failed", nextAttempts, "send failed after retries", supabase);
           failed += 1;
         } else {
-          await markJob(jobId, "pending", nextAttempts, "send failed, retrying", supabase);
+          await markJob(jobId, job.clinic_id, "pending", nextAttempts, "send failed, retrying", supabase);
         }
       } else {
-        await markJob(jobId, "skipped", nextAttempts, "job has no appointment", supabase);
+        await markJob(jobId, job.clinic_id, "skipped", nextAttempts, "job has no appointment", supabase);
       }
     } catch (e) {
       // Release the claim so the next run retries. After max attempts the
@@ -209,10 +220,10 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
         error: e instanceof Error ? e.message : String(e),
       });
       if (nextAttempts >= (job.max_attempts ?? 3)) {
-        await markJob(jobId, "failed", nextAttempts, "processing error after retries", supabase);
+        await markJob(jobId, job.clinic_id, "failed", nextAttempts, "processing error after retries", supabase);
         failed += 1;
       } else {
-        await markJob(jobId, "pending", nextAttempts, "processing error, retrying", supabase);
+        await markJob(jobId, job.clinic_id, "pending", nextAttempts, "processing error, retrying", supabase);
       }
     }
   }
@@ -237,13 +248,15 @@ function miniAppUrl(clinicId: string): string | null {
 
 async function markJob(
   jobId: string,
+  clinicId: string,
   status: Database["public"]["Enums"]["notification_job_status"],
   attempts: number,
   error: string,
   supabase: ReturnType<typeof createAdminClient>,
 ) {
   try {
-    await supabase.from("notification_jobs").update({ status, attempts, error }).eq("id", jobId);
+    const { error: updateError } = await supabase.from("notification_jobs").update({ status, attempts, error }).eq("id", jobId).eq("clinic_id",clinicId);
+    if (updateError) throw new Error("notification status write failed");
   } catch (e) {
     // Never let a failed bookkeeping write crash the whole batch.
     logger.error("failed to update notification job", {

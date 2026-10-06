@@ -50,6 +50,16 @@ type ConversationLite = {
   updated_at: string;
 };
 
+type ReferralLite = {
+  id: string;
+  status: string;
+  urgency: string;
+  reason: string;
+  referred_at: string;
+  referring_doctor: { name: string; specialties?: { name: string } | null } | null;
+  receiving_doctor: { name: string; specialties?: { name: string } | null } | null;
+};
+
 type ListResponse = {
   patients: PatientRow[];
   total: number;
@@ -73,6 +83,7 @@ export default function PatientsPage() {
   const [noConsent, setNoConsent] = useState(false);
   const [detail, setDetail] = useState<DetailResponse | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [patientReferrals, setPatientReferrals] = useState<ReferralLite[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
@@ -110,11 +121,16 @@ export default function PatientsPage() {
   const openDetail = async (id: string) => {
     setDetailId(id);
     setDetail(null);
+    setPatientReferrals([]);
     setBusy(true);
     setNotesSaved(false);
     try {
-      const res = await adminApi.get<DetailResponse>(`/api/admin/patients?id=${id}`);
+      const [res, refRes] = await Promise.all([
+        adminApi.get<DetailResponse>(`/api/admin/patients?id=${id}`),
+        adminApi.get<{ referrals: ReferralLite[] }>(`/api/admin/referrals?patientId=${id}`).catch(() => ({ referrals: [] })),
+      ]);
       setDetail(res);
+      setPatientReferrals(refRes.referrals ?? []);
       setNotesDraft(res.patient?.operational_notes ?? "");
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Bemor ma'lumotlarini yuklab bo‘lmadi");
@@ -330,6 +346,35 @@ export default function PatientsPage() {
                         <ABadge tone={c.status === "assigned" ? "purple" : c.status === "open" ? "blue" : "neutral"}>
                           {c.status === "assigned" ? "Operatorda" : c.status === "open" ? "Bot" : "Yopiq"}
                         </ABadge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <p className="mb-2 font-display text-sm font-bold text-foreground">Yo‘llanmalar ({patientReferrals.length})</p>
+                {patientReferrals.length === 0 ? (
+                  <p className="text-sm text-ink-muted">Yo‘llanmalar yo‘q</p>
+                ) : (
+                  <div className="space-y-2">
+                    {patientReferrals.map((r) => (
+                      <div key={r.id} className="rounded-xl border border-hairline p-3 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-semibold text-foreground">
+                            {r.referring_doctor?.name ?? "Shifokor"} → {r.receiving_doctor?.name ?? "Mutaxassis"}
+                          </p>
+                          <div className="flex items-center gap-1.5">
+                            <ABadge tone={r.urgency === "emergency" ? "clay" : r.urgency === "urgent" ? "amber" : "neutral"}>
+                              {r.urgency === "emergency" ? "Kechiktirib bo'lmas" : r.urgency === "urgent" ? "Shoshilinch" : "Oddiy"}
+                            </ABadge>
+                            <ABadge tone={r.status === "completed" ? "pine" : r.status === "accepted" ? "blue" : r.status === "declined" ? "clay" : "amber"}>
+                              {r.status === "completed" ? "Yakunlangan" : r.status === "accepted" ? "Qabul qilingan" : r.status === "declined" ? "Rad etilgan" : "Kutilmoqda"}
+                            </ABadge>
+                          </div>
+                        </div>
+                        <p className="text-xs text-ink-muted line-clamp-2">{r.reason}</p>
+                        <p className="text-[11px] text-ink-muted font-numeric">{formatDateTime(r.referred_at)}</p>
                       </div>
                     ))}
                   </div>

@@ -342,10 +342,9 @@ describeDb("role-based authorization (Phase 2)", () => {
   it("manager CANNOT update payments directly — server-managed (audit finding, closed by payments_block_direct_write)", async () => {
     const c = clients.get("manager")!;
     const before = await admin.from("payments").select("status").eq("id", paymentId).single();
-    const { error: payError } = await c.from("payments").update({ status: "paid" }).eq("id", paymentId);
-    // Unlike a plain RLS-hidden row (error: null, 0 rows affected), the
-    // block is a trigger RAISE EXCEPTION — a real, non-null error.
-    expect(payError).not.toBeNull();
+    const { data: changedPayments, error: payError } = await c.from("payments").update({ status: "paid" }).eq("id", paymentId).select("id");
+    // RLS may hide the row before the trigger executes; either way no write is allowed.
+    expect(payError !== null || !changedPayments || changedPayments.length === 0).toBe(true);
     const after = await admin.from("payments").select("status").eq("id", paymentId).single();
     expect(after.data!.status).toBe(before.data!.status);
   });

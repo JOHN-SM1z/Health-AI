@@ -27,7 +27,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="uz" suppressHydrationWarning>
+    <html lang="uz" data-scroll-behavior="smooth" suppressHydrationWarning>
       <body
         className={`${inter.variable} ${sora.variable} ${jetbrains.variable} bg-[var(--tg-bg,var(--background))] text-[var(--tg-text,var(--foreground))] antialiased`}
       >

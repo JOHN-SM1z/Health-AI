@@ -1,0 +1,57 @@
+[
+  {
+    "probe": "25_same_clinic_payment_update_denied",
+    "exit": 3,
+    "result": "",
+    "error": "ERROR:  Payments are server-managed; use the payment API\nCONTEXT:  PL/pgSQL function payments_block_direct_write() line 18 at RAISE"
+  },
+  {
+    "probe": "26_reception_full_payment_amount",
+    "exit": 0,
+    "result": "100.00",
+    "error": ""
+  },
+  {
+    "probe": "27_parent_tenant_reassignment",
+    "exit": 0,
+    "result": "t",
+    "error": ""
+  },
+  {
+    "probe": "28_doctor_changes_appointment_primary_key",
+    "exit": 0,
+    "result": "",
+    "error": ""
+  },
+  {
+    "probe": "29_doctor_changes_owned_appointment_created_at",
+    "exit": 0,
+    "result": "t",
+    "error": ""
+  },
+  {
+    "probe": "30_no_composite_foreign_keys",
+    "exit": 0,
+    "result": "0",
+    "error": ""
+  },
+  {
+    "probe": "31_authenticated_cross_clinic_claim",
+    "exit": 0,
+    "result": "1",
+    "error": ""
+  },
+  {
+    "probe": "32_payment_read_check_write_race",
+    "a_exit": 0,
+    "a_read": "pending",
+    "b_exit": 0,
+    "b_read": "pending",
+    "final_status": "failed"
+  },
+  {
+    "probe": "33_full_setup_single_transaction",
+    "exit": 3,
+    "error": "setup.sql:607: NOTICE:  trigger \"staff_roles_audit\" for relation \"public.staff_roles\" does not exist, skipping\npsql:/Users/jahonshoh/Health-AI/supabase/full-db-setup.sql:612: NOTICE:  trigger \"appointments_audit\" for relation \"public.appointments\" does not exist, skipping\npsql:/Users/jahonshoh/Health-AI/supabase/full-db-setup.sql:617: NOTICE:  trigger \"payments_audit\" for relation \"public.payments\" does not exist, skipping\npsql:/Users/jahonshoh/Health-AI/supabase/full-db-setup.sql:622: NOTICE:  trigger \"doctor_time_blocks_audit\" for relation \"public.doctor_time_blocks\" does not exist, skipping\npsql:/Users/jahonshoh/Health-AI/supabase/full-db-setup.sql:627: NOTICE:  trigger \"conversations_audit\" for relation \"public.conversations\" does not exist, skipping\npsql:/Users/jahonshoh/Health-AI/supabase/full-db-setup.sql:1208: NOTICE:  policy \"voice-messages service role access\" for relation \"storage.objects\" does not exist, skipping\npsql:/Users/jahonshoh/Health-AI/supabase/full-db-setup.sql:1216: NOTICE:  policy \"voice-messages staff read\" for relation \"storage.objects\" does not exist, skipping\npsql:/Users/jahonshoh/Health-AI/supabase/full-db-setup.sql:1541: NOTICE:  trigger \"appointments_doctor_status_only\" for relation \"public.appointments\" does not exist, skipping\npsql:/Users/jahonshoh/Health-AI/supabase/full-db-setup.sql:1795: NOTICE:  trigger \"appointments_validate_slot\" for relation \"public.appointments\" does not exist, skipping\npsql:/Users/jahonshoh/Health-AI/supabase/full-db-setup.sql:1853: NOTICE:  trigger \"conversations_touch_last_message\" for relation \"public.messages\" does not exist, skipping\npsql:/Users/jahonshoh/Health-AI/supabase/full-db-setup.sql:1881: NOTICE:  trigger \"patients_telegram_identity_server_only\" for relation \"public.patients\" does not exist, skipping\npsql:/Users/jahonshoh/Health-AI/supabase/full-db-setup.sql:2064: ERROR:  unsafe use of new value \"manager\" of enum type staff_role\nHINT:  New enum values must be committed before they can be used.\n"
+  }
+]

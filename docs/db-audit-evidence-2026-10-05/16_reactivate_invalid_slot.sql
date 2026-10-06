@@ -1,0 +1,3 @@
+begin;
+insert into appointments(id,clinic_id,doctor_id,patient_id,service_id,start_at,end_at,status) values ('00000000-0000-4000-8000-000000000064','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000031','00000000-0000-4000-8000-000000000041','2030-01-07 23:00+00','2030-01-07 23:30+00','cancelled');set local role authenticated; set local request.jwt.claim.role='authenticated'; set local request.jwt.claim.sub='00000000-0000-4000-8000-000000000011';update appointments set status='confirmed' where id='00000000-0000-4000-8000-000000000064';select status from appointments where id='00000000-0000-4000-8000-000000000064';
+rollback;

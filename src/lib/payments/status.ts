@@ -8,6 +8,7 @@ import type { Database } from "@/lib/supabase/database.types";
 type PaymentStatus = Database["public"]["Enums"]["payment_status"];
 
 const LEGAL_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
+  voided: [],
   unpaid: ["pending", "paid", "manual_review"],
   pending: ["paid", "failed", "manual_review"],
   manual_review: ["paid", "failed", "unpaid"],
@@ -43,7 +44,7 @@ export async function transitionPaymentStatus(opts: {
 
   let query = supabase
     .from("payments")
-    .select("id, status, clinic_id, appointment_id, amount, currency, provider, paid_at, paid_by, provider_reference")
+    .select("id, status, clinic_id, appointment_id, amount, currency, provider, paid_at, paid_by, provider_reference, metadata")
     .eq("clinic_id", opts.clinicId);
 
   if (opts.paymentId) {
@@ -69,21 +70,24 @@ export async function transitionPaymentStatus(opts: {
     );
   }
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("payments")
     .update({
       status: opts.to,
       paid_at: opts.to === "paid" ? new Date().toISOString() : payment.paid_at,
       paid_by: opts.to === "paid" ? opts.actorId ?? null : payment.paid_by,
       provider_reference: opts.providerReference ?? payment.provider_reference,
-      metadata: (opts.metadata ?? {}) as never,
+      metadata: { ...(payment.metadata && typeof payment.metadata === "object" && !Array.isArray(payment.metadata) ? payment.metadata : {}), ...opts.metadata } as never,
     })
-    .eq("id", payment.id);
+    .eq("id", payment.id).eq("clinic_id", opts.clinicId).eq("status", payment.status)
+    .select("id").maybeSingle();
 
   if (error) {
     logger.error("payment transition failed", { error: error.message, paymentId: payment.id });
     throw new ApiError(500, "To‘lov holatini yangilab bo‘lmadi", "payment_update_failed");
   }
+
+  if (!updated) throw new ApiError(409, "To‘lov holati o‘zgargan. Yangilang", "payment_conflict");
 
   await recordAudit({
     clinicId: payment.clinic_id,

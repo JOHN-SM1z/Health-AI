@@ -33,11 +33,15 @@ probe the local stack at startup (service-role lookup of the seed clinic):
   misleading failed run.
 
 Prerequisite for a full local run: `npm run db:reset-local` (above) and a
-`.env` with the real local keys.
+`.env.test` with local test keys. Tests never load `.env` or `.env.local`, and non-loopback Supabase URLs are rejected.
 
 ## Migrations
 
-21 migrations in `supabase/migrations/` (ordered, repeatable on any environment):
+The source of truth is `supabase/migrations/`, applied in filename order with one transaction per file. `full-db-setup.sql` is retired; never concatenate the migrations into one SQL Editor transaction.
+
+For an existing deployment, first compare its migration history. The previously uncommitted referral migrations were split/renumbered to separate enum creation from use. Do not replay renamed files against a deployment that already applied them without reconciliation. New foreign keys validate existing data and stop on conflicts.
+
+Historical migration groups:
 
 1. `0001`–`0008` — schema: clinics, profiles, staff_roles, patients, specialties,
    services, doctors, doctor_services, working hours, time blocks, appointments,

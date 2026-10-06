@@ -31,6 +31,7 @@ export async function getClinicById(clinicId: string) {
     .from("clinics")
     .select("*")
     .eq("id", clinicId)
+    .eq("is_active", true)
     .maybeSingle();
   if (error || !data) throw new ApiError(404, "Klinika topilmadi", "clinic_not_found");
   return data;

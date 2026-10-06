@@ -111,19 +111,24 @@ describeDb("analytics integrity (real DB totals)", () => {
     const day2 = new Date("2026-08-18T05:00:00Z"); // local Tue 10:00
     const day2Noon = new Date("2026-08-18T05:30:00Z"); // local Tue 10:30
 
-    await insertAppt(day1, "completed", "telegram_mini_app"); // revenue 50k, bucket Mon
-    await insertAppt(day1Plus, "completed", "walk_in"); // revenue 50k, bucket Mon
-    await insertAppt(day1Late, "completed", "walk_in"); // revenue 50k, bucket Wed (00:30 local)
-    await insertAppt(day2, "pending", "walk_in"); // no revenue
-    await insertAppt(day2Noon, "cancelled", "telegram_mini_app", "Narxi qimmat"); // cancel reason
-    await insertAppt(day1Plus, "no_show", "telegram_chat", null, "Bemorga aloqa yo‘q"); // no-show reason
-    await insertAppt(day2Noon, "no_show", "telegram_chat", null, "Bemorga aloqa yo‘q"); // no-show reason
+    expect((await insertAppt(day1, "completed", "telegram_mini_app")).error).toBeNull(); // revenue 50k, bucket Mon
+    expect((await insertAppt(day1Plus, "completed", "walk_in")).error).toBeNull(); // revenue 50k, bucket Mon
+    expect((await insertAppt(day1Late, "completed", "walk_in")).error).toBeNull(); // revenue 50k, bucket Wed (00:30 local)
+    expect((await insertAppt(day2, "pending", "walk_in")).error).toBeNull(); // no revenue
+    expect((await insertAppt(day2Noon, "cancelled", "telegram_mini_app", "Narxi qimmat")).error).toBeNull(); // cancel reason
+    expect((await insertAppt(day1Plus, "no_show", "telegram_chat", null, "Bemorga aloqa yo‘q")).error).toBeNull(); // no-show reason
+    expect((await insertAppt(day2Noon, "no_show", "telegram_chat", null, "Bemorga aloqa yo‘q")).error).toBeNull(); // no-show reason
+
+    // Revenue comes from actual paid records, never inferred from completed visits.
+    const { data: completed, error: completedError } = await admin.from("appointments").select("id").eq("clinic_id", clinicId).eq("status", "completed");
+    expect(completedError).toBeNull();
+    expect((await admin.from("payments").insert((completed ?? []).map(a => ({ clinic_id: clinicId, patient_id: patientId, appointment_id: a.id, amount: 50000, currency: "UZS", status: "paid", provider: "manual" })))).error).toBeNull();
 
     // Fetch exactly what the endpoint queries (clinic-scoped, same columns).
-    const since = new Date(Date.now() - 30 * 86400000).toISOString();
+    const since = day1.toISOString();
     const { data, error } = await admin
       .from("appointments")
-      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name)")
+      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name), payments(amount,status)")
       .eq("clinic_id", clinicId)
       .gte("start_at", since);
     expect(error).toBeNull();
@@ -163,14 +168,14 @@ describeDb("analytics integrity (real DB totals)", () => {
     expect(agg.revenueByMonth).toEqual([{ key: "2026-08", revenue: 150_000 }]);
 
     // Top service/doctor: counts + revenue only from completed rows.
-    expect(agg.topServices).toEqual([{ name: `Konsultatsiya ${suffix}`, count: 7, revenue: 150_000 }]);
-    expect(agg.topDoctors).toEqual([{ name: `Dr Analytics ${suffix}`, count: 7, revenue: 150_000 }]);
+    expect(agg.topServices).toEqual([{ name: `Konsultatsiya ${suffix}`, count: 7, completedCount: 3, revenue: 150_000 }]);
+    expect(agg.topDoctors).toEqual([{ name: `Dr Analytics ${suffix}`, count: 7, completedCount: 3, completionRate: 42.9, revenue: 150_000 }]);
   });
 
   it("partial days and empty ranges aggregate to zero without errors", async () => {
     const { data: none } = await admin
       .from("appointments")
-      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name)")
+      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name), payments(amount,status)")
       .eq("clinic_id", clinicId)
       .gte("start_at", new Date(Date.now() + 2 * 86400000).toISOString());
     const agg = aggregateAppointments((none ?? []) as unknown as AnalyticsRow[], TZ, 3);

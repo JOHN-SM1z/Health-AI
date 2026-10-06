@@ -1,0 +1,157 @@
+[
+  {
+    "file": "bootstrap.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000001_extensions_types.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000002_clinics_staff_patients.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000003_catalog.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000004_schedules.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000005_appointments_payments.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000006_conversations.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000007_faqs_settings.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000008_operations.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000009_functions_triggers.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000010_rls.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000011_storage.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000012_conversation_state.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000013_grants.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000014_release_blockers.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000015_fixes.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000016_admin_reply_policies.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000017_voice_storage_upload.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000018_patient_and_voice_policies.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000019_voice_messages_optional_telegram_file.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000020_appointments_slot_validation.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260813000021_integrity_and_consistency.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260818000022_clinic_telegram_integrations_tenancy.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260818000023_role_based_authorization.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260818000024_role_based_rls.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260818000025_no_show_reasons_and_read_tracking.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260821000001_telegram_integration_constraint_and_seed_resilience.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260822000001_payments_server_managed.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260822000002_tenancy_hardening.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260822120000_update_audit_trigger_header.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260822130000_fix_audit_and_multiclinic_rls.sql",
+    "exit": 3,
+    "errors": "psql:/Users/jahonshoh/Health-AI/supabase/migrations/20260822130000_fix_audit_and_multiclinic_rls.sql:46: ERROR:  cannot drop function handle_audit_log() because other objects depend on it\nDETAIL:  trigger staff_roles_audit on table staff_roles depends on function handle_audit_log()\ntrigger appointments_audit on table appointments depends on function handle_audit_log()\ntrigger payments_audit on table payments depends on function handle_audit_log()\ntrigger doctor_time_blocks_audit on table doctor_time_blocks depends on function handle_audit_log()\ntrigger conversations_audit on table conversations depends on function handle_audit_log()\nHINT:  Use DROP ... CASCADE to drop the dependent objects too.\n"
+  }
+]

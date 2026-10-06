@@ -1,13 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { HeartPulse } from "lucide-react";
 import { createClient } from "@/lib/supabase/browser";
 import { AButton, AInput, AError, Card } from "@/components/admin/ui";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -48,8 +46,7 @@ export default function LoginPage() {
         return;
       }
       setPasswordRecovery(false);
-      router.push("/admin");
-      router.refresh();
+      window.location.replace("/admin");
       return;
     }
 
@@ -60,8 +57,9 @@ export default function LoginPage() {
       setError("Kirish amalga oshmadi. Email yoki parol noto‘g‘ri.");
       return;
     }
-    router.push("/admin");
-    router.refresh();
+    // Start a fresh authenticated document after the session cookie is stored.
+    // A concurrent push + refresh can remount the next screen and erase form input.
+    window.location.replace("/admin");
   };
 
   return (

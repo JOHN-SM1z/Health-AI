@@ -11,6 +11,7 @@ import { trackAnalytics } from "@/lib/analytics";
 import { enqueueBookingNotifications } from "@/lib/notifications/jobs";
 import { getPaymentProvider } from "@/lib/payments/provider";
 import { transitionPaymentStatus } from "@/lib/payments/status";
+import { requireScheduledBookings } from "@/lib/operations/server";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +40,7 @@ export async function POST(request: NextRequest) {
     }
 
     const clinic = await getClinicFromRequest(request);
+    await requireScheduledBookings(clinic.id);
     let patient;
     let source: "telegram_mini_app" | "telegram_chat" | "web" = "telegram_mini_app";
 
@@ -76,7 +78,7 @@ export async function POST(request: NextRequest) {
         full_name: body.patientName,
         phone: body.phone,
       })
-      .eq("id", patient.id);
+      .eq("id", patient.id).eq("clinic_id", clinic.id);
     if (patientUpdateError) throw new ApiError(500, "Bemor ma‘lumotlarini saqlab bo‘lmadi");
 
     await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "booking_attempt", payload: { serviceId: body.serviceId } });

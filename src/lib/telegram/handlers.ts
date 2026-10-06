@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { adminChatIds } from "@/lib/env";
+import { getOperationsSettings } from "@/lib/operations/server";
 import { getClinicById } from "@/lib/clinics/context";
 import { getOrCreatePatient } from "@/lib/patients/identity";
 import { getOrCreateConversation, appendMessage, conversationIsHeld, updateConversationState } from "@/lib/telegram/store";
@@ -60,11 +61,13 @@ const webAppUrl = (clinicId: string): string | null => {
  * Otherwise it degrades to a plain text button that routes to
  * handleMenuButton, which replies with the booking link.
  */
-export function buildMainKeyboard(clinicId: string) {
-  const url = webAppUrl(clinicId);
+export function buildMainKeyboard(clinicId: string, scheduled = true) {
+  const originalUrl = webAppUrl(clinicId);
+  const url = scheduled ? originalUrl : originalUrl?.replace("/book?", "/?");
+  const label = scheduled ? "📅 Qabulga yozilish" : "🏥 Klinika ma’lumotlari";
   const bookingButton = url
-    ? { text: "📅 Qabulga yozilish", web_app: { url } }
-    : { text: "📅 Qabulga yozilish" };
+    ? { text: label, web_app: { url } }
+    : { text: label };
   return {
     keyboard: [
       [bookingButton],
@@ -93,7 +96,7 @@ export function welcomeText(clinicName: string): string {
   return (
     `Assalomu alaykum! 👋\n` +
     `Bu — ${clinicName}ning rasmiy qabul boti.\n\n` +
-    `Men klinika ma‘lumotlari (manzil, narxlar, ish vaqti) va qabulga yozilishda yordam beraman. ` +
+    `Men klinika ma‘lumotlari (manzil, narxlar, ish vaqti) va registratsiyaga murojaat qilish tartibi bo‘yicha yordam beraman. ` +
     `Bot tibbiy tashxis qo‘ymaydi va davolash tavsiya qilmaydi.\n\n` +
     `Qulay tugmani tanlang 👇`
   );
@@ -159,7 +162,7 @@ export async function handleTelegramMessage(opts: {
       // The admin may have taken over while we were thinking — never reply
       // over a human. Re-check immediately before sending.
       if (await conversationIsHeld(conversation.id)) return;
-      await sendTelegramMessage({ chatId: opts.chatId, text: reply, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
+      await sendTelegramMessage({ chatId: opts.chatId, text: reply, replyMarkup: await clinicKeyboard(clinic.id) }, clinic.id);
       await appendMessage({
         conversationId: conversation.id,
         clinicId: clinic.id,
@@ -178,7 +181,7 @@ export async function handleTelegramMessage(opts: {
       {
         chatId: opts.chatId,
         text: reply.text,
-        replyMarkup: reply.handoff ? buildMainKeyboard(clinic.id) : undefined,
+        replyMarkup: reply.handoff ? await clinicKeyboard(clinic.id) : undefined,
       },
       clinic.id,
     );
@@ -241,7 +244,7 @@ export async function handleTelegramCommand(opts: {
         );
         return;
       }
-      await sendTelegramMessage({ chatId: opts.chatId, text: welcomeText(clinic.name), replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
+      await sendTelegramMessage({ chatId: opts.chatId, text: welcomeText(clinic.name), replyMarkup: await clinicKeyboard(clinic.id) }, clinic.id);
       await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "bot_started" });
       break;
     }
@@ -315,6 +318,10 @@ export async function handleMenuButton(opts: {
     return;
   }
 
+  if (opts.button.includes("Klinika ma’lumotlari") || (opts.button.includes("Qabulga yozilish") && (await getOperationsSettings(clinic.id)).mode === "walk_in")) {
+    await sendTelegramMessage({chatId:opts.chatId,text:"Klinikada jonli navbat. Kelganingizda registratsiyaga murojaat qiling. Manzil va narxlar uchun menyudagi tugmalarni tanlang.",replyMarkup:await clinicKeyboard(clinic.id)},clinic.id);
+    return;
+  }
   if (opts.button.includes("Qabulga yozilish")) {
     const url = bookingLink(clinic.id);
     const isHttps = url && url.startsWith("https://");
@@ -349,7 +356,7 @@ export async function handleMenuButton(opts: {
       [NAVIGATION_STATE_KEY]: { step: 1 },
     });
     const question = await startNavigation();
-    await sendTelegramMessage({ chatId: opts.chatId, text: question, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
+    await sendTelegramMessage({ chatId: opts.chatId, text: question, replyMarkup: await clinicKeyboard(clinic.id) }, clinic.id);
     await appendMessage({
       conversationId: conversation.id,
       clinicId: clinic.id,
@@ -374,7 +381,7 @@ export async function handleMenuButton(opts: {
         services.map((s) => `• ${s.name} — ${new Intl.NumberFormat("uz-UZ").format(Number(s.price))} ${clinic.currency}, ${s.duration_minutes} daq.`).join("\n") +
         "\n\nQabulga yozilish uchun “Qabulga yozilish” tugmasini bosing."
       : "Narxlar ro‘yxati hozircha kiritilmagan. Operatorlarimizga murojaat qiling.";
-    await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
+    await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: await clinicKeyboard(clinic.id) }, clinic.id);
     return;
   }
 
@@ -382,7 +389,7 @@ export async function handleMenuButton(opts: {
     const text = clinic.address
       ? `📍 Manzil: ${clinic.address}\n\n☎️ Telefon: ${clinic.phone ?? "ko‘rsatilmagan"}\n\nIsh vaqti haqida ma‘lumot uchun operatorlarga murojaat qiling.`
       : "Manzil hozircha kiritilmagan. Operatorlarimizga murojaat qiling.";
-    await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
+    await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: await clinicKeyboard(clinic.id) }, clinic.id);
     return;
   }
 
@@ -472,7 +479,7 @@ export async function exitOperatorChat(opts: {
       {
         chatId: opts.chatId,
         text: "Hozir operator bilan faol suhbat yo‘q. Qanday yordam kerak?",
-        replyMarkup: buildMainKeyboard(opts.clinicId),
+        replyMarkup: await clinicKeyboard(opts.clinicId),
       },
       opts.clinicId,
     );
@@ -503,7 +510,7 @@ export async function exitOperatorChat(opts: {
     {
       chatId: opts.chatId,
       text: "Suhbat yakunlandi. ✅\n\nEndi bot yana javob beradi. Qanday yordam kerak?",
-      replyMarkup: buildMainKeyboard(opts.clinicId),
+      replyMarkup: await clinicKeyboard(opts.clinicId),
     },
     opts.clinicId,
   );
@@ -790,4 +797,7 @@ export async function handleVoiceWrong(opts: { clinicId: string; chatId: number;
     },
     voiceRow.clinic_id,
   );
+}
+async function clinicKeyboard(clinicId: string) {
+  return buildMainKeyboard(clinicId, (await getOperationsSettings(clinicId)).mode !== "walk_in");
 }

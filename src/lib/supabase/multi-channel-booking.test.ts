@@ -65,10 +65,15 @@ describeDb("one booking engine serves every channel, for more than one clinic", 
       admin.from("services").select("id").eq("name", "Terapevt qabuli").single(),
       admin.from("patients").select("id").eq("telegram_user_id", 777000).single(),
     ]);
-    doctorAId = doctorA!.id;
+    const { data: isolatedDoctor, error: doctorError } = await admin.from("doctors").insert({ clinic_id: CLINIC_A, name: `Channel fixture ${suffix}`, active: true }).select("id").single();
+    expect(doctorError).toBeNull();
+    doctorAId = isolatedDoctor!.id;
+    const { data: hours, error: hoursError } = await admin.from("doctor_working_hours").select("weekday,start_time,end_time").eq("doctor_id", doctorA!.id);
+    expect(hoursError).toBeNull();
+    expect((await admin.from("doctor_working_hours").insert((hours ?? []).map(h => ({ ...h, clinic_id: CLINIC_A, doctor_id: doctorAId })))).error).toBeNull();
     serviceAId = serviceA!.id;
     patientAId = patientA!.id;
-    await admin.from("appointments").delete().eq("doctor_id", doctorAId).gte("start_at", nextWeekdayAt10(1, 60));
+    await admin.from("appointments").update({ status: "cancelled" }).eq("doctor_id", doctorAId).gte("start_at", nextWeekdayAt10(1, 60));
 
     const { data: clinicB } = await admin
       .from("clinics")
@@ -115,7 +120,7 @@ describeDb("one booking engine serves every channel, for more than one clinic", 
 
   afterAll(async () => {
     await admin.from("clinics").delete().eq("id", clinicBId); // cascades doctors/services/patients/appointments/payments
-    await admin.from("appointments").delete().eq("doctor_id", doctorAId).gte("start_at", nextWeekdayAt10(1, 60));
+    await admin.from("appointments").update({ status: "cancelled" }).eq("doctor_id", doctorAId).gte("start_at", nextWeekdayAt10(1, 60));
   });
 
   it.each(SOURCES)("clinic A: %s books through the same book_appointment() RPC as every other channel", async (source) => {

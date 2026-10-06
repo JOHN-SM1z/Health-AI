@@ -1,0 +1,1 @@
+begin;set local role authenticated; set local request.jwt.claim.role='authenticated'; set local request.jwt.claim.sub='00000000-0000-4000-8000-000000000015';select count(*) from claim_due_notification_jobs(200) where clinic_id='00000000-0000-4000-8000-000000000002';rollback;

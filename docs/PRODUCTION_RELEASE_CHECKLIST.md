@@ -1,3 +1,5 @@
+> **Historical report — superseded for release decisions.** The October 2026 database audit found defects in the audited implementation. Do not use this document as current production approval. See [current revision status](OPERATIONS_REVISION_2026-10-06.md) and [database audit](DATABASE_AUDIT_2026-10-05.md).
+
 # Production Release Checklist
 
 This operational checklist governs the deployment, verification, and rollback procedures for launching the **Health AI** platform into production.

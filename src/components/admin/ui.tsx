@@ -108,6 +108,8 @@ const fieldBase =
   "w-full rounded-lg border border-hairline bg-surface px-3 py-2 text-sm text-foreground transition-[border-color,box-shadow] duration-150 placeholder:text-ink-muted/70 focus:border-pine";
 
 export function AInput({
+  id,
+  maxLength,
   value,
   onChange,
   placeholder,
@@ -116,6 +118,8 @@ export function AInput({
   autoComplete,
   "aria-label": ariaLabel,
 }: {
+  id?: string;
+  maxLength?: number;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -126,6 +130,8 @@ export function AInput({
 }) {
   return (
     <input
+      id={id}
+      maxLength={maxLength}
       type={type}
       value={value}
       aria-label={ariaLabel}
@@ -138,12 +144,14 @@ export function AInput({
 }
 
 export function ASelect({
+  id,
   value,
   onChange,
   options,
   className,
   "aria-label": ariaLabel,
 }: {
+  id?: string;
   value: string;
   onChange: (v: string) => void;
   options: Array<{ value: string; label: string }>;
@@ -152,6 +160,7 @@ export function ASelect({
 }) {
   return (
     <select
+      id={id}
       value={value}
       aria-label={ariaLabel}
       onChange={(e) => onChange(e.target.value)}
