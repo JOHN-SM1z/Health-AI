@@ -18,7 +18,7 @@ import {
   STATUS_TONES,
 } from "@/lib/admin/client";
 import { ReferralDialog } from "@/components/doctor/referral-dialog";
-import { LabOrdersSection } from "@/components/doctor/lab-orders";
+import { LabWorkspace } from "@/components/doctor/lab-history";
 import { ClinicalRecordForm, type RecordDraft } from "@/components/doctor/clinical-record-form";
 import { ReferralLifecycle } from "@/components/doctor/referral-lifecycle";
 import { RECORD_CATEGORY_LABELS, type RecordCategory } from "@/lib/clinical-records/categories";
@@ -511,9 +511,9 @@ export default function DoctorPatientWorkspacePage() {
         </Card>
       </Section>
 
-      <Section title="Laboratoriya" subtitle="Tahlil buyurtmalari va ularning holati. Natijalar faqat tasdiqlangandan keyin ko‘rinadi.">
+      <Section title="Laboratoriya" subtitle="Tahlil buyurtmalari, tasdiqlangan natijalar tarixi va dinamikasi. Natijalar faqat tasdiqlangandan keyin ko‘rinadi.">
         <Card>
-          <LabOrdersSection patientId={workspace.patient.id} appointmentId={current?.appointmentId ?? null} />
+          <LabWorkspace patientId={workspace.patient.id} appointmentId={current?.appointmentId ?? null} />
         </Card>
       </Section>
 
