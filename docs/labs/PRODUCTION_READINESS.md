@@ -104,7 +104,8 @@ Results:
 | D1 | Apply the 21 migrations to **staging, or a copy of production**, first. Then run the E2E suite there (`npm run test:e2e` refuses non-local targets by design (`assertLocalOnly`), so staging checks are the manual smoke test in § 3). |
 | D2 | Take and **verify a backup** immediately before applying to production: Supabase PITR, if the plan includes it, or `pg_dump`. Whether PITR is available on the project's plan was not checked. |
 | D3 | Confirm the hosted Postgres major version. On 17 or newer the `MAINTAIN` revoke applies; on older versions it is skipped by design. |
-| D4 | Apply with the Supabase CLI migration history (`supabase db push`), or file by file with `--single-transaction`, never by hand-editing. Regenerate nothing by hand. `full-db-setup.sql` is checked by `build-full-db-setup --check` in CI. |
+| D4 | **Do not use `supabase db push` on the existing production project.** Its migration history was written by name with fresh version stamps (for example version `20260911102114` named `20260821000001_telegram_…`), so the CLI's version comparison sees none of the repository's 68 files as applied. It refuses to push, or tries to re-run them. Apply only the 21 lab files, **in filename order, one transaction per file**, recorded under their file names as before: the SQL editor, `psql --single-transaction -v ON_ERROR_STOP=1 -f`, or the Supabase MCP `apply_migration` with `name` = the file name. Check by name afterwards (`STAGING_ACCEPTANCE.md` A3). Never hand-edit a file. `full-db-setup.sql` is for an empty project only. |
+| D5 | Checked read-only on 2026-10-06: the project "Health AI" (PostgreSQL 17.6, so the `MAINTAIN` revoke applies) has `20260930000006_tenant_integrity_hardening` as its latest migration, the same as `main`. That is the base the dry-run used. It has no development branches, so **no staging environment exists yet**. |
 
 ### 2.2 Application
 

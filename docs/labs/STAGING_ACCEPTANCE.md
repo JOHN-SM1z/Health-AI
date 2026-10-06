@@ -24,11 +24,13 @@ Rules for the run:
 ## A. Database (owner or engineer, SQL editor)
 
 1. [ ] **Backup.** A verified backup or PITR point exists from just before applying. Write down its time: ________
-2. [ ] Apply the migrations with `supabase db push` from the release commit. Expect no errors.
+2. [ ] Apply the 21 lab files from the release commit, `supabase/migrations/20261005000001_…` to `…021_…`, **in filename order, one transaction per file**. Record each under its file name, as the existing history does. Expect no errors.
+   - On a fresh staging project, `supabase db push` of the whole folder is fine.
+   - **On the production project, do not use `db push`.** Its history uses different version stamps, so the CLI would try to re-run everything (`PRODUCTION_READINESS.md` D4).
 3. [ ] Check that all 21 lab migrations are recorded. Expect **21**:
    ```sql
    select count(*) from supabase_migrations.schema_migrations
-   where version between '20261005000001' and '20261005000021';
+   where name like '20261005000%' or version like '20261005000%';
    ```
 4. [ ] Check that every public table has RLS enabled. Expect **no rows**:
    ```sql

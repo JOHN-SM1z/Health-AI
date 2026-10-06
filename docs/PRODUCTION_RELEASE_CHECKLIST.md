@@ -22,7 +22,7 @@ This operational checklist governs the deployment, verification, and rollback pr
 - [ ] Verify `is_clinic_staff` security definer function exists with `search_path = public`.
 - [ ] Verify partial exclusion constraint `no_overlapping_active_appointments` is active on `public.appointments`.
 - [ ] Confirm `anon` SQL role permissions are revoked on core business tables.
-- [ ] Laboratory module (migrations `20261005000001`–`…021` on an existing database): back up first, apply to staging or a production copy before production, and work through the conditions in [`docs/labs/PRODUCTION_READINESS.md`](labs/PRODUCTION_READINESS.md) §3. Rollback options are in §4 there; the migrations are forward-only.
+- [ ] Laboratory module (migrations `20261005000001`–`…021` on an existing database): back up first, apply to staging or a production copy before production, and work through the conditions in [`docs/labs/PRODUCTION_READINESS.md`](labs/PRODUCTION_READINESS.md) §3. Rollback options are in §4 there; the migrations are forward-only. On the existing production project apply only those 21 files, one by one, recorded by file name — not `supabase db push` (its history uses different version stamps; D4 there).
 
 ### C. Initial Data & Staff Bootstrapping
 - [ ] Run owner creation bootstrap script (`npm run create-owner`) with production credentials to create the primary clinic and owner profile.
