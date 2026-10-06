@@ -36,6 +36,7 @@ import { PATCH as actOnReferral } from "../referrals/[id]/route";
 import { PATCH as setAppointmentStatus } from "../appointments/[id]/route";
 import { GET as getAdminPatient } from "@/app/api/admin/patients/route";
 import { daytimeTimezone } from "@/test/daytime-timezone";
+import { tzOffsetMinutes } from "@/lib/time/local";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
@@ -49,10 +50,10 @@ type Workspace = {
   consultation: { current: { appointmentId: string } | null; booked: unknown; canStartWalkIn: boolean; blockedReason: string | null };
 };
 
-/** Minutes until midnight in the clinic (Tashkent, UTC+5): walk-ins must end within today's working hours. */
-const minutesToClinicMidnight = () => {
-  const local = new Date(Date.now() + 5 * 3_600_000);
-  return 24 * 60 - (local.getUTCHours() * 60 + local.getUTCMinutes());
+/** The clinic-local ISO weekday (Monday = 1) and minute of the day at `at`, in the clinic's zone (TZ). */
+const clinicLocal = (at: Date) => {
+  const local = new Date(at.getTime() + tzOffsetMinutes(TZ, at) * 60_000);
+  return { weekday: ((local.getUTCDay() + 6) % 7) + 1, minutes: local.getUTCHours() * 60 + local.getUTCMinutes() };
 };
 
 describeDb("referred-patient clinical workspace", () => {
@@ -414,12 +415,6 @@ describeDb("referred-patient clinical workspace", () => {
     expect(await start("b", x.id, { serviceId: quickService })).toMatchObject({ status: 409, body: { code: "referral_not_accepted" } });
     await act("b", referral, { action: "accept" });
 
-    if (minutesToClinicMidnight() < 15) {
-      // A walk-in must end within today's working hours.
-      expect(await start("b", x.id, { serviceId: quickService })).toMatchObject({ status: 422, body: { code: "INVALID_TIME", details: { reason: "outside_working_hours" } } });
-      return;
-    }
-
     const first = await start("b", x.id, { serviceId: quickService });
     expect(first.status).toBe(201);
     const appointmentId = (first.body.data!.consultation as { appointmentId: string }).appointmentId;
@@ -441,8 +436,24 @@ describeDb("referred-patient clinical workspace", () => {
     expect(after.records.find((r) => r.summary === "Hypertensive heart disease")).toMatchObject({ mine: true, appointmentId });
   });
 
+  it("refuses a walk-in that would run past the end of the doctor's working hours", async () => {
+    const x = await patientX();
+    await act("b", await refer(x), { action: "accept" });
+
+    // The route books the walk-in from the next whole minute; Dr B's day ends 2 minutes into the 5-minute visit.
+    // Starting later only moves it further past the end, so the refusal never depends on the clock.
+    const { weekday, minutes } = clinicLocal(new Date(Math.floor(Date.now() / 60_000) * 60_000 + 60_000));
+    const endTime = `${String(Math.floor((minutes + 2) / 60)).padStart(2, "0")}:${String((minutes + 2) % 60).padStart(2, "0")}`;
+    const { data: shortened } = await admin.from("doctor_working_hours").update({ end_time: endTime }).eq("doctor_id", doctors.b).eq("weekday", weekday).select("weekday");
+    expect(shortened).toHaveLength(1);
+    try {
+      expect(await start("b", x.id, { serviceId: quickService })).toMatchObject({ status: 422, body: { code: "INVALID_TIME", details: { reason: "outside_working_hours" } } });
+    } finally {
+      await admin.from("doctor_working_hours").update({ end_time: "23:59" }).eq("doctor_id", doctors.b).eq("weekday", weekday);
+    }
+  });
+
   it("starts a visit booked for today instead of adding a walk-in", async () => {
-    if (minutesToClinicMidnight() < 60) return; // no room left today for a booked visit
     const x = await patientX();
     const referral = await refer(x);
     await act("b", referral, { action: "accept" });
