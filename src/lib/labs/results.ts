@@ -38,6 +38,7 @@ const ENTRY_ERRORS: Array<[RegExp, number, string, string]> = [
   [/lab_result_draft_owned/, 409, "Bu natijani boshqa xodim kiritmoqda", "draft_owned"],
   [/lab_result_item_not_ready/, 409, "Namuna hali laboratoriyaga qabul qilinmagan", "sample_not_received"],
   [/lab_result_incomplete/, 422, "Barcha ko‘rsatkichlar to‘ldirilmagan", "result_incomplete"],
+  [/lab_result_has_documents/, 409, "Qoralamaga hujjat biriktirilgan — uni o‘chirib bo‘lmaydi; natijani to‘ldirib yuboring", "draft_has_documents"],
   [/lab_result_not_submitted/, 409, "Natija tekshiruvda emas (allaqachon tasdiqlangan yoki qaytarilgan) — sahifani yangilang", "not_awaiting_review"],
   [/lab_result_second_person/, 409, "Natijani kiritgan yoki yuborgan xodim uni tasdiqlay olmaydi", "second_person_required"],
   [/lab_result_reason_required/, 400, "Tuzatish sababini yozing", "reason_required"],
@@ -57,7 +58,7 @@ function entryError(error: { message?: string; code?: string }, what: string): A
 async function authorizedItem(staff: ClinicStaff, itemId: string) {
   const { data: item, error } = await createAdminClient()
     .from("lab_order_items")
-    .select("id, patient_id, test_id, status, test_name_snapshot, test_code_snapshot, created_at")
+    .select("id, order_id, patient_id, test_id, status, test_name_snapshot, test_code_snapshot, created_at")
     .eq("id", itemId)
     .eq("clinic_id", staff.clinicId)
     .maybeSingle();
@@ -111,7 +112,7 @@ export type EntryParameter = {
 };
 
 export type ResultEntry = {
-  item: { id: string; testName: string; testCode: string; status: string; orderedAt: string };
+  item: { id: string; orderId: string; testName: string; testCode: string; status: string; orderedAt: string };
   patient: { fullName: string | null; dateOfBirth: string | null; sex: string | null };
   /** The version being worked on (draft / submitted) or else the current verified one. */
   result: (VersionMeta & { mine: boolean; labComment: string | null }) | null;
@@ -283,7 +284,7 @@ export async function getResultEntry(staff: ClinicStaff, itemId: string): Promis
   };
 
   return {
-    item: { id: item.id, testName: item.test_name_snapshot, testCode: item.test_code_snapshot, status: item.status, orderedAt: item.created_at },
+    item: { id: item.id, orderId: item.order_id, testName: item.test_name_snapshot, testCode: item.test_code_snapshot, status: item.status, orderedAt: item.created_at },
     patient: { fullName: patient.data.full_name, dateOfBirth: patient.data.date_of_birth, sex: patient.data.sex },
     result: current ? { ...meta(current), mine: current.entered_by === staff.profileId, labComment: current.lab_comment } : null,
     parameters,

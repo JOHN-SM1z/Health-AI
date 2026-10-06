@@ -106,9 +106,10 @@ export const VIEWPORTS = {
 export async function signIn(browser, report, email, viewport = "desktop", { expectDenials = false } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORTS[viewport], hasTouch: viewport !== "desktop", isMobile: viewport === "phone" });
   const page = await context.newPage();
-  // Where a step deliberately opens forbidden pages or books a taken time, the
-  // browser's own "Failed to load resource: 404/409/410" lines are expected.
-  const expected = (text) => expectDenials && /Failed to load resource: .* (404|409|410)/.test(text);
+  // Where a step deliberately opens forbidden pages, books a taken time or
+  // uploads a forged file, the browser's own "Failed to load resource:
+  // 404/409/410/415" lines are expected.
+  const expected = (text) => expectDenials && /Failed to load resource: .* (404|409|410|415)/.test(text);
   page.on("console", (m) => m.type() === "error" && !expected(m.text()) && report.problems.push(`[${email}] console: ${m.text()}`));
   page.on("pageerror", (e) => report.problems.push(`[${email}] pageerror: ${e.message}`));
   page.on("response", (r) => r.status() >= 500 && report.problems.push(`[${email}] HTTP ${r.status()} ${r.url()}`));

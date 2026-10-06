@@ -5,6 +5,7 @@ import { ABadge, AButton, AError, AInput, AModal, ASelect, ATextArea } from "@/c
 import { adminApi, AdminApiError, formatDateTime } from "@/lib/admin/client";
 import { LAB_FLAG } from "@/components/doctor/lab-orders";
 import { formatRange, parseParameterValue, type LabValueType } from "@/lib/labs/values";
+import { ResultDocuments } from "@/components/lab/result-documents";
 
 /**
  * Structured result entry (Phase 8). One row per configured parameter: the
@@ -31,7 +32,7 @@ type Parameter = {
   value: { numeric: string | null; text: string | null; boolean: boolean | null; flag: string } | null;
 };
 type Entry = {
-  item: { id: string; testName: string; testCode: string; status: string; orderedAt: string };
+  item: { id: string; orderId: string; testName: string; testCode: string; status: string; orderedAt: string };
   patient: { fullName: string | null; dateOfBirth: string | null; sex: string | null };
   result: (VersionMeta & { mine: boolean; labComment: string | null }) | null;
   parameters: Parameter[];
@@ -314,6 +315,14 @@ export function ResultEntryDialog({ itemId, onClose, onChanged }: { itemId: stri
             Belgi saqlangandan keyin qo‘yiladi va faqat klinikada sozlangan me’yor oralig‘iga nisbatan joylashuvni ko‘rsatadi — bu tashxis emas.
             {editable && missing > 0 && ` Yuborish uchun barcha ko‘rsatkichlarni to‘ldiring (${missing} ta qoldi).`}
           </p>
+
+          {result && (
+            <ResultDocuments
+              orderId={entry.item.orderId}
+              resultId={result.id}
+              canUpload={result.status === "draft" || result.status === "submitted"}
+            />
+          )}
 
           {correcting && result?.status === "verified" && (
             <div className="flex flex-col gap-2 rounded-xl border border-hairline p-3" role="group" aria-label="Tuzatish">

@@ -174,7 +174,7 @@ describeDb("doctor lab history (real database)", () => {
     const first = await result(130, { orderedBy: people.drA, doctorId: doctors.a });
     results.first = first.resultId;
     results.firstItem = first.itemId;
-    results.second = (await result(110)).resultId;
+    results.second = (await result(110, { verify: false })).resultId; // verified below, after its report is attached
     results.pendingItem = (await result(150, { verify: false })).itemId;
     const correction = (await rpc("start_lab_result_correction", { p_clinic_id: clinicA, p_result_id: results.first, p_by: people.tech, p_reason: "Qayta o‘lchandi" })) as Array<{ lab_result_id: string }>;
     results.correction = correction[0].lab_result_id;
@@ -184,6 +184,7 @@ describeDb("doctor lab history (real database)", () => {
 
     docs.live = await document(results.second);
     docs.withdrawn = await document(results.second, { withdrawn: true });
+    await rpc("verify_lab_result", { p_clinic_id: clinicA, p_result_id: results.second, p_verified_by: people.reviewer });
     const pending = await admin.from("lab_results").select("id").eq("order_item_id", results.pendingItem).single();
     docs.unverified = await document(pending.data!.id);
   });

@@ -56,7 +56,7 @@ async function run() {
   }
   await verifiedResult(140, 60, { byDoctor: true });
   await verifiedResult(128, 30);
-  const latest = await verifiedResult(115, 2);
+  const latest = await verifiedResult(115, 2, { verify: false }); // its report is attached before verification
   const pending = await verifiedResult(99, 1, { verify: false });
 
   const docId = crypto.randomUUID();
@@ -64,6 +64,7 @@ async function run() {
   const { error: upErr } = await storage.from("lab-documents").upload(`${clinic}/${docId}`, new TextEncoder().encode(reportText), { contentType: "application/pdf" });
   if (upErr) throw new Error(upErr.message);
   await db`insert into public.lab_documents ${db({ id: docId, clinic_id: clinic, patient_id: patient.id, order_id: latest.orderId, result_id: latest.resultId, kind: "report", storage_path: `${clinic}/${docId}`, mime_type: "application/pdf", size_bytes: reportText.length, sha256: "b".repeat(64), uploaded_by: lab.id })}`;
+  await db`select public.verify_lab_result(${clinic}, ${latest.resultId}, ${lab2.id})`;
 
   const browser = await chromium.launch();
   try {

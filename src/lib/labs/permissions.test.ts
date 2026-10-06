@@ -73,6 +73,11 @@ describe("lab permission model", () => {
     expect(holders("sample.process")).toEqual(["lab"]);
   });
 
+  it("keeps attaching result documents with the laboratory", () => {
+    expect(holders("document.upload")).toEqual(["lab"]);
+    expect(labCapabilityGroup("document.upload")).toBe("clinical");
+  });
+
   it("keeps the clinic-wide work queue away from doctors", () => {
     expect(holders("queue.read")).toEqual(["owner", "manager", "admin", "receptionist", "lab"]);
   });

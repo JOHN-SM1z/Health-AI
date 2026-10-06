@@ -710,10 +710,14 @@ describeDb("lab domain — database layer", () => {
 
   describe("documents", () => {
     it("records provenance, is withdrawn but never deleted, and stays in its clinic", async () => {
-      const fx = await verifiedResult();
+      // Documents are attached while the result is in review (Phase 11), not after verification.
+      const fx = await collectedItem();
+      const result = await newResult(fx.item, fx.patient);
+      await addValue(result, fx.parameter, { value_numeric: 118 });
+      await submit(result);
       const id = randomUUID();
       const doc = {
-        id, clinic_id: clinicA, patient_id: fx.patient, order_id: fx.order, result_id: fx.result, kind: "report",
+        id, clinic_id: clinicA, patient_id: fx.patient, order_id: fx.order, result_id: result, kind: "report",
         storage_path: `${clinicA}/${id}`, mime_type: "application/pdf", size_bytes: 1024, sha256: "a".repeat(64),
         uploaded_by: profiles.receptionist,
       };
