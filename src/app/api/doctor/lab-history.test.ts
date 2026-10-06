@@ -26,6 +26,7 @@ vi.mock("@/lib/auth/staff", async (importOriginal) => {
 import { GET as getHistory } from "./patients/[id]/lab-history/route";
 import { GET as getDocument } from "./patients/[id]/lab-documents/[documentId]/route";
 import { POST as resultAction } from "../lab/results/[id]/route";
+import { idFree } from "@/test/id-free";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
@@ -218,7 +219,7 @@ describeDb("doctor lab history (real database)", () => {
 
     const { data: audit } = await admin.from("audit_events").select("entity_id, metadata").eq("action", "lab_result_viewed").eq("actor_id", people.drA);
     expect(audit!.map((a) => a.entity_id).sort()).toEqual([results.correction, results.second].sort());
-    expect(JSON.stringify(audit)).not.toMatch(/128|110/);
+    expect(idFree(audit)).not.toMatch(/128|110/);
   });
 
   it("a referred doctor sees the same history, including results another doctor ordered", async () => {

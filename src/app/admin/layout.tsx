@@ -5,6 +5,7 @@ import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
 import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge } from "lucide-react";
 import { labCan } from "@/lib/labs/permissions";
+import { NotificationBell } from "@/components/staff/notification-bell";
 
 export const metadata = { title: "Boshqaruv paneli" };
 
@@ -54,6 +55,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <p className="font-display text-sm font-bold tracking-tight text-foreground">Health AI</p>
             <p className="max-w-[10rem] truncate text-xs text-ink-muted">{ctx.clinicName}</p>
           </div>
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 text-sm">
           <p className="font-numeric px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.16em] text-ink-muted/80">
@@ -80,6 +84,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <span className="font-display text-sm font-bold tracking-tight">Health AI</span>
           </Link>
           <span className="pulse-dot" title="Jonli" />
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </header>
         {/* Phones and small tablets: the sidebar is hidden, so its sections sit in a scrollable strip. */}
         <NavStrip label="Boshqaruv bo‘limlari">

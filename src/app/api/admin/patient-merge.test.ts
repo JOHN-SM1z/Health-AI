@@ -35,6 +35,7 @@ import { GET as labHistory } from "../doctor/patients/[id]/lab-history/route";
 import { GET as doctorPatients } from "../doctor/patients/route";
 import { listPatientLabResults } from "@/lib/labs/patient-results";
 import { getOrCreatePatient } from "@/lib/patients/identity";
+import { idFree } from "@/test/id-free";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
@@ -238,7 +239,7 @@ describeDb("patient merge (real database)", () => {
     const { data: audit } = await admin.from("audit_events").select("patient_id, actor_id, new_values").eq("action", "patient_merged").eq("entity_id", mergeId);
     expect(audit!.map((a) => a.patient_id).sort()).toEqual([desk, bot].sort());
     expect(audit!.every((a) => a.actor_id === people.owner)).toBe(true);
-    const text = JSON.stringify(audit);
+    const text = idFree(audit);
     for (const secret of [pinfl, String(telegram), "pasport bilan"]) expect(text).not.toContain(secret);
 
     // The longitudinal record: each doctor still sees only their own visits, now across both records.

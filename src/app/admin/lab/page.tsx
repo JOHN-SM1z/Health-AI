@@ -60,6 +60,8 @@ type Settings = {
   paymentPolicy: "not_required" | "before_collection";
   releaseToPatient: boolean;
   verifiers: "lab_and_doctor" | "lab_only" | "doctor_only";
+  notifyStaff: boolean;
+  notifyPatientOnCancel: boolean;
 };
 
 const VALUE_TYPE_LABELS: Record<ValueType, string> = {
@@ -806,6 +808,14 @@ function SettingsTab({ onError }: { onError: (m: string) => void }) {
         />
       </div>
       <p className="text-xs text-ink-muted">Har bir natijani kiritgan xodimdan boshqa vakolatli xodim tasdiqlaydi — bu o‘zgarmas qoida.</p>
+      <label className="flex items-center gap-2 text-sm text-foreground">
+        <input type="checkbox" checked={settings.notifyStaff} onChange={(e) => setSettings({ ...settings, notifyStaff: e.target.checked })} />
+        Xodimlarga ilova ichida bildirishnoma (yangi buyurtma, namuna, tekshiruv, tasdiq, bekor qilish)
+      </label>
+      <label className="flex items-center gap-2 text-sm text-foreground">
+        <input type="checkbox" checked={settings.notifyPatientOnCancel} onChange={(e) => setSettings({ ...settings, notifyPatientOnCancel: e.target.checked })} />
+        Buyurtma bekor qilinganda bemorga Telegram orqali xabar berish
+      </label>
       <div className="flex items-center justify-end gap-3">
         {savedAt && <span className="text-xs text-ink-muted">Saqlandi {savedAt}</span>}
         <AButton onClick={save} disabled={saving}>Saqlash</AButton>

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
+import { idFree } from "@/test/id-free";
 
 /**
  * Verification and versioning (supabase/migrations/20261005000011):
@@ -221,7 +222,7 @@ describe.skipIf(unavailable !== null)("lab result verification — database", ()
       where entity_type = 'lab_results' and entity_id in ${sql([v1, c.lab_result_id])} order by created_at, id`;
     expect(audit.map((a) => a.action)).toEqual(expect.arrayContaining(["lab_result_correction_started", "lab_result_superseded", "lab_result_corrected"]));
     expect(audit.find((a) => a.action === "lab_result_superseded")!.actor_id).toBe(reviewer2);
-    expect(JSON.stringify(audit)).not.toMatch(/aralashib|145|130/);
+    expect(idFree(audit)).not.toMatch(/aralashib|145|130/);
   });
 
   it("a returned correction goes back to its author; a discarded one leaves the verified version as it was", async () => {

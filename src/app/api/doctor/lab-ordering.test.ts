@@ -27,6 +27,7 @@ vi.mock("@/lib/auth/staff", async (importOriginal) => {
 import { GET as getCatalog } from "./lab/catalog/route";
 import { GET as getOrders, POST as postOrder } from "./patients/[id]/lab-orders/route";
 import { GET as getResult } from "./patients/[id]/lab-results/[itemId]/route";
+import { idFree } from "@/test/id-free";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
@@ -287,7 +288,7 @@ describeDb("doctor lab ordering (real database)", () => {
     expect(shown.values).toEqual([{ parameter: "Gemoglobin", value: "118", unit: "g/L", rangeLabel: "120–150", flag: "low" }]);
     const { data: audit } = await admin.from("audit_events").select("actor_id, patient_id").eq("action", "lab_result_viewed").eq("entity_id", result!.id);
     expect(audit).toEqual([{ actor_id: people.drA, patient_id: p }]);
-    expect(JSON.stringify(audit)).not.toContain("118");
+    expect(idFree(audit)).not.toContain("118");
 
     // Dr C verified it but has no relationship with the patient: no access.
     as(people.drC, "doctor");

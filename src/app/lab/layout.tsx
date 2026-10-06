@@ -4,6 +4,7 @@ import { getStaffContext, hasAnyRole } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
 import { FileUp, FlaskConical, KeyRound, ListChecks } from "lucide-react";
+import { NotificationBell } from "@/components/staff/notification-bell";
 
 export const metadata = { title: "Laboratoriya" };
 
@@ -29,6 +30,9 @@ export default async function LabLayout({ children }: { children: React.ReactNod
             <p className="font-display text-sm font-bold tracking-tight text-foreground">Laboratoriya</p>
             <p className="max-w-[10rem] truncate text-xs text-ink-muted">{ctx.clinicName}</p>
           </div>
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 text-sm">
           <p className="font-numeric px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.16em] text-ink-muted/80">
@@ -52,6 +56,9 @@ export default async function LabLayout({ children }: { children: React.ReactNod
             </span>
             <span className="font-display text-sm font-bold tracking-tight">Laboratoriya</span>
           </Link>
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </header>
         <NavStrip label="Laboratoriya bo‘limlari">
           <NavLink href="/lab" exact icon={<ListChecks className="h-4 w-4" />}>Ish navbati</NavLink>

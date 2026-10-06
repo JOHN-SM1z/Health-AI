@@ -72,7 +72,7 @@ async function run() {
   await db`insert into public.lab_documents ${db({ id: docId, clinic_id: clinic, patient_id: alice.id, order_id: order.lab_order_id, result_id: r.lab_result_id, kind: "report", storage_path: `${clinic}/${docId}`, mime_type: "application/pdf", size_bytes: pdf.length, sha256: "d".repeat(64), uploaded_by: lab.id })}`;
   await db`select public.verify_lab_result(${clinic}, ${r.lab_result_id}, ${lab2.id})`;
 
-  const jobs = await db`select type, status, patient_telegram_user_id from public.notification_jobs where lab_result_id = ${r.lab_result_id}`;
+  const jobs = await db`select type, status, patient_telegram_user_id from public.notification_jobs where lab_result_id = ${r.lab_result_id} and channel = 'telegram'`;
   check(jobs.length === 1 && jobs[0].type === "lab_result_ready" && Number(jobs[0].patient_telegram_user_id) === tgAlice, "verification queues one 'result ready' notification for the patient's Telegram");
 
   const browser = await chromium.launch();

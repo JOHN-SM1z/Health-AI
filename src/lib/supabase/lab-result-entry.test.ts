@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
+import { idFree } from "@/test/id-free";
 
 /**
  * Structured result entry (supabase/migrations/20261005000010):
@@ -239,7 +240,7 @@ describe.skipIf(unavailable !== null)("lab result entry — database", () => {
     const [audit] = await sql<{ actor_id: string; new_values: Record<string, unknown> }[]>`
       select actor_id, new_values from public.audit_events where entity_id = ${id} and action = 'lab_result_draft_discarded'`;
     expect(audit.actor_id).toBe(lab2);
-    expect(JSON.stringify(audit.new_values)).not.toContain("135");
+    expect(idFree(audit.new_values)).not.toContain("135");
 
     const mine = await save(itemId, [{ parameter_id: p.hgb, value_numeric: 140 }], { by: lab2 });
     expect(mine.created).toBe(true);
@@ -287,7 +288,7 @@ describe.skipIf(unavailable !== null)("lab result entry — database", () => {
       ["lab_result_entered", lab1],
       ["lab_result_submitted", lab1],
     ]);
-    const text = JSON.stringify(audit);
+    const text = idFree(audit);
     for (const secret of ["Maxfiy", "135", "7.2", "Sariq"]) expect(text).not.toContain(secret);
   });
 

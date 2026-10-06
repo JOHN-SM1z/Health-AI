@@ -2266,9 +2266,12 @@ export type Database = {
           error: string | null
           id: string
           idempotency_key: string
+          lab_order_id: string | null
           lab_result_id: string | null
           max_attempts: number
           patient_telegram_user_id: number | null
+          read_at: string | null
+          recipient_profile_id: string | null
           recipient_type: string
           scheduled_for: string
           sent_at: string | null
@@ -2287,9 +2290,12 @@ export type Database = {
           error?: string | null
           id?: string
           idempotency_key: string
+          lab_order_id?: string | null
           lab_result_id?: string | null
           max_attempts?: number
           patient_telegram_user_id?: number | null
+          read_at?: string | null
+          recipient_profile_id?: string | null
           recipient_type?: string
           scheduled_for: string
           sent_at?: string | null
@@ -2308,9 +2314,12 @@ export type Database = {
           error?: string | null
           id?: string
           idempotency_key?: string
+          lab_order_id?: string | null
           lab_result_id?: string | null
           max_attempts?: number
           patient_telegram_user_id?: number | null
+          read_at?: string | null
+          recipient_profile_id?: string | null
           recipient_type?: string
           scheduled_for?: string
           sent_at?: string | null
@@ -2342,11 +2351,25 @@ export type Database = {
             referencedColumns: ["id", "clinic_id"]
           },
           {
+            foreignKeyName: "notification_jobs_lab_order_fkey"
+            columns: ["lab_order_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_orders"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
             foreignKeyName: "notification_jobs_lab_result_fkey"
             columns: ["lab_result_id", "clinic_id"]
             isOneToOne: false
             referencedRelation: "lab_results"
             referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "notification_jobs_recipient_profile_id_fkey"
+            columns: ["recipient_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -3139,7 +3162,7 @@ export type Database = {
         Returns: Record<string, unknown>
       }
       claim_due_notification_jobs: {
-        Args: { p_limit: number }
+        Args: { p_clinic_ids?: string[]; p_limit: number }
         Returns: {
           appointment_id: string | null
           attempts: number
@@ -3150,9 +3173,12 @@ export type Database = {
           error: string | null
           id: string
           idempotency_key: string
+          lab_order_id: string | null
           lab_result_id: string | null
           max_attempts: number
           patient_telegram_user_id: number | null
+          read_at: string | null
+          recipient_profile_id: string | null
           recipient_type: string
           scheduled_for: string
           sent_at: string | null
@@ -3521,6 +3547,12 @@ export type Database = {
         | "reschedule"
         | "human_takeover"
         | "lab_result_ready"
+        | "lab_order_created"
+        | "lab_sample_collected"
+        | "lab_result_entered"
+        | "lab_result_verified"
+        | "lab_result_corrected"
+        | "lab_order_cancelled"
       patient_sex: "female" | "male"
       payment_provider: "manual" | "click" | "payme" | "cash" | "card_terminal"
       payment_status:
@@ -3779,6 +3811,12 @@ export const Constants = {
         "reschedule",
         "human_takeover",
         "lab_result_ready",
+        "lab_order_created",
+        "lab_sample_collected",
+        "lab_result_entered",
+        "lab_result_verified",
+        "lab_result_corrected",
+        "lab_order_cancelled",
       ],
       patient_sex: ["female", "male"],
       payment_provider: ["manual", "click", "payme", "cash", "card_terminal"],

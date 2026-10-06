@@ -26,6 +26,7 @@ import { GET as getImport, POST as importAction } from "./imports/[id]/route";
 import { GET as getRows } from "./imports/[id]/rows/route";
 import { GET as getReport } from "./imports/[id]/report/route";
 import { GET as getQueue } from "./queue/route";
+import { idFree } from "@/test/id-free";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
@@ -207,7 +208,7 @@ describeDb("historical lab import (real database)", () => {
     // Audit: ids, counts and codes — never cells, values or identifiers.
     const { data: audit } = await admin.from("audit_events").select("action, metadata, new_values").eq("clinic_id", clinicA).like("action", "lab_import%");
     expect(audit!.map((a) => a.action)).toEqual(expect.arrayContaining(["lab_import_uploaded", "lab_import_analysed", "lab_import_dry_run", "lab_import_confirmed", "lab_import_run"]));
-    const text = JSON.stringify(audit);
+    const text = idFree(audit);
     for (const secret of [pinfl.ali, "135", "7.2", "Ali Karimov", "MP-1", "history-"]) expect(text).not.toContain(secret);
 
     // The same file cannot be uploaded again; the same data in another file is a duplicate.

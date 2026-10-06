@@ -122,7 +122,8 @@ describeDb("patient lab results (real database, signed initData)", () => {
     admin.from("notification_jobs").update({ scheduled_for: new Date(Date.now() - 1000).toISOString() }).in("clinic_id", [clinicA, clinicB]).eq("status", "pending");
 
   const jobsFor = async (resultId: string) =>
-    (await admin.from("notification_jobs").select("id, type, status, patient_telegram_user_id, idempotency_key, error").eq("lab_result_id", resultId)).data ?? [];
+    // The patient's Telegram jobs (staff in-app notifications, Phase 16, are another channel).
+    (await admin.from("notification_jobs").select("id, type, status, patient_telegram_user_id, idempotency_key, error").eq("lab_result_id", resultId).eq("channel", "telegram")).data ?? [];
 
   beforeAll(async () => {
     admin = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
@@ -205,18 +206,19 @@ describeDb("patient lab results (real database, signed initData)", () => {
     expect(await jobsFor(r.resultId)).toEqual([]);
   });
 
-  it("the worker sends the test name and date — never values — with a button that opens the result", async () => {
+  it("the worker sends the date only — no test name, never values — with a button that opens the result", async () => {
     process.env.VERCEL_URL = "clinic.example";
     const send = vi.mocked(sendTelegramMessage);
     send.mockClear();
     await makeDue();
-    await processDueNotificationJobs(200);
+    await processDueNotificationJobs(200, [clinicA, clinicB]);
     const toBob = send.mock.calls.filter(([payload]) => Number(payload.chatId) === tg.bob);
     expect(toBob.length).toBe(1);
     const [payload, clinicId] = toBob[0];
     expect(clinicId).toBe(clinicA);
     expect(payload.text).toContain("Laboratoriya natijangiz tayyor");
-    expect(payload.text).toContain(`Tahlil: Umumiy qon tahlili ${suffix}`);
+    // A notification preview may be read on a locked screen: no test name (Phase 16).
+    expect(payload.text).not.toContain("Umumiy qon tahlili");
     expect(payload.text).toMatch(/Sana: \d{2}\.\d{2}\.\d{4}/);
     expect(payload.text).not.toMatch(/150|g\/L|Gemoglobin/);
     const button = (payload.replyMarkup as { inline_keyboard: Array<Array<{ text: string; web_app?: { url: string } }>> }).inline_keyboard[0][0];
@@ -232,7 +234,7 @@ describeDb("patient lab results (real database, signed initData)", () => {
 
     // Running again sends nothing twice.
     send.mockClear();
-    await processDueNotificationJobs(200);
+    await processDueNotificationJobs(200, [clinicA, clinicB]);
     expect(send.mock.calls.filter(([p]) => [tg.alice, tg.bob].includes(Number(p.chatId)))).toEqual([]);
     delete process.env.VERCEL_URL;
   });
@@ -242,7 +244,7 @@ describeDb("patient lab results (real database, signed initData)", () => {
     await park();
     await admin.from("app_settings").upsert({ clinic_id: clinicA, key: "lab", value: { releaseToPatient: false } });
     await makeDue();
-    await processDueNotificationJobs(200);
+    await processDueNotificationJobs(200, [clinicA, clinicB]);
     expect((await jobsFor(r1.resultId))[0]).toMatchObject({ status: "skipped", error: "results not released to patients" });
   });
 

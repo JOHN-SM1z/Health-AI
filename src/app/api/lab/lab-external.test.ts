@@ -33,6 +33,7 @@ import { POST as resultAction } from "./results/[id]/route";
 import { PUT as saveResult } from "./items/[id]/result/route";
 import { processExternalLabRequests } from "@/lib/labs/providers/service";
 import { mockProviderOrders, mockSignature, resetMockProvider } from "@/lib/labs/providers/mock";
+import { idFree } from "@/test/id-free";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
@@ -220,13 +221,13 @@ describeDb("external laboratory integration (mock provider, real database)", () 
     // Audit: ids, statuses and codes only.
     const { data: audit } = await admin.from("audit_events").select("action, new_values").eq("entity_id", req.id).order("created_at");
     expect(audit!.map((a) => a.action)).toEqual(["lab_external_requested", "lab_external_sent", "lab_external_resulted"]);
-    expect(JSON.stringify(audit)).not.toMatch(/128|6\.4|Ext bemor/);
+    expect(idFree(audit)).not.toMatch(/128|6\.4|Ext bemor/);
 
     // Status for the queue (no values).
     as(people.reception, "receptionist");
     const status = await read(await sendOutsRoute(new NextRequest(`http://localhost/api/lab/send-outs?items=${itemId}`)));
     expect(status.body.data!.sendOuts).toEqual([expect.objectContaining({ itemId, status: "resulted", providerName: `Mock lab ${suffix}` })]);
-    expect(JSON.stringify(status.body)).not.toContain("128");
+    expect(idFree(status.body)).not.toContain("128");
   });
 
   it("is idempotent: the same send-out once, a lost response never makes a second order, retries back off", async () => {

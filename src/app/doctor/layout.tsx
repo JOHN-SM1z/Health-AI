@@ -5,6 +5,7 @@ import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
 import { HeartPulse, ListOrdered, CalendarRange, Send, Users, KeyRound } from "lucide-react";
 import { PendingReferralsBadge } from "@/components/doctor/pending-referrals-badge";
+import { NotificationBell } from "@/components/staff/notification-bell";
 
 export const metadata = { title: "Shifokor paneli" };
 
@@ -23,6 +24,9 @@ export default async function DoctorLayout({ children }: { children: React.React
           <div>
             <p className="font-display text-sm font-bold tracking-tight text-foreground">Shifokor</p>
             <p className="max-w-[10rem] truncate text-xs text-ink-muted">{ctx.clinicName}</p>
+          </div>
+          <div className="ml-auto">
+            <NotificationBell />
           </div>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 text-sm">
@@ -57,6 +61,9 @@ export default async function DoctorLayout({ children }: { children: React.React
             </span>
             <span className="font-display text-sm font-bold tracking-tight">Shifokor paneli</span>
           </Link>
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </header>
         {/* Phones and small tablets: the sidebar is hidden, so its sections sit in a scrollable strip. */}
         <NavStrip label="Shifokor bo‘limlari">

@@ -16,6 +16,9 @@ import type { ClinicStaff } from "@/lib/labs/guards";
  *                     for collection only once the order is paid.
  *   releaseToPatient  whether verified results are shown to the patient in
  *                     the Mini App (Phase 12). Default true.
+ *   notifyStaff       in-app lab notifications to staff (Phase 16). Default true.
+ *   notifyPatientOnCancel  a Telegram message to the patient when a lab
+ *                     order is cancelled (Phase 16). Default false.
  *   verifiers         who may verify a result (Phase 9): "lab_and_doctor"
  *                     (default), "lab_only" or "doctor_only". Whoever it is,
  *                     it is never the person who entered or submitted the
@@ -30,6 +33,8 @@ export const labSettingsSchema = z.object({
   paymentPolicy: z.enum(["not_required", "before_collection"]),
   releaseToPatient: z.boolean(),
   verifiers: z.enum(["lab_and_doctor", "lab_only", "doctor_only"]),
+  notifyStaff: z.boolean().default(true),
+  notifyPatientOnCancel: z.boolean().default(false),
 });
 
 export type LabSettings = z.infer<typeof labSettingsSchema>;
@@ -38,6 +43,8 @@ export const LAB_SETTINGS_DEFAULTS: LabSettings = {
   paymentPolicy: "not_required",
   releaseToPatient: true,
   verifiers: "lab_and_doctor",
+  notifyStaff: true,
+  notifyPatientOnCancel: false,
 };
 
 // Field by field: one malformed field falls back to its own default and

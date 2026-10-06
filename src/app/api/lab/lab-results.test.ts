@@ -22,6 +22,7 @@ vi.mock("@/lib/auth/staff", async (importOriginal) => {
 
 import { GET as getEntry, PUT as saveEntry } from "./items/[id]/result/route";
 import { POST as resultAction } from "./results/[id]/route";
+import { idFree } from "@/test/id-free";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 
@@ -183,7 +184,7 @@ describeDb("lab result entry routes (real database)", () => {
     const { data: audit } = await admin.from("audit_events").select("actor_id, metadata").eq("action", "lab_result_viewed").eq("entity_id", after.result!.id);
     expect(audit!.length).toBe(1);
     expect(audit![0].actor_id).toBe(people.lab);
-    expect(JSON.stringify(audit)).not.toContain("118");
+    expect(idFree(audit)).not.toContain("118");
   });
 
   it("refuses invalid values on the server (nothing stored)", async () => {

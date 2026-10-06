@@ -255,3 +255,22 @@ export async function loadLabResultNotice(clinicId: string, resultId: string): P
     corrected: r.version > 1,
   };
 }
+
+/**
+ * Whether a lab order is (still) cancelled, and the patient's Telegram
+ * identity — for the "order cancelled" message (Phase 16). Nothing else.
+ */
+export async function loadLabOrderNotice(clinicId: string, orderId: string): Promise<{ status: string; telegramUserId: number | null } | null> {
+  const db = createAdminClient();
+  const { data, error } = await db.from("lab_orders").select("status, patient_id").eq("id", orderId).eq("clinic_id", clinicId).maybeSingle();
+  if (error) throw loadFailed("order notice", error);
+  if (!data) return null;
+  const { data: patient, error: patientError } = await db
+    .from("patients")
+    .select("telegram_user_id")
+    .eq("id", (await patientRecordIds(clinicId, data.patient_id))[0])
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  if (patientError) throw loadFailed("order notice patient", patientError);
+  return { status: data.status, telegramUserId: patient?.telegram_user_id ?? null };
+}

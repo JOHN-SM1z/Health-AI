@@ -6,7 +6,7 @@ import { formatInClinicTz } from "@/lib/timezone";
 import type { Database } from "@/lib/supabase/database.types";
 import { resolveHttpsAppUrl } from "@/lib/telegram/bots";
 // The one approved gateway from patient-facing code to lab results (Phase 12).
-import { loadLabResultNotice } from "@/lib/labs/patient-results";
+import { loadLabOrderNotice, loadLabResultNotice } from "@/lib/labs/patient-results";
 
 
 const MESSAGE_TEMPLATES: Record<
@@ -41,8 +41,16 @@ const MESSAGE_TEMPLATES: Record<
     `📅 Yangi vaqt: ${formatInClinicTz(a.startAt, tz, "dd.MM.yyyy, HH:mm")}`,
   human_takeover: () =>
     `Operatorlarimiz siz bilan bog‘lanadi. Biroz kuting.`,
-  // Lab jobs carry no appointment; their text is built by processLabResultJob.
+  // Lab jobs carry no appointment: lab_result_ready and lab_order_cancelled
+  // are built by their own functions below; the other lab events are in-app
+  // staff notifications (channel in_app) the Telegram worker never claims.
   lab_result_ready: () => "",
+  lab_order_cancelled: () => "",
+  lab_order_created: () => "",
+  lab_sample_collected: () => "",
+  lab_result_entered: () => "",
+  lab_result_verified: () => "",
+  lab_result_corrected: () => "",
 };
 
 type AppointmentContext = {
@@ -86,7 +94,11 @@ async function loadAppointmentContext(supabase: ReturnType<typeof createAdminCli
  * - Automated messages pause while the conversation is taken over by an
  *   admin (conversation.status = 'assigned').
  */
-export async function processDueNotificationJobs(limit = 50): Promise<{ processed: number; sent: number; failed: number }> {
+export async function processDueNotificationJobs(
+  limit = 50,
+  /** Only these clinics' jobs (default: every clinic — the scheduler's run). */
+  clinicIds?: string[],
+): Promise<{ processed: number; sent: number; failed: number }> {
   const supabase = createAdminClient();
   // No global gate here: bots are per-clinic (clinic_telegram_integrations),
   // not a single shared credential, so "Telegram" can never be globally
@@ -101,6 +113,7 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
 
   const { data: jobs, error: claimError } = await supabase.rpc("claim_due_notification_jobs", {
     p_limit: limit,
+    ...(clinicIds ? { p_clinic_ids: clinicIds } : {}),
   });
   if (claimError) {
     logger.error("notification processor: claim failed", { error: claimError.message });
@@ -139,8 +152,8 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
         continue;
       }
 
-      if (job.type === "lab_result_ready") {
-        const outcome = await processLabResultJob(supabase, job);
+      if (job.type === "lab_result_ready" || job.type === "lab_order_cancelled") {
+        const outcome = job.type === "lab_result_ready" ? await processLabResultJob(supabase, job) : await processLabOrderCancelledJob(supabase, job);
         if (outcome === "sent") sent += 1;
         else if (outcome === "failed") failed += 1;
         continue;
@@ -262,17 +275,66 @@ async function processLabResultJob(
   }
   const { data: clinic } = await supabase.from("clinics").select("timezone").eq("id", job.clinic_id).maybeSingle();
   const date = formatInClinicTz(notice.date, clinic?.timezone ?? "Asia/Tashkent", "dd.MM.yyyy");
+  // A notification preview can be read on a locked screen: no test name, no
+  // values (Phase 16) — the app shows the result after verifying the patient.
   const text =
     (notice.corrected ? `🧪 Laboratoriya natijangiz yangilandi (tuzatilgan).\n\n` : `🧪 Laboratoriya natijangiz tayyor.\n\n`) +
-    `Tahlil: ${notice.testName}\n` +
     `Sana: ${date}\n\n` +
-    `Natija qiymatlari faqat ilovada, sizning Telegram hisobingiz tasdiqlangandan keyin ko‘rsatiladi.`;
+    `Natijani ilovada ko‘rishingiz mumkin — Telegram hisobingiz tasdiqlangandan keyin.`;
   const url = labResultUrl(job.clinic_id, notice.itemId);
   const messageId = await sendTelegramMessage(
     {
       chatId: job.patient_telegram_user_id,
       text,
       replyMarkup: url ? { inline_keyboard: [[url.webApp ? { text: "📄 Natijani ko‘rish", web_app: { url: url.href } } : { text: "📄 Natijani ko‘rish", url: url.href }]] } : undefined,
+    },
+    job.clinic_id,
+  );
+  if (messageId !== null) {
+    try {
+      await supabase
+        .from("notification_jobs")
+        .update({ status: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, attempts: nextAttempts })
+        .eq("id", job.id);
+    } catch (e) {
+      logger.error("notification sent but not recorded", { jobId: job.id, error: e instanceof Error ? e.message : String(e) });
+      await markJob(job.id, "failed", nextAttempts, "sent but not recorded", supabase);
+      return "failed";
+    }
+    return "sent";
+  }
+  if (nextAttempts >= (job.max_attempts ?? 3)) {
+    await markJob(job.id, "failed", nextAttempts, "send failed after retries", supabase);
+    return "failed";
+  }
+  await markJob(job.id, "pending", nextAttempts, "send failed, retrying", supabase);
+  return "retry";
+}
+
+/**
+ * "Your laboratory order was cancelled" (Phase 16) — only when the clinic
+ * enables it. Sent only while the order is still cancelled and the recipient
+ * is still the patient's Telegram identity; no test names.
+ */
+async function processLabOrderCancelledJob(
+  supabase: ReturnType<typeof createAdminClient>,
+  job: ClaimedJob,
+): Promise<"sent" | "failed" | "skipped" | "retry"> {
+  const nextAttempts = job.attempts + 1;
+  const notice = await loadLabOrderNotice(job.clinic_id, job.lab_order_id ?? "");
+  if (!notice || notice.status !== "cancelled") {
+    await markJob(job.id, "skipped", nextAttempts, "order not cancelled", supabase);
+    return "skipped";
+  }
+  if (!job.patient_telegram_user_id || notice.telegramUserId === null || Number(notice.telegramUserId) !== Number(job.patient_telegram_user_id)) {
+    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    return "skipped";
+  }
+  const messageId = await sendTelegramMessage(
+    {
+      chatId: job.patient_telegram_user_id,
+      text: `Laboratoriya buyurtmangiz bekor qilindi.\n\nSavollaringiz bo‘lsa, klinikaga murojaat qiling.`,
+      replyMarkup: { inline_keyboard: [[{ text: "👤 Operator bilan bog‘lanish", callback_data: "contact_operator" }]] },
     },
     job.clinic_id,
   );
