@@ -39,7 +39,7 @@ describeDb("doctor lab ordering (real database)", () => {
   const clinicA = randomUUID();
   const clinicB = randomUUID();
   const service = randomUUID();
-  const people = { drA: randomUUID(), drC: randomUUID(), drK: randomUUID(), reception: randomUUID(), lab: randomUUID() };
+  const people = { drA: randomUUID(), drC: randomUUID(), drK: randomUUID(), reception: randomUUID(), lab: randomUUID(), lab2: randomUUID() };
   const doctors = { a: randomUUID(), c: randomUUID(), k: randomUUID() };
   let day = 0;
   let cbc = "";
@@ -105,6 +105,7 @@ describeDb("doctor lab ordering (real database)", () => {
       { clinic_id: clinicB, profile_id: people.drK, role: "doctor" },
       { clinic_id: clinicA, profile_id: people.reception, role: "receptionist" },
       { clinic_id: clinicA, profile_id: people.lab, role: "lab" },
+      { clinic_id: clinicA, profile_id: people.lab2, role: "lab" },
     ]);
     await admin.from("doctors").insert([
       { id: doctors.a, clinic_id: clinicA, profile_id: people.drA, name: `Dr A ${suffix}`, active: true },
@@ -279,7 +280,7 @@ describeDb("doctor lab ordering (real database)", () => {
     const { data: result } = await admin.from("lab_results").insert({ clinic_id: clinicA, patient_id: p, order_item_id: itemId, entered_by: people.lab }).select("id").single();
     await admin.from("lab_result_values").insert({ clinic_id: clinicA, result_id: result!.id, parameter_id: hgb, value_numeric: 118 });
     await admin.from("lab_results").update({ status: "submitted", submitted_by: people.lab }).eq("id", result!.id);
-    const verified = await admin.from("lab_results").update({ status: "verified", verified_by: people.drC }).eq("id", result!.id);
+    const verified = await admin.from("lab_results").update({ status: "verified", verified_by: people.lab2 }).eq("id", result!.id);
     expect(verified.error).toBeNull();
 
     const view = await call(getResult, { id: p, itemId });
@@ -290,7 +291,7 @@ describeDb("doctor lab ordering (real database)", () => {
     expect(audit).toEqual([{ actor_id: people.drA, patient_id: p }]);
     expect(idFree(audit)).not.toContain("118");
 
-    // Dr C verified it but has no relationship with the patient: no access.
+    // Dr C has no relationship with the patient: no access.
     as(people.drC, "doctor");
     expect((await call(getResult, { id: p, itemId })).status).toBe(404);
   });

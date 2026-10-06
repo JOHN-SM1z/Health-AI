@@ -1,4 +1,3 @@
-import type { NextRequest } from "next/server";
 import { ApiError } from "@/lib/api/errors";
 
 /**
@@ -7,7 +6,7 @@ import { ApiError } from "@/lib/api/errors";
  * A request without an Origin header (same-origin navigation, server tools)
  * passes; session cookies are SameSite and still required.
  */
-export function assertSameOrigin(request: NextRequest): void {
+export function assertSameOrigin(request: Request): void {
   const origin = request.headers.get("origin");
   if (!origin) return;
   const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");

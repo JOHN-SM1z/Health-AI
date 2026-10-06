@@ -113,7 +113,7 @@ describe.skipIf(unavailable !== null)("lab result verification — database", ()
     await sql`insert into public.staff_roles ${sql([
       { clinic_id: clinic, profile_id: tech, role: "lab" },
       { clinic_id: clinic, profile_id: reviewer, role: "lab" },
-      { clinic_id: clinic, profile_id: reviewer2, role: "doctor" },
+      { clinic_id: clinic, profile_id: reviewer2, role: "lab" }, // a doctor verifies only a patient they may access (F4)
       { clinic_id: otherClinic, profile_id: outsider, role: "lab" },
     ])}`;
     const [t] = await sql<{ id: string }[]>`insert into public.lab_tests ${sql({ clinic_id: clinic, code: `VHB${suffix}`, name: `HB ${suffix}`, sample_type: "Qon", price: 1 })} returning id`;
@@ -272,12 +272,12 @@ describe.skipIf(unavailable !== null)("lab result verification — database", ()
   it("never crosses clinics", async () => {
     const { id } = await submitted();
     expect((await pgError(() => verify(id, outsider, otherClinic))).message).toMatch(/lab_result_not_found/);
-    expect((await pgError(() => verify(id, outsider))).message).toMatch(/verified_by must be a staff member/);
+    expect((await pgError(() => verify(id, outsider))).message).toMatch(/verified_by must be a staff member|lab_result_verifier_not_allowed/);
     expect((await pgError(() => giveBack(id, outsider, otherClinic))).message).toMatch(/lab_result_not_found/);
     expect((await pgError(() => giveBack(id, outsider))).message).toMatch(/lab_result_not_found/);
     await verify(id);
     expect((await pgError(() => correct(id, "x", outsider, otherClinic))).message).toMatch(/lab_result_not_found/);
-    expect((await pgError(() => correct(id, "x", outsider))).message).toMatch(/entered_by must be a staff member/);
+    expect((await pgError(() => correct(id, "x", outsider))).message).toMatch(/entered_by must be (a staff member|lab staff)/);
     expect((await row(id)).status).toBe("verified");
   });
 

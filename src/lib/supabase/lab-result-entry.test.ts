@@ -256,7 +256,7 @@ describe.skipIf(unavailable !== null)("lab result entry — database", () => {
   it("never crosses clinics", async () => {
     const { itemId } = await receivedItem();
     expect((await pgError(() => save(itemId, [{ parameter_id: p.hgb, value_numeric: 130 }], { clinicId: otherClinic, by: outsider }))).message).toMatch(/lab_result_unknown_item/);
-    expect((await pgError(() => save(itemId, [{ parameter_id: p.hgb, value_numeric: 130 }], { by: outsider }))).message).toMatch(/entered_by must be a staff member/);
+    expect((await pgError(() => save(itemId, [{ parameter_id: p.hgb, value_numeric: 130 }], { by: outsider }))).message).toMatch(/entered_by must be (a staff member|lab staff)/);
     const { lab_result_id: id } = await save(itemId, complete());
     expect((await pgError(() => submit(id, outsider, otherClinic))).message).toMatch(/lab_result_not_found/);
     expect((await pgError(() => discard(id, outsider, otherClinic))).message).toMatch(/lab_result_not_found/);

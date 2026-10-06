@@ -228,7 +228,8 @@ describeDb("lab domain — database layer", () => {
       clinic_id: clinicA,
       patient_id: patient,
       order_item_id: item,
-      entered_by: profiles.receptionist,
+      // Lab staff enter results (the database enforces it since the security review, F4).
+      entered_by: profiles.labA1,
       ...extra,
     })} returning id`);
     return row.id;
@@ -241,9 +242,9 @@ describeDb("lab domain — database layer", () => {
     return row;
   }
 
-  const submit = (result: string, by = profiles.receptionist) =>
+  const submit = (result: string, by = profiles.labA1) =>
     asServer((tx) => tx`update public.lab_results set status = 'submitted', submitted_by = ${by} where id = ${result}`);
-  const verify = (result: string, by = profiles.a) =>
+  const verify = (result: string, by = profiles.labA2) =>
     asServer((tx) => tx`update public.lab_results set status = 'verified', verified_by = ${by} where id = ${result}`);
 
   /** A fully verified result (Hb 118 → low against 120–160). */
@@ -618,7 +619,7 @@ describeDb("lab domain — database layer", () => {
           clinic_id: clinicB, patient_id: fresh.patient, order_item_id: fresh.item, entered_by: profiles.k,
         })}`),
       );
-      expect(crossClinic.message).toMatch(/staff member|unknown order item/);
+      expect(crossClinic.message).toMatch(/staff member|unknown order item|entered_by must be lab staff/);
     });
 
     it("requires a second person to verify, and moves the item with the result", async () => {
@@ -629,15 +630,16 @@ describeDb("lab domain — database layer", () => {
       expect(await itemStatus(fx.item)).toBe("resulted");
 
       // The person who entered (and submitted) it cannot verify it.
-      expect((await pgError(() => verify(result, profiles.receptionist))).message).toMatch(/second person/);
+      expect((await pgError(() => verify(result, profiles.labA1))).message).toMatch(/second person/);
       // Someone outside the clinic cannot verify it.
-      expect((await pgError(() => verify(result, profiles.k))).message).toMatch(/staff member/);
+      expect((await pgError(() => verify(result, profiles.k))).message).toMatch(/staff member|verifier/);
 
-      // Returned to draft for a fix, then resubmitted and verified by a doctor.
+      // Returned to draft for a fix, then resubmitted and verified by a second lab person
+      // (a doctor verifies only a patient they may access — lab-verification.test.ts).
       await asServer((tx) => tx`update public.lab_results set status = 'draft' where id = ${result}`);
       expect(await itemStatus(fx.item)).toBe("processing");
       await submit(result);
-      await verify(result, profiles.a);
+      await verify(result, profiles.labA2);
       expect(await itemStatus(fx.item)).toBe("verified");
 
       // The CHECK constraint holds even without the trigger's message path.
@@ -666,12 +668,12 @@ describeDb("lab domain — database layer", () => {
       ).toMatch(/version 2/);
 
       const correction = await newResult(fx.item, fx.patient, {
-        version: 2, supersedes_result_id: fx.result, correction_reason: "Transcription error", entered_by: profiles.manager,
+        version: 2, supersedes_result_id: fx.result, correction_reason: "Transcription error", entered_by: profiles.labA2,
       });
       await addValue(correction, fx.parameter, { value_numeric: 128 });
-      await submit(correction, profiles.manager);
-      expect((await pgError(() => verify(correction, profiles.manager))).message).toMatch(/second person/);
-      await verify(correction, profiles.a);
+      await submit(correction, profiles.labA2);
+      expect((await pgError(() => verify(correction, profiles.labA2))).message).toMatch(/second person/);
+      await verify(correction, profiles.labA1);
 
       const versions = await sql<{ id: string; version: number; status: string }[]>`
         select id, version, status from public.lab_results where order_item_id = ${fx.item} order by version`;
@@ -689,11 +691,11 @@ describeDb("lab domain — database layer", () => {
       const result = await newResult(fx.item, fx.patient);
       await addValue(result, fx.parameter, { value_numeric: 140 });
       await submit(result);
-      const outcomes = await Promise.allSettled([verify(result, profiles.a), verify(result, profiles.manager)]);
+      const outcomes = await Promise.allSettled([verify(result, profiles.a), verify(result, profiles.labA2)]);
       expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
       const [row] = await sql<{ status: string; verified_by: string }[]>`select status, verified_by from public.lab_results where id = ${result}`;
       expect(row.status).toBe("verified");
-      expect([profiles.a, profiles.manager]).toContain(row.verified_by);
+      expect([profiles.a, profiles.labA2]).toContain(row.verified_by);
     });
 
     it("discards a draft with its values but keeps everything else", async () => {
@@ -816,7 +818,7 @@ describeDb("lab domain — database layer", () => {
           "lab_result_entered", "lab_result_submitted", "lab_result_verified",
         ]),
       );
-      expect(rows.find((r) => r.action === "lab_result_verified")?.actor_id).toBe(profiles.a);
+      expect(rows.find((r) => r.action === "lab_result_verified")?.actor_id).toBe(profiles.labA2);
       const text = JSON.stringify(rows);
       expect(text).not.toContain("187.5");
       expect(text).not.toContain("lipaemic");
@@ -831,8 +833,8 @@ describeDb("lab domain — database layer", () => {
     it("erases a clinic together with all of its lab data", async () => {
       const clinic = randomUUID();
       await sql`insert into public.clinics ${sql({ id: clinic, name: `Lab erase ${suffix}`, slug: `lab-erase-${suffix}`, timezone: "Asia/Tashkent" })}`;
-      await sql`insert into public.staff_roles ${sql({ clinic_id: clinic, profile_id: profiles.manager, role: "manager" })}`;
-      await sql`insert into public.staff_roles ${sql({ clinic_id: clinic, profile_id: profiles.owner, role: "owner" })}`;
+      await sql`insert into public.staff_roles ${sql({ clinic_id: clinic, profile_id: profiles.manager, role: "lab" })}`;
+      await sql`insert into public.staff_roles ${sql({ clinic_id: clinic, profile_id: profiles.owner, role: "lab" })}`;
       const patient = await newPatient(clinic);
       const test = await newTest(clinic);
       const parameter = await newParameter(test, {}, clinic);
@@ -880,7 +882,7 @@ describeDb("lab domain — database layer", () => {
       await submit(result, profiles.labA1);
       expect((await pgError(() => verify(result, profiles.labA1))).message).toMatch(/second person/);
       // Lab staff of another clinic cannot verify it.
-      expect((await pgError(() => verify(result, profiles.labB))).message).toMatch(/staff member/);
+      expect((await pgError(() => verify(result, profiles.labB))).message).toMatch(/staff member|verifier/);
       await verify(result, profiles.labA2);
       expect(await itemStatus(item)).toBe("verified");
     });

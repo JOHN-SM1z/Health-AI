@@ -23,7 +23,8 @@ async function run() {
   const clinic = doctor.clinic_id;
   const [service] = await db`select id from public.services where clinic_id = ${clinic} and name = ${DEMO_NAMES.generalService}`;
   const [reception] = await db`select id from auth.users where email = ${DEMO.reception}`;
-  const [manager] = await db`select id from auth.users where email = ${DEMO.manager}`;
+  const [labTech] = await db`select id from auth.users where email = ${DEMO.lab}`;
+  const [labTech2] = await db`select id from auth.users where email = ${DEMO.lab2}`;
 
   // Catalog: a run-unique CBC with one parameter and a configured range.
   const code = `E2ECBC${suffix}`.slice(0, 32);
@@ -106,10 +107,10 @@ async function run() {
       const [sample] = await tx`insert into public.lab_samples ${tx({ clinic_id: clinic, patient_id: patient.id, order_id: first.order_id, sample_code: `E2E-${suffix}`, sample_type: "Qon", collected_by: reception.id })} returning id`;
       await tx`insert into public.lab_sample_items ${tx({ sample_id: sample.id, order_item_id: first.id, clinic_id: clinic })}`;
       await tx`update public.lab_order_items set status = 'collected', status_changed_by = ${reception.id} where id = ${first.id}`;
-      const [result] = await tx`insert into public.lab_results ${tx({ clinic_id: clinic, patient_id: patient.id, order_item_id: first.id, entered_by: reception.id })} returning id`;
+      const [result] = await tx`insert into public.lab_results ${tx({ clinic_id: clinic, patient_id: patient.id, order_item_id: first.id, entered_by: labTech.id })} returning id`;
       await tx`insert into public.lab_result_values ${tx({ clinic_id: clinic, result_id: result.id, parameter_id: parameter.id, value_numeric: 112 })}`;
-      await tx`update public.lab_results set status = 'submitted', submitted_by = ${reception.id} where id = ${result.id}`;
-      await tx`update public.lab_results set status = 'verified', verified_by = ${manager.id} where id = ${result.id}`;
+      await tx`update public.lab_results set status = 'submitted', submitted_by = ${labTech.id} where id = ${result.id}`;
+      await tx`update public.lab_results set status = 'verified', verified_by = ${labTech2.id} where id = ${result.id}`;
     });
 
     await page.reload();
