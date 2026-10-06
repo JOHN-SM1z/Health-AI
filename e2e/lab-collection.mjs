@@ -72,6 +72,21 @@ async function run() {
     );
     check((await r.getByRole("button", { name: "Qabul qilish" }).count()) === 0, "reception: no receive button (processing is lab work)");
     check((await r.request.post(`${BASE}/api/lab/samples/${samples[0].id}`, { data: { action: "receive" } })).status() === 403, "reception: receive API → 403");
+
+    // ---------- reception: cancelling an order before collection (Phase 20) ----------
+    const otherName = `E2E Bekor bemor ${suffix}`;
+    const [other] = await db`insert into public.patients ${db({ clinic_id: clinic, full_name: otherName, date_of_birth: "1988-08-08" })} returning id`;
+    const [cancelOrder] = await db`select * from public.create_lab_order(${clinic}, ${other.id}, ${reception.id}, 'walk_in', ${[tests[0].id]}::uuid[], '{}'::uuid[])`;
+    await r.reload();
+    const otherCard = r.getByRole("region", { name: `${otherName} buyurtmasi` });
+    await otherCard.getByRole("button", { name: "Buyurtmani bekor qilish" }).click();
+    const cancelDialog = r.getByRole("dialog", { name: `${otherName} buyurtmasini bekor qilish` });
+    await cancelDialog.getByLabel("Bekor qilish sababi").fill("Bemor kelmadi");
+    await cancelDialog.getByRole("button", { name: "Bekor qilish", exact: true }).click();
+    await r.getByText(`${otherName} buyurtmasi bekor qilindi`).waitFor();
+    const [cancelled] = await db`select o.status, o.cancel_reason, p.amount from public.lab_orders o join public.payments p on p.lab_order_id = o.id where o.id = ${cancelOrder.lab_order_id}`;
+    check(cancelled?.status === "cancelled" && cancelled.cancel_reason === "Bemor kelmadi" && Number(cancelled.amount) === 0, "reception: cancels an order before collection from the queue (reason kept, open bill cleared)");
+    check((await card.getByRole("button", { name: "Buyurtmani bekor qilish" }).count()) === 0, "reception: an order with a collected sample offers no cancel");
     await rc.close();
 
     // ---------- lab: receive, collect urine, reject ----------

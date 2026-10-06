@@ -297,3 +297,44 @@ export async function createWalkInOrder(
   if (!row) throw new ApiError(500, "Buyurtmani saqlab bo‘lmadi", "save_failed");
   return { orderId: row.lab_order_id, replayed: row.replayed };
 }
+
+// ---------------------------------------------------------------------------
+// Cancelling an order (Phase 20: the database supported it since Phase 2; this
+// is the application path). The database decides what may be cancelled: an
+// active order none of whose tests has a sample yet. Cancelling cancels its
+// open tests (trigger), lowers an unpaid bill to the remaining tests or leaves
+// a paid one for refund at the Kassa ("Qaytarish kerak"), notifies the lab,
+// managers and the ordering doctor (Phase 16) and is audited. Idempotent: a
+// cancelled order stays cancelled and a repeat changes nothing.
+
+export async function cancelLabOrder(staff: ClinicStaff, orderId: string, reason: string): Promise<{ changed: boolean }> {
+  const db = createAdminClient();
+  const { data, error } = await db
+    .from("lab_orders")
+    .update({ status: "cancelled", cancelled_by: staff.profileId, cancelled_at: new Date().toISOString(), cancel_reason: reason })
+    .eq("id", orderId)
+    .eq("clinic_id", staff.clinicId)
+    .eq("status", "active")
+    .select("id");
+  if (error) {
+    if (/collected samples cannot be cancelled/.test(error.message ?? "")) {
+      throw new ApiError(409, "Namuna olingan tahlillari bor buyurtmani bekor qilib bo‘lmaydi — namunani rad eting yoki natijani kiriting", "order_has_samples");
+    }
+    logger.error("lab queue: cancel order failed", { code: error.code });
+    throw new ApiError(500, "Buyurtmani bekor qilib bo‘lmadi", "save_failed");
+  }
+  if (data && data.length > 0) return { changed: true };
+
+  const { data: current, error: readError } = await db.from("lab_orders").select("status").eq("id", orderId).eq("clinic_id", staff.clinicId).maybeSingle();
+  if (readError) throw loadFailed("order", readError);
+  if (!current) throw new ApiError(404, "Buyurtma topilmadi", "order_not_found");
+  if (current.status === "cancelled") return { changed: false };
+  throw new ApiError(409, "Yakunlangan buyurtmani bekor qilib bo‘lmaydi", "order_completed");
+}
+
+/** The patient of an order of the staff member's clinic (for a doctor's access check), or null. */
+export async function orderPatientId(staff: ClinicStaff, orderId: string): Promise<string | null> {
+  const { data, error } = await createAdminClient().from("lab_orders").select("patient_id").eq("id", orderId).eq("clinic_id", staff.clinicId).maybeSingle();
+  if (error) throw loadFailed("order", error);
+  return data?.patient_id ?? null;
+}

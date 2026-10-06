@@ -16,6 +16,7 @@ export default async function AdminLabQueuePage() {
     <LabWorkQueue
       canCollect={labCan(ctx.roles, "sample.collect")}
       canProcess={labCan(ctx.roles, "sample.process")}
+      canCancel={labCan(ctx.roles, "order.cancel")}
       canOrder
     />
   );

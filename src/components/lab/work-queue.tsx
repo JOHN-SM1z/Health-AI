@@ -98,11 +98,13 @@ export function LabWorkQueue({
   canProcess,
   canOrder,
   canEnter = false,
+  canCancel = false,
 }: {
   canCollect: boolean;
   canProcess: boolean;
   canOrder: boolean;
   canEnter?: boolean;
+  canCancel?: boolean;
 }) {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [limit, setLimit] = useState(200);
@@ -112,6 +114,7 @@ export function LabWorkQueue({
   const [notice, setNotice] = useState<string | null>(null);
   const [collecting, setCollecting] = useState<{ order: Order; items: Item[] } | null>(null);
   const [rejecting, setRejecting] = useState<Sample | null>(null);
+  const [cancelling, setCancelling] = useState<Order | null>(null);
   const [ordering, setOrdering] = useState<"search" | PatientMatch | null>(null);
   const [entering, setEntering] = useState<string | null>(null);
   const [sendOuts, setSendOuts] = useState<Map<string, SendOut>>(new Map());
@@ -228,6 +231,8 @@ export function LabWorkQueue({
               onCollect={(items) => { setError(null); setNotice(null); setCollecting({ order: o, items }); }}
               onReceive={receive}
               onReject={(s) => { setError(null); setNotice(null); setRejecting(s); }}
+              canCancel={canCancel}
+              onCancel={() => { setError(null); setNotice(null); setCancelling(o); }}
               sendOuts={sendOuts}
               providers={providers}
               onSendOut={sendOut}
@@ -247,6 +252,18 @@ export function LabWorkQueue({
             setCollecting(null);
             await load();
             setNotice(`Namuna olindi: ${code} — shu kodni probirkaga yozing`);
+          }}
+        />
+      )}
+      {cancelling && (
+        <CancelOrderDialog
+          order={cancelling}
+          onClose={() => setCancelling(null)}
+          onDone={async () => {
+            const name = cancelling.patient.fullName ?? "Bemor";
+            setCancelling(null);
+            await load();
+            setNotice(`${name} buyurtmasi bekor qilindi`);
           }}
         />
       )}
@@ -305,6 +322,8 @@ function QueueCard({
   onCollect,
   onReceive,
   onReject,
+  canCancel,
+  onCancel,
   sendOuts,
   providers,
   onSendOut,
@@ -318,6 +337,8 @@ function QueueCard({
   onCollect: (items: Item[]) => void;
   onReceive: (s: Sample) => void;
   onReject: (s: Sample) => void;
+  canCancel: boolean;
+  onCancel: () => void;
   sendOuts: Map<string, SendOut>;
   providers: SendOutProvider[];
   onSendOut: (itemId: string, providerId: string) => Promise<void>;
@@ -333,6 +354,11 @@ function QueueCard({
     return [...map.values()];
   }, [order.items]);
   const awaitingPayment = order.items.some((i) => i.status === "ordered");
+  // Cancellable until a sample is taken for any of its tests (the database decides finally).
+  const cancellable =
+    order.status === "active" &&
+    order.items.every((i) => ["ordered", "ready_for_collection", "cancelled"].includes(i.status)) &&
+    order.items.some((i) => i.status !== "cancelled");
   const codeOf = (sampleId: string | null) => order.samples.find((s) => s.id === sampleId)?.code;
 
   return (
@@ -393,13 +419,19 @@ function QueueCard({
           })}
         </ul>
 
-        {canCollect && groups.length > 0 && (
+        {((canCollect && groups.length > 0) || (canCancel && cancellable)) && (
           <div className="flex flex-wrap gap-2">
-            {groups.map((g) => (
-              <AButton key={g[0].id} size="sm" onClick={() => onCollect(g)}>
-                <TestTube className="h-4 w-4" /> {g[0].sampleType} namunasini olish ({g.length})
+            {canCollect &&
+              groups.map((g) => (
+                <AButton key={g[0].id} size="sm" onClick={() => onCollect(g)}>
+                  <TestTube className="h-4 w-4" /> {g[0].sampleType} namunasini olish ({g.length})
+                </AButton>
+              ))}
+            {canCancel && cancellable && (
+              <AButton size="sm" variant="ghost" onClick={onCancel}>
+                Buyurtmani bekor qilish
               </AButton>
-            ))}
+            )}
           </div>
         )}
 
@@ -503,6 +535,44 @@ function CollectDialog({ order, items, onClose, onDone }: { order: Order; items:
       )}
       <ATextArea value={notes} onChange={setNotes} rows={2} placeholder="Izoh (ixtiyoriy, masalan: ikkinchi urinish)" aria-label="Izoh" />
       <p className="text-xs text-ink-muted">Namuna kodi tizim tomonidan beriladi.</p>
+    </AModal>
+  );
+}
+
+function CancelOrderDialog({ order, onClose, onDone }: { order: Order; onClose: () => void; onDone: () => void }) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await adminApi.post(`/api/lab/orders/${order.id}`, { action: "cancel", reason: reason.trim() });
+      onDone();
+    } catch (e) {
+      setError(errorText(e, "Buyurtmani bekor qilib bo‘lmadi"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <AModal
+      title={`${order.patient.fullName ?? "Bemor"} buyurtmasini bekor qilish`}
+      onClose={onClose}
+      footer={
+        <>
+          <AButton variant="ghost" onClick={onClose}>Qaytish</AButton>
+          <AButton variant="danger" onClick={submit} loading={saving} disabled={!reason.trim()}>Bekor qilish</AButton>
+        </>
+      }
+    >
+      {error && <AError message={error} />}
+      <p className="text-sm text-foreground">
+        Buyurtmadagi barcha tahlillar bekor qilinadi. To‘lanmagan hisob kamayadi; to‘langan bo‘lsa, kassada qaytarish uchun ko‘rinadi.
+      </p>
+      <ATextArea value={reason} onChange={setReason} rows={2} placeholder="Sabab (masalan: bemor kelmadi, shifokor bekor qildi)" aria-label="Bekor qilish sababi" />
     </AModal>
   );
 }

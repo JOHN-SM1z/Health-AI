@@ -11,6 +11,7 @@ export default async function LabHomePage() {
     <LabWorkQueue
       canCollect={labCan(ctx.roles, "sample.collect")}
       canProcess={labCan(ctx.roles, "sample.process")}
+      canCancel={labCan(ctx.roles, "order.cancel")}
       canOrder={labCan(ctx.roles, "queue.read")}
       canEnter={labCan(ctx.roles, "result.enter")}
     />
