@@ -172,4 +172,5 @@ If anything fails:
 
 | Run by | Date | Staging app URL | Release commit | Result |
 |---|---|---|---|---|
+| Claude (database part only) | 2026-10-06 | — (no staging app yet) | `ce4ccab` | Part A: A3–A8 pass on "Health AI staging" (`qoupbbsspzfyjqfzykuk`). A1 is not applicable to a new empty project. Parts B–E are still to do |
 | | | | | |
