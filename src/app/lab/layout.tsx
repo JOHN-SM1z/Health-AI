@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getStaffContext, hasAnyRole } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
-import { FileUp, FlaskConical, KeyRound, ListChecks } from "lucide-react";
+import { BarChart3, FileUp, FlaskConical, KeyRound, ListChecks } from "lucide-react";
 import { NotificationBell } from "@/components/staff/notification-bell";
 
 export const metadata = { title: "Laboratoriya" };
@@ -39,6 +39,7 @@ export default async function LabLayout({ children }: { children: React.ReactNod
             Ish jarayoni
           </p>
           <NavLink href="/lab" exact icon={<ListChecks className="h-4 w-4" />}>Ish navbati</NavLink>
+          <NavLink href="/lab/dashboard" icon={<BarChart3 className="h-4 w-4" />}>Ko‘rsatkichlar</NavLink>
           <NavLink href="/lab/imports" icon={<FileUp className="h-4 w-4" />}>Import</NavLink>
           <NavLink href="/lab/password" icon={<KeyRound className="h-4 w-4" />}>Parolim</NavLink>
         </nav>
@@ -62,6 +63,7 @@ export default async function LabLayout({ children }: { children: React.ReactNod
         </header>
         <NavStrip label="Laboratoriya bo‘limlari">
           <NavLink href="/lab" exact icon={<ListChecks className="h-4 w-4" />}>Ish navbati</NavLink>
+          <NavLink href="/lab/dashboard" icon={<BarChart3 className="h-4 w-4" />}>Ko‘rsatkichlar</NavLink>
           <NavLink href="/lab/imports" icon={<FileUp className="h-4 w-4" />}>Import</NavLink>
           <NavLink href="/lab/password" icon={<KeyRound className="h-4 w-4" />}>Parolim</NavLink>
         </NavStrip>

@@ -114,7 +114,9 @@ async function run() {
       results.every((x) => x.source === "import" && x.status === "verified" && x.entered_by === lab.id && x.verified_by === lab2.id && x.order_source === "external_import" && x.order_status === "completed"),
       "lab2: imported as verified, entered by the preparer, verified by the confirmer",
     );
-    check(results[0].patient_id === strong.id && results[0].performed_at.toISOString() === "2023-01-12T07:00:00.000Z", "lab2: the historical date is kept");
+    // A date-only row is kept as noon of that day in the clinic's timezone (the seed picks the zone by the time of day).
+    const [{ local }] = await db`select to_char(${results[0].performed_at}::timestamptz at time zone c.timezone, 'YYYY-MM-DD HH24:MI') as local from public.clinics c where c.id = ${clinic}`;
+    check(results[0].patient_id === strong.id && local === "2023-01-12 12:00", "lab2: the historical date is kept");
     const [batch] = await db`select status, confirmed_by from public.lab_import_batches where id = ${batchId}`;
     check(batch.status === "completed" && batch.confirmed_by === lab2.id, "lab2: the import is completed and records who confirmed it");
     const [{ n: jobs }] = await db`select count(*)::int as n from public.notification_jobs where lab_result_id in (select r.id from public.lab_results r join public.lab_order_items i on i.id = r.order_item_id where i.test_id = ${test.id})`;

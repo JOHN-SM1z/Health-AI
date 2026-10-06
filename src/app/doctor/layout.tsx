@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getStaffContext, hasRole } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
-import { HeartPulse, ListOrdered, CalendarRange, Send, Users, KeyRound } from "lucide-react";
+import { HeartPulse, ListOrdered, CalendarRange, Send, Users, KeyRound, FlaskConical } from "lucide-react";
 import { PendingReferralsBadge } from "@/components/doctor/pending-referrals-badge";
 import { NotificationBell } from "@/components/staff/notification-bell";
 
@@ -35,6 +35,7 @@ export default async function DoctorLayout({ children }: { children: React.React
           </p>
           <NavLink href="/doctor" exact icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
           <NavLink href="/doctor/patients" icon={<Users className="h-4 w-4" />}>Bemorlarim</NavLink>
+          <NavLink href="/doctor/lab" icon={<FlaskConical className="h-4 w-4" />}>Laboratoriya</NavLink>
           <NavLink href="/doctor/referrals" icon={<Send className="h-4 w-4" />}>Yo‘llanmalar<PendingReferralsBadge /></NavLink>
           <NavLink href="/doctor/schedule" icon={<CalendarRange className="h-4 w-4" />}>Jadvalim</NavLink>
           <NavLink href="/doctor/password" icon={<KeyRound className="h-4 w-4" />}>Parolim</NavLink>
@@ -69,6 +70,7 @@ export default async function DoctorLayout({ children }: { children: React.React
         <NavStrip label="Shifokor bo‘limlari">
           <NavLink href="/doctor" exact icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
           <NavLink href="/doctor/patients" icon={<Users className="h-4 w-4" />}>Bemorlarim</NavLink>
+          <NavLink href="/doctor/lab" icon={<FlaskConical className="h-4 w-4" />}>Laboratoriya</NavLink>
           <NavLink href="/doctor/referrals" icon={<Send className="h-4 w-4" />}>Yo‘llanmalar<PendingReferralsBadge /></NavLink>
           <NavLink href="/doctor/schedule" icon={<CalendarRange className="h-4 w-4" />}>Jadvalim</NavLink>
           <NavLink href="/doctor/password" icon={<KeyRound className="h-4 w-4" />}>Parolim</NavLink>

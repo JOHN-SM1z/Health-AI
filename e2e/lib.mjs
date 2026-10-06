@@ -103,13 +103,15 @@ export const VIEWPORTS = {
 };
 
 /** Signs in through the real login page; page errors and 5xx responses are reported as problems. */
-export async function signIn(browser, report, email, viewport = "desktop", { expectDenials = false } = {}) {
+export async function signIn(browser, report, email, viewport = "desktop", { expectDenials = false, expectForbidden = false } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORTS[viewport], hasTouch: viewport !== "desktop", isMobile: viewport === "phone" });
   const page = await context.newPage();
   // Where a step deliberately opens forbidden pages, books a taken time or
   // uploads a forged file, the browser's own "Failed to load resource:
-  // 404/409/410/415" lines are expected.
-  const expected = (text) => expectDenials && /Failed to load resource: .* (404|409|410|415)/.test(text);
+  // 404/409/410/415" lines are expected; a page opened by a role it refuses
+  // shows its permission state after a 403 (expectForbidden).
+  const expected = (text) =>
+    (expectDenials && /Failed to load resource: .* (404|409|410|415)/.test(text)) || (expectForbidden && /Failed to load resource: .* 403/.test(text));
   page.on("console", (m) => m.type() === "error" && !expected(m.text()) && report.problems.push(`[${email}] console: ${m.text()}`));
   page.on("pageerror", (e) => report.problems.push(`[${email}] pageerror: ${e.message}`));
   page.on("response", (r) => r.status() >= 500 && report.problems.push(`[${email}] HTTP ${r.status()} ${r.url()}`));

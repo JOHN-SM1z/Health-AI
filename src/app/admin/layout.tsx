@@ -3,7 +3,7 @@ import Link from "next/link";
 import { adminWorkspaceRedirect, getStaffContext, hasAnyRole, hasRole, isCallCenterStaff, canViewPaymentDynamics } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
-import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge } from "lucide-react";
+import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge, Activity } from "lucide-react";
 import { labCan } from "@/lib/labs/permissions";
 import { NotificationBell } from "@/components/staff/notification-bell";
 
@@ -37,6 +37,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin/specialties", label: "Yo‘nalishlar", icon: <Sparkles className="h-4 w-4" />, show: isManagement },
     { href: "/admin/faqs", label: "Savol-javoblar", icon: <MessagesSquare className="h-4 w-4" />, show: isManagement },
     { href: "/admin/analytics", label: "Tahlillar", icon: <BarChart3 className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/lab-analytics", label: "Laboratoriya tahlili", icon: <Activity className="h-4 w-4" />, show: isManagement },
     { href: "/admin/finance", label: "Moliya", icon: <Wallet className="h-4 w-4" />, show: financeVisible },
     { href: "/admin/lab-kassa", label: "Laboratoriya kassasi", icon: <Receipt className="h-4 w-4" />, show: financeVisible },
     { href: "/admin/staff", label: "Xodimlar", icon: <UserCog className="h-4 w-4" />, show: hasRole(ctx, "owner") },

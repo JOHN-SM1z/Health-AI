@@ -3279,6 +3279,10 @@ export type Database = {
       }
       is_linked_doctor: { Args: { p_doctor_id: string }; Returns: boolean }
       is_platform_admin: { Args: never; Returns: boolean }
+      lab_doctor_accessible_patients: {
+        Args: { p_clinic_id: string; p_doctor_id: string; p_patient_ids: string[] }
+        Returns: string[]
+      }
       lab_entry_ranges: {
         Args: { p_clinic_id: string; p_order_item_id: string }
         Returns: {
