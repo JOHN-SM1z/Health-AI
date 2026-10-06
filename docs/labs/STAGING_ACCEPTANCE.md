@@ -9,6 +9,50 @@ Rules for the run:
 - **Never copy result values, names or documents** into tickets, chat or this record. Write ids and outcomes only, the same rule as the logs and audit.
 - The automated suites (`npm test`, `npm run test:e2e`) run only against a local stack by design (`assertLocalOnly`). On staging, this manual run is the check.
 
+## 0. Setting up the staging app (owner, once)
+
+**Database: done.** "Health AI staging" (`qoupbbsspzfyjqfzykuk`, API URL `https://qoupbbsspzfyjqfzykuk.supabase.co`) was built on 2026-10-06 and passes part A (`PRODUCTION_READINESS.md` D6). It holds the seed's demo clinic and no production data.
+
+Optional cleanup: run `drop schema staging_setup cascade;` in the staging SQL editor. That schema holds the copies of this repository's SQL used to build the database; nothing reads it.
+
+The simplest staging app is **this branch's existing Vercel preview**, pointed at the staging database:
+
+1. **Vercel → the project that deploys this repository → Settings → Environment Variables.** Add these with environment **Preview** and Git branch `claude/sharp-ptolemy-rl1rnc` only, so production and other previews are untouched:
+
+   | Variable | Value |
+   |---|---|
+   | `NEXT_PUBLIC_SUPABASE_URL` | `https://qoupbbsspzfyjqfzykuk.supabase.co` |
+   | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | the staging project's anon / publishable key (Supabase → Project Settings → API keys) |
+   | `SUPABASE_SERVICE_ROLE_KEY` | the staging project's **service_role** key (secret; staging only, never production's) |
+   | `NEXT_PUBLIC_APP_URL` | `https://health-ai-git-claude-sharp-ptolemy-rl1rnc-handly.vercel.app` |
+   | `TELEGRAM_WEBHOOK_SECRET` | a new `openssl rand -hex 32`, not production's |
+   | `CRON_SECRET` | a new `openssl rand -hex 32`, not production's |
+   | `LOG_FORMAT` | `json` |
+
+   Leave `ENABLE_AI`, `ALLOW_MOCK_LAB_PROVIDER` and `ENABLE_TELEGRAM_DEV_MODE` **unset**. Then redeploy the branch: `NEXT_PUBLIC_*` values are built in.
+
+   **Check while you are there:** if the general **Preview** variables point at the *production* Supabase project, every pull-request preview runs unmerged code against production data. Pointing all Preview variables at staging avoids that.
+2. **Deployment Protection.** Telegram's webhook and the Mini App cannot sign in to Vercel. For the run, turn off Vercel Authentication for preview deployments (Settings → Deployment Protection), then turn it back on afterwards. Staging holds test data only.
+3. **Owner account.** On your computer, create an untracked `.env.staging` containing:
+   - `SUPABASE_URL=https://qoupbbsspzfyjqfzykuk.supabase.co`
+   - the staging `SUPABASE_SERVICE_ROLE_KEY`
+   - `OWNER_EMAIL`, `OWNER_PASSWORD` (12 or more characters)
+
+   Then run `node --env-file=.env.staging scripts/create-owner.ts`, and delete the file afterwards.
+4. **Staff.** Sign in at the preview URL as the owner.
+   - Under **Xodimlar**, add reception, Doctor A, Doctor B, Lab 1 and Lab 2. Each gets a one-time password.
+   - Under **Shifokorlar**, link the two doctor accounts to two of the seed's doctors.
+5. **Telegram test bot.**
+   - Run `@BotFather` → `/newbot` and copy the token. Paste it in the dashboard's Telegram bot panel and activate it; the webhook registers itself (`docs/telegram-setup.md` §1).
+   - Then `/newapp` (or Menu Button) → `https://health-ai-git-claude-sharp-ptolemy-rl1rnc-handly.vercel.app/book`.
+6. **Scheduler.** In the staging project's SQL editor:
+   1. Store the staging `CRON_SECRET` in Vault as `health_ai_cron_secret`.
+   2. Run `supabase/ops/scheduled-jobs.sql` with `v_app_url` set to the preview URL.
+
+   Instead of waiting for C10, one manual run also works: `curl -X POST -H "Authorization: Bearer <staging CRON_SECRET>" <preview URL>/api/notifications/process`.
+
+After the run, either pause the staging project (Supabase → Project Settings → General) or keep it for the next release.
+
 ## People and devices
 
 | Who | Role | Used for |
