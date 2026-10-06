@@ -888,6 +888,242 @@ export type Database = {
           },
         ]
       }
+      lab_import_batches: {
+        Row: {
+          analysed_at: string | null
+          analysed_by: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          clinic_id: string
+          completed_at: string | null
+          confirmed_at: string | null
+          confirmed_by: string | null
+          created_at: string
+          created_by: string
+          file_name: string
+          file_sha256: string
+          headers: Json
+          id: string
+          mapping: Json | null
+          row_count: number
+          source_system: string
+          status: Database["public"]["Enums"]["lab_import_status"]
+          summary: Json
+          updated_at: string
+        }
+        Insert: {
+          analysed_at?: string | null
+          analysed_by?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          clinic_id: string
+          completed_at?: string | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          created_at?: string
+          created_by: string
+          file_name: string
+          file_sha256: string
+          headers: Json
+          id?: string
+          mapping?: Json | null
+          row_count: number
+          source_system: string
+          status?: Database["public"]["Enums"]["lab_import_status"]
+          summary?: Json
+          updated_at?: string
+        }
+        Update: {
+          analysed_at?: string | null
+          analysed_by?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          clinic_id?: string
+          completed_at?: string | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          created_at?: string
+          created_by?: string
+          file_name?: string
+          file_sha256?: string
+          headers?: Json
+          id?: string
+          mapping?: Json | null
+          row_count?: number
+          source_system?: string
+          status?: Database["public"]["Enums"]["lab_import_status"]
+          summary?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_import_batches_analysed_by_fkey"
+            columns: ["analysed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_import_batches_cancelled_by_fkey"
+            columns: ["cancelled_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_import_batches_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_import_batches_confirmed_by_fkey"
+            columns: ["confirmed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_import_batches_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lab_import_rows: {
+        Row: {
+          accession: string | null
+          attempts: number
+          batch_id: string
+          candidate_patient_ids: string[]
+          clinic_id: string
+          created_at: string
+          errors: string[]
+          group_key: string | null
+          id: string
+          lab_result_id: string | null
+          match_confirmed_by: string | null
+          match_kind: string | null
+          parameter_id: string | null
+          patient_id: string | null
+          patient_key: string | null
+          performed_at: string | null
+          raw: Json
+          row_number: number
+          status: Database["public"]["Enums"]["lab_import_row_status"]
+          test_id: string | null
+          updated_at: string
+          value_boolean: boolean | null
+          value_numeric: number | null
+          value_text: string | null
+        }
+        Insert: {
+          accession?: string | null
+          attempts?: number
+          batch_id: string
+          candidate_patient_ids?: string[]
+          clinic_id: string
+          created_at?: string
+          errors?: string[]
+          group_key?: string | null
+          id?: string
+          lab_result_id?: string | null
+          match_confirmed_by?: string | null
+          match_kind?: string | null
+          parameter_id?: string | null
+          patient_id?: string | null
+          patient_key?: string | null
+          performed_at?: string | null
+          raw: Json
+          row_number: number
+          status?: Database["public"]["Enums"]["lab_import_row_status"]
+          test_id?: string | null
+          updated_at?: string
+          value_boolean?: boolean | null
+          value_numeric?: number | null
+          value_text?: string | null
+        }
+        Update: {
+          accession?: string | null
+          attempts?: number
+          batch_id?: string
+          candidate_patient_ids?: string[]
+          clinic_id?: string
+          created_at?: string
+          errors?: string[]
+          group_key?: string | null
+          id?: string
+          lab_result_id?: string | null
+          match_confirmed_by?: string | null
+          match_kind?: string | null
+          parameter_id?: string | null
+          patient_id?: string | null
+          patient_key?: string | null
+          performed_at?: string | null
+          raw?: Json
+          row_number?: number
+          status?: Database["public"]["Enums"]["lab_import_row_status"]
+          test_id?: string | null
+          updated_at?: string
+          value_boolean?: boolean | null
+          value_numeric?: number | null
+          value_text?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_import_rows_batch_fkey"
+            columns: ["batch_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_import_batches"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_import_rows_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_import_rows_match_confirmed_by_fkey"
+            columns: ["match_confirmed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lab_import_rows_parameter_fkey"
+            columns: ["parameter_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_test_parameters"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_import_rows_patient_fkey"
+            columns: ["patient_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_import_rows_result_fkey"
+            columns: ["lab_result_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_results"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "lab_import_rows_test_fkey"
+            columns: ["test_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "lab_tests"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
       lab_order_items: {
         Row: {
           clinic_id: string
@@ -2743,6 +2979,23 @@ export type Database = {
         }
         Returns: Record<string, unknown>
       }
+      run_lab_import: {
+        Args: {
+          p_actor: string
+          p_after_row?: number
+          p_batch_id: string
+          p_clinic_id: string
+          p_dry_run: boolean
+          p_max_groups?: number
+        }
+        Returns: {
+          error_code: string
+          first_row: number
+          group_key: string
+          lab_result_id: string
+          outcome: string
+        }[]
+      }
       save_lab_result_draft: {
         Args: {
           p_clinic_id: string
@@ -2792,6 +3045,17 @@ export type Database = {
         }
         Returns: Json
       }
+      store_lab_import_analysis: {
+        Args: {
+          p_actor: string
+          p_batch_id: string
+          p_clinic_id: string
+          p_mapping: Json
+          p_rows: Json
+          p_summary: Json
+        }
+        Returns: undefined
+      }
       submit_lab_result: {
         Args: { p_clinic_id: string; p_result_id: string; p_submitted_by: string }
         Returns: boolean
@@ -2829,6 +3093,23 @@ export type Database = {
       conversation_channel: "telegram" | "mini_app"
       conversation_status: "open" | "assigned" | "closed"
       lab_document_kind: "report" | "scan" | "image" | "import_source"
+      lab_import_row_status:
+        | "pending"
+        | "ready"
+        | "invalid"
+        | "unmatched"
+        | "possible_match"
+        | "conflict"
+        | "duplicate"
+        | "imported"
+        | "failed"
+        | "skipped"
+      lab_import_status:
+        | "uploaded"
+        | "analysed"
+        | "confirmed"
+        | "completed"
+        | "cancelled"
       lab_item_status:
         | "ordered"
         | "ready_for_collection"
@@ -3056,6 +3337,25 @@ export const Constants = {
       conversation_channel: ["telegram", "mini_app"],
       conversation_status: ["open", "assigned", "closed"],
       lab_document_kind: ["report", "scan", "image", "import_source"],
+      lab_import_row_status: [
+        "pending",
+        "ready",
+        "invalid",
+        "unmatched",
+        "possible_match",
+        "conflict",
+        "duplicate",
+        "imported",
+        "failed",
+        "skipped",
+      ],
+      lab_import_status: [
+        "uploaded",
+        "analysed",
+        "confirmed",
+        "completed",
+        "cancelled",
+      ],
       lab_item_status: [
         "ordered",
         "ready_for_collection",

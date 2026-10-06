@@ -77,6 +77,8 @@ export async function getWorkQueue(staff: ClinicStaff): Promise<QueueOrder[]> {
         "lab_samples!lab_samples_order_fkey(id, sample_code, sample_type, status, collected_at, notes, reject_reason, lab_sample_items!lab_sample_items_sample_fkey(order_item_id))",
     )
     .eq("clinic_id", staff.clinicId)
+    // Historical imports (Phase 13) arrive completed: they are not lab work.
+    .neq("source", "external_import")
     .or(`status.eq.active,and(status.eq.completed,updated_at.gte.${new Date(Date.now() - RECENTLY_COMPLETED_DAYS * 86_400_000).toISOString()})`)
     .order("created_at", { ascending: false })
     .limit(QUEUE_LIMIT);

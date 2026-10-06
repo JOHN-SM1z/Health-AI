@@ -6,6 +6,7 @@ import { requireLabCapability } from "@/lib/labs/guards";
 import { DOCUMENT_KINDS, listOrderDocuments, uploadLabDocument } from "@/lib/labs/documents";
 import { LAB_DOCUMENT_MAX_BYTES } from "@/lib/labs/file-type";
 import { sharedRateLimit } from "@/lib/rate-limit-shared";
+import { assertSameOrigin } from "@/lib/api/same-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -43,20 +44,7 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
     if (!limit.ok) throw new ApiError(429, "Juda ko‘p so‘rov, birozdan keyin urinib ko‘ring", "rate_limited");
     const orderId = await orderIdOf(ctx);
 
-    // A multipart POST is the one request a foreign page can send without
-    // CORS: refuse any Origin other than this site's own.
-    const origin = request.headers.get("origin");
-    const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-    const originHost = (() => {
-      try {
-        return origin ? new globalThis.URL(origin).host : null;
-      } catch {
-        return ""; // "null" or garbage: never this site
-      }
-    })();
-    if (origin && (!host || originHost !== host)) {
-      throw new ApiError(403, "So‘rov boshqa saytdan yuborilgan", "cross_site_request");
-    }
+    assertSameOrigin(request);
 
     // Refuse an oversized body before reading it (multipart overhead allowed).
     const declared = Number(request.headers.get("content-length") ?? "0");

@@ -26,7 +26,7 @@ type StaffRole = Database["public"]["Enums"]["staff_role"];
 export const LAB_CAPABILITY_GROUPS = {
   configuration: ["catalog.configure", "settings.configure"],
   operational: ["catalog.read", "order.create", "order.cancel", "order.status.read", "queue.read", "sample.collect", "sample.process"],
-  clinical: ["result.enter", "result.verify", "result.read", "document.upload"],
+  clinical: ["result.enter", "result.verify", "result.read", "document.upload", "import.manage"],
   financial: ["finance.view"],
 } as const;
 
@@ -63,6 +63,10 @@ export const LAB_CAPABILITIES: Record<LabCapability, readonly StaffRole[]> = {
   "result.read": ["lab", "doctor"],
   // Attaching report / scan / image files to a result is lab work (Phase 11).
   "document.upload": ["lab"],
+  // Historical result import (Phase 13): the file holds result values and
+  // patient identifiers, so it is lab work, and a second lab staff member
+  // confirms what one prepared (enforced in the database).
+  "import.manage": ["lab"],
 
   // Financial: the existing rule (canViewPaymentDynamics) — owner and admin.
   "finance.view": ["owner", "admin"],

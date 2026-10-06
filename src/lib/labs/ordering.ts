@@ -131,6 +131,8 @@ export async function getPatientLabOrders(doctor: LinkedDoctor, patientId: strin
     )
     .eq("clinic_id", doctor.clinicId)
     .eq("patient_id", patientId)
+    // Historical imports (Phase 13) are results, not orders: they appear in the lab history.
+    .neq("source", "external_import")
     .order("created_at", { ascending: false })
     .limit(100);
   if (error) throw loadFailed("orders", error);

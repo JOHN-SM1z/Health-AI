@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getStaffContext, hasAnyRole } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
-import { FlaskConical, KeyRound, ListChecks } from "lucide-react";
+import { FileUp, FlaskConical, KeyRound, ListChecks } from "lucide-react";
 
 export const metadata = { title: "Laboratoriya" };
 
@@ -35,6 +35,7 @@ export default async function LabLayout({ children }: { children: React.ReactNod
             Ish jarayoni
           </p>
           <NavLink href="/lab" exact icon={<ListChecks className="h-4 w-4" />}>Ish navbati</NavLink>
+          <NavLink href="/lab/imports" icon={<FileUp className="h-4 w-4" />}>Import</NavLink>
           <NavLink href="/lab/password" icon={<KeyRound className="h-4 w-4" />}>Parolim</NavLink>
         </nav>
         <div className="border-t border-hairline px-5 py-4">
@@ -54,6 +55,7 @@ export default async function LabLayout({ children }: { children: React.ReactNod
         </header>
         <NavStrip label="Laboratoriya bo‘limlari">
           <NavLink href="/lab" exact icon={<ListChecks className="h-4 w-4" />}>Ish navbati</NavLink>
+          <NavLink href="/lab/imports" icon={<FileUp className="h-4 w-4" />}>Import</NavLink>
           <NavLink href="/lab/password" icon={<KeyRound className="h-4 w-4" />}>Parolim</NavLink>
         </NavStrip>
         <div className="flex-1 overflow-x-hidden p-4 md:p-8">{children}</div>

@@ -76,6 +76,8 @@ describe("lab permission model", () => {
   it("keeps attaching result documents with the laboratory", () => {
     expect(holders("document.upload")).toEqual(["lab"]);
     expect(labCapabilityGroup("document.upload")).toBe("clinical");
+    expect(holders("import.manage")).toEqual(["lab"]);
+    expect(labCapabilityGroup("import.manage")).toBe("clinical");
   });
 
   it("keeps the clinic-wide work queue away from doctors", () => {

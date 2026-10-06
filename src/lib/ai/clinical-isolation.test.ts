@@ -38,7 +38,9 @@ const FORBIDDEN = [
   /lab_results/,
   /lab_result_values/,
   /lab_documents/,
-  /@\/lib\/labs\/(ordering|guards|results|collection|history|documents)/,
+  /@\/lib\/labs\/(ordering|guards|results|collection|history|documents|imports|import\/)/,
+  // Historical import rows hold patient identifiers and result values (Phase 13).
+  /lab_import_/,
 ];
 
 // The approved gateway for patients' own results (Phase 12) — allowed only in
