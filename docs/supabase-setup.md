@@ -61,7 +61,10 @@ Later migrations add the referral and clinical-records model and lifecycle, the 
 booking engine (`20260930000005`) and tenant integrity (`20260930000006`: composite
 same-clinic foreign keys everywhere, patient communication written by the server only —
 which supersedes the staff reply/upload policies of `0015`–`0021` — SECURITY DEFINER
-search_path and grants, reactivation checks, clinic deletion, `urgent_at`, `purged_at`).
+search_path and grants, reactivation checks, clinic deletion, `urgent_at`, `purged_at`), and
+clinical record governance (`20261001000001`: versioned author-only corrections, doctor
+records that keep their authors, patient deletion that never cascades into clinical,
+referral, booking or payment records, and an empty `retention_policies`).
 
 Regenerate TypeScript types after schema changes:
 

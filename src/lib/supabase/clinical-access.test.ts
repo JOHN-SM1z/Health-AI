@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -228,6 +229,7 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
   afterAll(async () => {
     if (!sql) return;
     const clinics = [clinicA, clinicB];
+    await cleanupTestClinics(clinics);
     await sql`delete from public.referrals where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.payments where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.appointments where clinic_id in ${sql(clinics)}`;
@@ -235,7 +237,6 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     await sql`delete from public.doctors where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.patients where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.services where clinic_id in ${sql(clinics)}`;
-    await sql`delete from public.clinics where id in ${sql(clinics)}`;
     await sql`delete from auth.users where id in ${sql(Object.values(profiles))}`;
     await sql.end({ timeout: 5 });
   });
@@ -244,9 +245,9 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     const x = await patientX();
     await asServer((tx) => tx`insert into public.payments ${tx({ clinic_id: clinicA, appointment_id: x.consultation, patient_id: x.id, amount: 100000 })}`);
 
-    expect(await access(doctors.a, x.id)).toMatchObject({ clinic_id: clinicA, own_patient: true, active_referral_ids: [], history_doctor_ids: [] });
-    // The patient record, their own visits and their own payments — not Dr E's visit.
-    expect(await seenBy(profiles.a, x.id)).toEqual({ patient: true, appointments: [...x.withA].sort(), payments: 1 });
+    expect(await access(doctors.a, x.id)).toMatchObject({ clinic_id: clinicA, own_patient: true, active_referral_ids: [], history_doctor_ids: [doctors.a, doctors.e].sort() });
+    // The patient record, longitudinal visits and their own payment metadata.
+    expect(await seenBy(profiles.a, x.id)).toEqual({ patient: true, appointments: [...x.withA, x.withE].sort(), payments: 1 });
   });
 
   it("2. Doctor B can access a patient actively referred to Doctor B", async () => {
@@ -258,16 +259,16 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     expect(await access(doctors.b, x.id)).toMatchObject({
       own_patient: false,
       active_referral_ids: [referral],
-      history_doctor_ids: [],
+      history_doctor_ids: [doctors.a, doctors.e].sort(),
       referral_appointment_ids: [x.consultation],
     });
-    expect(await seenBy(profiles.b, x.id)).toEqual({ patient: true, appointments: [x.consultation], payments: 0 });
+    expect(await seenBy(profiles.b, x.id)).toEqual({ patient: true, appointments: [...x.withA, x.withE].sort(), payments: 0 });
 
-    // Accepted: also X's visits with the referring doctor — never Dr E's
+    // Accepted: the longitudinal history was already available while pending.
     // visit, never payments.
     await accept(referral);
-    expect(await access(doctors.b, x.id)).toMatchObject({ active_referral_ids: [referral], history_doctor_ids: [doctors.a] });
-    expect(await seenBy(profiles.b, x.id)).toEqual({ patient: true, appointments: [...x.withA].sort(), payments: 0 });
+    expect(await access(doctors.b, x.id)).toMatchObject({ active_referral_ids: [referral], history_doctor_ids: [doctors.a, doctors.e].sort() });
+    expect(await seenBy(profiles.b, x.id)).toEqual({ patient: true, appointments: [...x.withA, x.withE].sort(), payments: 0 });
   });
 
   it("3. Doctor C cannot access that patient when not referred", async () => {
@@ -303,7 +304,7 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
         return row.id;
       });
       await accept(referral);
-      expect((await seenBy(profiles.b, x.id)).appointments).toEqual([...x.withA].sort());
+      expect((await seenBy(profiles.b, x.id)).appointments).toEqual([...x.withA, x.withE].sort());
 
       await new Promise((r) => setTimeout(r, 2_500));
 
@@ -340,13 +341,13 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     await accept(referral2);
     const followUp = await startHandoff(referral2, x2.id);
     // In progress: Dr A's history stays shared while Dr B consults.
-    expect(await access(doctors.b, x2.id)).toMatchObject({ own_patient: true, history_doctor_ids: [doctors.a] });
-    expect(await seenBy(profiles.b, x2.id)).toMatchObject({ appointments: [...x2.withA, followUp].sort() });
+    expect(await access(doctors.b, x2.id)).toMatchObject({ own_patient: true, history_doctor_ids: [doctors.a, doctors.b, doctors.e].sort() });
+    expect(await seenBy(profiles.b, x2.id)).toMatchObject({ appointments: [...x2.withA, x2.withE, followUp].sort() });
 
     await transition(referral2, { status: "completed", completed_by: profiles.b });
-    // Own relationship now: the record and Dr B's own visit — not Dr A's history.
-    expect(await access(doctors.b, x2.id)).toMatchObject({ own_patient: true, history_doctor_ids: [] });
-    expect(await seenBy(profiles.b, x2.id)).toEqual({ patient: true, appointments: [followUp], payments: 0 });
+    // Direct care keeps longitudinal history after handoff completion.
+    expect(await access(doctors.b, x2.id)).toMatchObject({ own_patient: true, history_doctor_ids: [doctors.a, doctors.b, doctors.e].sort() });
+    expect(await seenBy(profiles.b, x2.id)).toEqual({ patient: true, appointments: [...x2.withA, x2.withE, followUp].sort(), payments: 0 });
   });
 
   it("6. Doctor B cannot access patients from another clinic", async () => {
@@ -482,13 +483,13 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     expect((await seenBy(profiles.a, x.id)).patient).toBe(true); // own
     expect((await seenBy(profiles.b, x.id)).patient).toBe(true); // referred
     expect((await seenBy(profiles.receptionist, x.id)).patient).toBe(true); // operational role, not a doctor
-    for (const denied of [profiles.c, profiles.e, profiles.k]) {
-      // Dr E saw X once: that is their own visit, not the rest of X's history.
+    for (const denied of [profiles.c, profiles.k]) {
+      // Doctors without a relationship remain denied.
       const seen = await seenBy(denied, x.id);
       expect(seen.appointments).not.toEqual(expect.arrayContaining([x.consultation]));
-      if (denied !== profiles.e) expect(seen).toEqual(nothing);
+      expect(seen).toEqual(nothing);
     }
-    expect((await seenBy(profiles.e, x.id)).appointments).toEqual([x.withE]);
+    expect((await seenBy(profiles.e, x.id)).appointments).toEqual([...x.withA, x.withE].sort());
 
     // Doctors never see a patient's conversations, even their own patient's.
     await asServer((tx) => tx`insert into public.conversations ${tx({ clinic_id: clinicA, patient_id: x.id })}`);
@@ -538,7 +539,7 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     } finally {
       await sql`update public.doctors set active = true where id in ${sql([doctors.a, doctors.b])}`;
     }
-    expect(await seenBy(profiles.a, x.id)).toEqual({ patient: true, appointments: [...x.withA].sort(), payments: 1 });
+    expect(await seenBy(profiles.a, x.id)).toEqual({ patient: true, appointments: [...x.withA, x.withE].sort(), payments: 1 });
   });
 
   it("13. Doctors cannot write appointments directly — status changes go through the server", async () => {
@@ -564,17 +565,17 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     const followUp = await visit(x.id, doctors.b, clinicA, "confirmed");
     await transition(referral, { follow_up_appointment_id: followUp });
 
-    // Dr A sees their own visits plus the follow-up with Dr B — not Dr E's visit.
-    expect(await access(doctors.a, x.id)).toMatchObject({ referral_appointment_ids: [followUp] });
-    expect(await seenBy(profiles.a, x.id)).toMatchObject({ appointments: [...x.withA, followUp].sort() });
+    // Both treating doctors see longitudinal visits, including Dr E.
+    expect(await access(doctors.a, x.id)).toMatchObject({ history_doctor_ids: [doctors.a, doctors.b, doctors.e].sort() });
+    expect(await seenBy(profiles.a, x.id)).toMatchObject({ appointments: [...x.withA, x.withE, followUp].sort() });
 
     // The booked follow-up starts (moving the referral in progress); once
-    // completed, Dr B keeps only their own visit.
+    // Completed: Dr B keeps history through their independent care relationship.
     await sql`update public.appointments set status = 'in_progress' where id = ${followUp}`;
     await transition(referral, { status: "completed", completed_by: profiles.b });
-    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: true, referral_appointment_ids: [], history_doctor_ids: [] });
-    expect(await seenBy(profiles.b, x.id)).toMatchObject({ appointments: [followUp] });
+    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: true, referral_appointment_ids: [], history_doctor_ids: [doctors.a, doctors.b, doctors.e].sort() });
+    expect(await seenBy(profiles.b, x.id)).toMatchObject({ appointments: [...x.withA, x.withE, followUp].sort() });
     // Dr E, who also saw X, gains nothing from any of this.
-    expect(await seenBy(profiles.e, x.id)).toMatchObject({ appointments: [x.withE] });
+    expect(await seenBy(profiles.e, x.id)).toMatchObject({ appointments: [...x.withA, x.withE, followUp].sort() });
   });
 });

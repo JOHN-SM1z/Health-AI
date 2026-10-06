@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -237,7 +238,7 @@ describeDb("referral lifecycle through the API — transitions, access terminati
     await admin.from("staff_roles").delete().eq("clinic_id", clinicA);
     await admin.from("doctors").delete().eq("clinic_id", clinicA);
     await admin.from("services").delete().eq("clinic_id", clinicA);
-    await admin.from("clinics").delete().eq("id", clinicA);
+    await cleanupTestClinics([clinicA]);
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });
 
@@ -334,7 +335,7 @@ describeDb("referral lifecycle through the API — transitions, access terminati
     });
   }, 20_000); // waits for a real expiry (seconds) — generous under parallel load
 
-  it("completed: no referral-based access for Dr B — and past expires_at neither doctor keeps anything of the other's", async () => {
+  it("completed: independent care keeps longitudinal history after referral expiry", async () => {
     const x = await patientX();
     const referral = await shortLived(x, 4_000);
     await act("b", referral, { action: "accept" });
@@ -342,22 +343,22 @@ describeDb("referral lifecycle through the API — transitions, access terminati
     const bRecord = await writeRecord(x.id, "b", own, `Hypertensive heart disease (${suffix})`);
     expect(await act("b", referral, { action: "complete" })).toMatchObject({ status: 200 });
 
-    // Straight after completion: Dr B sees only their own consultation; Dr A receives its outcome.
+    // Completion does not remove the independent treating relationship.
     const b = (await workspace("b", x.id)).body.data!.record as { relationship: string; records: Array<{ id: string }>; referralAccessUntil: string | null };
     expect(b).toMatchObject({ relationship: "own", referralAccessUntil: null });
-    expect(b.records.map((r) => r.id)).toEqual([bRecord]);
+    expect(b.records.map((r) => r.id).sort()).toEqual([x.aRecord,bRecord].sort());
     const a = (await workspace("a", x.id)).body.data!.record as { records: Array<{ id: string }> };
     expect(a.records.map((r) => r.id).sort()).toEqual([x.aRecord, bRecord].sort());
     expect((await detail("b", referral)).status).toBe(200);
 
     await new Promise((r) => setTimeout(r, 4_500));
-    // Not permanent: the completed referral's text is gone for Dr B, the outcome for Dr A.
-    expect(await detail("b", referral)).toMatchObject({ status: 410, body: { code: "referral_completed" } });
+    // Referral-only access ended; independent care still releases historical content.
+    expect(await detail("b", referral)).toMatchObject({ status: 200 });
     expect((await list("b", "incoming")).map((r) => r.id)).not.toContain(referral);
     const bAfter = (await workspace("b", x.id)).body.data!.record as { records: Array<{ id: string }> };
-    expect(bAfter.records.map((r) => r.id)).toEqual([bRecord]);
+    expect(bAfter.records.map((r) => r.id).sort()).toEqual([x.aRecord,bRecord].sort());
     const aAfter = (await workspace("a", x.id)).body.data!.record as { records: Array<{ id: string }> };
-    expect(aAfter.records.map((r) => r.id)).toEqual([x.aRecord]);
+    expect(aAfter.records.map((r) => r.id).sort()).toEqual([x.aRecord,bRecord].sort());
     expect((await detail("a", referral)).status).toBe(200); // the referring doctor's own referral
   }, 20_000); // waits for a real expiry (seconds) — generous under parallel load
 

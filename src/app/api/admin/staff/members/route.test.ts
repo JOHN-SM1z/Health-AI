@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
@@ -85,7 +86,7 @@ describeDb("owner staff management (real database and auth)", () => {
 
   afterAll(async () => {
     if (!admin) return;
-    await admin.from("clinics").delete().in("id", [clinicA, clinicB]);
+    await cleanupTestClinics([clinicA, clinicB]);
     for (const id of created) await admin.auth.admin.deleteUser(id);
   });
 

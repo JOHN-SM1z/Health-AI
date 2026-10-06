@@ -5,27 +5,14 @@ import { logger } from "@/lib/logger";
 import type { Database } from "@/lib/supabase/database.types";
 
 /**
- * Referral-based authorization of a doctor's access to a patient's clinical
- * data. Working in the same clinic grants nothing by itself: a doctor sees a
- * patient only through
+ * The database admits active same-clinic doctors with a legitimate care
+ * relationship: an assigned visit, authored care, or an open unexpired
+ * referral (pending suffices). Such a relationship releases the patient's
+ * longitudinal consultations and clinical history. Clinic membership alone
+ * grants nothing. Each author retains exclusive correction rights.
  *
- *   A. their own relationship — an appointment with the patient: the
- *      patient record and their own appointments with the patient;
- *   B. an active referral to them — pending or accepted and not past
- *      expires_at: the patient record and the consultation the referral
- *      came from, plus (once accepted) the patient's appointments with the
- *      referring doctor;
- *   C. otherwise nothing, and nothing ever in another clinic.
- *
- * Only active doctor records count. A referring doctor also sees the
- * follow-up appointment booked for their referral.
- *
- * The decision itself is public.doctor_patient_access() (see
- * supabase/migrations/20260927000003_referral_clinical_access.sql and
- * 20260927000004_clinical_access_hardening.sql), the same
- * function the patients/appointments RLS policies use, so the server and
- * direct database access can never disagree. Payments, conversations,
- * messages and voice notes are outside every doctor's clinical scope.
+ * public.doctor_patient_access() supplies the same decision to RLS and the
+ * server. Payments, conversations, messages and voice notes are excluded.
  */
 
 export type ClinicalRelationship = "own" | "referred" | "none";
@@ -39,12 +26,12 @@ export type ClinicalAccess = {
     patientRecord: boolean;
     /** The doctor's own appointments with the patient. */
     ownAppointments: boolean;
-    /** Doctors whose appointments with the patient accepted referrals share. */
+    /** Historical authors/consultation doctors covered by this patient's care relationship. */
     sharedHistoryDoctorIds: string[];
     /** Appointments a referral links to: its consultation (receiver), its follow-up (referrer). */
     referralAppointmentIds: string[];
   };
-  /** Active (pending or accepted, unexpired) referrals of the patient to this doctor. */
+  /** Active (pending, accepted or in-progress, unexpired) referrals of the patient to this doctor. */
   activeReferralIds: string[];
 };
 

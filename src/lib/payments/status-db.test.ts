@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -49,7 +50,7 @@ describeDb("payment status transitions — compare-and-set against the real data
 
   afterAll(async () => {
     if (!sql) return;
-    await sql`delete from public.clinics where id = ${clinic}`;
+    await cleanupTestClinics([clinic]);
     await sql.end({ timeout: 5 });
   });
 

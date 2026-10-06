@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
@@ -78,7 +79,7 @@ describeDb("getStaffContext() multi-clinic role scoping", () => {
 
   afterAll(async () => {
     const admin = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
-    if (secondClinicId) await admin.from("clinics").delete().eq("id", secondClinicId);
+    if (secondClinicId) await cleanupTestClinics([secondClinicId]);
     if (userId) await admin.auth.admin.deleteUser(userId).catch(() => {});
   });
 

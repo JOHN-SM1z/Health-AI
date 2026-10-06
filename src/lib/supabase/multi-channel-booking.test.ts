@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { localDbAvailable } from "@/test/local-db";
@@ -117,7 +118,7 @@ describeDb("one booking engine serves every channel, for more than one clinic", 
   });
 
   afterAll(async () => {
-    await admin.from("clinics").delete().eq("id", clinicBId); // cascades doctors/services/patients/appointments/payments
+    await cleanupTestClinics([clinicBId]); // cascades doctors/services/patients/appointments/payments
     await admin.from("appointments").delete().eq("doctor_id", doctorAId).gte("start_at", nextWeekdayAt10(1, 60));
   });
 

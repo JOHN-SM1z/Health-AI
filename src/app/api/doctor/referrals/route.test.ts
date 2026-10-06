@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -234,7 +235,7 @@ describeDb("referral API (doctor portal + reception)", () => {
       await admin.from("staff_roles").delete().eq("clinic_id", clinicId);
       await admin.from("doctors").delete().eq("clinic_id", clinicId);
       await admin.from("services").delete().eq("clinic_id", clinicId);
-      await admin.from("clinics").delete().eq("id", clinicId);
+      await cleanupTestClinics([clinicId]);
     }
     for (const id of Object.values(users)) await admin.auth.admin.deleteUser(id).catch(() => {});
   });
@@ -668,7 +669,7 @@ describeDb("referral API (doctor portal + reception)", () => {
     expect(await refer({ reason: " " })).toMatchObject({ status: 400, body: { code: "validation" } });
   });
 
-  it("shows a referral only to its doctors, shares history after acceptance, and logs every view", async () => {
+  it("shows the participant workflow with immediate clinical history and logs every view", async () => {
     const id = await freshReferral();
 
     expect(await detail("bystander", id)).toMatchObject({ status: 404, body: { code: "referral_not_found" } });
@@ -681,7 +682,7 @@ describeDb("referral API (doctor portal + reception)", () => {
       status: "pending",
       priority: "urgent",
       reason: `Suspected arrhythmia, please assess (${suffix})`,
-      history: null,
+      history: expect.any(Array),
       allowedActions: ["accept", "decline"],
       patient: { fullName: `Referral API patient ${suffix}` },
     });
@@ -702,7 +703,7 @@ describeDb("referral API (doctor portal + reception)", () => {
       .eq("action", "referral_viewed")
       .order("created_at");
     expect((views ?? []).map((v) => v.actor_id)).toEqual([users.receiver, users.referrer, users.receiver]);
-    expect((views ?? []).map((v) => (v.metadata as { history_shared: boolean }).history_shared)).toEqual([false, true, true]);
+    expect((views ?? []).map((v) => (v.metadata as { history_shared: boolean }).history_shared)).toEqual([true, true, true]);
   });
 
   it("lets only the right doctor act, and only in a valid order", async () => {
@@ -768,8 +769,7 @@ describeDb("referral API (doctor portal + reception)", () => {
       );
     };
 
-    expect(await book()).toMatchObject({ status: 409, body: { code: "referral_not_accepted" } });
-    await act("receiver", id, { action: "accept" });
+    // Reception schedules the pending handoff; no acceptance prerequisite.
 
     expect(await book({ doctorId: doctors.bystander })).toMatchObject({ status: 400, body: { code: "follow_up_wrong_doctor" } });
     expect(await book({ patientId: await newPatient() })).toMatchObject({ status: 400, body: { code: "follow_up_wrong_patient" } });
@@ -787,7 +787,7 @@ describeDb("referral API (doctor portal + reception)", () => {
     as("receptionist", "receptionist");
     const patient = await read(await getPatient(request("GET", `/api/admin/patients?id=${referral!.patient_id}`)));
     const referrals = patient.body.data!.referrals as Array<Record<string, unknown>>;
-    expect(referrals[0]).toMatchObject({ id, status: "accepted", canBookFollowUp: false, followUp: { id: appointmentId } });
+    expect(referrals[0]).toMatchObject({ id, status: "pending", canBookFollowUp: false, followUp: { id: appointmentId } });
     // Reception sees scheduling metadata only, never the clinical text.
     expect(JSON.stringify(referrals)).not.toContain("arrhythmia");
     expect(referrals[0]).not.toHaveProperty("reason");
@@ -872,7 +872,7 @@ describeDb("referral API (doctor portal + reception)", () => {
         expect(error).toBeNull();
       };
 
-      expect(await bookFollowUp(id, startAt)).toMatchObject({ status: 409, body: { code: "referral_not_accepted" } });
+      expect(await bookFollowUp(id, startAt)).toMatchObject({ status: 409, body: { code: "referral_not_open" } });
       expect(await appointmentsAt(patient, startAt)).toEqual([{ id: expect.any(String), status: "cancelled" }]);
       const { data: referral } = await admin.from("referrals").select("follow_up_appointment_id").eq("id", id).single();
       expect(referral!.follow_up_appointment_id).toBeNull();

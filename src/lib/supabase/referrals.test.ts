@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -310,6 +311,7 @@ describeDb("referrals data model (Phase 1)", () => {
   afterAll(async () => {
     if (!sql) return;
     const clinics = [clinicA, clinicB];
+    await cleanupTestClinics(clinics);
     // Dependency order: the audit triggers on appointments/staff_roles need
     // their clinic to still exist while those rows are removed.
     await sql`delete from public.referrals where clinic_id in ${sql(clinics)}`;
@@ -318,7 +320,6 @@ describeDb("referrals data model (Phase 1)", () => {
     await sql`delete from public.doctors where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.patients where clinic_id in ${sql(clinics)}`;
     await sql`delete from public.services where clinic_id in ${sql(clinics)}`;
-    await sql`delete from public.clinics where id in ${sql(clinics)}`;
     await sql`delete from auth.users where id in ${sql(Object.values(profiles))}`;
     await sql.end({ timeout: 5 });
   });
@@ -393,13 +394,18 @@ describeDb("referrals data model (Phase 1)", () => {
 
   // ---------- Cross-clinic rejection ----------
 
+  const SAME_CLINIC_PATIENT_KEYS = ["referrals_patient_same_clinic_fkey", "referrals_originating_appointment_fkey"];
+
   describe("cross-clinic referral rejection", () => {
     it("rejects a patient from another clinic", async () => {
       const visit = await consultation();
       const foreignPatient = await newPatient(clinicB);
       const err = await pgError(() => insertReferral(referralValues(visit, { patient_id: foreignPatient })));
       expect(err.code).toBe("23503");
-      expect(err.constraint_name).toBe("referrals_patient_same_clinic_fkey");
+      // The patient key and the consultation key (which also pins the
+      // patient) both refuse it; which reports first depends on the order
+      // the constraints were created in.
+      expect(SAME_CLINIC_PATIENT_KEYS).toContain(err.constraint_name);
     });
 
     it("rejects a referring doctor from another clinic", async () => {
@@ -422,7 +428,7 @@ describeDb("referrals data model (Phase 1)", () => {
       const visit = await consultation();
       const err = await pgError(() => insertReferral(referralValues(visit, { clinic_id: clinicB })));
       expect(err.code).toBe("23503");
-      expect(err.constraint_name).toBe("referrals_patient_same_clinic_fkey");
+      expect(err.constraint_name).toMatch(/^referrals_.*(same_clinic|originating_appointment)_fkey$/);
     });
 
     it("rejects a consultation that took place in another clinic", async () => {
@@ -692,7 +698,7 @@ describeDb("referrals data model (Phase 1)", () => {
       const walkIn = await startConsultation(fresh);
       const later = await consultation({ doctor: doctors.receiver, patient: fresh.patient_id, status: "confirmed" });
       const err = await pgError(() => transition(fresh.id, { follow_up_appointment_id: later.appointmentId }));
-      expect(err.message).toMatch(/only be booked once the referral is accepted/);
+      expect(err.message).toMatch(/only be linked to an open handoff/);
       expect(walkIn.status).toBe("in_progress");
     });
 
@@ -926,17 +932,17 @@ describeDb("referrals data model (Phase 1)", () => {
       });
     });
 
-    it("is only possible once the referral is accepted", async () => {
+    it("schedules a pending handoff but cannot link at creation or after closure", async () => {
       const pending = await openReferral();
       const booking = await followUp(pending);
-      const early = await pgError(() => transition(pending.id, { follow_up_appointment_id: booking.appointmentId }));
-      expect(early.message).toMatch(/only be booked once the referral is accepted/);
+      await transition(pending.id, { follow_up_appointment_id: booking.appointmentId });
+      expect((await sql`select status from public.referrals where id = ${pending.id}`)[0].status).toBe("pending");
 
       const visit = await consultation();
       const atCreation = await pgError(async () =>
         insertReferral(referralValues(visit, { follow_up_appointment_id: (await followUp(pending)).appointmentId })),
       );
-      expect(atCreation.message).toMatch(/only be booked once the referral is accepted/);
+      expect(atCreation.message).toMatch(/only be linked to an open handoff/);
 
       const completed = await acceptedReferral();
       await startConsultation(completed);
@@ -944,7 +950,7 @@ describeDb("referrals data model (Phase 1)", () => {
       const late = await pgError(async () =>
         transition(completed.id, { follow_up_appointment_id: (await followUp(completed)).appointmentId }),
       );
-      expect(late.message).toMatch(/only be booked once the referral is accepted/);
+      expect(late.message).toMatch(/only be linked to an open handoff/);
     });
 
     it("must be with the receiving doctor, for the referred patient", async () => {
@@ -1113,14 +1119,17 @@ describeDb("referrals data model (Phase 1)", () => {
       for (const err of [insert, update, remove]) expect(err.code).toBe("42501");
     });
 
-    it("no one deletes a referral directly, but patient erasure still cascades", async () => {
+    it("no one deletes a referral directly, and deleting the patient does not take it along", async () => {
       const referral = await openReferral();
       const direct = await pgError(() => asServer((tx) => tx`delete from public.referrals where id = ${referral.id}`));
       expect(direct.code).toBe("42501");
 
-      await asServer((tx) => tx`delete from public.patients where id = ${referral.patient_id}`);
+      // A referral has its own lifecycle: the patient cannot be deleted from
+      // under it (20261001000001_clinical_record_governance.sql).
+      const erase = await pgError(() => asServer((tx) => tx`delete from public.patients where id = ${referral.patient_id}`));
+      expect(erase.code).toBe("23503");
       const [{ count }] = await sql<{ count: number }[]>`select count(*)::int as count from public.referrals where id = ${referral.id}`;
-      expect(count).toBe(0);
+      expect(count).toBe(1);
     });
 
     it("the originating consultation and the authoring account cannot be deleted from under a referral", async () => {

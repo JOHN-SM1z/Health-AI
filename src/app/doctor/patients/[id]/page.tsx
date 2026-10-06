@@ -20,6 +20,7 @@ import {
 import { ReferralDialog } from "@/components/doctor/referral-dialog";
 import { ClinicalRecordForm, type RecordDraft } from "@/components/doctor/clinical-record-form";
 import { ReferralLifecycle } from "@/components/doctor/referral-lifecycle";
+import { RecordHistory } from "@/components/doctor/record-history";
 import { RECORD_CATEGORY_LABELS, type RecordCategory } from "@/lib/clinical-records/categories";
 
 type Appointment = {
@@ -40,9 +41,11 @@ type ClinicalRecord = {
   createdAt: string;
   appointmentId: string;
   author: { id: string; name: string | null };
+  /** Written by the calling doctor — the only records they may edit. */
   mine: boolean;
-  correctsRecordId: string | null;
-  correctedByRecordId: string | null;
+  /** The server sends only the current version of each record; 1 means never corrected. */
+  version: number;
+  rootRecordId: string;
   /** Written in the doctor's consultation under way, or earlier (set by the server). */
   stage: "current" | "historical";
   category: RecordCategory;
@@ -50,7 +53,7 @@ type ClinicalRecord = {
 
 type Referral = {
   id: string;
-  role: "referrer" | "receiver";
+  role: "referrer" | "receiver" | "care_team";
   status: string;
   priority: string;
   reason: string;
@@ -79,7 +82,7 @@ type Workspace = {
     current: ConsultationRef | null;
     booked: ConsultationRef | null;
     canStartWalkIn: boolean;
-    blockedReason: "referral_pending" | null;
+    blockedReason: null;
     services: Array<{ id: string; name: string }>;
   };
 };
@@ -90,7 +93,7 @@ type Blocked = { title: string; subtitle: string; icon: ReactNode };
 const BLOCKED: Record<string, Blocked> = {
   referral_expired: {
     title: "Yo‘llanma muddati tugagan",
-    subtitle: "Bu bemorning ma‘lumotlari endi sizga ko‘rinmaydi. Kerak bo‘lsa, yo‘llagan shifokordan yangi yo‘llanma so‘rang.",
+    subtitle: "Yo‘llanma muddati tugagan. Yangi davolash uchun qabulxona sizni bemorning mavjud kartasiga qabulga yozishi mumkin.",
     icon: <Clock className="h-6 w-6" />,
   },
   referral_revoked: {
@@ -147,35 +150,46 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
 
 function RecordItem({
   record,
+  patientId,
   onCorrect,
 }: {
   record: ClinicalRecord;
+  patientId: string;
   onCorrect?: (r: ClinicalRecord) => void;
 }) {
+  const [showHistory, setShowHistory] = useState(false);
   return (
     <li className="rounded-xl border border-hairline px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
         <ABadge tone={CLINICAL_RECORD_TYPE_TONES[record.type] ?? "neutral"}>{RECORD_CATEGORY_LABELS[record.category] ?? record.type}</ABadge>
-        {record.correctsRecordId && <ABadge tone="blue">Tuzatish</ABadge>}
-        {record.correctedByRecordId && <ABadge tone="gray">Tuzatilgan</ABadge>}
+        {record.version > 1 && <ABadge tone="gray">Tuzatilgan · {record.version}-versiya</ABadge>}
         {record.code && <span className="font-numeric text-xs text-ink-muted">{record.code}</span>}
       </div>
-      <p className={`mt-1 text-sm font-medium ${record.correctedByRecordId ? "text-ink-muted line-through" : "text-foreground"}`}>
-        {record.summary}
-      </p>
+      {/* Only the current version: earlier ones are in the record's history. */}
+      <p className="mt-1 text-sm font-medium text-foreground">{record.summary}</p>
       {record.details && <p className="mt-0.5 whitespace-pre-wrap text-sm text-foreground">{record.details}</p>}
       {/* Provenance: who wrote it and when — never implied to be the reader's. */}
       <p className="mt-1 text-xs text-ink-muted">
         {record.mine ? "Siz yozgansiz" : `Muallif: ${record.author.name ?? "—"}`} · {formatDateTime(record.createdAt)}
-        {onCorrect && record.mine && !record.correctedByRecordId && (
+        {/* Only the author edits; another doctor records their own view as a new record. */}
+        {onCorrect && record.mine && (
           <>
             {" · "}
             <button type="button" className="text-pine hover:underline" onClick={() => onCorrect(record)}>
-              Tuzatish
+              Tahrirlash
+            </button>
+          </>
+        )}
+        {record.version > 1 && (
+          <>
+            {" · "}
+            <button type="button" className="text-pine hover:underline" aria-expanded={showHistory} onClick={() => setShowHistory((v) => !v)}>
+              {showHistory ? "Tarixni yopish" : "Tarix"}
             </button>
           </>
         )}
       </p>
+      {showHistory && <RecordHistory patientId={patientId} recordId={record.id} />}
     </li>
   );
 }
@@ -194,17 +208,19 @@ export default function DoctorPatientWorkspacePage() {
   const [declineReason, setDeclineReason] = useState("");
   const [notice, setNotice] = useState<ReactNode | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<Workspace | null> => {
     try {
       const res = await adminApi.get<{ record: Workspace }>(`/api/doctor/patients/${id}`);
       setWorkspace(res.record);
       setBlocked(null);
+      return res.record;
     } catch (e) {
       setWorkspace(null);
       const known = e instanceof AdminApiError && e.code ? BLOCKED[e.code] : undefined;
       if (known) setBlocked(known);
       else if (e instanceof AdminApiError && e.status === 404) setBlocked(BLOCKED.patient_not_found);
       else setError(e instanceof AdminApiError ? e.message : "Bemor ma‘lumotlarini yuklab bo‘lmadi");
+      return null;
     }
   }, [id]);
 
@@ -237,7 +253,23 @@ export default function DoctorPatientWorkspacePage() {
       setDeclineReason("");
     });
   const correct = (rec: ClinicalRecord) =>
-    setCorrecting({ recordId: rec.id, type: rec.type, summary: rec.summary, details: rec.details, code: rec.code, appointmentId: rec.appointmentId });
+    setCorrecting({
+      recordId: rec.id,
+      rootRecordId: rec.rootRecordId,
+      version: rec.version,
+      type: rec.type,
+      summary: rec.summary,
+      details: rec.details,
+      code: rec.code,
+      appointmentId: rec.appointmentId,
+    });
+  // The record changed since it was opened: show its latest version and move
+  // the still-open form (with the doctor's unsaved text) onto it, so the next
+  // save is a deliberate correction of what is current now.
+  const reloadAfterConflict = async (rootRecordId: string) => {
+    const latest = (await load())?.records.find((r) => r.rootRecordId === rootRecordId && r.mine);
+    setCorrecting((c) => (latest && c ? { ...c, recordId: latest.id, version: latest.version } : null));
+  };
 
   const recordsByAppointment = useMemo(() => {
     const map = new Map<string, ClinicalRecord[]>();
@@ -294,8 +326,8 @@ export default function DoctorPatientWorkspacePage() {
   // still listed rather than silently dropped.
   const shownAppointmentIds = new Set([...(current ? [current.appointmentId] : []), ...previous.map((a) => a.id)]);
   const unplaced = workspace.records.filter((r) => !shownAppointmentIds.has(r.appointmentId));
-  // Records still in force (a corrected record gives way to its correction), by type.
-  const summary = SUMMARY_TYPES.map((type) => [type, workspace.records.filter((r) => r.type === type && !r.correctedByRecordId)] as const).filter(
+  // Records by type (the server sends only each record's current version).
+  const summary = SUMMARY_TYPES.map((type) => [type, workspace.records.filter((r) => r.type === type)] as const).filter(
     ([, items]) => items.length > 0,
   );
 
@@ -313,7 +345,7 @@ export default function DoctorPatientWorkspacePage() {
         {workspace.relationship === "own" && <ABadge tone="green">Mening bemorim</ABadge>}
         {(workspace.relationship === "referred" || activeReferralToMe) && <ABadge tone="blue">Yo‘llanma bo‘yicha</ABadge>}
         <span className="text-ink-muted">Faqat sizga ruxsat etilgan ma‘lumotlar ko‘rsatiladi.</span>
-        {workspace.referralAccessUntil && (
+        {workspace.relationship === "referred" && workspace.referralAccessUntil && (
           <span className="text-ink-muted">
             Yo‘llanma bo‘yicha kirish {formatDateTime(workspace.referralAccessUntil)} da tugaydi (yo‘llanma yopilsa — darhol).
           </span>
@@ -328,7 +360,9 @@ export default function DoctorPatientWorkspacePage() {
                 <p className="text-sm font-medium text-foreground">
                   {r.role === "receiver"
                     ? `Sizga yo‘llagan: ${r.referringDoctor?.name ?? "—"}`
-                    : `Siz yo‘llagansiz: ${r.referredToDoctor?.name ?? "—"}`}
+                    : r.role === "referrer"
+                      ? `Siz yo‘llagansiz: ${r.referredToDoctor?.name ?? "—"}`
+                      : `${r.referringDoctor?.name ?? "—"} → ${r.referredToDoctor?.name ?? "—"}`}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <ABadge tone={r.priority === "urgent" ? "red" : "neutral"}>{REFERRAL_PRIORITY_LABELS[r.priority] ?? r.priority}</ABadge>
@@ -349,9 +383,11 @@ export default function DoctorPatientWorkspacePage() {
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-ink-muted">
                   Yuborilgan {formatDateTime(r.createdAt)} · Amal qiladi {formatDateTime(r.expiresAt)} ·{" "}
-                  <Link href={`/doctor/referrals/${r.id}`} className="text-pine hover:underline">
-                    Yo‘llanmani ochish
-                  </Link>
+                  {r.role !== "care_team" && (
+                    <Link href={`/doctor/referrals/${r.id}`} className="text-pine hover:underline">
+                      Yo‘llanmani ochish
+                    </Link>
+                  )}
                 </p>
                 {r.role === "receiver" && r.status === "pending" && declineFor !== r.id && (
                   <div className="flex gap-2">
@@ -369,9 +405,9 @@ export default function DoctorPatientWorkspacePage() {
                   </AButton>
                 )}
               </div>
-              {r.role === "receiver" && r.status === "accepted" && (
+              {r.role === "receiver" && ["pending", "accepted"].includes(r.status) && (
                 <p className="mt-2 text-sm text-ink-muted">
-                  Keyingi qadam: quyida o‘z qabulingizni boshlang — yo‘llanma “Qabul boshlangan” holatiga o‘tadi.
+                  Tarix hozirdan ko‘rinadi. Quyida qabulingizni boshlang — yo‘llanma “Qabul boshlangan” holatiga o‘tadi.
                 </p>
               )}
               {declineFor === r.id && (
@@ -391,7 +427,7 @@ export default function DoctorPatientWorkspacePage() {
               {confirmComplete === r.id && (
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-hairline pt-3">
                   <p className="text-sm text-foreground">
-                    Yakunlangach, o‘z qabullaringizdan boshqa yozuvlar sizga ko‘rinmay qoladi.
+                    Yo‘llanma yakunlanadi. Bemor bilan o‘z qabulingiz bo‘lsa, uning tibbiy tarixi ko‘rinishda qoladi.
                   </p>
                   <div className="flex gap-2">
                     <AButton size="sm" variant="outline" onClick={() => setConfirmComplete(null)}>
@@ -447,17 +483,18 @@ export default function DoctorPatientWorkspacePage() {
               {currentRecords.length > 0 && (
                 <ul className="flex flex-col gap-2" aria-label="Joriy qabul yozuvlari">
                   {currentRecords.map((r) => (
-                    <RecordItem key={r.id} record={r} onCorrect={correct} />
+                    <RecordItem key={r.id} record={r} patientId={workspace.patient.id} onCorrect={correct} />
                   ))}
                 </ul>
               )}
               {correcting && correcting.appointmentId === current.appointmentId ? (
                 <ClinicalRecordForm
-                  key={correcting.recordId}
+                  key={correcting.rootRecordId}
                   patientId={workspace.patient.id}
                   appointmentId={current.appointmentId}
                   correcting={correcting}
                   onCancel={() => setCorrecting(null)}
+                  onConflict={reloadAfterConflict}
                   onSaved={() => {
                     setCorrecting(null);
                     void load();
@@ -467,18 +504,6 @@ export default function DoctorPatientWorkspacePage() {
                 <ClinicalRecordForm patientId={workspace.patient.id} appointmentId={current.appointmentId} onSaved={() => void load()} />
               )}
             </div>
-          ) : consultation.blockedReason === "referral_pending" ? (
-            <p className="text-sm text-ink-muted">
-              Qabulni boshlash uchun avval yo‘llanmani qabul qiling.{" "}
-              {workspace.referrals.find((r) => r.role === "receiver" && r.status === "pending") && (
-                <Link
-                  href={`/doctor/referrals/${workspace.referrals.find((r) => r.role === "receiver" && r.status === "pending")!.id}`}
-                  className="font-medium text-pine hover:underline"
-                >
-                  Yo‘llanmani ochish
-                </Link>
-              )}
-            </p>
           ) : consultation.booked ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-foreground">
@@ -530,7 +555,7 @@ export default function DoctorPatientWorkspacePage() {
       )}
 
       {summary.length > 0 && (
-        <Section title="Klinik xulosa" subtitle="Amaldagi yozuvlar turi bo‘yicha — tuzatilganlari o‘rniga tuzatishlari ko‘rsatiladi.">
+        <Section title="Klinik xulosa" subtitle="Amaldagi yozuvlar turi bo‘yicha — tuzatilgan yozuvning oxirgi versiyasi ko‘rsatiladi.">
           <div className="grid gap-3 md:grid-cols-2">
             {summary.map(([type, items]) => (
               <Card key={type}>
@@ -564,7 +589,7 @@ export default function DoctorPatientWorkspacePage() {
             <p className="text-sm font-medium text-foreground">Boshqa qabullardagi yozuvlar</p>
             <ul className="mt-3 flex flex-col gap-2">
               {unplaced.map((r) => (
-                <RecordItem key={r.id} record={r} />
+                <RecordItem key={r.id} record={r} patientId={workspace.patient.id} />
               ))}
             </ul>
           </Card>
@@ -602,7 +627,7 @@ export default function DoctorPatientWorkspacePage() {
                 {records.length > 0 ? (
                   <ul className="mt-3 flex flex-col gap-2">
                     {records.map((r) => (
-                      <RecordItem key={r.id} record={r} onCorrect={correct} />
+                      <RecordItem key={r.id} record={r} patientId={workspace.patient.id} onCorrect={correct} />
                     ))}
                   </ul>
                 ) : (
@@ -611,11 +636,12 @@ export default function DoctorPatientWorkspacePage() {
                 {correcting && correcting.appointmentId === a.id && (
                   <div className="mt-3 border-t border-hairline pt-3">
                     <ClinicalRecordForm
-                      key={correcting.recordId}
+                      key={correcting.rootRecordId}
                       patientId={workspace.patient.id}
                       appointmentId={a.id}
                       correcting={correcting}
                       onCancel={() => setCorrecting(null)}
+                      onConflict={reloadAfterConflict}
                       onSaved={() => {
                         setCorrecting(null);
                         void load();

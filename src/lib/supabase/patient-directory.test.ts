@@ -1,3 +1,4 @@
+import { cleanupTestClinics } from "@/test/cleanup-clinics";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
@@ -157,7 +158,7 @@ describeDb("admin patients directory (Phase 5)", () => {
     }
     if (clinicB) {
       try {
-        await admin.from("clinics").delete().eq("id", clinicB);
+        await cleanupTestClinics([clinicB]);
       } catch {
         // best effort cleanup
       }
