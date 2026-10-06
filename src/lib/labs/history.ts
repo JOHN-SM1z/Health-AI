@@ -1,4 +1,5 @@
 import "server-only";
+import { patientRecordIds } from "@/lib/patients/record-group";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { recordAudit, recordAudits } from "@/lib/audit";
@@ -80,18 +81,20 @@ const num = (v: number | string | null) => (v === null ? null : Number(v));
 export async function getPatientLabHistory(doctor: LinkedDoctor, patientId: string): Promise<HistoryResult[]> {
   await requireAccess(doctor, patientId);
   const db = createAdminClient();
+  // The person's merged record group (Phase 14).
+  const ids = await patientRecordIds(doctor.clinicId, patientId);
 
   const { data, error } = await db
     .from("lab_results")
     .select(
-      "id, order_item_id, version, source, performed_at, verified_at, correction_reason, lab_comment, " +
+      "id, patient_id, order_item_id, version, source, performed_at, verified_at, correction_reason, lab_comment, " +
         "verified:profiles!lab_results_verified_by_fkey(full_name), " +
         "lab_result_values(value_numeric, value_text, value_boolean, unit_snapshot, flag, range_low, range_high, range_text, lab_test_parameters(code, name, sort_order)), " +
         "lab_order_items!lab_results_item_fkey(test_code_snapshot, test_name_snapshot, " +
         "lab_orders!lab_order_items_order_fkey(created_at, source, doctors!lab_orders_ordering_doctor_fkey(name), profiles!lab_orders_ordered_by_fkey(full_name)))",
     )
     .eq("clinic_id", doctor.clinicId)
-    .eq("patient_id", patientId)
+    .in("patient_id", ids)
     .eq("status", "verified")
     .order("verified_at", { ascending: false })
     .limit(LIMIT);
@@ -99,6 +102,7 @@ export async function getPatientLabHistory(doctor: LinkedDoctor, patientId: stri
 
   type Row = {
     id: string;
+    patient_id: string;
     order_item_id: string;
     version: number;
     source: string;
@@ -139,7 +143,7 @@ export async function getPatientLabHistory(doctor: LinkedDoctor, patientId: stri
       .from("lab_documents")
       .select("id, result_id, kind, mime_type, size_bytes, created_at")
       .eq("clinic_id", doctor.clinicId)
-      .eq("patient_id", patientId)
+      .in("patient_id", ids)
       .in("result_id", resultIds)
       .is("withdrawn_at", null)
       .order("created_at"),
@@ -165,7 +169,7 @@ export async function getPatientLabHistory(doctor: LinkedDoctor, patientId: stri
       action: "lab_result_viewed",
       entityType: "lab_results",
       entityId: r.id,
-      patientId,
+      patientId: r.patient_id,
       actor: { actorId: doctor.profileId, actorType: "staff" as const },
       metadata: { order_item_id: r.order_item_id, version: r.version, via: "doctor_history" },
     })),
@@ -221,12 +225,13 @@ export async function getPatientLabHistory(doctor: LinkedDoctor, patientId: stri
 export async function getLabDocumentLink(doctor: LinkedDoctor, patientId: string, documentId: string): Promise<{ url: string; expiresIn: number }> {
   await requireAccess(doctor, patientId);
   const db = createAdminClient();
+  const ids = await patientRecordIds(doctor.clinicId, patientId);
   const { data: doc, error } = await db
     .from("lab_documents")
-    .select("id, storage_path, result_id, kind, lab_results!lab_documents_result_fkey(status)")
+    .select("id, patient_id, storage_path, result_id, kind, lab_results!lab_documents_result_fkey(status)")
     .eq("id", documentId)
     .eq("clinic_id", doctor.clinicId)
-    .eq("patient_id", patientId)
+    .in("patient_id", ids)
     .is("withdrawn_at", null)
     .maybeSingle();
   if (error) throw loadFailed("document", error);
@@ -238,7 +243,7 @@ export async function getLabDocumentLink(doctor: LinkedDoctor, patientId: string
     action: "lab_document_viewed",
     entityType: "lab_documents",
     entityId: doc.id,
-    patientId,
+    patientId: doc.patient_id,
     actor: { actorId: doctor.profileId, actorType: "staff" },
     metadata: { result_id: doc.result_id, kind: doc.kind, via: "doctor_history" },
     strict: true,

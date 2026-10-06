@@ -86,7 +86,9 @@ describe("clinical data never reaches AI or patient-facing code", () => {
     const resultQueries = text.split('.from("lab_results")').slice(1).map((q) => q.slice(0, 600));
     expect(resultQueries.length).toBeGreaterThanOrEqual(3);
     for (const q of resultQueries) expect(q).toMatch(/\.eq\("clinic_id", clinicId\)/);
-    expect(resultQueries.filter((q) => /\.eq\("status", "verified"\)/.test(q) && /\.eq\("patient_id", patientId\)/.test(q)).length).toBe(2);
+    // Pinned to the patient's own merged record group (Phase 14), never wider.
+    expect(text).toMatch(/const patientIds = await patientRecordIds\(clinicId, patientId\)/);
+    expect(resultQueries.filter((q) => /\.eq\("status", "verified"\)/.test(q) && /\.in\("patient_id", patientIds\)/.test(q)).length).toBe(2);
     expect(text).toMatch(/lab_release_to_patient/);
     expect(text).toMatch(/\.is\("withdrawn_at", null\)/);
     for (const pattern of [/clinical_records/, /referrals/, /handoff_note/, /lab_comment/, /correction_reason/, /@\/lib\/labs\/(ordering|guards|results|collection|history|documents)/]) {

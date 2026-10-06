@@ -87,16 +87,34 @@ export async function listDoctorPatients(doctor: LinkedDoctor, query: string): P
     }
   }
 
-  const ids = [...new Set([...own, ...referralOf.keys()])];
-  const patients: Array<{ id: string; full_name: string | null; phone: string | null }> = [];
-  for (let i = 0; i < ids.length; i += ID_CHUNK) {
-    const { data, error } = await supabase
-      .from("patients")
-      .select("id, full_name, phone")
-      .eq("clinic_id", doctor.clinicId)
-      .in("id", ids.slice(i, i + ID_CHUNK));
-    if (error) throw new ApiError(500, "Bemorlarni yuklab bo‘lmadi");
-    patients.push(...(data ?? []));
+  type Row = { id: string; full_name: string | null; phone: string | null; merged_into_patient_id: string | null };
+  const fetchPatients = async (wanted: string[]) => {
+    const out: Row[] = [];
+    for (let i = 0; i < wanted.length; i += ID_CHUNK) {
+      const { data, error } = await supabase
+        .from("patients")
+        .select("id, full_name, phone, merged_into_patient_id")
+        .eq("clinic_id", doctor.clinicId)
+        .in("id", wanted.slice(i, i + ID_CHUNK));
+      if (error) throw new ApiError(500, "Bemorlarni yuklab bo‘lmadi");
+      out.push(...((data ?? []) as Row[]));
+    }
+    return out;
+  };
+  const found = await fetchPatients([...new Set([...own, ...referralOf.keys()])]);
+
+  // A record merged into another (Phase 14) is listed as the person's
+  // canonical record, once: the same group the access decision uses.
+  const canonicalOf = new Map(found.map((p) => [p.id, p.merged_into_patient_id ?? p.id]));
+  const missing = [...new Set([...canonicalOf.values()])].filter((id) => !found.some((p) => p.id === id));
+  const patients = [...found, ...(await fetchPatients(missing))].filter((p) => !p.merged_into_patient_id);
+  for (const [id, canonical] of canonicalOf) {
+    if (id === canonical) continue;
+    if (own.has(id)) own.add(canonical);
+    const visit = lastVisit.get(id);
+    if (visit && (!lastVisit.has(canonical) || visit > lastVisit.get(canonical)!)) lastVisit.set(canonical, visit);
+    const referral = referralOf.get(id);
+    if (referral && !referralOf.has(canonical)) referralOf.set(canonical, referral);
   }
 
   const q = query.trim();

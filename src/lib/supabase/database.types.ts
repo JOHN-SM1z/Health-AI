@@ -2130,6 +2130,93 @@ export type Database = {
           },
         ]
       }
+      patient_merges: {
+        Row: {
+          canonical_patient_id: string
+          clinic_id: string
+          copied: Json
+          duplicate_patient_id: string
+          id: string
+          merged_at: string
+          merged_by: string
+          moved: Json
+          preview: Json
+          reason: string
+          unmerge_reason: string | null
+          unmerge_report: Json | null
+          unmerged_at: string | null
+          unmerged_by: string | null
+        }
+        Insert: {
+          canonical_patient_id: string
+          clinic_id: string
+          copied?: Json
+          duplicate_patient_id: string
+          id?: string
+          merged_at?: string
+          merged_by: string
+          moved?: Json
+          preview: Json
+          reason: string
+          unmerge_reason?: string | null
+          unmerge_report?: Json | null
+          unmerged_at?: string | null
+          unmerged_by?: string | null
+        }
+        Update: {
+          canonical_patient_id?: string
+          clinic_id?: string
+          copied?: Json
+          duplicate_patient_id?: string
+          id?: string
+          merged_at?: string
+          merged_by?: string
+          moved?: Json
+          preview?: Json
+          reason?: string
+          unmerge_reason?: string | null
+          unmerge_report?: Json | null
+          unmerged_at?: string | null
+          unmerged_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "patient_merges_canonical_fkey"
+            columns: ["canonical_patient_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "patient_merges_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_merges_duplicate_fkey"
+            columns: ["duplicate_patient_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "patient_merges_merged_by_fkey"
+            columns: ["merged_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_merges_unmerged_by_fkey"
+            columns: ["unmerged_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       patients: {
         Row: {
           clinic_id: string
@@ -2141,6 +2228,8 @@ export type Database = {
           full_name: string | null
           id: string
           last_seen_at: string | null
+          merged_at: string | null
+          merged_into_patient_id: string | null
           operational_notes: string | null
           phone: string | null
           pinfl: string | null
@@ -2162,6 +2251,8 @@ export type Database = {
           full_name?: string | null
           id?: string
           last_seen_at?: string | null
+          merged_at?: string | null
+          merged_into_patient_id?: string | null
           operational_notes?: string | null
           phone?: string | null
           pinfl?: string | null
@@ -2183,6 +2274,8 @@ export type Database = {
           full_name?: string | null
           id?: string
           last_seen_at?: string | null
+          merged_at?: string | null
+          merged_into_patient_id?: string | null
           operational_notes?: string | null
           phone?: string | null
           pinfl?: string | null
@@ -2201,6 +2294,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "clinics"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patients_merged_into_fkey"
+            columns: ["merged_into_patient_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id", "clinic_id"]
           },
         ]
       }
@@ -2953,6 +3053,28 @@ export type Database = {
         }
         Returns: boolean
       }
+      merge_patients: {
+        Args: {
+          p_actor: string
+          p_canonical_id: string
+          p_clinic_id: string
+          p_duplicate_id: string
+          p_fingerprint: string
+          p_reason: string
+        }
+        Returns: string
+      }
+      patient_canonical_id: { Args: { p_patient_id: string }; Returns: string }
+      patient_duplicate_candidates: {
+        Args: { p_clinic_id: string; p_limit?: number }
+        Returns: { patient_a: string; patient_b: string; reasons: string[] }[]
+      }
+      patient_entity_counts: { Args: { p_clinic_id: string; p_patient_id: string }; Returns: Json }
+      patient_merge_preview: {
+        Args: { p_canonical_id: string; p_clinic_id: string; p_duplicate_id: string }
+        Returns: Json
+      }
+      patient_record_group: { Args: { p_patient_id: string }; Returns: string[] }
       reject_lab_sample: {
         Args: {
           p_clinic_id: string
@@ -3059,6 +3181,10 @@ export type Database = {
       submit_lab_result: {
         Args: { p_clinic_id: string; p_result_id: string; p_submitted_by: string }
         Returns: boolean
+      }
+      unmerge_patients: {
+        Args: { p_actor: string; p_clinic_id: string; p_merge_id: string; p_reason: string }
+        Returns: Json
       }
       verify_lab_result: {
         Args: { p_clinic_id: string; p_result_id: string; p_verified_by: string }

@@ -247,6 +247,7 @@ export async function searchPatients(staff: ClinicStaff, q: string): Promise<Pat
     .from("patients")
     .select("id, full_name, date_of_birth, phone")
     .eq("clinic_id", staff.clinicId)
+    .is("merged_into_patient_id", null)
     .or(anyColumnContains(["full_name", "phone"], text))
     .order("full_name")
     .limit(10);
@@ -270,16 +271,18 @@ export async function createWalkInOrder(
   const db = createAdminClient();
   const { data: patient, error: patientError } = await db
     .from("patients")
-    .select("id")
+    .select("id, merged_into_patient_id")
     .eq("id", patientId)
     .eq("clinic_id", staff.clinicId)
     .maybeSingle();
   if (patientError) throw loadFailed("patient", patientError);
   if (!patient) throw new ApiError(404, "Bemor topilmadi", "patient_not_found");
+  // A merged record takes no new orders (Phase 14): order for the person's canonical record.
+  const orderPatientId = patient.merged_into_patient_id ?? patient.id;
 
   const { data, error } = await db.rpc("create_lab_order", {
     p_clinic_id: staff.clinicId,
-    p_patient_id: patientId,
+    p_patient_id: orderPatientId,
     p_ordered_by: staff.profileId,
     p_source: "walk_in",
     p_test_ids: input.testIds,

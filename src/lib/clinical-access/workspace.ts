@@ -1,4 +1,5 @@
 import "server-only";
+import { patientRecordGroup } from "@/lib/patients/record-group";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { recordAudit } from "@/lib/audit";
@@ -118,12 +119,15 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
     access.scope.referralAppointmentIds.length > 0 ? `id.in.(${access.scope.referralAppointmentIds.join(",")})` : null,
   ].filter(Boolean);
 
+  // The person's record across merged records (Phase 14): the canonical
+  // record's details, every member's visits under the same coverage.
+  const group = (await patientRecordGroup(doctor.clinicId, patientId)) ?? { canonicalId: patientId, ids: [patientId] };
   const supabase = createAdminClient();
   const [patientRes, appointmentsRes, records, referrals, services] = await Promise.all([
     supabase
       .from("patients")
       .select("id, full_name, phone, preferred_language")
-      .eq("id", patientId)
+      .eq("id", group.canonicalId)
       .eq("clinic_id", doctor.clinicId)
       .maybeSingle(),
     coverage.length > 0
@@ -131,7 +135,7 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
           .from("appointments")
           .select("id, start_at, end_at, status, doctor_id, services(name), doctors(name)")
           .eq("clinic_id", doctor.clinicId)
-          .eq("patient_id", patientId)
+          .in("patient_id", group.ids)
           .or(coverage.join(","))
           .order("start_at", { ascending: false })
           .limit(100)
@@ -153,7 +157,7 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
       .from("appointments")
       .select("id, start_at, end_at, status, doctor_id, services(name), doctors(name)")
       .eq("clinic_id", doctor.clinicId)
-      .eq("patient_id", patientId)
+      .in("patient_id", group.ids)
       .in("id", missing.slice(i, i + 150));
     if (error) throw new ApiError(500, "Bemor ma‘lumotlarini yuklab bo‘lmadi");
     for (const a of (older ?? []) as unknown as AppointmentRow[]) {

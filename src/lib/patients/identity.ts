@@ -93,6 +93,8 @@ export async function getOrCreateWebPatient(opts: {
     .eq("clinic_id", opts.clinicId)
     .eq("phone", opts.phone)
     .is("telegram_user_id", null)
+    // A record merged into another (Phase 14) takes no new bookings.
+    .is("merged_into_patient_id", null)
     .order("created_at", { ascending: true })
     .limit(20);
   if (lookupError) {

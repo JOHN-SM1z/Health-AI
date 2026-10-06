@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { adminWorkspaceRedirect, getStaffContext, hasRole, isCallCenterStaff, canViewPaymentDynamics } from "@/lib/auth/staff";
+import { adminWorkspaceRedirect, getStaffContext, hasAnyRole, hasRole, isCallCenterStaff, canViewPaymentDynamics } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
-import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube } from "lucide-react";
+import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge } from "lucide-react";
 import { labCan } from "@/lib/labs/permissions";
 
 export const metadata = { title: "Boshqaruv paneli" };
@@ -27,7 +27,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin/appointments", label: "Qabullar", icon: <ClipboardList className="h-4 w-4" />, show: true },
     { href: "/admin/calendar", label: "Kalendar", icon: <CalendarDays className="h-4 w-4" />, show: true },
     { href: "/admin/conversations", label: "Suhbatlar", icon: <MessagesSquare className="h-4 w-4" />, show: true },
-    { href: "/admin/patients", label: "Bemorlar", icon: <Users className="h-4 w-4" />, show: true },
+    { href: "/admin/patients", label: "Bemorlar", icon: <Users className="h-4 w-4" />, show: true, exact: true },
+    { href: "/admin/patients/merge", label: "Kartalarni birlashtirish", icon: <Merge className="h-4 w-4" />, show: hasAnyRole(ctx.roles, ["owner", "admin"]) },
     { href: "/admin/lab-queue", label: "Namunalar", icon: <TestTube className="h-4 w-4" />, show: labCan(ctx.roles, "queue.read") },
     { href: "/admin/doctors", label: "Shifokorlar", icon: <Stethoscope className="h-4 w-4" />, show: isManagement },
     { href: "/admin/services", label: "Xizmatlar", icon: <Scissors className="h-4 w-4" />, show: isManagement },

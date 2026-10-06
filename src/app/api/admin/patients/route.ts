@@ -6,6 +6,7 @@ import { anyColumnContains } from "@/lib/api/postgrest";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { parseBody, uuidSchema } from "@/lib/api/validate";
 import { listPatientReferrals } from "@/lib/referrals/service";
+import { patientRecordIds } from "@/lib/patients/record-group";
 
 export const dynamic = "force-dynamic";
 
@@ -39,13 +40,15 @@ export async function GET(request: NextRequest) {
       const { data: patient, error: patientError } = await supabase
         .from("patients")
         .select(
-          "id, full_name, phone, telegram_username, telegram_first_name, telegram_last_name, consent_given, consent_given_at, last_seen_at, created_at, operational_notes",
+          "id, full_name, phone, telegram_username, telegram_first_name, telegram_last_name, consent_given, consent_given_at, last_seen_at, created_at, operational_notes, merged_into_patient_id, merged_at",
         )
         .eq("id", detailId)
         .eq("clinic_id", staff.clinicId)
         .maybeSingle();
       if (patientError) throw patientError;
       if (!patient) return ok({ patient: null, appointments: [], conversations: [], referrals: [] });
+      // The person's visits and conversations across merged records (Phase 14).
+      const ids = await patientRecordIds(staff.clinicId, detailId);
 
       const [{ data: appointments, error: appointmentsError }, { data: conversations, error: conversationsError }, referrals] =
         await Promise.all([
@@ -54,14 +57,14 @@ export async function GET(request: NextRequest) {
             .select(
               "id, start_at, status, source, services(name), doctors(name)",
             )
-            .eq("patient_id", detailId)
+            .in("patient_id", ids)
             .eq("clinic_id", staff.clinicId)
             .order("start_at", { ascending: false })
             .limit(20),
           supabase
             .from("conversations")
             .select("id, status, channel, updated_at")
-            .eq("patient_id", detailId)
+            .in("patient_id", ids)
             .eq("clinic_id", staff.clinicId)
             .order("updated_at", { ascending: false })
             .limit(10),
@@ -80,6 +83,8 @@ export async function GET(request: NextRequest) {
         { count: "exact" },
       )
       .eq("clinic_id", staff.clinicId)
+      // Records merged into another (Phase 14) are reached through that record.
+      .is("merged_into_patient_id", null)
       .order("last_seen_at", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false })
       .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);

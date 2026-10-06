@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { recordAudit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
+import { patientRecordIds } from "@/lib/patients/record-group";
 
 /**
  * A patient's own laboratory results in the Mini App (Phase 12).
@@ -43,11 +44,13 @@ export type PatientResultSummary = {
 
 export async function listPatientLabResults(clinicId: string, patientId: string): Promise<{ released: boolean; results: PatientResultSummary[] }> {
   if (!(await released(clinicId))) return { released: false, results: [] };
+  // The patient's merged record group (Phase 14): the person's results, one list.
+  const patientIds = await patientRecordIds(clinicId, patientId);
   const { data, error } = await createAdminClient()
     .from("lab_results")
     .select("order_item_id, version, performed_at, verified_at, lab_result_values(flag), lab_order_items!lab_results_item_fkey(test_name_snapshot)")
     .eq("clinic_id", clinicId)
-    .eq("patient_id", patientId)
+    .in("patient_id", patientIds)
     .eq("status", "verified")
     .order("verified_at", { ascending: false })
     .limit(200);
@@ -87,6 +90,7 @@ const num = (v: number | string | null) => (v === null ? null : Number(v));
 export async function getPatientLabResult(clinicId: string, patientId: string, itemId: string): Promise<PatientResultDetail> {
   if (!(await released(clinicId))) throw NOT_FOUND();
   const db = createAdminClient();
+  const patientIds = await patientRecordIds(clinicId, patientId);
   const { data, error } = await db
     .from("lab_results")
     .select(
@@ -95,7 +99,7 @@ export async function getPatientLabResult(clinicId: string, patientId: string, i
         "lab_order_items!lab_results_item_fkey(test_name_snapshot)",
     )
     .eq("clinic_id", clinicId)
-    .eq("patient_id", patientId)
+    .in("patient_id", patientIds)
     .eq("order_item_id", itemId)
     .eq("status", "verified")
     .maybeSingle();
@@ -125,7 +129,7 @@ export async function getPatientLabResult(clinicId: string, patientId: string, i
     .from("lab_documents")
     .select("id, kind, mime_type, size_bytes")
     .eq("clinic_id", clinicId)
-    .eq("patient_id", patientId)
+    .in("patient_id", patientIds)
     .eq("result_id", r.id)
     .is("withdrawn_at", null)
     .order("created_at");
@@ -168,12 +172,13 @@ export async function getPatientLabResult(clinicId: string, patientId: string, i
 export async function getPatientDocumentLink(clinicId: string, patientId: string, documentId: string): Promise<{ url: string; expiresIn: number }> {
   if (!(await released(clinicId))) throw new ApiError(404, "Hujjat topilmadi", "document_not_found");
   const db = createAdminClient();
+  const patientIds = await patientRecordIds(clinicId, patientId);
   const { data, error } = await db
     .from("lab_documents")
     .select("id, storage_path, result_id, kind, lab_results!lab_documents_result_fkey(status)")
     .eq("id", documentId)
     .eq("clinic_id", clinicId)
-    .eq("patient_id", patientId)
+    .in("patient_id", patientIds)
     .is("withdrawn_at", null)
     .maybeSingle();
   if (error) throw loadFailed("document", error);
@@ -236,7 +241,8 @@ export async function loadLabResultNotice(clinicId: string, resultId: string): P
   };
   const [isReleased, patient] = await Promise.all([
     released(clinicId),
-    db.from("patients").select("telegram_user_id").eq("id", r.patient_id).eq("clinic_id", clinicId).maybeSingle(),
+    // The person's Telegram identity lives on the canonical record after a merge (Phase 14).
+    db.from("patients").select("telegram_user_id").eq("id", (await patientRecordIds(clinicId, r.patient_id))[0]).eq("clinic_id", clinicId).maybeSingle(),
   ]);
   if (patient.error) throw loadFailed("notice patient", patient.error);
   return {

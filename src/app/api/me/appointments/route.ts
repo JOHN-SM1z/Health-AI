@@ -5,6 +5,7 @@ import { resolvePatientFromInitData, devIdentityAllowed } from "@/lib/patients/i
 import { handleApiError, ApiError, ok, fail } from "@/lib/api/errors";
 import { rateLimit, keyFromIp } from "@/lib/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { patientRecordIds } from "@/lib/patients/record-group";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,8 @@ export async function POST(request: NextRequest) {
     const { data: appointments, error } = await supabase
       .from("appointments")
       .select("*, doctors(name, title), services(name, price, duration_minutes), payments(status, amount, currency, payment_url)")
-      .eq("patient_id", resolved.patient.id)
+      // The person's visits across merged records (Phase 14).
+      .in("patient_id", await patientRecordIds(clinic.id, resolved.patient.id))
       .eq("clinic_id", clinic.id)
       .order("start_at", { ascending: false });
 

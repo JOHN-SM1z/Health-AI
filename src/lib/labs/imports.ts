@@ -291,7 +291,8 @@ const chunks = <T>(items: T[], size = 200): T[][] => {
 async function loadCandidates(clinicId: string, lookups: ReturnType<typeof patientLookups>): Promise<CandidatePatient[]> {
   const db = createAdminClient();
   const found = new Map<string, CandidatePatient>();
-  const columns = "id, full_name, phone, date_of_birth, sex, pinfl, document_number";
+  const columns = "id, full_name, phone, date_of_birth, sex, pinfl, document_number, merged_into_patient_id";
+  const aliases = new Map<string, string[]>();
   const queries: Array<[string, string[]]> = [
     ["id", lookups.ids],
     ["pinfl", lookups.pinfls],
@@ -303,6 +304,11 @@ async function loadCandidates(clinicId: string, lookups: ReturnType<typeof patie
       const { data, error } = await db.from("patients").select(columns).eq("clinic_id", clinicId).in(column, part).limit(5000);
       if (error) throw loadFailed("patients", error);
       for (const p of data ?? []) {
+        // A merged record (Phase 14) is matched as its canonical record.
+        if (p.merged_into_patient_id) {
+          aliases.set(p.merged_into_patient_id, [...(aliases.get(p.merged_into_patient_id) ?? []), p.id]);
+          continue;
+        }
         found.set(p.id, {
           id: p.id,
           pinfl: p.pinfl,
@@ -314,6 +320,18 @@ async function loadCandidates(clinicId: string, lookups: ReturnType<typeof patie
         });
       }
     }
+  }
+  const canonicalMissing = [...aliases.keys()].filter((id) => !found.has(id));
+  for (const part of chunks(canonicalMissing)) {
+    const { data, error } = await db.from("patients").select(columns).eq("clinic_id", clinicId).in("id", part);
+    if (error) throw loadFailed("patients", error);
+    for (const p of data ?? []) {
+      found.set(p.id, { id: p.id, pinfl: p.pinfl, documentNumber: p.document_number, phoneKey: phoneKey(p.phone), dateOfBirth: p.date_of_birth, name: normalizeName(p.full_name), sex: p.sex });
+    }
+  }
+  for (const [canonical, ids] of aliases) {
+    const c = found.get(canonical);
+    if (c) c.aliasIds = ids;
   }
   return [...found.values()];
 }

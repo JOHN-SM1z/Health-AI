@@ -159,6 +159,12 @@ describe("patient matching", () => {
     });
   });
 
+  it("a Health AI id of a record merged into another means that other record (Phase 14)", () => {
+    const merged = [P({ id: "p-canonical", dateOfBirth: "1990-01-30", aliasIds: ["p-old"] })];
+    expect(matchPatient({ patientId: "p-old" }, merged)).toEqual({ kind: "exact", patientId: "p-canonical", via: "patient_id", warnings: [] });
+    expect(matchPatient({ patientId: "p-old", dateOfBirth: "1991-01-01" }, merged)).toMatchObject({ kind: "conflict", reason: "dob_differs" });
+  });
+
   it("never matches by name alone", () => {
     expect(matchPatient({ name: "ali karimov" }, all)).toEqual({ kind: "unmatched", reason: "insufficient_identifiers" });
     expect(matchPatient({ pinfl: "11111111111111" }, all)).toEqual({ kind: "unmatched", reason: "no_candidate" });

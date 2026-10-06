@@ -1,4 +1,5 @@
 import "server-only";
+import { patientRecordIds } from "@/lib/patients/record-group";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { logger } from "@/lib/logger";
@@ -62,13 +63,15 @@ export async function listVisibleClinicalRecords(
   ].filter(Boolean);
   if (coverage.length === 0) return [];
 
+  // Every record of the person's merged record group (Phase 14), same coverage.
+  const ids = await patientRecordIds(doctor.clinicId, patientId);
   const { data, error } = await createAdminClient()
     .from("clinical_records")
     .select(
       "id, record_type, summary, details, code, created_at, appointment_id, author_doctor_id, corrects_record_id, author:doctors!clinical_records_author_same_clinic_fkey(name)",
     )
     .eq("clinic_id", doctor.clinicId)
-    .eq("patient_id", patientId)
+    .in("patient_id", ids)
     .or(coverage.join(","))
     .order("created_at", { ascending: false })
     .limit(500);

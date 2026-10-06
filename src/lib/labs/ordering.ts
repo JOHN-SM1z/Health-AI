@@ -1,4 +1,5 @@
 import "server-only";
+import { patientRecordIds } from "@/lib/patients/record-group";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { recordAudit } from "@/lib/audit";
@@ -123,6 +124,7 @@ export type LabOrderView = {
 
 export async function getPatientLabOrders(doctor: LinkedDoctor, patientId: string): Promise<LabOrderView[]> {
   await requireAccess(doctor, patientId);
+  const ids = await patientRecordIds(doctor.clinicId, patientId);
   const { data, error } = await createAdminClient()
     .from("lab_orders")
     .select(
@@ -130,7 +132,7 @@ export async function getPatientLabOrders(doctor: LinkedDoctor, patientId: strin
         "lab_order_items(id, test_id, test_code_snapshot, test_name_snapshot, status, price_snapshot, lab_panels(name))",
     )
     .eq("clinic_id", doctor.clinicId)
-    .eq("patient_id", patientId)
+    .in("patient_id", ids)
     // Historical imports (Phase 13) are results, not orders: they appear in the lab history.
     .neq("source", "external_import")
     .order("created_at", { ascending: false })
@@ -286,10 +288,10 @@ export async function getVerifiedLabResultForDoctor(doctor: LinkedDoctor, patien
   const db = createAdminClient();
   const { data: item, error: itemError } = await db
     .from("lab_order_items")
-    .select("id, test_name_snapshot, created_at")
+    .select("id, patient_id, test_name_snapshot, created_at")
     .eq("id", itemId)
     .eq("clinic_id", doctor.clinicId)
-    .eq("patient_id", patientId)
+    .in("patient_id", await patientRecordIds(doctor.clinicId, patientId))
     .maybeSingle();
   if (itemError) throw loadFailed("result item", itemError);
   if (!item) throw new ApiError(404, "Natija topilmadi", "result_not_found");
@@ -333,7 +335,7 @@ export async function getVerifiedLabResultForDoctor(doctor: LinkedDoctor, patien
     action: "lab_result_viewed",
     entityType: "lab_results",
     entityId: r.id,
-    patientId,
+    patientId: item.patient_id,
     actor: { actorId: doctor.profileId, actorType: "staff" },
     metadata: { order_item_id: itemId, version: r.version, via: "doctor_workspace" },
     strict: true,

@@ -37,6 +37,8 @@ export type CandidatePatient = {
   dateOfBirth: string | null;
   name: string | null;
   sex: "male" | "female" | null;
+  /** Ids of records merged into this one (Phase 14): a file naming one of them means this patient. */
+  aliasIds?: string[];
 };
 
 export type StrongVia = "patient_id" | "pinfl" | "document_number";
@@ -77,7 +79,7 @@ function contradiction(i: ImportIdentity, p: CandidatePatient): ConflictReason |
 export function matchPatient(identity: ImportIdentity, patients: readonly CandidatePatient[]): MatchOutcome {
   const strong = new Map<string, StrongVia>();
   if (identity.patientId) {
-    const p = patients.find((c) => c.id === identity.patientId);
+    const p = patients.find((c) => c.id === identity.patientId || (c.aliasIds ?? []).includes(identity.patientId!));
     if (!p) return { kind: "conflict", reason: "patient_id_unknown", candidates: [] };
     strong.set(p.id, "patient_id");
   }
