@@ -5,6 +5,7 @@ import { PageHeader, Card, ABadge, AButton, AEmpty, AError, AInput, AModal, ATex
 import { adminApi, AdminApiError, formatDateTime } from "@/lib/admin/client";
 import { newIdempotencyKey } from "@/lib/idempotency-key";
 import { LAB_ITEM_STATUS, LabOrderDialog } from "@/components/doctor/lab-orders";
+import { ResultEntryDialog } from "@/components/lab/result-entry";
 import { ListChecks, Plus, TestTube } from "lucide-react";
 
 /**
@@ -51,10 +52,20 @@ function inView(order: Order, view: View): boolean {
   if (view === "all") return true;
   if (view === "collect") return order.items.some((i) => i.status === "ready_for_collection" || i.status === "ordered");
   if (view === "receive") return order.samples.some((s) => s.status === "collected");
-  return order.items.some((i) => i.status === "processing");
+  return order.items.some((i) => i.status === "processing" || i.status === "resulted");
 }
 
-export function LabWorkQueue({ canCollect, canProcess, canOrder }: { canCollect: boolean; canProcess: boolean; canOrder: boolean }) {
+export function LabWorkQueue({
+  canCollect,
+  canProcess,
+  canOrder,
+  canEnter = false,
+}: {
+  canCollect: boolean;
+  canProcess: boolean;
+  canOrder: boolean;
+  canEnter?: boolean;
+}) {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [limit, setLimit] = useState(200);
   const [view, setView] = useState<View>(canProcess && !canCollect ? "receive" : "collect");
@@ -64,6 +75,7 @@ export function LabWorkQueue({ canCollect, canProcess, canOrder }: { canCollect:
   const [collecting, setCollecting] = useState<{ order: Order; items: Item[] } | null>(null);
   const [rejecting, setRejecting] = useState<Sample | null>(null);
   const [ordering, setOrdering] = useState<"search" | PatientMatch | null>(null);
+  const [entering, setEntering] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -132,6 +144,8 @@ export function LabWorkQueue({ canCollect, canProcess, canOrder }: { canCollect:
               order={o}
               canCollect={canCollect}
               canProcess={canProcess}
+              canEnter={canEnter}
+              onEnter={(itemId) => { setError(null); setNotice(null); setEntering(itemId); }}
               onCollect={(items) => { setError(null); setNotice(null); setCollecting({ order: o, items }); }}
               onReceive={receive}
               onReject={(s) => { setError(null); setNotice(null); setRejecting(s); }}
@@ -165,6 +179,17 @@ export function LabWorkQueue({ canCollect, canProcess, canOrder }: { canCollect:
           }}
         />
       )}
+      {entering && (
+        <ResultEntryDialog
+          itemId={entering}
+          onClose={() => { setEntering(null); void load(); }}
+          onChanged={async (message) => {
+            setEntering(null);
+            await load();
+            setNotice(message);
+          }}
+        />
+      )}
       {ordering === "search" && <PatientPicker onClose={() => setOrdering(null)} onPick={(p) => setOrdering(p)} />}
       {ordering && ordering !== "search" && (
         <LabOrderDialog
@@ -192,6 +217,8 @@ function QueueCard({
   order,
   canCollect,
   canProcess,
+  canEnter,
+  onEnter,
   onCollect,
   onReceive,
   onReject,
@@ -199,6 +226,8 @@ function QueueCard({
   order: Order;
   canCollect: boolean;
   canProcess: boolean;
+  canEnter: boolean;
+  onEnter: (itemId: string) => void;
   onCollect: (items: Item[]) => void;
   onReceive: (s: Sample) => void;
   onReject: (s: Sample) => void;
@@ -235,7 +264,15 @@ function QueueCard({
                   {i.testName} <span className="text-xs text-ink-muted">· {i.sampleType}</span>
                   {codeOf(i.sampleId) && <span className="font-numeric ml-1 text-xs text-ink-muted">· {codeOf(i.sampleId)}</span>}
                 </span>
-                <ABadge tone={i.status === "ordered" ? "amber" : status.tone}>{i.status === "ordered" ? "To‘lov kutilmoqda" : status.label}</ABadge>
+                <span className="flex items-center gap-1">
+                  <ABadge tone={i.status === "ordered" ? "amber" : status.tone}>{i.status === "ordered" ? "To‘lov kutilmoqda" : status.label}</ABadge>
+                  {canEnter && i.status === "processing" && (
+                    <AButton size="sm" onClick={() => onEnter(i.id)}>Natija kiritish</AButton>
+                  )}
+                  {canEnter && i.status === "resulted" && (
+                    <AButton size="sm" variant="outline" onClick={() => onEnter(i.id)}>Natijani ko‘rish</AButton>
+                  )}
+                </span>
               </li>
             );
           })}

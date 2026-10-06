@@ -2642,6 +2642,10 @@ export type Database = {
           replayed: boolean
         }[]
       }
+      discard_lab_result_draft: {
+        Args: { p_by: string; p_clinic_id: string; p_result_id: string }
+        Returns: boolean
+      }
       doctor_can_read_appointment: {
         Args: {
           p_appointment_id: string
@@ -2682,6 +2686,17 @@ export type Database = {
       }
       is_linked_doctor: { Args: { p_doctor_id: string }; Returns: boolean }
       is_platform_admin: { Args: never; Returns: boolean }
+      lab_entry_ranges: {
+        Args: { p_clinic_id: string; p_order_item_id: string }
+        Returns: {
+          critical_high: number
+          critical_low: number
+          parameter_id: string
+          range_high: number
+          range_low: number
+          range_text: string
+        }[]
+      }
       receive_lab_sample: {
         Args: {
           p_clinic_id: string
@@ -2712,6 +2727,20 @@ export type Database = {
         }
         Returns: Record<string, unknown>
       }
+      save_lab_result_draft: {
+        Args: {
+          p_clinic_id: string
+          p_entered_by: string
+          p_lab_comment?: string
+          p_order_item_id: string
+          p_performed_at?: string
+          p_values: Json
+        }
+        Returns: {
+          created: boolean
+          lab_result_id: string
+        }[]
+      }
       start_consultation: {
         Args: {
           p_actor: string
@@ -2734,6 +2763,10 @@ export type Database = {
           p_start_at: string
         }
         Returns: Json
+      }
+      submit_lab_result: {
+        Args: { p_clinic_id: string; p_result_id: string; p_submitted_by: string }
+        Returns: boolean
       }
     }
     Enums: {

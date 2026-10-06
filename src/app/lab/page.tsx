@@ -12,6 +12,7 @@ export default async function LabHomePage() {
       canCollect={labCan(ctx.roles, "sample.collect")}
       canProcess={labCan(ctx.roles, "sample.process")}
       canOrder={labCan(ctx.roles, "queue.read")}
+      canEnter={labCan(ctx.roles, "result.enter")}
     />
   );
 }
