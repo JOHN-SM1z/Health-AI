@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, AModal, ATextArea, LoadingRow } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, AModal, ASelect, ATextArea, LoadingRow } from "@/components/admin/ui";
 import { QuickBookingModal, type FollowUpPreset } from "@/components/admin/quick-booking-modal";
 import { Users } from "lucide-react";
 import {
@@ -43,6 +43,9 @@ type PatientDetail = {
   last_seen_at: string | null;
   created_at: string;
   operational_notes: string | null;
+  merged_into_patient_id: string | null;
+  date_of_birth: string | null;
+  sex: "female" | "male" | null;
 };
 
 type AppointmentLite = {
@@ -105,6 +108,10 @@ export default function PatientsPage() {
   const [notesDraft, setNotesDraft] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
+  const [dobDraft, setDobDraft] = useState("");
+  const [sexDraft, setSexDraft] = useState("");
+  const [demoSaving, setDemoSaving] = useState(false);
+  const [demoSaved, setDemoSaved] = useState(false);
   const [isManagement, setIsManagement] = useState(false);
   const [bookingFor, setBookingFor] = useState<FollowUpPreset | null>(null);
   const [revokeFor, setRevokeFor] = useState<PatientReferral | null>(null);
@@ -151,10 +158,13 @@ export default function PatientsPage() {
     setDetail(null);
     setBusy(true);
     setNotesSaved(false);
+    setDemoSaved(false);
     try {
       const res = await adminApi.get<DetailResponse>(`/api/admin/patients?id=${id}`);
       setDetail(res);
       setNotesDraft(res.patient?.operational_notes ?? "");
+      setDobDraft(res.patient?.date_of_birth ?? "");
+      setSexDraft(res.patient?.sex ?? "");
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Bemor ma'lumotlarini yuklab bo‘lmadi");
     } finally {
@@ -174,6 +184,22 @@ export default function PatientsPage() {
       setError(e instanceof AdminApiError ? e.message : "Izohni saqlab bo‘lmadi");
     } finally {
       setNotesSaving(false);
+    }
+  };
+
+  const saveDemographics = async () => {
+    if (!detailId || !dobDraft) return;
+    setDemoSaving(true);
+    setDemoSaved(false);
+    try {
+      const sex = sexDraft === "female" || sexDraft === "male" ? sexDraft : null;
+      await adminApi.patch(`/api/admin/patients/demographics`, { patientId: detailId, dateOfBirth: dobDraft, sex });
+      setDetail((prev) => (prev?.patient ? { ...prev, patient: { ...prev.patient, date_of_birth: dobDraft, sex } } : prev));
+      setDemoSaved(true);
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Saqlab bo‘lmadi");
+    } finally {
+      setDemoSaving(false);
     }
   };
 
@@ -207,6 +233,7 @@ export default function PatientsPage() {
   const pageCount = Math.max(1, Math.ceil(total / 25));
   const selected = detail?.patient ?? null;
   const notesDirty = notesDraft.trim() !== (selected?.operational_notes ?? "").trim();
+  const demoDirty = dobDraft !== (selected?.date_of_birth ?? "") || sexDraft !== (selected?.sex ?? "");
 
   const visitStats = useMemo(() => {
     const completed = (detail?.appointments ?? []).filter((a) => a.status === "completed");
@@ -337,6 +364,45 @@ export default function PatientsPage() {
                   Yakunlangan tashriflar: {visitStats.count}
                 </p>
               </div>
+
+              <section aria-label="Shaxsiy ma’lumotlar">
+                <p className="mb-2 font-display text-sm font-bold text-foreground">Shaxsiy ma’lumotlar</p>
+                {selected.merged_into_patient_id ? (
+                  <p className="text-sm text-ink-muted">Bu karta boshqa kartaga birlashtirilgan — ma’lumotlarni asosiy kartada o‘zgartiring.</p>
+                ) : (
+                  <>
+                    <p className="mb-2 text-xs text-ink-muted">
+                      Laboratoriya tahlili buyurtmasi uchun tug‘ilgan sana kerak. Jins va yosh klinika belgilagan me’yor oralig‘ini tanlash uchun ishlatiladi.
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="text-sm text-foreground">
+                        <span className="mb-1 block text-xs text-ink-muted">Tug‘ilgan sana</span>
+                        <AInput type="date" value={dobDraft} onChange={(v) => { setDobDraft(v); setDemoSaved(false); }} aria-label="Tug‘ilgan sana" />
+                      </label>
+                      <label className="text-sm text-foreground">
+                        <span className="mb-1 block text-xs text-ink-muted">Jins</span>
+                        <ASelect
+                          value={sexDraft}
+                          onChange={(v) => { setSexDraft(v); setDemoSaved(false); }}
+                          options={[
+                            { value: "", label: "Ko‘rsatilmagan" },
+                            { value: "female", label: "Ayol" },
+                            { value: "male", label: "Erkak" },
+                          ]}
+                          aria-label="Jins"
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <AButton size="sm" loading={demoSaving} disabled={!demoDirty || !dobDraft} onClick={() => void saveDemographics()}>
+                        Ma’lumotlarni saqlash
+                      </AButton>
+                      {demoSaved && !demoDirty && <span className="text-xs text-pine-deep">Saqlandi ✓</span>}
+                      {!selected.date_of_birth && !demoSaved && <ABadge tone="amber">Tug‘ilgan sana kiritilmagan</ABadge>}
+                    </div>
+                  </>
+                )}
+              </section>
 
               <div>
                 <p className="mb-2 font-display text-sm font-bold text-foreground">Operatsion izoh</p>

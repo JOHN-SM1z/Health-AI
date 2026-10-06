@@ -22,13 +22,13 @@ Three features are not ready to switch on, and all three ship switched off:
 | Area | Verdict | Why, in one line |
 |---|---|---|
 | Database | **CONDITIONALLY READY** | Clean dry-run on populated pre-lab data, and the schema is identical to a clean build. It has not yet run on staging or a production copy, and there is no confirmed backup before applying. |
-| Application | **READY** | Authorization, validation, idempotency, retries and error handling are tested end to end. Two small gaps found in this review were fixed (R1, R2). |
+| Application | **READY** (after B1) | Authorization, validation, idempotency, retries and error handling are tested end to end. Three gaps found in this review were fixed: **B1 was a go-live blocker** (no way to record a date of birth, so no lab order could be placed); R1 and R2 were small. |
 | Documents | **READY** | Private bucket; 20 MB limit and type check; 60-second signed links; withdrawn, never deleted; audited. Open: file retention, and storage cleanup on clinic erase. |
 | Notifications | **CONDITIONALLY READY** | Atomic claims, idempotency keys, retry and give-up are tested. Real Telegram delivery is unverified. Patient messages ride the 15-minute notification cron. |
 | Payments | **CONDITIONALLY READY** | Server-controlled manual payments, audited, refunds as a whole-bill status. There are no receipts and no partial refunds; the owner must accept that, or have them built. |
 | Clinical records (lab results) | **CONDITIONALLY READY** | Authorship, versioning, access and audit are enforced in the database and the server. Retention and legal requirements are an open owner decision. |
 | AI | **READY while disabled; NOT READY to enable** | The computed fallback is verified, and so are the safety checks and injection handling. Before enabling: choose a provider, sign a data-processing agreement, and review real answers. |
-| Historical migration (import) | **CONDITIONALLY READY** | Dry-run analysis, duplicate and match handling, partial failure and audit are verified with synthetic files. It has not been run on a real export from the old system. |
+| Historical migration (import) | **CONDITIONALLY READY** | Dry-run analysis, duplicate and match handling, partial failure and audit are verified with synthetic files. It has not been run on a real export from the old system, and exact matching by PINFL or passport is unavailable until those can be recorded (B2). |
 | External laboratories | **NOT READY (by design, off)** | Only a mock adapter exists, and it is refused in production. No real provider API has been verified. |
 | Critical-result alerts | **Deferred** | Owner decision: not needed now. |
 
@@ -120,6 +120,24 @@ Results:
 | Fail-closed configuration | Production refuses to start with the default `CRON_SECRET`. The mock lab adapter is refused in production unless `ALLOW_MOCK_LAB_PROVIDER=true` *and* the database is localhost. AI needs `ENABLE_AI=true` plus key and URL *and* the clinic's `aiSummaries`. `PAYMENT_PROVIDER` other than `manual` refuses to start without an adapter. The development Telegram identity is refused in production |
 
 #### Found and fixed in this phase
+
+**B1 — no lab test could be ordered for a real patient (go-live blocker).**
+- Since Phase 2 the database refuses a lab order (doctor or desk) for a patient without a date of birth. The error tells staff "reception must fill it in before ordering".
+- But nothing in the application could record a date of birth, or a patient's sex. The only patient update route saves the front-desk note.
+- Every test and E2E run created its patients with the date written straight into the database, so none could catch it. Every existing patient has no date of birth, so in production **every first lab order would have been refused**.
+- **Fix:** `PATCH /api/admin/patients/demographics` records the date of birth and sex:
+  - the same roles as the patient card (owner, admin, manager, receptionist); the clinic comes from the session;
+  - a real calendar date from 1900 to today in the clinic's time zone, with the database check as the last word;
+  - sex is optional (unknown stays unknown, never guessed);
+  - a record merged into another is refused (`patient_merged`);
+  - audited as `patient_demographics_updated` with the names of the changed fields only, never the values.
+- The patient card (`/admin/patients`) gains a "Shaxsiy ma’lumotlar" section with the two fields and a "Tug‘ilgan sana kiritilmagan" badge while the date is missing.
+- **Tests:** `patient-demographics.test.ts` (4, real routes and database):
+  - an order is refused with `dob_required`; reception records the date; the same order then succeeds;
+  - audit rows hold field names only;
+  - invalid dates, wrong roles, another clinic and merged records are refused.
+- **E2E:** `lab-collection` now registers its patient without a date of birth; reception records it on the patient card before the walk-in order (15/15).
+
 
 **R1 — patient lab routes were limited per instance only.**
 - `requireMiniAppPatient()` is used by the three `/api/me/lab-*` routes. It used the in-memory, per-instance limiter, keyed by IP.
@@ -268,6 +286,11 @@ Results:
 - Run the import on a **real export** from the old system (encoding, date formats, column names) in staging, and confirm the reports, before importing for real.
 - Windows-1251 files must be saved as UTF-8 first.
 
+**B2 — exact matching needs identifiers the application cannot record (open, owner decision).**
+- An import row matches a patient *exactly* by Health AI patient id, PINFL or passport/ID number. The database has columns for PINFL and the document number (Phase 2), but no screen or route records them.
+- An old system's export will not carry Health AI ids. So until PINFL or passport numbers are recorded, every imported patient is at best a *possible match*: phone or full name **plus date of birth** (now recordable, B1), confirmed by a person, row group by row group.
+- Whether reception should record PINFL or passport numbers is a privacy decision (national identifiers) for the owner. Nothing was added.
+
 ### 2.9 External laboratories (Phase 15)
 
 The internal workflow does not depend on them. The adapter interface, retries, leases, webhook signatures and code mapping are tested with the mock adapter. **No real provider is integrated**, and the mock is refused in production.
@@ -293,8 +316,11 @@ Before connecting a real laboratory:
 2. Back up production and verify the backup. Then apply the migrations in a low-traffic window (D2–D4).
 3. Confirm the 15-minute notification cron runs (`scheduled-jobs.sql` check query). Send one real "result ready" message to a test patient.
 4. Create the lab staff accounts, with the lab role. Configure the catalog, reference ranges and lab settings per clinic.
-5. Keep `ENABLE_AI` off, or `aiSummaries` off, and configure no external provider.
-6. Recommended: a platform-level rate limit for `/api/*` (Vercel firewall).
+5. Tell reception that a patient's date of birth (and sex, where known) is recorded on the patient card before the first lab order (B1). Every existing patient starts without one.
+6. Keep `ENABLE_AI` off, or `aiSummaries` off, and configure no external provider.
+7. Recommended: a platform-level rate limit for `/api/*` (Vercel firewall).
+
+The step-by-step staging check is [`STAGING_ACCEPTANCE.md`](STAGING_ACCEPTANCE.md).
 
 **Owner decisions (product, legal — not engineering)**
 1. Retention of lab results, documents and import evidence, and the related legal requirements. No period is assumed.
@@ -303,6 +329,7 @@ Before connecting a real laboratory:
 4. Clinician and native-speaker review of the Uzbek wording, flags and reference ranges. Ranges are configured by each clinic; the system only places values against them.
 5. Before AI is enabled: provider, region and data-processing agreement.
 6. Critical-result alerts: deferred until the owner has consulted doctors and clinical managers.
+7. Whether reception records PINFL or passport numbers, which the import needs for exact matching (B2).
 
 ## 4. Rollback and reversal
 
@@ -345,9 +372,9 @@ Before connecting a real laboratory:
 |---|---|
 | `npm run lint` | pass |
 | `npm run typecheck` | pass |
-| `npm test` (clean local stack) | **1052 / 1052** (1050 from Phase 20 + R1 + R2) |
+| `npm test` (clean local stack) | **1056 / 1056** (1050 from Phase 20 + R1 + R2 + B1 ×4) |
 | `npm run build` | pass |
-| `npm run test:e2e` (Chromium, against the production build) | **all 18 scripts pass** (referral 84/84 … HTTP red team 55/55; lab patient results 10/10, lab external 13/13 with R1 and R2 in place) |
+| `npm run test:e2e` (Chromium, against the production build) | **all 18 scripts pass** (referral 84/84 … HTTP red team 55/55; lab patient results 10/10, lab external 13/13 with R1 and R2 in place; lab collection 15/15 with B1) |
 | Migration dry-run on populated pre-lab data | 21/21 applied; data unchanged; schema identical; transactional; partial failure rolled back |
 | `main`'s tests on the migrated schema | 709/709 |
 | Phase 20 CI (head `002062e`) | green |

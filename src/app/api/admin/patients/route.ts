@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
       const { data: patient, error: patientError } = await supabase
         .from("patients")
         .select(
-          "id, full_name, phone, telegram_username, telegram_first_name, telegram_last_name, consent_given, consent_given_at, last_seen_at, created_at, operational_notes, merged_into_patient_id, merged_at",
+          "id, full_name, phone, telegram_username, telegram_first_name, telegram_last_name, consent_given, consent_given_at, last_seen_at, created_at, operational_notes, merged_into_patient_id, merged_at, date_of_birth, sex",
         )
         .eq("id", detailId)
         .eq("clinic_id", staff.clinicId)

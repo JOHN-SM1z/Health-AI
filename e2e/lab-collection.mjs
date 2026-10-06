@@ -30,12 +30,27 @@ async function run() {
     { clinic_id: clinic, code: `E2EURI${suffix}`.slice(0, 32), name: `E2E siydik ${suffix}`, sample_type: "Siydik", price: 30000, preparation_text: null },
   ])} returning id, name, sample_type`;
   const patientName = `E2E Namuna bemor ${suffix}`;
-  const [patient] = await db`insert into public.patients ${db({ clinic_id: clinic, full_name: patientName, date_of_birth: "1979-03-14", phone: `+99890${String(Date.now()).slice(-7)}` })} returning id`;
+  // Registered without a date of birth, as every existing patient is: reception records it first (Phase 21, B1).
+  const [patient] = await db`insert into public.patients ${db({ clinic_id: clinic, full_name: patientName, phone: `+99890${String(Date.now()).slice(-7)}` })} returning id`;
 
   const browser = await chromium.launch();
   try {
     // ---------- reception: walk-in order and collection ----------
     const { context: rc, page: r } = await signIn(browser, report, DEMO.reception);
+
+    // The date of birth is required before ordering: reception records it on the patient card.
+    await r.goto(`${BASE}/admin/patients`);
+    await r.getByLabel("Bemorlarni qidirish").fill(`Namuna bemor ${suffix}`);
+    await r.getByRole("row", { name: new RegExp(patientName) }).click();
+    const personal = r.getByRole("region", { name: "Shaxsiy ma’lumotlar" });
+    await personal.getByText("Tug‘ilgan sana kiritilmagan").waitFor();
+    await personal.getByLabel("Tug‘ilgan sana").fill("1979-03-14");
+    await personal.getByLabel("Jins").selectOption("female");
+    await personal.getByRole("button", { name: "Ma’lumotlarni saqlash" }).click();
+    await personal.getByText("Saqlandi ✓").waitFor();
+    const [recorded] = await db`select to_char(date_of_birth, 'YYYY-MM-DD') as dob, sex from public.patients where id = ${patient.id}`;
+    check(recorded?.dob === "1979-03-14" && recorded?.sex === "female", "reception: records the patient's date of birth and sex on the patient card");
+
     await r.goto(`${BASE}/admin/lab-queue`);
     await r.waitForLoadState("networkidle");
     check(await r.getByRole("heading", { name: "Ish navbati" }).isVisible(), "reception: the lab work queue opens at the desk");
