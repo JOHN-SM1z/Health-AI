@@ -273,6 +273,16 @@ async function handle(row: RequestRow) {
   return applyStatus(row, provider, adapter, outcome.status);
 }
 
+/**
+ * What an unexpected exception is logged as: its class and, for our own
+ * errors, the code — never the message, which an adapter could build from a
+ * provider's response (patient data must not reach the logs).
+ */
+function errorLabel(e: unknown): string {
+  if (e instanceof ApiError) return `ApiError:${e.code}`;
+  return e instanceof Error ? e.name : typeof e;
+}
+
 /** The worker: claims due send-outs and moves each one step. */
 export async function processExternalLabRequests(limit = 20): Promise<{ claimed: number; failed: number }> {
   const { data, error } = await createAdminClient().rpc("claim_external_lab_requests", { p_limit: limit });
@@ -286,7 +296,7 @@ export async function processExternalLabRequests(limit = 20): Promise<{ claimed:
       await handle(row);
     } catch (e) {
       failed++;
-      logger.error("lab external: handling threw", { requestId: row.id, error: e instanceof Error ? e.message : String(e) });
+      logger.error("lab external: handling threw", { requestId: row.id, error: errorLabel(e) });
       await updateRequest(row.id, LIVE, { last_error_code: "worker_error", next_attempt_at: plus(BACKOFF_SECONDS[0]), lease_until: null });
     }
   }
@@ -357,7 +367,7 @@ export async function sendOutItem(staff: ClinicStaff, itemId: string, providerId
         .maybeSingle();
       if (claimed) await handle(claimed);
     } catch (e) {
-      logger.warn("lab external: immediate send deferred to the worker", { error: e instanceof Error ? e.message : String(e) });
+      logger.warn("lab external: immediate send deferred to the worker", { error: errorLabel(e) });
     }
   }
   return { requestId: row.lab_external_request_id, replayed: row.replayed };

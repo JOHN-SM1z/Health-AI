@@ -339,4 +339,15 @@ describeDb("patient lab results (real database, signed initData)", () => {
     expect((await document(docs[results.bob.resultId], alice)).status).toBe(404); // someone else's
     expect((await document("not-a-uuid", alice)).status).toBe(404);
   });
+
+  it("is rate-limited per verified patient across instances, whatever the IP (Phase 21)", async () => {
+    // Every call comes from a different IP, so only the shared per-patient limit can stop them.
+    const carolB = signInitData(BOT_B, tg.carol);
+    const statuses: number[] = [];
+    for (let i = 0; i < 31; i++) statuses.push((await list(carolB, clinicB)).status);
+    expect(statuses.slice(0, 30).every((s) => s === 200)).toBe(true);
+    expect(statuses[30]).toBe(429);
+    // Another patient is unaffected.
+    expect((await list(signInitData(BOT_A, tg.bob))).status).toBe(200);
+  });
 });

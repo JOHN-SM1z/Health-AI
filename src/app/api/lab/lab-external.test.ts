@@ -32,7 +32,8 @@ import { POST as processRoute } from "./providers/process/route";
 import { POST as resultAction } from "./results/[id]/route";
 import { PUT as saveResult } from "./items/[id]/result/route";
 import { processExternalLabRequests } from "@/lib/labs/providers/service";
-import { mockProviderOrders, mockSignature, resetMockProvider } from "@/lib/labs/providers/mock";
+import { mockLabProvider, mockProviderOrders, mockSignature, resetMockProvider } from "@/lib/labs/providers/mock";
+import { logger } from "@/lib/logger";
 import { idFree } from "@/test/id-free";
 
 const describeDb = describe.skipIf(!localDbAvailable());
@@ -388,6 +389,34 @@ describeDb("external laboratory integration (mock provider, real database)", () 
 
     expect((await processRoute(new NextRequest("http://localhost/api/lab/providers/process", { method: "POST" }))).status).toBe(401);
     expect((await processRoute(new NextRequest("http://localhost/api/lab/providers/process", { method: "POST", headers: { authorization: "Bearer wrong" } }))).status).toBe(401);
+  });
+
+  it("an adapter that throws is retried, and what it threw never reaches the logs (Phase 21)", async () => {
+    const providerId = await provider();
+    const { itemId } = await receivedItem();
+    const leak = `Bemor Valiyev ${suffix}: gemoglobin 112 g/L`;
+    const spy = vi.spyOn(mockLabProvider, "createOrder").mockRejectedValue(new Error(leak));
+    const logs = [vi.spyOn(logger, "error"), vi.spyOn(logger, "warn")];
+    try {
+      // The immediate send throws (deferred to the worker; its lease then runs out), then the worker's attempt throws too.
+      expect((await sendOut(itemId, providerId)).status).toBe(201);
+      const { id } = await request(itemId);
+      await admin.from("lab_external_requests").update({ lease_until: new Date(Date.now() - 1000).toISOString() }).eq("id", id);
+      await due(id);
+      await processExternalLabRequests();
+      expect(await request(itemId)).toMatchObject({ status: "queued", last_error_code: "worker_error" });
+      const logged = JSON.stringify(logs.flatMap((l) => l.mock.calls));
+      expect(logged).toContain("lab external: handling threw");
+      expect(logged).not.toContain("Valiyev");
+      expect(logged).not.toContain("112");
+    } finally {
+      spy.mockRestore();
+      logs.forEach((l) => l.mockRestore());
+    }
+    // Once the adapter works again, the retry sends it.
+    await due((await request(itemId)).id);
+    await processExternalLabRequests();
+    expect((await request(itemId)).status).toBe("sent");
   });
 
   it("lab staff can stop a send-out, after which the lab enters the result itself", async () => {

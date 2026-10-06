@@ -5,13 +5,16 @@ import { getClinicFromRequest } from "@/lib/clinics/context";
 import { resolvePatientFromInitData, devIdentityAllowed } from "@/lib/patients/identity";
 import { ApiError } from "@/lib/api/errors";
 import { rateLimit, keyFromIp } from "@/lib/rate-limit";
+import { sharedRateLimit } from "@/lib/rate-limit-shared";
 
 const schema = z.object({ initData: z.string().nullable().optional() });
 
 /**
  * The verified patient of the clinic in the Mini App URL — through the
  * existing Telegram identity (initData signed by that clinic's bot), never
- * an id from the browser. Rate-limited per IP.
+ * an id from the browser. Rate-limited per IP on this instance (cheap,
+ * before the signature check) and per verified patient across every
+ * instance (sharedRateLimit), since these routes return lab data.
  */
 export async function requireMiniAppPatient(request: NextRequest, bucket: string) {
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
@@ -30,5 +33,7 @@ export async function requireMiniAppPatient(request: NextRequest, bucket: string
   const clinic = await getClinicFromRequest(request);
   const resolved = await resolvePatientFromInitData(body.initData, clinic.id);
   if (!resolved) throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
+  const shared = await sharedRateLimit({ key: `${bucket}:${clinic.id}:${resolved.patient.id}`, limit: 30, windowMs: 60_000 });
+  if (!shared.ok) throw new ApiError(429, "Juda ko‘p so‘rov", "rate_limited");
   return { clinicId: clinic.id, patientId: resolved.patient.id };
 }
