@@ -171,20 +171,35 @@ particular:
 
 ---
 
-## Open questions before implementation
+## Follow-up answers (2026-10-07)
 
-1. **Cashier.** Is "cashier" the existing `receptionist` role (and `lab` at the lab desk), or a new
-   `cashier` role?
-2. **Admin refunds.** The `admin` role can refund today. Should it keep that right, or should refunds be
-   owner and manager only (plus authorized cashiers)?
-3. **Cross-clinic identity.** Link patients across clinics by verified PINFL/passport (B2), by patient
-   confirmation in Telegram, or both?
-4. **Patient consent for cross-clinic access.** Required, or available by default to a treating doctor?
+1. **Cashier.** A new `cashier` staff role. It is not the existing receptionist or lab role.
+2. **Refund rights.**
+   - Owner and manager only.
+   - The `admin` role **loses** the refund right it has today.
+   - A cashier refunds only with an active grant from a manager or owner.
+3. **Cross-clinic identity.**
+   - A verified ID (PINFL/passport) links the patient's records automatically.
+   - Where no ID is available, or the match is uncertain, the patient confirms the link in Telegram.
+   - **Never** link automatically on name or phone alone.
+   - Ambiguous matches go to patient confirmation or manual reconciliation.
+   - This settles the B2 decision: PINFL/passport is collected as a verified identifier.
+4. **Consent for cross-clinic access.**
+   - A correctly linked patient's relevant prior history is available automatically to a doctor with a
+     **current treating relationship** at Clinic B. There is no per-access patient approval.
+   - Every access is audited.
+   - The doctor cannot modify Clinic A's records.
+   - Access is limited to the appropriate clinical information.
+
+Still to define in the cross-clinic design document:
+- the exact "current treating relationship" rule, and how long it lasts;
+- what counts as "appropriate clinical information".
 
 ## Proposed order of work
 
 1. Retention hardening (cascade → restrict, with tests). Small, no behaviour change for users.
 2. Clinic lifecycle (suspend/terminate enforced at sign-in, bot and notifications).
 3. Refunds (partial refunds, refund records, manager rights, cashier grants).
-4. Cross-clinic history: design document first, then implementation after the open questions above are
-   answered.
+4. Patient identifiers (PINFL/passport, verified) and patient-confirmed linking.
+5. Cross-clinic history: design document first (treating-relationship rule, scope of information), then
+   implementation.
