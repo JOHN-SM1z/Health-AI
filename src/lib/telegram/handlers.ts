@@ -13,6 +13,7 @@ import { recordAudit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { getTranscriptionProvider } from "@/lib/transcription/provider";
 import { detectUrgency, urgentMessage } from "@/lib/safety/policy";
+import { listUpcomingAppointments, upcomingAppointmentsText } from "@/lib/appointments/patient-upcoming";
 
 /**
  * Booking link for a clinic, or null when no usable app address is
@@ -72,6 +73,7 @@ export function buildMainKeyboard(clinicId: string) {
   return {
     keyboard: [
       [bookingButton],
+      [{ text: "📋 Mening qabullarim" }],
       [{ text: "🤖 Shifokor tanlashda yordam" }],
       [{ text: "💰 Narxlar" }],
       [{ text: "📍 Manzil" }],
@@ -355,6 +357,28 @@ export async function handleMenuButton(opts: {
           ? `Qabulga yozilish uchun quyidagi tugmani bosing:`
           : "Qabulga yozilish hozircha onlayn sozlanmagan. Iltimos, operatorlarimizga murojaat qiling.",
         replyMarkup,
+      },
+      clinic.id,
+    );
+    return;
+  }
+
+  if (opts.button.includes("Mening qabullarim")) {
+    // Answered in the chat itself: the patient is the verified sender of this
+    // update, so this works however the Mini App was (or wasn't) opened. The
+    // inline web_app button opens the full page with valid initData.
+    let text: string;
+    try {
+      text = upcomingAppointmentsText(await listUpcomingAppointments(clinic.id, patient.id), clinic.timezone);
+    } catch {
+      text = "Qabullaringizni hozir yuklab bo‘lmadi. Birozdan keyin qayta urinib ko‘ring.";
+    }
+    const url = resolveHttpsAppUrl(`/my-appointments?clinic=${encodeURIComponent(clinic.id)}`);
+    await sendTelegramMessage(
+      {
+        chatId: opts.chatId,
+        text,
+        replyMarkup: url ? { inline_keyboard: [[{ text: "📋 Qabullarimni ochish", web_app: { url } }]] } : buildMainKeyboard(clinic.id),
       },
       clinic.id,
     );

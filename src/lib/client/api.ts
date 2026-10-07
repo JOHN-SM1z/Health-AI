@@ -12,15 +12,39 @@ const CLINIC_STORAGE_KEY = "health-ai.clinic-id";
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string; status: number };
 
-/** Clinic id for the current Mini App session (URL param or stored). */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function readStored(storage: () => Storage): string | null {
+  try {
+    const v = storage().getItem(CLINIC_STORAGE_KEY);
+    return v && UUID.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Clinic id for the Mini App: the URL's ?clinic= when present (and a
+ * well-formed id), otherwise the one remembered from an earlier visit. It is
+ * kept in localStorage as well as sessionStorage, so re-opening the Mini App
+ * from a link without ?clinic= still reaches the same clinic. It is only a
+ * tenant hint: the server verifies the patient's Telegram signature against
+ * that clinic's own bot, so a wrong value can never show someone's data.
+ */
 export function getClientClinicId(): string | null {
   if (typeof window === "undefined") return null;
   const fromUrl = new URLSearchParams(window.location.search).get("clinic");
-  if (fromUrl) {
-    sessionStorage.setItem(CLINIC_STORAGE_KEY, fromUrl);
+  if (fromUrl && UUID.test(fromUrl)) {
+    for (const storage of [() => sessionStorage, () => localStorage]) {
+      try {
+        storage().setItem(CLINIC_STORAGE_KEY, fromUrl);
+      } catch {
+        // storage unavailable (private mode) — the URL still works
+      }
+    }
     return fromUrl;
   }
-  return sessionStorage.getItem(CLINIC_STORAGE_KEY);
+  return readStored(() => sessionStorage) ?? readStored(() => localStorage);
 }
 
 export async function apiPost<T>(path: string, body: unknown, initData: string | null): Promise<ApiResult<T>> {

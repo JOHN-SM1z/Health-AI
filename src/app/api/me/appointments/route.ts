@@ -20,7 +20,9 @@ const schema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-    const limit = rateLimit({ key: keyFromIp(ip, "my-appointments"), limit: 20, windowMs: 60_000 });
+    // The page refreshes itself every 15 s while open (live status), and
+    // several patients may share one clinic Wi-Fi address.
+    const limit = rateLimit({ key: keyFromIp(ip, "my-appointments"), limit: 60, windowMs: 60_000 });
     if (!limit.ok) return fail("Juda ko‘p so‘rov", 429, "rate_limited");
 
     const body = schema.parse(await request.json());
@@ -43,7 +45,11 @@ export async function POST(request: NextRequest) {
 
     if (error) throw new ApiError(500, "Qabullarni yuklab bo‘lmadi");
 
-    return ok({ appointments: appointments ?? [], patient: { id: resolved.patient.id, fullName: resolved.patient.full_name } });
+    return ok({
+      appointments: appointments ?? [],
+      patient: { id: resolved.patient.id, fullName: resolved.patient.full_name },
+      clinic: { name: clinic.name, timezone: clinic.timezone },
+    });
   } catch (e) {
     return handleApiError(e);
   }
