@@ -198,8 +198,9 @@ describeDb("doctor lab summary (real database, stand-in AI)", () => {
     expect(texts.find((t) => t.includes("Kreatinin"))).toMatch(/avvalgi o‘lchovga \(80, .*\) yaqin/);
     expect(texts).toContain("3 ta matnli yoki tanlovli qiymat xulosaga kiritilmagan — ularni natijaning o‘zida ko‘ring.");
     expect(s.bullets.filter((b) => b.kind === "pending")).toHaveLength(2); // the submitted and the draft test are still pending
-    // Nothing from drafts, unverified results or another patient.
-    expect(JSON.stringify(s)).not.toMatch(/\b(999|777|333|33)\b/);
+    // Nothing from drafts, unverified results or another patient. (The
+    // statements only — generatedAt is a clock time whose seconds can be "33".)
+    expect(JSON.stringify(s.bullets)).not.toMatch(/\b(999|777|333|33)\b/);
   });
 
   it("the model receives the computed statements only — no identity, comments, free text or injection", async () => {
