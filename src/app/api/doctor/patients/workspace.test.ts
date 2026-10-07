@@ -414,11 +414,13 @@ describeDb("referred-patient clinical workspace", () => {
     expect(await start("b", x.id, { serviceId: quickService })).toMatchObject({ status: 409, body: { code: "referral_not_accepted" } });
     await act("b", referral, { action: "accept" });
 
-    if (minutesToClinicMidnight() < 15) {
-      // A walk-in must end within today's working hours.
+    // A walk-in starts at the next minute and must end by 23:59, so a 5-minute
+    // one no longer fits with fewer than 7 minutes to midnight.
+    if (minutesToClinicMidnight() < 6) {
       expect(await start("b", x.id, { serviceId: quickService })).toMatchObject({ status: 422, body: { code: "INVALID_TIME", details: { reason: "outside_working_hours" } } });
       return;
     }
+    if (minutesToClinicMidnight() < 15) return; // too close to midnight for the rest of this test
 
     const first = await start("b", x.id, { serviceId: quickService });
     expect(first.status).toBe(201);

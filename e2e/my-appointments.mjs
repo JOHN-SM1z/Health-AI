@@ -55,8 +55,12 @@ async function run() {
   const [patient] = await db`insert into public.patients ${db({ clinic_id: clinic, full_name: `E2E Navbat ${suffix}`, telegram_user_id: tgUser })} returning id`;
 
   const visit = async (hoursFromNow, status) => {
-    const start = new Date(Date.now() + hoursFromNow * 3_600_000);
+    let start = new Date(Date.now() + hoursFromNow * 3_600_000);
     start.setUTCSeconds(0, 0);
+    // A visit must end on its own local day: one that would cross the clinic's midnight moves an hour later.
+    const p = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(start);
+    const localMinute = (Number(p.find((x) => x.type === "hour").value) % 24) * 60 + Number(p.find((x) => x.type === "minute").value);
+    if (localMinute + 30 > 23 * 60 + 59) start = new Date(start.getTime() + 3_600_000);
     const [row] = await db`insert into public.appointments ${db({ clinic_id: clinic, patient_id: patient.id, doctor_id: doctorId, service_id: service.id, start_at: start, end_at: new Date(start.getTime() + 30 * 60_000), status, source: "telegram_mini_app" })} returning id, start_at`;
     return row;
   };

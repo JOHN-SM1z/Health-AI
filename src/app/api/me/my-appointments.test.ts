@@ -63,7 +63,13 @@ describeDb("Mening qabullarim (real database)", () => {
     });
     return read(await myAppointments(req));
   };
-  const at = (hoursFromNow: number) => new Date(Date.now() + hoursFromNow * 3_600_000);
+  // A 30-minute visit must end on its own local day (Tashkent, UTC+5): one
+  // that would cross midnight is moved an hour later.
+  const at = (hoursFromNow: number) => {
+    const start = new Date(Date.now() + hoursFromNow * 3_600_000);
+    const localMinute = (start.getUTCHours() * 60 + start.getUTCMinutes() + 5 * 60) % (24 * 60);
+    return localMinute + 30 > 23 * 60 + 59 ? new Date(start.getTime() + 3_600_000) : start;
+  };
   const book = async (patient: string, startH: number, status: string) => {
     const start = at(startH);
     const { data, error } = await admin
