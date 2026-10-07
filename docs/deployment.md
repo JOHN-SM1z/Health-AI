@@ -1,117 +1,72 @@
-# Production Deployment Guide
+# Deployment runbook
 
-This guide covers deploying the Health AI application to production. You can deploy it to **Vercel** (recommended for rapid zero-cost launch) or any standard **Node.js production environment**.
+The current branch is a release candidate, not an approved production upgrade.
+Read [the hosted preflight](DEPLOYMENT_PREFLIGHT_2026-10-07.md) before deployment.
+It records concrete incompatibilities with both hosted databases.
 
----
+## Database gate
 
-## 1. Prerequisites & Required Services
+Use all versioned migrations for an empty, isolated database, with one transaction
+per file. Never initialize an existing hosted database by replaying the baseline,
+running `full-db-setup.sql`, resetting it, or marking conflicting versions applied.
+The hosted production and laboratory staging schemas require a reviewed,
+forward-only compatibility upgrade and preservation tests first.
 
-1. **Supabase Cloud Project**
-   - Free or Pro tier at [supabase.com](https://supabase.com).
-   - Provides PostgreSQL Database, Auth, Storage, and Row-Level Security (RLS).
-2. **Telegram Bot**
-   - Created via [@BotFather](https://t.me/BotFather) on Telegram.
-3. **Hosting Platform**
-   - **Option A (Recommended):** [Vercel](https://vercel.com) (Fast, serverless, automated HTTPS & CI/CD).
-   - **Option B:** Standalone Node.js server (VPS / VM / Cloud Run / Railway / Render).
+Run `scripts/release-schema-preflight.sql` as a read-only prerequisite check.
+Any returned row blocks this branch. An empty result is necessary but does not
+prove that grants, RLS, triggers, function bodies, or data are correct.
 
----
-
-## 2. Supabase Database Setup
-
-1. In your Supabase project dashboard, navigate to **SQL Editor** (left sidebar).
-2. Copy and run the full initialization script from:
-   [`supabase/migrations/20260415000000_init.sql`](../supabase/migrations/20260415000000_init.sql)
-3. Copy your project keys from **Project Settings → API**:
-   - **Project URL:** `https://<PROJECT_REF>.supabase.co`
-   - **`anon` `public` API key:** `eyJhbG...`
-   - **`service_role` `secret` key:** `eyJhbG...`
-
----
-
-## 3. Environment Variables Reference
-
-Configure these environment variables in your hosting provider's dashboard:
-
-| Variable | Required | Description | Example |
-|---|---|---|---|
-| `NEXT_PUBLIC_APP_URL` | Optional | Public URL used for booking links in Telegram notifications (omit if unused) | `https://health-ai.vercel.app` |
-| `NEXT_PUBLIC_SUPABASE_URL` | **Yes** | Supabase project endpoint | `https://xyzcompany.supabase.co` |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | **Yes** | Supabase public anon key | `eyJhbGciOi...` |
-| `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Supabase privileged service-role key (server-only) | `eyJhbGciOi...` |
-| `TELEGRAM_BOT_TOKEN` | Optional | Legacy platform admin-notification bot only (@BotFather) — NOT any clinic's patient-facing bot, which clinic admins activate from their own dashboard instead (see telegram-setup.md) | `123456789:ABCdefGHIjkl...` |
-| `TELEGRAM_WEBHOOK_SECRET` | **Yes** | Random 32+ character string; seeds the per-bot HMAC secret every clinic's webhook is validated against — required even if `TELEGRAM_BOT_TOKEN` is unset (see telegram-setup.md §2) | `health_ai_sec_9876543210abcdef123` |
-| `CRON_SECRET` | **Yes** | Random 32+ character string for background notification scheduler | `health_ai_cron_1234567890abcdef12` |
-| `PAYMENT_PROVIDER` | **Yes** | Payment mode (`manual` for pilot) | `manual` |
-| `ENABLE_AI` | Optional | Enable OpenAI-compatible bot intelligence | `false` |
-| `NODE_ENV` | Automatic | Environment mode | `production` |
-
----
-
-## 4. Deploying to Vercel (Recommended)
-
-1. Push your code to GitHub.
-2. Log into [vercel.com](https://vercel.com) and click **Add New → Project**.
-3. Import your `Health-AI` repository.
-4. Expand **Environment Variables** and paste the variables listed above.
-5. Click **Deploy**. Vercel will automatically build and launch the Next.js application.
-
----
-
-## 5. Post-Deployment Steps
-
-### A. Register Telegram Webhook
-Run this command in your terminal using your live production domain:
+## Release checks
 
 ```bash
-curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://<YOUR_PRODUCTION_DOMAIN>/api/telegram/webhook",
-    "secret_token": "<YOUR_TELEGRAM_WEBHOOK_SECRET>"
-  }'
+npm run lint
+npm run typecheck
+npm test
+npm run build
 ```
 
-Expected response:
-```json
-{"ok": true, "result": true, "description": "Webhook was set"}
-```
+Run database integration tests against an isolated test database; all required
+tests must run, rather than pass through skips. Test existing-record upgrades,
+authorization, payment idempotency, and browser workflows. Confirm backup/restore
+capability before changing the production schema. See
+[PILOT_VALIDATION_2026-10-06.md](PILOT_VALIDATION_2026-10-06.md) for the previously
+tested isolated branch and its limitations.
 
-### B. Configure Telegram Mini App URL (Optional)
-In Telegram via [@BotFather](https://t.me/BotFather):
-1. Send `/mybots` → Select your bot → **Bot Settings** → **Menu Button** (or **Configure Mini App**).
-2. Set URL to: `https://<YOUR_PRODUCTION_DOMAIN>/book`.
+## Configuration and staged release
 
-### C. Create First Clinic Owner
-Run the bootstrap script locally with your production Supabase keys:
+1. Confirm the existing Vercel project and production domain; both `health-ai`
+   and `health-ai-w1vc` deploy the repository. Scope every command explicitly.
+2. Set matching Supabase URL/public key/server-only service key through the
+   hosting environment manager. Keep keys out of source, shell arguments, and logs.
+   Check runtime required secrets against `src/lib/env.ts`; use securely generated
+   values for `CRON_SECRET` and `TELEGRAM_WEBHOOK_SECRET`.
+3. Keep `PAYMENT_PROVIDER=manual`, Telegram development mode disabled, and AI /
+   transcription disabled unless separately configured and verified. Do not enable
+   seed or demo users in production. Never copy local test settings into hosting.
+4. Set the stable HTTPS app origin. For a linked and verified project, stage the
+   production build with `vercel deploy --prod --skip-domain --scope <team>`.
+   Confirm the exact commit and production environment before building.
+5. Verify `/api/health` returns HTTP 200 with `status: "ok"`, login and role guards,
+   authorized walk-in registration, cashier collection/refund, clinician history,
+   referral reads, and the permitted lab workflow. A READY deployment is not a
+   successful application health check.
+6. Promote the same tested deployment with `vercel promote <deployment-url>
+   --scope <team>`, then recheck the stable domain. Preserve the previous deployment
+   and document which database changes allow or prevent application rollback.
 
-```bash
-SUPABASE_URL="https://<PROJECT_REF>.supabase.co" \
-SUPABASE_SERVICE_ROLE_KEY="<YOUR_SERVICE_ROLE_KEY>" \
-OWNER_EMAIL="admin@yourclinic.com" \
-OWNER_PASSWORD="YourSecurePassword123!" \
-CLINIC_NAME="Mening Klinikam" \
-CLINIC_SLUG="my-clinic" \
-npm run create-owner
-```
+## Clinic activation
 
-You can now log in at `https://<YOUR_PRODUCTION_DOMAIN>/admin/login`.
+Use verified clinic owner/staff accounts and the clinic's actual service catalogue,
+prices, doctor availability, and operating mode. Default to walk-ins; do not invent
+appointment slots or payroll policies. Existing patient history must remain visible
+to authorized clinicians after upgrade.
 
-### D. Setup Notification Cron Job (Every 15 Minutes)
-To automatically process reminders (24h and 2h before appointments), configure a periodic HTTP trigger (using [cron-job.org](https://cron-job.org) or Vercel Cron):
+Clinic-specific Telegram bots are activated through the clinic dashboard. Do not
+manually replace their webhooks with a legacy global route. Verify the webhook
+secret, actual successful delivery, consent, and notification jobs before claiming
+messaging is operational. Inspect existing scheduler configuration before adding
+jobs; avoid duplicate schedules.
 
-- **Target URL:** `https://<YOUR_PRODUCTION_DOMAIN>/api/notifications/process`
-- **Method:** `POST`
-- **Header:** `Authorization: Bearer <YOUR_CRON_SECRET>`
-- **Interval:** Every 15 minutes (`*/15 * * * *`)
-
----
-
-## 6. Verification Checklist
-
-- [ ] `/api/health` returns `{"ok": true, "timestamp": ...}`
-- [ ] Admin panel loads at `/admin/login` and accepts owner credentials
-- [ ] Doctor panel loads at `/doctor`
-- [ ] Telegram bot replies to `/start` in Telegram
-- [ ] Mini App booking completes and schedules appointment
-- [ ] Webhook returns 401 Unauthorized for invalid secret tokens
+Payroll, inpatient workflows, comprehensive finance, device adapters, and lab
+release are not made complete by deployment. See
+[PILOT_IMPLEMENTATION_CHECKLIST.md](PILOT_IMPLEMENTATION_CHECKLIST.md).
