@@ -6,6 +6,16 @@ import { logger } from "@/lib/logger";
 
 export const NAVIGATION_STATE_KEY = "navigation";
 
+/** "• Kardiologiya — Rahimova Dilnoza (Kardiolog)" for each direction. */
+function directoryLines(k: { specialties: Array<{ name: string }>; doctors: Array<{ name: string; title: string | null; specialty: string | null }> }): string {
+  return k.specialties
+    .map((s) => {
+      const doctors = k.doctors.filter((d) => d.specialty === s.name).map((d) => (d.title ? `${d.name} (${d.title})` : d.name));
+      return `• ${s.name}${doctors.length ? ` — ${doctors.join(", ")}` : ""}`;
+    })
+    .join("\n");
+}
+
 export type NavigationState = {
   step: number; // 0 = start, 1 = first answer, 2 = recommendation given
   lastUserInput?: string;
@@ -50,13 +60,15 @@ export async function suggestNavigation(clinicId: string, userInput: string): Pr
 
   const provider = getAiProvider();
   if (!provider) {
-    // Deterministic fallback: offer general consultation + human.
+    // Deterministic fallback: the clinic's directions with their doctors,
+    // general consultation, and a human — no guessing from symptoms.
     return (
       `${NOT_DIAGNOSIS_DISCLAIMER}\n\n` +
-      `Klinikamizda quyidagi yo‘nalishlar mavjud:\n` +
-      specialties.map((s) => `• ${s.name}`).join("\n") +
+      `Klinikamizdagi yo‘nalishlar va shifokorlar:\n\n` +
+      directoryLines(knowledge) +
       `\n\nQaysi biri sizga mos kelishini bilmasangiz, “Umumiy konsultatsiya”ga yozilishingiz mumkin. ` +
-      `Ishonchingiz komil bo‘lmasa, operatorlarimiz yordam beradi — “Operator bilan bog‘lanish” tugmasini bosing.`
+      `Ishonchingiz komil bo‘lmasa, operatorlarimiz yordam beradi — “👤 Operator bilan bog‘lanish” tugmasini bosing. ` +
+      `Qabulga yozilish uchun “📅 Qabulga yozilish” tugmasini bosing.`
     );
   }
 
@@ -82,8 +94,8 @@ export async function suggestNavigation(clinicId: string, userInput: string): Pr
     });
     return (
       `${NOT_DIAGNOSIS_DISCLAIMER}\n\n` +
-      `Klinikamizda quyidagi yo‘nalishlar mavjud:\n` +
-      specialties.map((s) => `• ${s.name}`).join("\n") +
+      `Klinikamizdagi yo‘nalishlar va shifokorlar:\n\n` +
+      directoryLines(knowledge) +
       `\n\nQaysi biri mos kelishini bilmasangiz, “Umumiy konsultatsiya”ga yozilishingiz yoki operatorlarimiz bilan bog‘lanishingiz mumkin.`
     );
   }

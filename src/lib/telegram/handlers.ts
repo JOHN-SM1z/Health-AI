@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { adminChatIds, env } from "@/lib/env";
 import { getClinicById } from "@/lib/clinics/context";
+import { getClinicContact } from "@/lib/clinics/contact";
 import { getOrCreatePatient } from "@/lib/patients/identity";
 import { getOrCreateConversation, appendMessage, conversationIsHeld, updateConversationState } from "@/lib/telegram/store";
 import { sendTelegramMessage, getTelegramFileUrl } from "@/lib/telegram/bot";
@@ -421,8 +422,14 @@ export async function handleMenuButton(opts: {
   }
 
   if (opts.button.includes("Manzil")) {
-    const text = clinic.address
-      ? `📍 Manzil: ${clinic.address}\n\n☎️ Telefon: ${clinic.phone ?? "ko‘rsatilmagan"}\n\nIsh vaqti haqida ma‘lumot uchun operatorlarga murojaat qiling.`
+    const contact = await getClinicContact(clinic);
+    const lines = [
+      contact.address ? `📍 Manzil: ${contact.address}` : "📍 Manzil hozircha kiritilmagan.",
+      contact.phone ? `☎️ Telefon: ${contact.phone}` : null,
+      contact.openingHours ? `🕘 Ish vaqti: ${contact.openingHours}` : null,
+    ].filter(Boolean);
+    const text = contact.address || contact.phone
+      ? lines.join("\n")
       : "Manzil hozircha kiritilmagan. Operatorlarimizga murojaat qiling.";
     await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
     return;
@@ -520,10 +527,14 @@ export async function requestHumanHandoff(opts: {
     actor: { actorType: "telegram" },
   });
 
+  const clinic = await getClinicById(opts.clinicId).catch(() => null);
+  const contact = clinic ? await getClinicContact(clinic) : null;
   await sendTelegramMessage(
     {
       chatId: opts.chatId,
-      text: "Operatorlarimiz siz bilan bog‘lanadi. Biroz kuting. ⏳\n\nOperator javob berguncha avtomatik xabarlar to‘xtatiladi.",
+      text:
+        "Operatorlarimiz siz bilan shu yerda bog‘lanadi. Biroz kuting. ⏳\n\nOperator javob berguncha avtomatik xabarlar to‘xtatiladi." +
+        (contact?.phone ? `\n\n☎️ Tezroq bog‘lanish uchun qo‘ng‘iroq qiling: ${contact.phone}` : ""),
       replyMarkup: buildHeldKeyboard(),
     },
     opts.clinicId,
