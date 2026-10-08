@@ -83,7 +83,7 @@ These are results on this branch (`claude/sharp-ptolemy-rl1rnc`) against a **loc
   clears that doctor's window in the local E2E database before running.
 - **Intermittent failure, observed once:** `multi-channel-booking.test.ts` failed once, in the first full run
   just after the local stack was restarted. It passed on its own and in 4 further full runs. Not reproduced and
-  not hidden; to watch.
+  not hidden; to watch. **Root cause found in Run 3** (below).
 
 ### Owner decisions applied
 
@@ -101,3 +101,67 @@ Everything listed under Run 1, plus:
 - Discounts and partial payment: no clinic rule.
 - Lab orders on the visit bill (Phase 3).
 - Screens that switch on `operating_mode`.
+
+## Run 3 — 2026-10-08 (laboratory on the visit bill, walk-in lab queue)
+
+| Gate | Result |
+|---|---|
+| Lint / types | 0 errors / 0 errors |
+| `npm test` | **1101 passed, 0 skipped** (117 files), twice in a row. Includes 7 lab-visit database tests and 2 lab-visit route tests. |
+| `full-db-setup.sql` | regenerated from 72 migrations; `--check` up to date |
+| Build | default build passed; app started |
+| Browser E2E | **21 scripts, 371 checks, all passed**. New: `lab-walk-in` 10/10. Every earlier script, all `lab-*` scripts included, passed unchanged. |
+
+| Script | Checks |
+|---|---|
+| referral-workflow | 84/84 |
+| booking-channels | 9/9 |
+| my-appointments | 6/6 |
+| staff-and-safety | 14/14 |
+| lab-configuration | 11/11 |
+| lab-ordering | 14/14 |
+| lab-collection | 15/15 |
+| lab-results | 11/11 |
+| lab-verification | 13/13 |
+| lab-history | 12/12 |
+| lab-documents | 12/12 |
+| lab-patient-results | 10/10 |
+| lab-import | 18/18 |
+| patient-merge | 14/14 |
+| lab-external | 13/13 |
+| lab-notifications | 7/7 |
+| lab-dashboards | 10/10 |
+| lab-ai-summary | 8/8 |
+| outpatient-journey | 25/25 |
+| lab-walk-in | 10/10 |
+| redteam-http | 55/55 |
+
+### Defects found and fixed in this run
+
+- **The intermittent `multi-channel-booking` failure (Run 2) has a cause, and it is fixed.**
+  - It failed twice in a row here, at the same line: its seed lookup `services … name = 'Terapevt qabuli'`
+    `.single()` found two rows.
+  - `menu-buttons.test.ts` (the bot menu work) created a second service with that name in its own test clinic.
+    Whenever both files ran at the same moment, every suite that looks the seed service up by name could fail.
+  - Fix: the menu test uses its own name. After the fix, two full runs had 0 failed and 0 skipped. The 11
+    "skipped" in the failing runs were that file's own tests after its setup failed, so they were not a pass.
+- **Cancelling a lab walk-in at reception left its tests in the lab's work queue.** Found in review before the
+  first commit. Cancelling now cancels the lab order too, and is refused once a sample is taken; there is a
+  database test for both.
+- **A finished consultation that still owed for tests a doctor ordered in it was listed under "other"** at the
+  kassa. The kassa now lists every visit that owes money under "To‘lov kutilmoqda". This is a screen grouping;
+  no automated check covers it.
+
+### Owner decisions applied
+
+- Walk-in lab queue first; lab slot booking waits for lab hours and per-slot capacity.
+- Tests are paid before the sample is taken, through the clinic's lab setting `paymentPolicy = before_collection`.
+  The pilot clinic must have it on (runbook §2).
+
+### Still not covered
+
+Everything listed under Runs 1 and 2, minus "lab orders on the visit bill", plus:
+- lab slot booking;
+- a lab queue number for tests a doctor orders during a consultation (they go through the lab's work queue);
+- printed labels and a generated lab report.
+
