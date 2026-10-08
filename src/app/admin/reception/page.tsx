@@ -26,7 +26,10 @@ type Match = {
 type Catalog = {
   clinic: { currency: string; operating_mode: string; queue_after_payment: boolean };
   doctors: Array<{ id: string; name: string; title: string | null; services: Array<{ id: string; name: string; price: number }> }>;
+  lab: { tests: Array<{ id: string; name: string; price: number }>; panels: Array<{ id: string; name: string; price: number }> };
 };
+/** The reception's "doctor" choice for a laboratory walk-in. */
+const LAB = "__lab__";
 type Visit = {
   id: string;
   status: string;
@@ -34,7 +37,8 @@ type Visit = {
   queueDate: string | null;
   arrivedAt: string;
   patient: { id: string; patientNumber: number; fullName: string | null };
-  doctor: { id: string; name: string };
+  kind: "doctor" | "lab";
+  doctor: { id: string; name: string } | null;
   balance: { charged: number; outstanding: number };
 };
 
@@ -59,6 +63,7 @@ export default function ReceptionPage() {
   // ---------- visit ----------
   const [doctorId, setDoctorId] = useState("");
   const [serviceIds, setServiceIds] = useState<string[]>([]);
+  const [panelIds, setPanelIds] = useState<string[]>([]);
   // One key per intended registration: a retry after a network error is the same request.
   const [key, setKey] = useState(newKey);
   const [saving, setSaving] = useState(false);
@@ -68,10 +73,15 @@ export default function ReceptionPage() {
   const [cancelling, setCancelling] = useState<Visit | null>(null);
   const [cancelReason, setCancelReason] = useState("");
 
+  const isLab = doctorId === LAB;
   const doctor = catalog.data?.doctors.find((d) => d.id === doctorId) ?? null;
+  // For a lab walk-in the "services" are lab tests (serviceIds) and panels (panelIds).
+  const options = useMemo(() => (isLab ? (catalog.data?.lab.tests ?? []) : (doctor?.services ?? [])), [isLab, catalog.data, doctor]);
   const total = useMemo(
-    () => (doctor?.services ?? []).filter((s) => serviceIds.includes(s.id)).reduce((sum, s) => sum + s.price, 0),
-    [doctor, serviceIds],
+    () =>
+      options.filter((s) => serviceIds.includes(s.id)).reduce((sum, s) => sum + s.price, 0) +
+      (isLab ? (catalog.data?.lab.panels ?? []).filter((p) => panelIds.includes(p.id)).reduce((sum, p) => sum + p.price, 0) : 0),
+    [options, serviceIds, isLab, catalog.data, panelIds],
   );
   const currency = catalog.data?.clinic.currency ?? "UZS";
 
@@ -96,6 +106,7 @@ export default function ReceptionPage() {
     setNp(EMPTY_NEW);
     setDoctorId("");
     setServiceIds([]);
+    setPanelIds([]);
     setMatches(null);
     setQ("");
     setDob("");
@@ -109,24 +120,21 @@ export default function ReceptionPage() {
     setDone(null);
     setSaving(true);
     try {
-      const body = {
-        key,
-        doctorId,
-        serviceIds,
-        ...(patient
-          ? { patientId: patient.id }
-          : {
-              newPatient: {
-                fullName: np.fullName,
-                dateOfBirth: np.dateOfBirth,
-                sex: np.sex || null,
-                phone: np.phone || null,
-                documentNumber: np.documentNumber || null,
-                pinfl: np.pinfl || null,
-              },
-            }),
-      };
-      await adminApi.post<{ visitId: string }>("/api/operations/arrivals", body);
+      const who = patient
+        ? { patientId: patient.id }
+        : {
+            newPatient: {
+              fullName: np.fullName,
+              dateOfBirth: np.dateOfBirth,
+              sex: np.sex || null,
+              phone: np.phone || null,
+              documentNumber: np.documentNumber || null,
+              pinfl: np.pinfl || null,
+            },
+          };
+      // A lab walk-in: tests (and panels) on the visit's bill; otherwise a doctor and services.
+      if (isLab) await adminApi.post<{ visitId: string }>("/api/operations/lab-arrivals", { key, testIds: serviceIds, panelIds, ...who });
+      else await adminApi.post<{ visitId: string }>("/api/operations/arrivals", { key, doctorId, serviceIds, ...who });
       const name = patient?.fullName ?? np.fullName;
       setDone(
         catalog.data?.clinic.queue_after_payment && total > 0
@@ -162,7 +170,7 @@ export default function ReceptionPage() {
     }
   };
 
-  const canRegister = !!doctorId && serviceIds.length > 0 && (patient !== null || (creating && np.fullName.trim().length >= 2 && !!np.dateOfBirth));
+  const canRegister = !!doctorId && serviceIds.length + panelIds.length > 0 && (patient !== null || (creating && np.fullName.trim().length >= 2 && !!np.dateOfBirth));
 
   return (
     <div className="flex flex-col gap-5">
@@ -286,18 +294,36 @@ export default function ReceptionPage() {
         </Card>
 
         <Card>
-          <p className="mb-3 font-display text-sm font-bold">2. Shifokor va xizmatlar</p>
+          <p className="mb-3 font-display text-sm font-bold">2. Shifokor yoki laboratoriya</p>
           <ASelect
             value={doctorId}
             onChange={(v) => {
               setDoctorId(v);
               setServiceIds([]);
+              setPanelIds([]);
             }}
             aria-label="Shifokor"
-            options={[{ value: "", label: "Shifokorni tanlang" }, ...(catalog.data?.doctors ?? []).map((d) => ({ value: d.id, label: d.title ? `${d.name} — ${d.title}` : d.name }))]}
+            options={[
+              { value: "", label: "Shifokorni tanlang" },
+              ...(catalog.data?.doctors ?? []).map((d) => ({ value: d.id, label: d.title ? `${d.name} — ${d.title}` : d.name })),
+              ...((catalog.data?.lab.tests.length ?? 0) > 0 ? [{ value: LAB, label: "Laboratoriya — tahlil topshirish" }] : []),
+            ]}
           />
-          <div className="mt-3 flex flex-col gap-1.5" role="group" aria-label="Xizmatlar">
-            {(doctor?.services ?? []).map((s) => (
+          {isLab && (catalog.data?.lab.panels.length ?? 0) > 0 && (
+            <div className="mt-3 flex flex-col gap-1.5" role="group" aria-label="Panellar">
+              {catalog.data!.lab.panels.map((p) => (
+                <label key={p.id} className="flex items-center justify-between gap-3 rounded-lg border border-hairline px-3 py-2 text-sm">
+                  <span className="flex items-center gap-2">
+                    <input type="checkbox" checked={panelIds.includes(p.id)} onChange={(e) => setPanelIds(e.target.checked ? [...panelIds, p.id] : panelIds.filter((x) => x !== p.id))} />
+                    {p.name} <span className="text-xs text-ink-muted">(panel)</span>
+                  </span>
+                  <span className="font-numeric text-xs text-ink-muted">{money(p.price, currency)}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          <div className="mt-3 flex flex-col gap-1.5" role="group" aria-label={isLab ? "Tahlillar" : "Xizmatlar"}>
+            {options.map((s) => (
               <label key={s.id} className="flex items-center justify-between gap-3 rounded-lg border border-hairline px-3 py-2 text-sm">
                 <span className="flex items-center gap-2">
                   <input
@@ -341,7 +367,7 @@ export default function ReceptionPage() {
                   <p className="font-medium">{v.patient.fullName}</p>
                   <p className="text-xs text-ink-muted">Karta № {v.patient.patientNumber}</p>
                 </td>
-                <td className="px-4 py-3">{v.doctor.name}</td>
+                <td className="px-4 py-3">{v.kind === "lab" ? "Laboratoriya" : v.doctor?.name}</td>
                 <td className="px-4 py-3">
                   <ABadge tone={VISIT_STATUS[v.status]?.tone}>{VISIT_STATUS[v.status]?.label ?? v.status}</ABadge>
                 </td>
@@ -422,7 +448,7 @@ export default function ReceptionPage() {
           }
         >
           <p className="text-sm">
-            {cancelling.patient.fullName} — {cancelling.doctor.name}. To‘langan pul bo‘lsa, avval kassada qaytariladi.
+            {cancelling.patient.fullName} — {cancelling.kind === "lab" ? "Laboratoriya" : cancelling.doctor?.name}. To‘langan pul bo‘lsa, avval kassada qaytariladi.
           </p>
           <AInput value={cancelReason} onChange={setCancelReason} placeholder="Sabab" aria-label="Bekor qilish sababi" />
         </AModal>

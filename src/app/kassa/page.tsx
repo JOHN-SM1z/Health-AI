@@ -16,15 +16,16 @@ import { Wallet } from "lucide-react";
  * and collected money is not profit.
  */
 
-type Charge = { id: string; serviceName: string; amount: number; status: "active" | "voided"; voidReason: string | null };
+type Charge = { id: string; serviceName: string; amount: number; status: "active" | "voided"; voidReason: string | null; isLabTest: boolean };
 type Balance = { charged: number; collected: number; refunded: number; outstanding: number; cashNet: number; terminalNet: number };
 type Visit = {
   id: string;
   status: string;
   queueNumber: number | null;
   arrivedAt: string;
+  kind: "doctor" | "lab";
   patient: { id: string; patientNumber: number; fullName: string | null };
-  doctor: { id: string; name: string };
+  doctor: { id: string; name: string } | null;
   balance: Balance;
   charges: Charge[];
 };
@@ -179,7 +180,7 @@ export default function KassaPage() {
         <div>
           <p className="font-semibold">{v.patient.fullName}</p>
           <p className="text-xs text-ink-muted">
-            Karta № {v.patient.patientNumber} · {v.doctor.name}
+            Karta № {v.patient.patientNumber} · {v.kind === "lab" ? "Laboratoriya" : v.doctor?.name}
             {v.queueNumber ? ` · navbat № ${v.queueNumber}` : ""}
           </p>
         </div>
@@ -194,11 +195,12 @@ export default function KassaPage() {
             </span>
             <span className="flex items-center gap-2">
               <span className="font-numeric">{money(c.amount, currency)}</span>
-              {c.status === "active" && mode === "due" && (
+              {c.status === "active" && mode === "due" && !c.isLabTest && (
                 <AButton size="sm" variant="ghost" onClick={() => setVoiding(c)}>
                   Olib tashlash
                 </AButton>
               )}
+              {c.status === "active" && c.isLabTest && <span className="text-[11px] text-ink-muted">tahlil — laboratoriyada bekor qilinadi</span>}
             </span>
           </li>
         ))}
@@ -217,8 +219,8 @@ export default function KassaPage() {
           <dd className="font-numeric">{money(v.balance.refunded, currency)}</dd>
         </div>
         <div>
-          <dt className="text-xs text-ink-muted">Qarz</dt>
-          <dd className="font-numeric font-semibold">{money(v.balance.outstanding, currency)}</dd>
+          <dt className="text-xs text-ink-muted">{v.balance.outstanding < 0 ? "Qaytarilishi kerak" : "Qarz"}</dt>
+          <dd className={`font-numeric font-semibold ${v.balance.outstanding < 0 ? "text-danger" : ""}`}>{money(Math.abs(v.balance.outstanding), currency)}</dd>
         </div>
       </dl>
       <div className="mt-3 flex flex-wrap justify-end gap-2">
@@ -242,8 +244,11 @@ export default function KassaPage() {
     </Card>
   );
 
-  const due = kassa.data?.open.filter((v) => v.balance.outstanding > 0) ?? [];
-  const others = [...(kassa.data?.open.filter((v) => v.balance.outstanding <= 0) ?? []), ...(kassa.data?.closed ?? [])];
+  // A finished consultation can still owe for tests the doctor ordered in it.
+  const all = [...(kassa.data?.open ?? []), ...(kassa.data?.closed ?? [])];
+  const isDue = (v: Visit) => v.balance.outstanding > 0 && v.status !== "cancelled";
+  const due = all.filter(isDue);
+  const others = all.filter((v) => !isDue(v));
 
   return (
     <div className="flex flex-col gap-5">

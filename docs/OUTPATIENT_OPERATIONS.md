@@ -1,7 +1,8 @@
 # Outpatient operations — how the pilot works
 
-This document covers the walk-in flow built for the outpatient pilot (migrations `20261007000001`–`03`). The rules
-come from the owner's decisions of 2026-10-07; nothing here invents a clinic policy. Where the clinic still has to
+This document covers the walk-in flow built for the outpatient pilot (migrations `20261007000001`–`03`, and
+`20261008000001` for the laboratory). The rules come from the owner's decisions of 2026-10-07 and 2026-10-08;
+nothing here invents a clinic policy. Where the clinic still has to
 decide, the section says so.
 
 ## The flow
@@ -33,14 +34,15 @@ find patient (№ / JSHSHIR /         itemized bill (server prices)       "Jonli
 
 ## Who may do what
 
-| Action | Owner | Manager | Admin | Receptionist | Cashier | Doctor |
-|---|---|---|---|---|---|---|
-| Register an arrival, create a patient | ✓ | ✓ | ✓ | ✓ | — | — |
-| Call or cancel at the desk | ✓ | ✓ | ✓ | ✓ | — | own patients: call only |
-| Take payment | ✓ | ✓ | ✓ | — | ✓ | — |
-| Refund (full or partial, reason required) | ✓ | ✓ | — | — | only with a grant | — |
-| Give or withdraw a cashier's refund grant | ✓ | ✓ | — | — | — | — |
-| Start or complete a consultation | — | — | — | — | — | the visit's own doctor |
+| Action | Owner | Manager | Admin | Receptionist | Cashier | Doctor | Lab staff |
+|---|---|---|---|---|---|---|---|
+| Register an arrival (doctor or laboratory), create a patient | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| Call or cancel at the desk | ✓ | ✓ | ✓ | ✓ | — | own patients: call only | lab visits: call only |
+| Take payment | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| Refund (full or partial, reason required) | ✓ | ✓ | — | — | only with a grant | — | — |
+| Give or withdraw a cashier's refund grant | ✓ | ✓ | — | — | — | — | — |
+| Start or complete a consultation | — | — | — | — | — | the visit's own doctor | — |
+| Start collection or complete a lab visit | — | — | — | — | — | — | ✓ |
 
 The API checks every rule, and the database checks it again. A browser cannot choose the clinic, the actor, a
 price, an amount owed or a payment status.
@@ -66,6 +68,42 @@ price, an amount owed or a payment status.
   - bank refunds. A refund here *records* that money was paid back; the cashier hands over cash or reverses
     on the terminal.
 
+## Laboratory (Phase 3)
+
+Owner decisions of 2026-10-08: a **walk-in lab queue** first, and tests are **paid before the sample is taken**.
+
+```
+Reception                          Kassa                              Laboratory (/lab)
+─────────                          ─────                              ─────────────────
+"Laboratoriya — tahlil topshirish"  the tests are lines of ONE bill    "Navbat": lab visits by number
+→ tick tests / panels               (prices frozen when ordered)      → Chaqirish (call)
+  (catalogue prices shown)          full payment → queue number       → Namuna olishni boshlash
+→ "Ro‘yxatga olish"                 → tests become collectable        → sample taken in the work
+                                                                         queue below, as before
+                                                                      → Yakunlash (complete)
+```
+
+- **One bill.** A lab walk-in creates the lab order as before and puts each test on the visit's bill. The order
+  gets no separate lab-kassa bill, so nothing is charged twice. Orders made outside a walk-in visit (for
+  example from a booked appointment) keep their own bill in `/admin/lab-kassa`.
+- **Paid before collection.** With the clinic's lab setting *payment before collection*
+  (`paymentPolicy = before_collection`), the tests stay "awaiting payment" until the bill is paid in full; payment
+  releases them. **The pilot clinic must have this setting on** (runbook).
+- **Tests a doctor orders during a walk-in consultation** go on that same visit's bill. The kassa shows the
+  added amount, even if the doctor has already completed the visit. These patients reach the lab through the
+  existing work queue; they do not get a separate lab queue number yet.
+- **Queue numbers** come from the same clinic-day counter as doctors' visits. The waiting-room screen shows
+  the laboratory as its own column, "Laboratoriya".
+- **Cancelling a test** happens in the laboratory, never at the kassa: the kassa has no "remove" button for a
+  test line. Cancelling voids its line on the bill automatically.
+  - If the test was not yet paid, the bill simply goes down.
+  - If it was paid, the kassa shows the amount as **"Qaytarilishi kerak"** (to give back) and a refund is
+    recorded there. This is the same rule as a cancelled paid lab order today. The plan had first proposed
+    refusing the cancel until refunded; that was not built, because the lab must be able to stop a test it
+    cannot perform.
+- **Cancelling a lab walk-in at reception** (nothing paid) also cancels its tests in the laboratory. Once a
+  sample has been taken, reception cannot cancel the visit; the lab rejects the sample or enters a result.
+
 ## Corrections
 
 | Mistake | What to do | What the system keeps |
@@ -75,6 +113,7 @@ price, an amount owed or a payment status.
 | Registered twice | The second registration for the same doctor is refused while the first is unfinished. A retry after a network error returns the first registration. | — |
 | Same person, second card | Refused when the passport, JSHSHIR, or name + date of birth match; reception is offered the existing card. Old duplicates are merged by the owner/administrator (patient merge). | Merge history; reversible |
 | Paid, then the patient left | Refund (owner/manager, or cashier with a grant), then cancel the visit | Both ledger rows; who authorized and who executed |
+| Wrong lab test ordered | Laboratory cancels the test (reason required); refund at the kassa if it was paid | The cancelled test, the voided line, any refund |
 
 Clinical records are never rewritten. A doctor's correction is a new record (existing rule).
 
@@ -92,7 +131,9 @@ patient who arrives as a walk-in for that doctor needs no acceptance: the visit 
   rules.
 - Named cashier shifts with opening and closing cash counts. Today totals are per clinic day.
 - SMS tickets (no SMS gateway contract) and MyID/OneID identity (no contract).
-- Lab orders billed through the visit's bill. Lab orders still have their own lab kassa (Phase 3).
+- Lab collection booking by time slot (needs lab hours and per-slot capacity from the clinic).
+- A lab queue number for tests a doctor orders during a consultation (they use the lab's work queue).
+- Printed specimen labels and a generated lab report (owner prefers digital; printer model unknown).
 - The waiting-room screen and the reception screen do not yet switch on `operating_mode`. Existing clinics are
   `mixed`: bookings keep working beside walk-ins.
 - Inpatient care (Phase 5) and payroll (out of scope).

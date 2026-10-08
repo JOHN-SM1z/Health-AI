@@ -380,7 +380,7 @@ async function processQueueTicketJob(
   const nextAttempts = job.attempts + 1;
   const { data: visit } = await supabase
     .from("visits")
-    .select("id, clinic_id, status, queue_date, queue_number, doctor_id, patients!inner(telegram_user_id), doctors!inner(name)")
+    .select("id, clinic_id, kind, status, queue_date, queue_number, doctor_id, patients!inner(telegram_user_id), doctors(name)")
     .eq("id", job.visit_id ?? "")
     .eq("clinic_id", job.clinic_id)
     .maybeSingle();
@@ -393,12 +393,14 @@ async function processQueueTicketJob(
     await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
     return "skipped";
   }
-  const { count: ahead } = await supabase
+  // The same queue: this doctor's, or the laboratory's.
+  let aheadQuery = supabase
     .from("visits")
     .select("id", { count: "exact", head: true })
     .eq("clinic_id", visit.clinic_id)
-    .eq("doctor_id", visit.doctor_id)
-    .in("status", ["waiting", "called"])
+    .in("status", ["waiting", "called"]);
+  aheadQuery = visit.doctor_id ? aheadQuery.eq("doctor_id", visit.doctor_id) : aheadQuery.eq("kind", "lab");
+  const { count: ahead } = await aheadQuery
     .or(`queue_date.lt.${visit.queue_date},and(queue_date.eq.${visit.queue_date},queue_number.lt.${visit.queue_number})`);
   const appUrl = resolveHttpsAppUrl(`/my-appointments?clinic=${encodeURIComponent(job.clinic_id)}`);
   const messageId = await sendTelegramMessage(
@@ -406,7 +408,7 @@ async function processQueueTicketJob(
       chatId: job.patient_telegram_user_id,
       text:
         `🎫 Navbat raqamingiz: ${visit.queue_number}\n\n` +
-        `👨‍⚕️ Shifokor: ${visit.doctors?.name ?? "Shifokor"}\n` +
+        (visit.kind === "lab" ? `🧪 Laboratoriya (tahlil topshirish)\n` : `👨‍⚕️ Shifokor: ${visit.doctors?.name ?? "Shifokor"}\n`) +
         `👥 Sizdan oldin: ${ahead ?? 0} bemor\n\n` +
         `Bu kelish tartibi, aniq qabul vaqti emas. Navbatingiz kelganda chaqirasiz.`,
       ...(appUrl ? { replyMarkup: { inline_keyboard: [[{ text: "📋 Navbatni kuzatish", web_app: { url: appUrl } }]] } } : {}),

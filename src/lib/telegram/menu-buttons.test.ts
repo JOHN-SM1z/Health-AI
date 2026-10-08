@@ -49,7 +49,8 @@ describeDb("bot menu buttons (real database)", () => {
     ]);
     await admin.from("services").insert([
       { clinic_id: clinic, name: "Kardiolog qabuli", price: 250000, duration_minutes: 30, active: true, sort_order: 1 },
-      { clinic_id: clinic, name: "Terapevt qabuli", price: 150000, duration_minutes: 20, active: true, sort_order: 2 },
+      // Not "Terapevt qabuli": other suites look the seed clinic's service up by that name.
+      { clinic_id: clinic, name: "Nevrolog qabuli", price: 150000, duration_minutes: 20, active: true, sort_order: 2 },
       { clinic_id: clinic, name: "Eski xizmat", price: 1000, duration_minutes: 10, active: false, sort_order: 3 },
     ]);
     // The owner's contact details, as saved under Sozlamalar.
@@ -70,7 +71,7 @@ describeDb("bot menu buttons (real database)", () => {
     await press("💰 Narxlar");
     const text = sent()[0];
     expect(text).toContain("Kardiolog qabuli — 250");
-    expect(text).toContain("Terapevt qabuli — 150");
+    expect(text).toContain("Nevrolog qabuli — 150");
     expect(text).toContain("UZS, 30 daq.");
     expect(text).not.toContain("Eski xizmat");
   });

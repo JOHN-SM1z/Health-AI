@@ -1442,6 +1442,7 @@ export type Database = {
       }
       lab_orders: {
         Row: {
+          visit_id: string | null
           appointment_id: string | null
           cancel_reason: string | null
           cancelled_at: string | null
@@ -1459,6 +1460,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          visit_id?: string | null
           appointment_id?: string | null
           cancel_reason?: string | null
           cancelled_at?: string | null
@@ -1476,6 +1478,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          visit_id?: string | null
           appointment_id?: string | null
           cancel_reason?: string | null
           cancelled_at?: string | null
@@ -3122,6 +3125,7 @@ export type Database = {
       }
       visit_charges: {
         Row: {
+          lab_order_item_id: string | null
           amount: number
           clinic_id: string
           created_at: string
@@ -3131,7 +3135,7 @@ export type Database = {
           idempotency_key: string | null
           patient_id: string
           quantity: number
-          service_id: string
+          service_id: string | null
           service_name: string
           status: string
           unit_price: number
@@ -3141,6 +3145,7 @@ export type Database = {
           voided_by: string | null
         }
         Insert: {
+          lab_order_item_id?: string | null
           amount: number
           clinic_id: string
           created_at?: string
@@ -3150,7 +3155,7 @@ export type Database = {
           idempotency_key?: string | null
           patient_id: string
           quantity?: number
-          service_id: string
+          service_id?: string | null
           service_name: string
           status?: string
           unit_price: number
@@ -3160,6 +3165,7 @@ export type Database = {
           voided_by?: string | null
         }
         Update: {
+          lab_order_item_id?: string | null
           amount?: number
           clinic_id?: string
           created_at?: string
@@ -3169,7 +3175,7 @@ export type Database = {
           idempotency_key?: string | null
           patient_id?: string
           quantity?: number
-          service_id?: string
+          service_id?: string | null
           service_name?: string
           status?: string
           unit_price?: number
@@ -3252,6 +3258,8 @@ export type Database = {
       }
       visits: {
         Row: {
+          lab_order_id: string | null
+          kind: string
           appointment_id: string | null
           arrived_at: string
           called_at: string | null
@@ -3260,7 +3268,7 @@ export type Database = {
           clinic_id: string
           completed_at: string | null
           created_by: string
-          doctor_id: string
+          doctor_id: string | null
           id: string
           idempotency_key: string
           patient_id: string
@@ -3273,6 +3281,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          lab_order_id?: string | null
+          kind?: string
           appointment_id?: string | null
           arrived_at?: string
           called_at?: string | null
@@ -3281,7 +3291,7 @@ export type Database = {
           clinic_id: string
           completed_at?: string | null
           created_by: string
-          doctor_id: string
+          doctor_id?: string | null
           id?: string
           idempotency_key: string
           patient_id: string
@@ -3294,6 +3304,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          lab_order_id?: string | null
+          kind?: string
           appointment_id?: string | null
           arrived_at?: string
           called_at?: string | null
@@ -3302,7 +3314,7 @@ export type Database = {
           clinic_id?: string
           completed_at?: string | null
           created_by?: string
-          doctor_id?: string
+          doctor_id?: string | null
           id?: string
           idempotency_key?: string
           patient_id?: string
@@ -3737,6 +3749,18 @@ export type Database = {
           p_method: string
           p_reason: string
           p_visit: string
+        }
+        Returns: Json
+      }
+      register_lab_arrival: {
+        Args: {
+          p_actor: string
+          p_clinic: string
+          p_key: string
+          p_new_patient: Json | null
+          p_panel_ids: string[]
+          p_patient: string | null
+          p_test_ids: string[]
         }
         Returns: Json
       }

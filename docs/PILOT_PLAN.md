@@ -76,7 +76,13 @@ Legend: **V** implemented and verified · **U** implemented, unverified · **M**
 |---|---|---|
 | Test catalogue, panels, reference ranges (clinic-entered) | V | Phases 2–4, `e2e/lab-configuration.mjs` |
 | Orders with several tests, by any clinic staff | V | Phase 5, `e2e/lab-ordering.mjs` |
-| Order payment, lab kassa | V | Phase 6 |
+| Order payment, lab kassa | V | Phase 6 (orders outside a walk-in visit keep this bill) |
+| Lab walk-in: reception registers tests, **one bill** at the kassa, lab queue number after full payment | V | `register_lab_arrival` (`20261008000001`); `lab-visits.test.ts`, `lab-visits-api.test.ts`, `e2e/lab-walk-in.mjs` |
+| Tests held until paid (owner 2026-10-08: paid before the sample is taken) | V / U | clinic lab setting `paymentPolicy = before_collection` releases the visit's tests on full payment; the pilot clinic must have this set (runbook) |
+| Tests a doctor orders in a walk-in consultation go on that visit's bill (no second bill) | V | trigger on `lab_orders` via the visit's consultation appointment; DB test. The patient reaches the lab through the existing work queue — no separate lab queue number for these yet (M) |
+| Lab queue run by lab staff (call, back to queue, start collection, complete) | V | `/lab` "Navbat"; waiting-room screen column "Laboratoriya" |
+| Test cancelled in the lab → its line leaves the bill; paid money shows "Qaytarilishi kerak" for a kassa refund | V | same as a cancelled paid lab order today; a lab line cannot be removed at the desk |
+| Lab walk-in cancelled at the desk → its tests are cancelled in the lab; refused once a sample is taken | V | `transition_visit` (`lab_sample_taken`) |
 | Specimen ids, collection, receipt, rejection, recollection | V | Phase 7, `e2e/lab-collection.mjs` |
 | Printed barcode labels | M | codes are on screen only; printer model unknown (B for printer choice) |
 | Manual result entry, partial results, flags from clinic ranges | V | Phase 8 |
@@ -84,7 +90,7 @@ Legend: **V** implemented and verified · **U** implemented, unverified · **M**
 | Release to patient (finalized only, verified Telegram identity) | V | Phase 12 |
 | Printable lab report | M | documents can be uploaded; no generated report |
 | Delivery jobs with status and retries | V (Telegram) / B (SMS) | Phase 16 |
-| Lab booking (collection slot) through the shared booking engine | M | booking engine is doctor-only today |
+| Lab booking (collection slot) through the shared booking engine | M (deferred) | owner 2026-10-08: walk-in lab queue first; slot booking once the clinic gives lab hours and per-slot capacity |
 | Verifier permissions, self-verification | V | setting `verifiers`; self-verification refused (owner decision O4) |
 | Critical-result escalation | B | deferred by owner decision; no thresholds invented |
 | Device connections | B | no inventory or interface manuals (`DEVICE_INTEGRATION_PLAN.md` on the codex branch) |
@@ -113,9 +119,10 @@ Legend: **V** implemented and verified · **U** implemented, unverified · **M**
 5. Phase 2d: corrections: wrong patient, wrong service or duplicate entry go through void and re-register,
    audited, never a rewrite.
 6. Phase 3:
-   - lab orders billed through the visit's charges;
-   - lab collection booking on the shared booking engine (booking ≠ lab order ≠ specimen ≠ queue ticket);
-   - printable labels and reports.
+   - **done:** lab orders billed through the visit's charges, walk-in lab queue (owner 2026-10-08);
+   - **later:** lab collection booking on the shared booking engine (booking ≠ lab order ≠ specimen ≠ queue
+     ticket), once the clinic gives lab hours and per-slot capacity;
+   - **later:** printable labels and reports (owner prefers digital; printer model unknown).
 7. Phase 4: pilot package: configuration checks, migration plan, backup/restore, onboarding, downtime,
    monitoring and rollback.
 
@@ -128,5 +135,6 @@ and SMS once contracts exist; cross-clinic history.
 - Service catalogue with current prices, and doctor–service assignments and hours.
 - Rules for discounts, partial payment, payment exceptions and refunds beyond the decided roles.
 - Whether payment is required before the queue ticket, before consultation, or neither.
-- Lab: approved report layout, label printer model, and the critical-result procedure.
+- Lab: approved report layout, label printer model, and the critical-result procedure. Lab opening hours and
+  per-slot capacity, before lab slot booking is built.
 - External contracts: MyID/OneID, SMS gateway, fiscal receipt/terminal provider.

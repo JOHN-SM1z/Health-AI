@@ -72,7 +72,7 @@ export default function LabKassaPage() {
 
   return (
     <div>
-      <PageHeader title="Laboratoriya kassasi" subtitle="Tahlil buyurtmalari to‘lovlari — summa buyurtmadagi narxlardan olinadi" />
+      <PageHeader title="Laboratoriya kassasi" subtitle="Tahlil buyurtmalari to‘lovlari — summa buyurtmadagi narxlardan olinadi. Qabulxonada ro‘yxatga olingan tashrif tahlillari asosiy kassada to‘lanadi." />
       <div className="mb-4 max-w-xs">
         <ASelect
           value={filter}

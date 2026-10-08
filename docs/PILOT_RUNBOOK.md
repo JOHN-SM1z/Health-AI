@@ -12,7 +12,8 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
 - **Missing in production:**
   - `20260930000006_tenant_integrity_hardening` (check whether it is present by name first);
   - the 21 laboratory migrations `20261005000001`–`021`;
-  - the outpatient migrations `20261007000001`–`003`.
+  - the outpatient migrations `20261007000001`–`003`;
+  - the laboratory-visit migration `20261008000001_lab_visits` (needs the laboratory migrations).
 - **The live app is `health-ai-w1vc.vercel.app`, which runs `main`.** This branch (PR #14) is not deployed.
 - **The scheduler secret is not aligned.** The Vault `health_ai_cron_secret` must equal `CRON_SECRET` on
   health-ai-w1vc. Reminders fail with 401 until it does.
@@ -27,6 +28,8 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
 | Refund grants: which cashiers, granted by whom | `/kassa` → "Kassirlarga qaytarish ruxsati" |
 | Discount, partial-payment and exception rules | **not built until decided** |
 | Lab verifiers, report layout, label printer, critical-result procedure | Phase 3 laboratory release |
+| Lab setting "Namuna faqat to‘lovdan keyin olinadi" (owner 2026-10-08: paid before the sample) | `/admin/lab` → To‘lov va namuna olish. Without it, lab walk-in tests are collectable before payment |
+| Lab opening hours and per-slot capacity | lab slot booking (not built yet) |
 | SMS gateway, MyID/OneID, fiscal receipt provider contracts | blocked features |
 
 ## 3. Release steps (when authorized)
@@ -37,7 +40,7 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
    - Write down the time and the backup id.
 2. **Rehearse on staging first.**
    - Staging project `qoupbbsspzfyjqfzykuk` has the schema up to the lab module.
-   - Apply `20261007000001`–`003` there by name, then run the acceptance checks in §5 against a staging
+   - Apply `20261007000001`–`003` and `20261008000001` there by name, then run the acceptance checks in §5 against a staging
      deployment.
 3. **Pre-flight on production (read-only):**
    - migration names present;
@@ -46,14 +49,17 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
 4. **Apply to production by name, one file per transaction:**
    - first, the lab files `20261005000001`–`021`, if the lab module is part of the release (decision needed);
    - then `20261007000001_operations_enums`, `20261007000002_outpatient_operations` and
-     `20261007000003_visit_actual_end`.
+     `20261007000003_visit_actual_end`;
+   - then, with the lab files, `20261008000001_lab_visits` (laboratory on the visit bill, lab queue).
    - Every existing clinic becomes `operating_mode = 'mixed'`, so bookings keep working.
 5. **Deploy the app** by merging the release branch into `main`; Vercel builds `health-ai-w1vc`. Then check
    that `/api/health` and `/login` respond.
 6. **Smoke test with a test patient,** then cancel and refund it:
    - registration → payment → queue number → doctor queue → complete;
    - the waiting-room screen `/queue/<clinic id>` shows the number;
-   - the patient's Telegram receives the ticket, if linked.
+   - the patient's Telegram receives the ticket, if linked;
+   - a lab walk-in with one test: one bill at the kassa, the test collectable only after payment, the lab
+     calls the number. Cancel the test in the lab and refund at the kassa.
 
 ## 4. Running the pilot
 
@@ -98,6 +104,11 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
 - [ ] An unfinished visit from yesterday is still in today's queue.
 - [ ] The waiting-room screen shows numbers only.
 - [ ] Day totals by method match the test payments.
+- [ ] A lab walk-in shows its tests as lines of one bill; `/admin/lab-kassa` shows no second bill for it.
+- [ ] The tests cannot be collected before full payment, and can be after.
+- [ ] The kassa cannot remove a test line. A test cancelled in the lab leaves the bill; if paid, the kassa shows
+      "Qaytarilishi kerak".
+- [ ] The waiting-room screen shows the lab's numbers under "Laboratoriya".
 
 ## 6. Monitoring (SQL, read-only; run daily during the pilot)
 
@@ -111,12 +122,18 @@ select status, count(*) from public.notification_jobs where type = 'queue_ticket
 -- Visits with money held but cancelled (should be 0: cancel requires refund first)
 select v.id from public.visits v join public.visit_transactions t on t.visit_id = v.id where v.status = 'cancelled'
  group by v.id having sum(case when t.kind = 'collection' then t.amount else -t.amount end) <> 0;
+-- Visit-billed lab tests still held although the visit owes nothing (should be 0)
+select i.id from public.lab_order_items i join public.lab_orders o on o.id = i.order_id
+ where o.visit_id is not null and i.status = 'ordered'
+   and (select outstanding from public.visit_balance(o.visit_id)) <= 0;
 ```
 
 ## 7. Rollback
 
 - **App:** in Vercel, promote the previous production deployment (instant).
 - **Database:** the outpatient migrations only add tables and columns, so the previous app version ignores them.
+  `20261008000001` also adds triggers on lab orders and payments; they act only on orders billed to a walk-in
+  visit, which an older app never creates.
   - Do **not** drop the tables: they hold real money records.
   - Rolling back the app is enough. Turn walk-in screens off by not linking staff to them, or restore the
     previous app.

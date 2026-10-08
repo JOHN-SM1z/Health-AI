@@ -5,6 +5,7 @@ import { logger } from "@/lib/logger";
 import type { StaffContext } from "@/lib/auth/staff";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 import type { Json } from "@/lib/supabase/database.types";
+import { ORDER_ERRORS } from "@/lib/labs/ordering";
 
 /**
  * Outpatient pilot — the server side of 20261007000002. Every write is one
@@ -32,6 +33,7 @@ const REFUSALS: Record<string, [number, string]> = {
   patient_merged: [409, "Bu karta asosiy kartaga birlashtirilgan — asosiy kartani tanlang"],
   patient_exists: [409, "Bu bemor allaqachon ro‘yxatda bor — mavjud kartani tanlang"],
   already_registered: [409, "Bemor bu shifokorga allaqachon ro‘yxatdan o‘tgan"],
+  already_registered_lab: [409, "Bemor laboratoriya navbatida allaqachon bor"],
   visit_not_found: [404, "Tashrif topilmadi"],
   visit_cancelled: [409, "Tashrif bekor qilingan"],
   stale: [409, "Ma’lumot o‘zgargan — sahifani yangilang"],
@@ -45,6 +47,8 @@ const REFUSALS: Record<string, [number, string]> = {
   charge_not_found: [404, "Xizmat qatori topilmadi"],
   refund_first: [409, "Avval to‘lovni qaytaring"],
   invalid_transition: [409, "Bu amalni hozir bajarib bo‘lmaydi"],
+  cancel_lab_test: [409, "Tahlil laboratoriyada bekor qilinadi — keyin u hisobdan avtomatik chiqadi"],
+  lab_sample_taken: [409, "Namuna allaqachon olingan — tashrifni bekor qilib bo‘lmaydi, laboratoriya hal qiladi"],
   // start_walk_in_consultation's booking-engine codes
   outside_working_hours: [409, "Hozir ish vaqtingiz emas"],
   time_blocked: [409, "Hozir sizda tanaffus yoki band vaqt belgilangan"],
@@ -168,9 +172,12 @@ export async function registerArrival(
   return { visitId: r.visit_id, replayed: r.replayed };
 }
 
-export type VisitCharge = { id: string; serviceName: string; amount: number; status: "active" | "voided"; voidReason: string | null };
+export type VisitCharge = { id: string; serviceName: string; amount: number; status: "active" | "voided"; voidReason: string | null; isLabTest: boolean };
 export type VisitSummary = {
   id: string;
+  /** "doctor": a consultation queue; "lab": the laboratory's walk-in queue (no doctor). */
+  kind: "doctor" | "lab";
+  labOrderId: string | null;
   status: VisitStatus;
   queueDate: string | null;
   queueNumber: number | null;
@@ -178,16 +185,22 @@ export type VisitSummary = {
   queuedAt: string | null;
   calledAt: string | null;
   patient: { id: string; patientNumber: number; fullName: string | null };
-  doctor: { id: string; name: string };
+  /** null for a laboratory visit. */
+  doctor: { id: string; name: string } | null;
   balance: Balance;
   charges: VisitCharge[];
 };
 
+/** What the queue is called on screens and tickets. */
+export const queueLabel = (v: { kind: string; doctor: { name: string } | null }) => (v.kind === "lab" ? "Laboratoriya" : (v.doctor?.name ?? "Shifokor"));
+
 const VISIT_SELECT =
-  "id, status, queue_date, queue_number, arrived_at, queued_at, called_at, patient_id, doctor_id, patients!inner(id, patient_number, full_name), doctors!inner(id, name), visit_charges(id, service_name, amount, status, void_reason, created_at)";
+  "id, kind, lab_order_id, status, queue_date, queue_number, arrived_at, queued_at, called_at, patient_id, doctor_id, patients!inner(id, patient_number, full_name), doctors(id, name), visit_charges(id, service_name, amount, status, void_reason, created_at, lab_order_item_id)";
 
 type VisitRow = {
   id: string;
+  kind: "doctor" | "lab";
+  lab_order_id: string | null;
   status: VisitStatus;
   queue_date: string | null;
   queue_number: number | null;
@@ -196,7 +209,7 @@ type VisitRow = {
   called_at: string | null;
   patients: { id: string; patient_number: number; full_name: string | null } | null;
   doctors: { id: string; name: string } | null;
-  visit_charges: Array<{ id: string; service_name: string; amount: number; status: "active" | "voided"; void_reason: string | null; created_at: string }> | null;
+  visit_charges: Array<{ id: string; service_name: string; amount: number; status: "active" | "voided"; void_reason: string | null; created_at: string; lab_order_item_id: string | null }> | null;
 };
 
 async function balances(visitIds: string[]): Promise<Map<string, Balance>> {
@@ -227,7 +240,7 @@ async function toSummaries(rows: VisitRow[]): Promise<VisitSummary[]> {
   return rows.map((r) => {
     const charges = [...(r.visit_charges ?? [])]
       .sort((a, b) => a.created_at.localeCompare(b.created_at))
-      .map((c) => ({ id: c.id, serviceName: c.service_name, amount: Number(c.amount), status: c.status, voidReason: c.void_reason }));
+      .map((c) => ({ id: c.id, serviceName: c.service_name, amount: Number(c.amount), status: c.status, voidReason: c.void_reason, isLabTest: c.lab_order_item_id !== null }));
     const b = money.get(r.id)!;
     b.charged = round2(charges.filter((c) => c.status === "active").reduce((s, c) => s + c.amount, 0));
     b.collected = round2(b.collected);
@@ -237,6 +250,8 @@ async function toSummaries(rows: VisitRow[]): Promise<VisitSummary[]> {
     b.outstanding = round2(b.charged - b.collected + b.refunded);
     return {
       id: r.id,
+      kind: r.kind,
+      labOrderId: r.lab_order_id,
       status: r.status,
       queueDate: r.queue_date,
       queueNumber: r.queue_number,
@@ -244,12 +259,15 @@ async function toSummaries(rows: VisitRow[]): Promise<VisitSummary[]> {
       queuedAt: r.queued_at,
       calledAt: r.called_at,
       patient: { id: r.patients!.id, patientNumber: Number(r.patients!.patient_number), fullName: r.patients!.full_name },
-      doctor: { id: r.doctors!.id, name: r.doctors!.name },
+      doctor: r.doctors ? { id: r.doctors.id, name: r.doctors.name } : null,
       balance: b,
       charges,
     };
   });
 }
+
+/** Two visits wait in the same queue: the same doctor's, or both the laboratory's. */
+const sameQueue = (a: VisitSummary, b: VisitSummary) => (a.kind === "lab" ? b.kind === "lab" : b.doctor?.id === a.doctor?.id && b.kind === "doctor");
 
 /** Queue order: earlier clinic day first, then number; unnumbered (awaiting payment) by arrival. */
 function queueOrder(a: VisitSummary, b: VisitSummary): number {
@@ -332,6 +350,45 @@ export async function voidVisitCharge(staff: Staff, chargeId: string, reason: st
     p_charge: chargeId,
     p_reason: reason,
   });
+}
+
+/**
+ * A laboratory walk-in: the patient (existing, or new — same duplicate rules),
+ * a lab order of the chosen tests/panels and a lab visit, in one database
+ * transaction. The tests become lines of the visit's bill (no separate lab
+ * bill); the lab queue number is issued on full payment.
+ */
+export async function registerLabArrival(
+  staff: Staff,
+  input: { key: string; patientId?: string | null; newPatient?: NewPatientInput | null; testIds: string[]; panelIds: string[] },
+): Promise<{ visitId: string; labOrderId: string | null; replayed: boolean }> {
+  const np = input.newPatient
+    ? {
+        full_name: input.newPatient.fullName,
+        date_of_birth: input.newPatient.dateOfBirth,
+        sex: input.newPatient.sex ?? null,
+        phone: input.newPatient.phone ?? null,
+        document_number: input.newPatient.documentNumber ?? null,
+        pinfl: input.newPatient.pinfl ?? null,
+      }
+    : null;
+  const { data, error } = await createAdminClient().rpc("register_lab_arrival", {
+    p_clinic: staff.clinicId,
+    p_actor: staff.profileId,
+    p_key: input.key,
+    p_patient: input.patientId ?? null,
+    p_new_patient: np as Json,
+    p_test_ids: input.testIds,
+    p_panel_ids: input.panelIds,
+  });
+  if (error) {
+    // create_lab_order's own refusals (no date of birth, inactive test, …).
+    const known = ORDER_ERRORS.find(([pattern]) => pattern.test(error.message ?? ""));
+    if (known && !error.hint) throw new ApiError(known[1], known[2], known[3]);
+    throw refusal(error, "register_lab_arrival");
+  }
+  const r = data as { visit_id: string; lab_order_id?: string; replayed: boolean };
+  return { visitId: r.visit_id, labOrderId: r.lab_order_id ?? null, replayed: r.replayed };
 }
 
 // ---------------------------------------------------------------------------
@@ -512,7 +569,7 @@ export async function publicQueue(clinicId: string): Promise<PublicQueue | null>
   if (!clinic || !clinic.is_active) return null;
   const { data, error } = await supabase
     .from("visits")
-    .select("status, queue_date, queue_number, doctors!inner(name)")
+    .select("kind, status, queue_date, queue_number, doctors(name)")
     .eq("clinic_id", clinicId)
     .in("status", ["waiting", "called"])
     .not("queue_number", "is", null)
@@ -521,10 +578,11 @@ export async function publicQueue(clinicId: string): Promise<PublicQueue | null>
     .limit(500);
   if (error) throw new ApiError(500, "Navbatni yuklab bo‘lmadi");
   const byDoctor = new Map<string, { called: number[]; waiting: number[] }>();
-  for (const v of (data ?? []) as unknown as Array<{ status: string; queue_number: number; doctors: { name: string } }>) {
-    const d = byDoctor.get(v.doctors.name) ?? { called: [], waiting: [] };
+  for (const v of (data ?? []) as unknown as Array<{ kind: string; status: string; queue_number: number; doctors: { name: string } | null }>) {
+    const name = queueLabel({ kind: v.kind, doctor: v.doctors });
+    const d = byDoctor.get(name) ?? { called: [], waiting: [] };
     (v.status === "called" ? d.called : d.waiting).push(v.queue_number);
-    byDoctor.set(v.doctors.name, d);
+    byDoctor.set(name, d);
   }
   return { clinicName: clinic.name, doctors: [...byDoctor.entries()].map(([name, d]) => ({ name, ...d })) };
 }
@@ -548,11 +606,11 @@ export async function patientQueuePositions(clinicId: string, patientIds: string
     visitId: v.id,
     status: v.status,
     queueNumber: v.queueNumber,
-    doctorName: v.doctor.name,
+    doctorName: queueLabel(v),
     ahead:
       v.queueNumber === null || !["waiting", "called"].includes(v.status)
         ? null
-        : all.filter((o) => o.doctor.id === v.doctor.id && o.id !== v.id && queueOrder(o, v) < 0).length,
+        : all.filter((o) => sameQueue(v, o) && o.id !== v.id && queueOrder(o, v) < 0).length,
     outstanding: v.balance.outstanding,
   }));
 }
