@@ -19,8 +19,18 @@ type Appointment = {
   payments: { status: string; amount: number; currency: string } | null;
 };
 
+type QueueTicket = {
+  visitId: string;
+  status: "awaiting_payment" | "waiting" | "called" | "in_progress" | "completed" | "cancelled";
+  queueNumber: number | null;
+  doctorName: string;
+  ahead: number | null;
+  outstanding: number;
+};
+
 type MyAppointmentsResponse = {
   appointments: Appointment[];
+  queue?: QueueTicket[];
   clinic?: { name: string; timezone: string };
 };
 
@@ -161,6 +171,15 @@ function MyAppointmentsInner() {
       </div>
       {error && <ErrorBanner message={error} />}
 
+      {(data?.queue ?? []).length > 0 && (
+        <section aria-label="Jonli navbat" className="flex flex-col gap-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--tg-hint,#8a9699)]">Jonli navbat</p>
+          {data!.queue!.map((t) => (
+            <QueueTicketCard key={t.visitId} t={t} />
+          ))}
+        </section>
+      )}
+
       <section aria-label="Kelgusi qabullar" className="flex flex-col gap-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-[var(--tg-hint,#8a9699)]">Kelgusi qabullar</p>
         {upcoming.length === 0 ? (
@@ -199,6 +218,37 @@ function MyAppointmentsInner() {
         </section>
       )}
     </div>
+  );
+}
+
+/** The digital queue ticket (no paper): arrival order, never a promised time. */
+function QueueTicketCard({ t }: { t: QueueTicket }) {
+  const label =
+    t.status === "awaiting_payment"
+      ? "Kassada to‘lovni kutmoqda"
+      : t.status === "called"
+        ? "Sizni chaqirishdi — shifokor xonasiga kiring"
+        : t.status === "in_progress"
+          ? "Qabulda"
+          : "Navbatda";
+  return (
+    <Card className={t.status === "called" ? "ring-2 ring-[var(--pine-deep)]" : ""}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs text-[var(--tg-hint,#8a9699)]">Navbat raqami</p>
+          <p className="font-display text-3xl font-bold text-[var(--tg-text,var(--foreground))]">{t.queueNumber ?? "—"}</p>
+        </div>
+        <Badge tone={t.status === "called" ? "green" : t.status === "awaiting_payment" ? "amber" : "blue"}>{label}</Badge>
+      </div>
+      <p className="mt-2 text-sm font-medium text-[var(--tg-text,var(--foreground))]">{t.doctorName}</p>
+      {t.ahead !== null && t.status === "waiting" && (
+        <p className="mt-1 text-xs text-[var(--tg-text,var(--foreground))]">Sizdan oldin: {t.ahead} bemor</p>
+      )}
+      {t.status === "awaiting_payment" && (
+        <p className="mt-1 text-xs text-[var(--tg-text,var(--foreground))]">Navbat raqami kassada to‘lovdan so‘ng beriladi.</p>
+      )}
+      <p className="mt-2 text-[11px] text-[var(--tg-hint,#8a9699)]">Bu kelish tartibi, aniq qabul vaqti emas.</p>
+    </Card>
   );
 }
 

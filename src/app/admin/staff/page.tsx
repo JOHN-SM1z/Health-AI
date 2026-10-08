@@ -5,7 +5,7 @@ import { UserCog } from "lucide-react";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ASelect, LoadingRow } from "@/components/admin/ui";
 import { adminApi, AdminApiError } from "@/lib/admin/client";
 
-type Role = "owner" | "admin" | "manager" | "receptionist" | "doctor" | "lab";
+type Role = "owner" | "admin" | "manager" | "receptionist" | "cashier" | "doctor" | "lab";
 type Member = { profileId: string; fullName: string; email: string | null; role: Role; isSelf: boolean; linkedDoctorName: string | null };
 
 const ROLE_LABELS: Record<Role, string> = {
@@ -13,11 +13,13 @@ const ROLE_LABELS: Record<Role, string> = {
   admin: "Administrator",
   manager: "Menejer",
   receptionist: "Qabulxona",
+  cashier: "Kassir",
   doctor: "Shifokor",
   lab: "Laboratoriya",
 };
 const ASSIGNABLE: Array<{ value: Exclude<Role, "owner">; label: string }> = [
   { value: "receptionist", label: ROLE_LABELS.receptionist },
+  { value: "cashier", label: ROLE_LABELS.cashier },
   { value: "doctor", label: ROLE_LABELS.doctor },
   { value: "lab", label: ROLE_LABELS.lab },
   { value: "manager", label: ROLE_LABELS.manager },

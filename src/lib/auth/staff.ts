@@ -57,7 +57,7 @@ export function isCallCenterStaff(ctx: StaffContext | null): boolean {
   return !!ctx && hasAnyRole(ctx.roles, ["manager", "receptionist"]);
 }
 
-const ADMIN_WORKSPACE_ROLES: StaffRole[] = ["owner", "admin", "manager", "receptionist", "cashier"];
+const ADMIN_WORKSPACE_ROLES: StaffRole[] = ["owner", "admin", "manager", "receptionist"];
 
 /**
  * Where a signed-in staff session belongs when it lands on the clinic
@@ -71,11 +71,19 @@ const ADMIN_WORKSPACE_ROLES: StaffRole[] = ["owner", "admin", "manager", "recept
  * them to their own working portal instead, mirroring the equivalent
  * doctor-only guard in doctor/layout.tsx.
  */
-export function adminWorkspaceRedirect(ctx: StaffContext): "/platform" | "/doctor" | "/lab" | null {
+export function adminWorkspaceRedirect(ctx: StaffContext): "/platform" | "/doctor" | "/lab" | "/kassa" | null {
   if (ctx.platformAdmin) return "/platform";
-  if (!hasAnyRole(ctx.roles, ADMIN_WORKSPACE_ROLES)) return hasAnyRole(ctx.roles, ["lab"]) ? "/lab" : "/doctor";
+  if (!hasAnyRole(ctx.roles, ADMIN_WORKSPACE_ROLES)) {
+    if (hasAnyRole(ctx.roles, ["cashier"])) return "/kassa";
+    return hasAnyRole(ctx.roles, ["lab"]) ? "/lab" : "/doctor";
+  }
   return null;
 }
+
+/** Roles that work the kassa (collect and, under the refund rules, refund). Reception is not one. */
+export const KASSA_ROLES: StaffRole[] = ["owner", "manager", "admin", "cashier"];
+/** Roles that register arrivals and run the live queue at the desk. */
+export const RECEPTION_ROLES: StaffRole[] = ["owner", "manager", "admin", "receptionist"];
 
 /**
  * Resolves the staff member's clinic context from the session.

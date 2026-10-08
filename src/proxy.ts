@@ -43,5 +43,6 @@ export const config = {
     "/admin/:path*",
     "/doctor/:path*",
     "/lab/:path*",
+    "/kassa/:path*",
   ],
 };

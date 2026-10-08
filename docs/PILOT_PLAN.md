@@ -34,14 +34,14 @@ Legend: **V** implemented and verified · **U** implemented, unverified · **M**
 |---|---|---|
 | Patient search by name/phone (staff) | V | `/admin/patients`, `src/app/api/admin/patients` tests |
 | Stable patient identifiers: PINFL, document number, DOB, sex stored | V | `20261005000001_patient_lab_identity.sql`; DOB/sex entry `patient-demographics.test.ts` |
-| Search by document number / PINFL + DOB with identity confirmation before selecting | M | no such search or confirmation step |
-| Human-readable patient number for the talon/registry | M | patients have only UUIDs |
-| Walk-in arrival registered in one transaction (patient, arrival, charge) | M | only doctor-started walk-in consultations exist (`start_walk_in_consultation`) |
-| Live queue (waiting/called/in progress/done) by doctor or department | M | |
-| Printable queue talon | M | no print view anywhere in the app |
-| Unfinished arrivals survive midnight | M | |
-| Duplicate-retry and concurrent-arrival safety | M | (booking engine has idempotency keys; arrivals do not exist yet) |
-| Walk-in / scheduled / mixed operation setting | M | today the clinic is booking-first |
+| Search by document number / PINFL + DOB with identity confirmation before selecting | V | `/admin/reception`; masked hints; confirmation tick required (`e2e/outpatient-journey.mjs`) |
+| Human-readable patient number | V | per-clinic `patients.patient_number`, immutable (`20261007000002`) |
+| Walk-in arrival registered in one transaction (patient, arrival, charges) | V | `register_arrival`; duplicate-identity refusal (`outpatient-operations.test.ts`) |
+| Live queue (awaiting payment / waiting / called / in progress) | V | reception board, doctor "Jonli navbat", 10 s refresh with stale warning |
+| Queue ticket — **digital, no paper** (owner 2026-10-07) | V / B | Telegram ticket job with real delivery status, Mini App position, waiting-room screen `/queue/[clinic]`; SMS **B** (no gateway contract) |
+| Unfinished arrivals survive midnight | V | listed regardless of day; number keeps its day (DB test) |
+| Duplicate-retry and concurrent-arrival safety | V | idempotency keys + clinic lock; 8 concurrent retries → 1 visit; 8 payments → distinct numbers |
+| Walk-in / scheduled / mixed operation setting | U | `clinics.operating_mode` stored (existing clinics `mixed`); screens do not yet switch on it |
 | Online identity via MyID / OneID | B | needs a UZINFOCOM / OneID contract, test credentials and documentation |
 | SMS queue notifications for patients without a smartphone | B | needs an SMS gateway contract and credentials; only Telegram exists |
 
@@ -49,13 +49,13 @@ Legend: **V** implemented and verified · **U** implemented, unverified · **M**
 | Workflow | Status | Evidence / gap |
 |---|---|---|
 | Server-controlled prices, price snapshot on the charge | V (appointments, lab orders) | booking engine resolves the amount; lab order lines snapshot prices (`lab-kassa.test.ts`) |
-| Itemized multi-service charges for a visit | M | appointment payment is one amount per appointment |
-| Charged / paid / refunded / outstanding shown separately | M | status only |
-| Cash vs card-terminal recorded once (no double count from two receipts) | M | manual payment has no method |
-| `cashier` role, distinct from registration | M | decided 2026-10-07 (`docs/decisions/2026-10-07-retention-tenancy-refunds.md`) |
-| Refunds: owner/manager, cashier only with a manager's grant, partial, with reason | M | today owner/admin, full only |
-| Concurrent payment/refund writes safe | U | `status-concurrency` tests cover status flips only |
-| Cashier totals by payment method (shift reconciliation) | M | |
+| Itemized multi-service charges for a visit | V | `visit_charges` with price snapshot; void-with-reason, never edit |
+| Charged / paid / refunded / outstanding shown separately | V | kassa cards |
+| Cash vs card-terminal recorded once (no double count from two receipts) | V | one ledger row per method per request, idempotent |
+| `cashier` role, distinct from registration | V | own `/kassa` workspace; reception refused at API and DB |
+| Refunds: owner/manager, cashier only with a manager's grant, partial, with reason | V (visits) / U (old appointment & lab-order payments still owner/admin full refunds) | grants with who-granted and who-executed |
+| Concurrent payment/refund writes safe | V | row lock + expected-outstanding; concurrent pay → 1, concurrent refunds never exceed collected |
+| Cashier totals by payment method (reconciliation) | V (per clinic day) / M (named shifts with opening/closing cash) | `/api/operations/kassa/totals` |
 | Discounts, partial payment, payment exceptions | B | no clinic policy supplied — not to be invented |
 | Fiscal receipts / card-terminal or Click/Payme integration | B | not implemented; only `manual` payment is production-usable |
 
@@ -63,10 +63,10 @@ Legend: **V** implemented and verified · **U** implemented, unverified · **M**
 | Workflow | Status | Evidence / gap |
 |---|---|---|
 | Doctor's own appointment queue | V | `/doctor`, booking/e2e tests |
-| Doctor's walk-in queue | M | depends on arrivals |
+| Doctor's walk-in queue | V | call / start (opens workspace, no second bill) / complete; slot ends at completion (`20261007000003`) |
 | Authorized history (own patient / referral), audited reads | V | `doctor_patient_access()`, `canDoctorAccessPatientClinicalData()`, `clinical-access.test.ts`, `e2e/referral-workflow.mjs` |
 | Clinician-authored, append-only records; corrections as new records | V | `clinical_records`, `clinical-records.test.ts` |
-| Referral grants the receiving doctor shared history **immediately**, no accept/start step | M (partial) | a pending referral is visible to the receiver, but the referring doctor's visit history opens only after `accepted`/`in_progress` (`doctor_patient_access`) |
+| Referral grants the receiving doctor shared history **immediately**, no accept/start step | V | pending shares history (`20261007000002`); starting a consultation *from a referral* still needs accept; a walk-in visit needs none |
 | Referral expiry/revocation ends access | V | `referral-lifecycle.test.ts` |
 | Printable consultation record / prescription | M | |
 | Cross-clinic history (Clinic A → B) | M | decided 2026-10-07; needs its own design (decision record §3) |

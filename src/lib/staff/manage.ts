@@ -16,7 +16,7 @@ import type { StaffRole } from "@/lib/auth/staff";
  * up — and an owner never changes or removes their own access.
  */
 
-export const ASSIGNABLE_ROLES = ["admin", "manager", "receptionist", "doctor", "lab"] as const satisfies readonly StaffRole[];
+export const ASSIGNABLE_ROLES = ["admin", "manager", "receptionist", "cashier", "doctor", "lab"] as const satisfies readonly StaffRole[];
 export type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];
 
 export type StaffMember = {

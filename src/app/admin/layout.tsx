@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { adminWorkspaceRedirect, getStaffContext, hasAnyRole, hasRole, isCallCenterStaff, canViewPaymentDynamics } from "@/lib/auth/staff";
+import { adminWorkspaceRedirect, getStaffContext, hasAnyRole, hasRole, isCallCenterStaff, canViewPaymentDynamics, KASSA_ROLES, RECEPTION_ROLES } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
-import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge, Activity } from "lucide-react";
+import { CalendarDays, DoorOpen, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge, Activity } from "lucide-react";
 import { labCan } from "@/lib/labs/permissions";
 import { NotificationBell } from "@/components/staff/notification-bell";
 
@@ -25,6 +25,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const nav = [
     { href: "/admin", label: "Bugun", icon: <LayoutDashboard className="h-4 w-4" />, show: true, exact: true },
+    { href: "/admin/reception", label: "Qabulxona", icon: <DoorOpen className="h-4 w-4" />, show: hasAnyRole(ctx.roles, RECEPTION_ROLES) },
+    { href: "/kassa", label: "Kassa", icon: <Wallet className="h-4 w-4" />, show: hasAnyRole(ctx.roles, KASSA_ROLES) },
     { href: "/admin/appointments", label: "Qabullar", icon: <ClipboardList className="h-4 w-4" />, show: true },
     { href: "/admin/calendar", label: "Kalendar", icon: <CalendarDays className="h-4 w-4" />, show: true },
     { href: "/admin/conversations", label: "Suhbatlar", icon: <MessagesSquare className="h-4 w-4" />, show: true },

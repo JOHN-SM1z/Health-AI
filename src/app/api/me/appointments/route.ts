@@ -6,6 +6,7 @@ import { handleApiError, ApiError, ok, fail } from "@/lib/api/errors";
 import { rateLimit, keyFromIp } from "@/lib/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { patientRecordIds } from "@/lib/patients/record-group";
+import { patientQueuePositions } from "@/lib/operations/outpatient";
 
 export const dynamic = "force-dynamic";
 
@@ -35,11 +36,12 @@ export async function POST(request: NextRequest) {
     if (!resolved) throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
 
     const supabase = createAdminClient();
+    // The person's visits across merged records (Phase 14).
+    const recordIds = await patientRecordIds(clinic.id, resolved.patient.id);
     const { data: appointments, error } = await supabase
       .from("appointments")
       .select("*, doctors(name, title), services(name, price, duration_minutes), payments(status, amount, currency, payment_url)")
-      // The person's visits across merged records (Phase 14).
-      .in("patient_id", await patientRecordIds(clinic.id, resolved.patient.id))
+      .in("patient_id", recordIds)
       .eq("clinic_id", clinic.id)
       .order("start_at", { ascending: false });
 
@@ -47,6 +49,8 @@ export async function POST(request: NextRequest) {
 
     return ok({
       appointments: appointments ?? [],
+      // Walk-in visits still open: the digital queue ticket and live position.
+      queue: await patientQueuePositions(clinic.id, recordIds),
       patient: { id: resolved.patient.id, fullName: resolved.patient.full_name },
       clinic: { name: clinic.name, timezone: clinic.timezone },
     });

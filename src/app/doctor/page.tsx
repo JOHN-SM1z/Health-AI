@@ -18,6 +18,7 @@ import {
 } from "@/lib/admin/client";
 import { localDayWindow } from "@/lib/time/local";
 import { ReferralDialog } from "@/components/doctor/referral-dialog";
+import { DoctorLiveQueue } from "@/components/operations/doctor-live-queue";
 import { LabSummaryPanel } from "@/components/doctor/lab-summary";
 
 const WEEKDAYS = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
@@ -159,6 +160,8 @@ export default function DoctorQueuePage() {
       />
 
       {error && <AError message={error} />}
+
+      <DoctorLiveQueue />
 
       {sentReferralId && (
         <Card className="mb-6 border-pine/30 bg-pine-tint/60">

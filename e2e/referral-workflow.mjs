@@ -84,12 +84,13 @@ async function run() {
   const [service] = await db`select id from public.services where clinic_id = ${clinic} and name = ${DEMO_NAMES.generalService}`;
 
   // Earlier runs' visits happening now would overlap this run's — from this
-  // script or any other (booking-channels books these demo doctors "now" too).
+  // script or any other (booking-channels and outpatient-journey use these
+  // demo doctors "now" too), completed ones included.
   // Both doctors exist only in the local E2E database (assertLocalOnly).
   await db`
     update public.appointments a set status = 'cancelled', cancelled_at = now(), cancelled_reason = 'E2E: an earlier run'
      where a.doctor_id in (${A.id}, ${B.id})
-       and a.status not in ('cancelled', 'no_show', 'completed')
+       and a.status not in ('cancelled', 'no_show')
        and tstzrange(a.start_at, a.end_at) && tstzrange(now() - interval '3 hours', now() + interval '3 hours')`;
 
   // Dr A's patient, in consultation with them now.

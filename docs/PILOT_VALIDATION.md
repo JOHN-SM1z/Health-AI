@@ -59,3 +59,45 @@ These are results on this branch (`claude/sharp-ptolemy-rl1rnc`) against a **loc
 - Production data: production has not been migrated beyond `20260930000005`, and its rows are not checked by
   these runs.
 - Clinic acceptance: no clinic staff have used this build.
+
+## Run 2 — 2026-10-08 (outpatient pilot: walk-in, kassa, queue, referrals)
+
+| Gate | Result |
+|---|---|
+| Lint / types | 0 errors / 0 errors |
+| `npm test` | **1092 passed, 0 skipped** (115 files). Includes 18 outpatient database tests and 4 outpatient route tests. |
+| Build | default build passed; app started |
+| Browser E2E | **20 scripts, 361 checks, all passed**. New: `outpatient-journey` 25/25. |
+
+### Defects found and fixed in this run
+
+- **A completed walk-in blocked the doctor's next patient.**
+  - The consultation appointment kept its full booked duration. Completed appointments still count in the
+    overlap rule, so the doctor got "slot taken" when starting the next queued patient.
+  - Fixed in `20261007000003_visit_actual_end.sql`: the appointment ends when the visit is completed.
+  - Regression test `outpatient-operations.test.ts`: it **fails with the old function and passes with the
+    fix**, checked by loading each function in turn.
+- **The kassa page requested the refund-permission list as a cashier** and got a 403. The page now asks only
+  when the server says the user may manage grants.
+- **Test isolation:** `referral-workflow` and `outpatient-journey` both use the demo doctor "now". Each now
+  clears that doctor's window in the local E2E database before running.
+- **Intermittent failure, observed once:** `multi-channel-booking.test.ts` failed once, in the first full run
+  just after the local stack was restarted. It passed on its own and in 4 further full runs. Not reproduced and
+  not hidden; to watch.
+
+### Owner decisions applied
+
+- Queue number after full payment.
+- Full payment only (cash and terminal split allowed).
+- A new cashier role. Refunds: owner/manager, or a cashier with a manager's grant; admin cannot refund.
+- No paper ticket: Telegram, the waiting-room screen and the Mini App instead.
+- Referral history shared without an accept step.
+
+### Still not covered
+
+Everything listed under Run 1, plus:
+- SMS tickets: no gateway.
+- Named cashier shifts.
+- Discounts and partial payment: no clinic rule.
+- Lab orders on the visit bill (Phase 3).
+- Screens that switch on `operating_mode`.

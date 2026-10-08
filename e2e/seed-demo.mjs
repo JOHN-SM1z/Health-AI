@@ -10,6 +10,7 @@
 //   owner@e2e.local         owner (manages staff)
 //   lab@e2e.local           lab staff (sample processing)
 //   lab2@e2e.local          second lab staff member (second-person verification)
+//   cashier@e2e.local       cashier (kassa: collects; refunds only with a manager's grant)
 //
 // All with the password in e2e/lib.mjs. Both doctors work 00:00–23:59 every
 // day, and the clinic's timezone is one where it is daytime when the seed
@@ -73,6 +74,7 @@ try {
   await staff(DEMO.owner, "Klinika Egasi", "owner");
   await staff(DEMO.lab, "Laborant", "lab");
   await staff(DEMO.lab2, "Laborant Ikki", "lab");
+  await staff(DEMO.cashier, "Kassir", "cashier");
   console.log("E2E demo clinic and staff ready");
 } finally {
   await db.end({ timeout: 5 });

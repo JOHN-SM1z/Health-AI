@@ -419,6 +419,25 @@ describeDb("outpatient operations — database layer", () => {
     expect(after.status).toBe("completed");
   });
 
+  it("after completing one walk-in the doctor can start the next queued patient at once (the slot ends when the visit does)", async () => {
+    if (minutesToClinicMidnight() < 8) return;
+    const first = await register({ patient: await newPatient(), doctor: doctors.c });
+    const second = await register({ patient: await newPatient(), doctor: doctors.c });
+    for (const r of [first, second]) await pay(r.visit_id, [{ method: "cash", amount: 150000 }], 150000);
+    const start = (visit: string) =>
+      asServer((tx) => tx<{ r: { appointment_id: string } }[]>`select public.start_visit_consultation(${clinicA}, ${profiles.drC}, ${visit}, 'waiting') as r`);
+    const [{ r: a }] = await start(first.visit_id);
+    // Let the clock pass the first consultation's start minute, as a real visit does.
+    await sql`update public.appointments set start_at = start_at - interval '2 minutes', end_at = end_at - interval '2 minutes' where id = ${a.appointment_id}`;
+    await transition(first.visit_id, "in_progress", "completed", profiles.drC);
+    const [ended] = await sql<{ status: string; ends_now: boolean }[]>`
+      select status, end_at <= now() + interval '1 second' as ends_now from public.appointments where id = ${a.appointment_id}`;
+    expect(ended).toEqual({ status: "completed", ends_now: true });
+    // The 5-minute service booked for the first patient no longer blocks the second.
+    const [{ r: b }] = await start(second.visit_id);
+    expect(b.appointment_id).toEqual(expect.any(String));
+  });
+
   it("a waiting walk-in gives its doctor access (own relationship) before the consultation starts", async () => {
     const patient = await newPatient();
     await register({ patient, doctor: doctors.c });
