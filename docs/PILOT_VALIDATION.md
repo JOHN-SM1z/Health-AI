@@ -165,3 +165,35 @@ Everything listed under Runs 1 and 2, minus "lab orders on the visit bill", plus
 - a lab queue number for tests a doctor orders during a consultation (they go through the lab's work queue);
 - printed labels and a generated lab report.
 
+## Run 4 — 2026-10-08 (one-step reception lookup, Telegram queue follow-up)
+
+| Gate | Result |
+|---|---|
+| Database | rebuilt from scratch with `supabase db reset` (74 migrations), then the owner account and E2E demo seeded as CI does |
+| Lint / types | 0 errors / 0 errors |
+| `npm test` | **1114 passed, 0 skipped** (120 files). New: 5 follow-link database tests, including 8 concurrent claims with exactly 1 winner; 2 bot tests on the real database; webhook routing; follow-link roles; search exact/mismatch; `dd.mm.yyyy` parsing. |
+| `full-db-setup.sql` | regenerated from 74 migrations; `--check` up to date |
+| Build | default build passed; app started |
+| Browser E2E | **21 scripts, 378 checks, all passed**. `outpatient-journey` is now 32/32 (was 25). After a last one-line change to the QR component, the app was rebuilt and `outpatient-journey` (32/32) and `lab-walk-in` (10/10) were run again. |
+
+### Defects found and fixed in this run
+
+- **Tenant integrity.** `visit_followers.token_id` referenced the tokens table without `clinic_id`. The
+  existing tenant-integrity suite caught it; the reference is now `(token_id, clinic_id)`.
+- **Queue messages could arrive up to 15 minutes late.** The scheduled notification worker runs every
+  15 minutes, so a queue ticket or "you are called" could sit that long. They are now delivered right
+  after the payment, registration or call. Jobs are still claimed atomically, so the scheduled run never
+  sends one twice.
+- **A false statement was required at reception.** The reception tick "I checked the document" was
+  browser-only and required even for a patient without a document. It is removed (owner: no physical
+  check).
+
+### What these runs do **not** cover
+
+- **Real Telegram delivery.** The E2E sends a correctly signed, simulated Telegram update to the webhook,
+  and checks that the follower and the "you are called" job are recorded. Messages to the stand-in bot do
+  not reach Telegram. The runbook's acceptance check with the clinic's real bot and a test phone is the
+  only proof of delivery.
+- **MyID / OneID** (no contract) and SMS.
+- **Earlier runs:** everything listed under Runs 1–3.
+
