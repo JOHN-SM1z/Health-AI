@@ -1,14 +1,19 @@
 // The outpatient pilot journey in real browsers against the built app and a
 // LOCAL Supabase stack (e2e/seed-demo.mjs), with real logins:
-//   reception identifies (new patient, then the returning one with identity
-//   confirmation), registers, and cannot take money →
-//   the cashier takes a split cash/terminal payment and the queue number
-//   appears (no paper: the waiting-room screen and the patient's Telegram) →
-//   the doctor calls, starts and completes from their live queue →
+//   reception types the passport and the date of birth (dd.mm.yyyy) — no card
+//   yet, so the new-patient form opens with both filled in; next time the
+//   same two open the card at once; a wrong date of birth is caught; a patient
+//   without a document is taken by name ("Hujjat yo‘q — davom etish") →
+//   reception cannot take money →
+//   the cashier takes a split cash/terminal payment; the queue number and a
+//   Telegram QR appear (no paper) → opening the QR link in the clinic's bot
+//   follows that visit's queue (simulated Telegram update; no patient card) →
+//   the doctor calls ("you are called" is queued for the follower), starts
+//   and completes from their live queue →
 //   a partial refund is refused for the cashier until the manager grants it,
 //   and the ledger records who authorized and who executed it.
 // Rerunnable: run-unique patient identity.
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { chromium } from "playwright";
 import { BASE, DEMO, DEMO_NAMES, assertLocalOnly, connect, createReport, runFixture, signIn } from "./lib.mjs";
 
@@ -20,6 +25,8 @@ const { suffix } = runFixture();
 
 const PATIENT = `Yo‘lchiyev Sardor ${suffix}`;
 const DOC = `AD${String(Date.now()).slice(-7)}`;
+const FOLLOWER = 970_000_000 + (Date.now() % 1_000_000);
+let insertedIntegration = null;
 
 async function run() {
   const [reception] = await db`select sr.clinic_id from auth.users u join public.staff_roles sr on sr.profile_id = u.id where u.email = ${DEMO.reception}`;
@@ -42,6 +49,15 @@ async function run() {
   await db`update public.visits set status = 'cancelled', cancelled_at = now(), cancel_reason = 'E2E: an earlier run'
            where doctor_id = ${doctor.id} and status in ('awaiting_payment', 'waiting', 'called')
              and not exists (select 1 from public.visit_transactions t where t.visit_id = visits.id)`;
+  // The clinic's bot, for the kassa's Telegram QR (a local stand-in: nothing reaches Telegram).
+  let [bot] = await db`select telegram_bot_token, telegram_username from public.clinic_telegram_integrations where clinic_id = ${clinic} and enabled and status = 'active'`;
+  if (!bot) {
+    const token = `${Date.now() % 1_000_000}:E2E${suffix}${"q".repeat(24)}`;
+    await db`insert into public.clinic_telegram_integrations ${db({ clinic_id: clinic, telegram_bot_token: token, telegram_bot_id: Date.now() % 1_000_000_000, telegram_username: `e2e_q_${suffix}_bot`, telegram_bot_name: "E2E", status: "active", enabled: true, validated_at: new Date() })}
+             on conflict (clinic_id) do nothing`;
+    insertedIntegration = clinic;
+    [bot] = await db`select telegram_bot_token, telegram_username from public.clinic_telegram_integrations where clinic_id = ${clinic}`;
+  }
 
   const browser = await chromium.launch();
   let visitId = "";
@@ -53,14 +69,14 @@ async function run() {
       await page.getByRole("link", { name: "Qabulxona" }).first().click();
       await page.waitForURL(/\/admin\/reception$/);
       await page.getByLabel("Bemorni qidirish").fill(DOC);
-      await page.getByRole("button", { name: "Qidirish" }).click();
-      await page.getByText("Topilmadi.").waitFor();
-      check(true, "reception searches by passport number first — not found");
-
-      await page.getByRole("button", { name: "Yangi bemor" }).click();
+      await page.getByLabel("Tug‘ilgan sana (kk.oo.yyyy)").fill("12.04.1991");
+      await page.getByRole("button", { name: "Topish" }).click();
+      await page.getByText("Bu hujjat bilan karta yo‘q").waitFor();
+      check(
+        (await page.getByLabel("Pasport / ID raqami").inputValue()) === DOC && (await page.getByLabel("Tug‘ilgan sana", { exact: true }).inputValue()) === "12.04.1991",
+        "passport + date of birth with no card: the new-patient form opens with both filled in",
+      );
       await page.getByLabel("F.I.Sh.").fill(PATIENT);
-      await page.getByLabel("Tug‘ilgan sana", { exact: true }).fill("1991-04-12");
-      await page.getByLabel("Pasport / ID raqami").fill(DOC);
       await page.getByLabel("Telefon").fill("+998 90 555 66 77");
       await page.getByLabel("Shifokor").selectOption({ label: `${DEMO_NAMES.referrer} — Terapevt` });
       await page.getByRole("group", { name: "Xizmatlar" }).getByText(DEMO_NAMES.generalService).click();
@@ -68,29 +84,45 @@ async function run() {
       await page.getByText(/ro‘yxatga olindi\. Bemorni kassaga yo‘naltiring/).waitFor();
       check(true, "a new patient is registered in one step and sent to the kassa");
 
-      const [visit] = await db`select v.id, v.status, v.queue_number, p.patient_number from public.visits v join public.patients p on p.id = v.patient_id
+      const [visit] = await db`select v.id, v.status, v.queue_number, p.patient_number, p.date_of_birth::text as dob from public.visits v join public.patients p on p.id = v.patient_id
                                where v.clinic_id = ${clinic} and p.document_number = ${DOC}`;
       visitId = visit.id;
+      check(visit.dob === "1991-04-12", "the date of birth typed as dd.mm.yyyy is stored as that date");
       check(visit.status === "awaiting_payment" && visit.queue_number === null, "no queue number before payment");
       const queueRow = page.getByRole("row", { name: new RegExp(PATIENT) });
       await queueRow.waitFor();
       check(await queueRow.getByText("Kassada to‘lov kutilmoqda").isVisible(), "the live queue shows the patient waiting for the kassa");
 
-      // Returning patient: found by passport, selected only after confirming identity.
+      // Returning patient: passport + date of birth open the card at once — no tick, no dialog.
       await page.getByLabel("Bemorni qidirish").fill(DOC.toLowerCase());
-      await page.getByRole("button", { name: "Qidirish" }).click();
-      await page.getByRole("button", { name: "Tanlash" }).first().click();
-      const dialog = page.getByRole("dialog", { name: "Shaxsini tasdiqlang" });
-      const select = dialog.getByRole("button", { name: "Tanlash" });
-      check(await select.isDisabled(), "selecting a found patient needs the identity confirmation first");
-      await dialog.getByRole("checkbox").check();
-      await select.click();
-      await page.getByText(`Karta № ${visit.patient_number} · 1991-04-12`).waitFor();
+      await page.getByLabel("Tug‘ilgan sana (kk.oo.yyyy)").fill("12/04/1991");
+      await page.getByRole("button", { name: "Topish" }).click();
+      await page.getByText(`Karta № ${visit.patient_number} · 12.04.1991`).waitFor();
+      check(
+        (await page.getByText("Hujjat va tug‘ilgan sana bo‘yicha topildi").isVisible()) && (await page.getByRole("dialog").count()) === 0,
+        "a returning patient's card opens straight from passport + date of birth",
+      );
       await page.getByLabel("Shifokor").selectOption({ label: `${DEMO_NAMES.referrer} — Terapevt` });
       await page.getByRole("group", { name: "Xizmatlar" }).getByText(DEMO_NAMES.generalService).click();
       await page.getByRole("button", { name: "Ro‘yxatga olish" }).click();
       await page.getByText("Bemor bu shifokorga allaqachon ro‘yxatdan o‘tgan").waitFor();
       check(true, "a duplicate registration with the same doctor is refused");
+
+      // The right passport with a wrong date of birth: caught, and the card is not shown.
+      await page.getByRole("button", { name: "O‘zgartirish" }).click();
+      await page.getByLabel("Bemorni qidirish").fill(DOC);
+      await page.getByLabel("Tug‘ilgan sana (kk.oo.yyyy)").fill("13.04.1991");
+      await page.getByRole("button", { name: "Topish" }).click();
+      await page.getByText(/tug‘ilgan sana mos emas/).waitFor();
+      check((await page.getByText(`Karta № ${visit.patient_number} ·`).count()) === 0, "a wrong date of birth does not open the card");
+
+      // No document with them: found by name, taken without one.
+      await page.getByLabel("Bemorni qidirish").fill(PATIENT);
+      await page.getByLabel("Tug‘ilgan sana (kk.oo.yyyy)").fill("");
+      await page.getByRole("button", { name: "Topish" }).click();
+      await page.getByRole("button", { name: "Hujjat yo‘q — davom etish" }).first().click();
+      await page.getByText("Hujjatsiz tanlandi").waitFor();
+      check(true, "a patient without a document is taken by name with 'Hujjat yo‘q — davom etish'");
 
       // Reception cannot take money, even by calling the API directly.
       // (context.request shares the session cookies; deliberate refusals stay out of the page console.)
@@ -132,6 +164,26 @@ async function run() {
       const notice = page.getByText(/Navbat raqami: (\d+)/);
       await notice.waitFor();
       queueNumber = Number((await notice.textContent()).match(/Navbat raqami: (\d+)/)[1]);
+      const qr = page.locator("figure[data-follow-url]");
+      await qr.waitFor();
+      const followUrl = await qr.getAttribute("data-follow-url");
+      check(/^https:\/\/t\.me\/[A-Za-z0-9_]+\?start=v_[A-Za-z0-9_-]{32}$/.test(followUrl ?? ""), "after payment the kassa shows a Telegram QR for following the queue");
+
+      // The patient opens it in the clinic's bot (a simulated, correctly signed Telegram update).
+      const start = new URL(followUrl).searchParams.get("start");
+      const hook = await fetch(`${BASE}/api/telegram/webhook?bot=${bot.telegram_username}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": createHmac("sha256", process.env.TELEGRAM_WEBHOOK_SECRET ?? "").update(bot.telegram_bot_token).digest("hex"),
+        },
+        body: JSON.stringify({ update_id: Date.now() % 2_000_000_000, message: { message_id: 1, chat: { id: FOLLOWER, type: "private" }, from: { id: FOLLOWER, first_name: "E2E" }, text: `/start ${start}` } }),
+      });
+      const followers = await db`select 1 from public.visit_followers where visit_id = ${visitId} and telegram_user_id = ${FOLLOWER}`;
+      check(hook.status === 200 && followers.length === 1, "opening the QR link in the clinic's bot follows this visit's queue");
+      const [{ cards }] = await db`select count(*)::int as cards from public.patients where telegram_user_id = ${FOLLOWER}`;
+      check(cards === 0, "following the queue creates no patient card and links no identity");
+
       const rows = await db`select kind, method, amount from public.visit_transactions where visit_id = ${visitId} order by method`;
       check(rows.length === 2 && Number(rows[0].amount) === 50000 && rows[0].method === "cash" && Number(rows[1].amount) === 100000, "one ledger row per method — recorded once");
       const [v] = await db`select status, queue_number from public.visits where id = ${visitId}`;
@@ -161,6 +213,8 @@ async function run() {
       await item.getByRole("button", { name: "Chaqirish" }).click();
       await item.getByText("Chaqirildi").waitFor();
       check(true, "the doctor calls the patient");
+      const calls = await db`select 1 from public.notification_jobs where visit_id = ${visitId} and type = 'queue_called' and patient_telegram_user_id = ${FOLLOWER}`;
+      check(calls.length === 1, "the call queues 'you are called' for the Telegram follower (delivery itself needs the real bot)");
       const nearMidnight = (() => {
         const local = new Date(Date.now() + 5 * 3_600_000);
         return 24 * 60 - (local.getUTCHours() * 60 + local.getUTCMinutes()) < 8;
@@ -221,6 +275,7 @@ try {
 } catch (e) {
   code = report.abort(e);
 } finally {
+  if (insertedIntegration) await db`delete from public.clinic_telegram_integrations where clinic_id = ${insertedIntegration}`.catch(() => {});
   await db.end({ timeout: 5 });
 }
 process.exit(code);

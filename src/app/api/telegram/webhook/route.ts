@@ -14,6 +14,8 @@ import {
   requestHumanHandoff,
 } from "@/lib/telegram/handlers";
 import { answerCallbackQuery } from "@/lib/telegram/bot";
+import { handleQueueFollowStart, handleQueueStatus } from "@/lib/telegram/queue-follow";
+import { QUEUE_STATUS_CALLBACK } from "@/lib/operations/queue-messages";
 
 export const dynamic = "force-dynamic";
 // 120s, not the 60s default: the voice-message pipeline (handleVoiceConsent)
@@ -161,6 +163,14 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
 
     const text = message.text?.trim() ?? "";
 
+    // The kassa's QR: "/start v_<token>" follows that visit's queue only —
+    // no patient card is created or linked for it.
+    const follow = /^\/start\s+v_(\S+)$/.exec(text);
+    if (follow) {
+      await handleQueueFollowStart({ clinicId, chatId, telegramUserId: from.id, token: follow[1] });
+      return;
+    }
+
     if (text.startsWith("/")) {
       const command = text.split(" ")[0];
       await handleTelegramCommand({ clinicId, chatId, from, command });
@@ -206,6 +216,10 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
     }
     if (data.startsWith("voice_wrong:")) {
       await handleVoiceWrong({ clinicId, chatId, telegramUserId: from.id, voiceMessageId: data.split(":")[1] });
+      return;
+    }
+    if (data === QUEUE_STATUS_CALLBACK) {
+      await handleQueueStatus({ clinicId, chatId, telegramUserId: from.id });
       return;
     }
     if (data === "contact_operator") {

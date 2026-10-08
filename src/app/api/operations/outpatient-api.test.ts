@@ -176,6 +176,16 @@ describeDb("outpatient pilot — routes", () => {
     const dup = await registerNew(`Boshqa ism ${suffix}`, { documentNumber: "AC1234567" });
     expect(dup).toMatchObject({ status: 409, body: { code: "patient_exists", details: { patientId: matches[0].id } } });
 
+    // The owner's one-step lookup: passport + date of birth → exactly this card.
+    const exact = (await read(await searchPatients(new NextRequest("http://x?q=AC1234567&dob=1990-05-06")))).body.data!;
+    expect(exact).toMatchObject({ exact: true, dobMismatch: false });
+    expect((exact.patients as Array<{ id: string }>).map((p) => p.id)).toEqual([matches[0].id]);
+    // The right passport with another date of birth: reported, and the card is not shown.
+    const wrong = (await read(await searchPatients(new NextRequest("http://x?q=AC1234567&dob=1991-05-06")))).body.data!;
+    expect(wrong).toEqual({ patients: [], exact: false, dobMismatch: true });
+    // An unknown passport: nothing, so reception opens the new-patient form.
+    expect((await read(await searchPatients(new NextRequest("http://x?q=AC7654321&dob=1990-05-06")))).body.data).toEqual({ patients: [], exact: false, dobMismatch: false });
+
     // Another clinic's reception finds nothing of clinic A.
     as(people.receptionB, "receptionist", clinicB);
     expect(((await read(await searchPatients(new NextRequest("http://x?q=AC1234567")))).body.data!.patients as unknown[]).length).toBe(0);

@@ -7,6 +7,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { resolveHttpsAppUrl } from "@/lib/telegram/bots";
 // The one approved gateway from patient-facing code to lab results (Phase 12).
 import { loadLabOrderNotice, loadLabResultNotice } from "@/lib/labs/patient-results";
+import { queueCalledText, queueStatusButton, queueTicketText } from "@/lib/operations/queue-messages";
 
 
 const MESSAGE_TEMPLATES: Record<
@@ -53,6 +54,8 @@ const MESSAGE_TEMPLATES: Record<
   lab_result_corrected: () => "",
   // Built by processQueueTicketJob from the visit, not an appointment.
   queue_ticket: () => "",
+  // Built by processQueueCalledJob from the visit.
+  queue_called: () => "",
 };
 
 type AppointmentContext = {
@@ -154,8 +157,8 @@ export async function processDueNotificationJobs(
         continue;
       }
 
-      if (job.type === "queue_ticket") {
-        const outcome = await processQueueTicketJob(supabase, job);
+      if (job.type === "queue_ticket" || job.type === "queue_called") {
+        const outcome = job.type === "queue_ticket" ? await processQueueTicketJob(supabase, job) : await processQueueCalledJob(supabase, job);
         if (outcome === "sent") sent += 1;
         else if (outcome === "failed") failed += 1;
         continue;
@@ -368,53 +371,53 @@ async function processLabOrderCancelledJob(
   return "retry";
 }
 
-/**
- * The patient's digital queue ticket (no paper talon). Sent only while the
- * visit is still waiting or called, and only to the visit's own patient's
- * verified Telegram chat. States arrival order, never a time.
- */
-async function processQueueTicketJob(
-  supabase: ReturnType<typeof createAdminClient>,
-  job: ClaimedJob,
-): Promise<"sent" | "failed" | "skipped" | "retry"> {
-  const nextAttempts = job.attempts + 1;
-  const { data: visit } = await supabase
+type QueueVisit = {
+  id: string;
+  clinic_id: string;
+  kind: string;
+  status: string;
+  queue_date: string | null;
+  queue_number: number | null;
+  doctor_id: string | null;
+  patients: { telegram_user_id: number | null } | null;
+  doctors: { name: string } | null;
+};
+
+async function loadQueueVisit(supabase: ReturnType<typeof createAdminClient>, job: ClaimedJob): Promise<QueueVisit | null> {
+  const { data } = await supabase
     .from("visits")
     .select("id, clinic_id, kind, status, queue_date, queue_number, doctor_id, patients!inner(telegram_user_id), doctors(name)")
     .eq("id", job.visit_id ?? "")
     .eq("clinic_id", job.clinic_id)
     .maybeSingle();
-  if (!visit || visit.queue_number === null || !["waiting", "called"].includes(visit.status)) {
-    await markJob(job.id, "skipped", nextAttempts, "visit no longer waiting", supabase);
-    return "skipped";
-  }
-  const patientChat = visit.patients?.telegram_user_id ?? null;
-  if (!job.patient_telegram_user_id || patientChat === null || Number(patientChat) !== Number(job.patient_telegram_user_id)) {
-    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
-    return "skipped";
-  }
-  // The same queue: this doctor's, or the laboratory's.
-  let aheadQuery = supabase
-    .from("visits")
+  return (data as QueueVisit | null) ?? null;
+}
+
+/**
+ * A queue message goes only to the visit's own patient's linked Telegram, or
+ * to a Telegram user who follows this visit (scanned its QR at the kassa,
+ * 20261008000003). Anyone else — a card re-linked, a follower gone — is skipped.
+ */
+async function isQueueRecipient(supabase: ReturnType<typeof createAdminClient>, visit: QueueVisit, chat: number | null): Promise<"patient" | "follower" | null> {
+  if (!chat) return null;
+  const own = visit.patients?.telegram_user_id ?? null;
+  if (own !== null && Number(own) === Number(chat)) return "patient";
+  const { count } = await supabase
+    .from("visit_followers")
     .select("id", { count: "exact", head: true })
+    .eq("visit_id", visit.id)
     .eq("clinic_id", visit.clinic_id)
-    .in("status", ["waiting", "called"]);
-  aheadQuery = visit.doctor_id ? aheadQuery.eq("doctor_id", visit.doctor_id) : aheadQuery.eq("kind", "lab");
-  const { count: ahead } = await aheadQuery
-    .or(`queue_date.lt.${visit.queue_date},and(queue_date.eq.${visit.queue_date},queue_number.lt.${visit.queue_number})`);
-  const appUrl = resolveHttpsAppUrl(`/my-appointments?clinic=${encodeURIComponent(job.clinic_id)}`);
-  const messageId = await sendTelegramMessage(
-    {
-      chatId: job.patient_telegram_user_id,
-      text:
-        `🎫 Navbat raqamingiz: ${visit.queue_number}\n\n` +
-        (visit.kind === "lab" ? `🧪 Laboratoriya (tahlil topshirish)\n` : `👨‍⚕️ Shifokor: ${visit.doctors?.name ?? "Shifokor"}\n`) +
-        `👥 Sizdan oldin: ${ahead ?? 0} bemor\n\n` +
-        `Bu kelish tartibi, aniq qabul vaqti emas. Navbatingiz kelganda chaqirasiz.`,
-      ...(appUrl ? { replyMarkup: { inline_keyboard: [[{ text: "📋 Navbatni kuzatish", web_app: { url: appUrl } }]] } } : {}),
-    },
-    job.clinic_id,
-  );
+    .eq("telegram_user_id", chat);
+  return (count ?? 0) > 0 ? "follower" : null;
+}
+
+/** Records a send, or schedules the retry; the job stays claimed by this worker until then. */
+async function finishQueueSend(
+  supabase: ReturnType<typeof createAdminClient>,
+  job: ClaimedJob,
+  messageId: number | null,
+  nextAttempts: number,
+): Promise<"sent" | "failed" | "retry"> {
   if (messageId !== null) {
     try {
       await supabase
@@ -434,6 +437,77 @@ async function processQueueTicketJob(
   }
   await markJob(job.id, "pending", nextAttempts, "send failed, retrying", supabase);
   return "retry";
+}
+
+/**
+ * The patient's digital queue ticket (no paper talon). Sent only while the
+ * visit is still waiting or called, and only to the visit's own patient's
+ * verified Telegram chat. States arrival order, never a time. (A follower
+ * gets the ticket from the bot the moment they scan the QR.)
+ */
+async function processQueueTicketJob(
+  supabase: ReturnType<typeof createAdminClient>,
+  job: ClaimedJob,
+): Promise<"sent" | "failed" | "skipped" | "retry"> {
+  const nextAttempts = job.attempts + 1;
+  const visit = await loadQueueVisit(supabase, job);
+  if (!visit || visit.queue_number === null || !["waiting", "called"].includes(visit.status)) {
+    await markJob(job.id, "skipped", nextAttempts, "visit no longer waiting", supabase);
+    return "skipped";
+  }
+  if ((await isQueueRecipient(supabase, visit, job.patient_telegram_user_id)) !== "patient") {
+    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    return "skipped";
+  }
+  // The same queue: this doctor's, or the laboratory's.
+  let aheadQuery = supabase
+    .from("visits")
+    .select("id", { count: "exact", head: true })
+    .eq("clinic_id", visit.clinic_id)
+    .in("status", ["waiting", "called"]);
+  aheadQuery = visit.doctor_id ? aheadQuery.eq("doctor_id", visit.doctor_id) : aheadQuery.eq("kind", "lab");
+  const { count: ahead } = await aheadQuery
+    .or(`queue_date.lt.${visit.queue_date},and(queue_date.eq.${visit.queue_date},queue_number.lt.${visit.queue_number})`);
+  const appUrl = resolveHttpsAppUrl(`/my-appointments?clinic=${encodeURIComponent(job.clinic_id)}`);
+  const messageId = await sendTelegramMessage(
+    {
+      chatId: job.patient_telegram_user_id!,
+      text: queueTicketText({ queueNumber: visit.queue_number, lab: visit.kind === "lab", doctorName: visit.doctors?.name ?? null, ahead: ahead ?? 0 }),
+      ...(appUrl ? { replyMarkup: { inline_keyboard: [[{ text: "📋 Navbatni kuzatish", web_app: { url: appUrl } }]] } } : {}),
+    },
+    job.clinic_id,
+  );
+  return finishQueueSend(supabase, job, messageId, nextAttempts);
+}
+
+/**
+ * "You are called" (20261008000003): to the patient's linked Telegram and to
+ * the visit's followers. Sent only while the number is still being called —
+ * once the patient is in, or was sent back to the queue, it is stale.
+ */
+async function processQueueCalledJob(
+  supabase: ReturnType<typeof createAdminClient>,
+  job: ClaimedJob,
+): Promise<"sent" | "failed" | "skipped" | "retry"> {
+  const nextAttempts = job.attempts + 1;
+  const visit = await loadQueueVisit(supabase, job);
+  if (!visit || visit.queue_number === null || visit.status !== "called") {
+    await markJob(job.id, "skipped", nextAttempts, "visit no longer called", supabase);
+    return "skipped";
+  }
+  if (!(await isQueueRecipient(supabase, visit, job.patient_telegram_user_id))) {
+    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    return "skipped";
+  }
+  const messageId = await sendTelegramMessage(
+    {
+      chatId: job.patient_telegram_user_id!,
+      text: queueCalledText({ queueNumber: visit.queue_number, lab: visit.kind === "lab", doctorName: visit.doctors?.name ?? null }),
+      replyMarkup: { inline_keyboard: [[queueStatusButton]] },
+    },
+    job.clinic_id,
+  );
+  return finishQueueSend(supabase, job, messageId, nextAttempts);
 }
 
 /**

@@ -195,6 +195,50 @@ Still to define in the cross-clinic design document:
 - the exact "current treating relationship" rule, and how long it lasts;
 - what counts as "appropriate clinical information".
 
+## Identity at the desk and the Telegram queue (owner, 2026-10-08)
+
+**Decisions**
+1. **No physical ID check and no face step inside Health AI.** A patient in pain is never slowed down by
+   identity.
+2. **The walk-in flow.**
+   - Reception types the passport/ID number (for example `AB1234567`) or JSHSHIR, and the date of birth as
+     `dd.mm.yyyy`.
+   - The patient's card opens.
+   - Reception registers what the patient needs.
+   - The patient pays at the kassa.
+   - The patient follows the queue in the clinic's Telegram bot, with status updates.
+3. **A returning patient without a document** is taken with "Hujjat yo‘q — davom etish".
+4. **"Verified" means verified by MyID (or OneID) once it is integrated.**
+   - An ID and DOB that anyone types in are a lookup key, not verification. Staff do not "verify" by looking
+     at a document.
+   - The automatic cross-clinic link (follow-up §3) therefore uses MyID-verified identifiers only. Until
+     MyID, it uses the patient's confirmation in Telegram.
+5. **The Telegram QR at the kassa follows that one visit's queue only.** That means the number, how many are
+   ahead, and "you are called".
+   - It does not link the Telegram account to the card. Records and lab results are not reachable through
+     it, even if someone else scans it.
+   - The patient scans a new QR for each visit until MyID links identity.
+
+**What is built (`20261008000002`–`03`)**
+- **Reception:**
+  - passport or JSHSHIR + DOB opens exactly one card;
+  - with no card, the new-patient form opens with both filled in;
+  - a wrong DOB is reported and the card is not shown;
+  - the previous mandatory "I checked the document" tick is removed.
+- **Following the queue in Telegram:**
+  - one-time links stored only as a hash, valid 24 hours, claimed once by one Telegram user;
+  - `visit_followers` grants status updates for one visit;
+  - "you are called" (`queue_called`) goes to the linked patient and every follower, delivered right after the
+    call;
+  - "🔄 Navbatim" answers with the live position.
+
+**Not built**
+- **The MyID adapter.** It needs the contract, API and test credentials. When it exists, it fills a
+  first-time patient's name, JSHSHIR and sex at reception's no-card step, and records the verification.
+- Whether MyID offers a lookup by passport + DOB without the person present (its web flow includes a face
+  check) is for MyID/UZINFOCOM to confirm. Health AI does not query state registries on its own.
+- **Unchanged:** the urgent-care message and admin escalation.
+
 ## Proposed order of work
 
 1. Retention hardening (cascade → restrict, with tests). Small, no behaviour change for users.

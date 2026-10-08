@@ -1,7 +1,7 @@
 # Outpatient operations — how the pilot works
 
-This document covers the walk-in flow built for the outpatient pilot (migrations `20261007000001`–`03`, and
-`20261008000001` for the laboratory). The rules come from the owner's decisions of 2026-10-07 and 2026-10-08;
+This document covers the walk-in flow built for the outpatient pilot (migrations `20261007000001`–`03`,
+`20261008000001` for the laboratory, and `20261008000002`–`03` for following the queue in Telegram). The rules come from the owner's decisions of 2026-10-07 and 2026-10-08;
 nothing here invents a clinic policy. Where the clinic still has to
 decide, the section says so.
 
@@ -10,12 +10,13 @@ decide, the section says so.
 ```
 Reception (/admin/reception)        Kassa (/kassa)                     Doctor (/doctor)
 ───────────────────────────        ──────────────                     ────────────────
-find patient (№ / JSHSHIR /         itemized bill (server prices)       "Jonli navbat": own patients
- passport / phone / name)           charged · paid · refunded · due      in queue order
-→ confirm identity (tick)           take FULL payment, cash and/or     → Chaqirish (call)
-  or create a new patient             card terminal (split allowed)     → Qabulni boshlash (start):
-→ doctor + services                 → queue number issued                 opens the patient card;
-→ "Ro‘yxatga olish"                  (Telegram ticket, hall screen)      notes are written as usual
+passport or JSHSHIR + date of      itemized bill (server prices)       "Jonli navbat": own patients
+ birth (dd.mm.yyyy) → card opens    charged · paid · refunded · due      in queue order
+ (no card → new-patient form;       take FULL payment, cash and/or     → Chaqirish (call) — the
+  no document → by name,              card terminal (split allowed)       patient's Telegram is told
+  "Hujjat yo‘q — davom etish")      → queue number + Telegram QR       → Qabulni boshlash (start):
+→ doctor + services                   (patient scans it: the queue        opens the patient card;
+→ "Ro‘yxatga olish"                    in the bot; hall screen)           notes are written as usual
   (no money at reception)                                               → Yakunlash (complete)
 ```
 
@@ -23,7 +24,15 @@ find patient (№ / JSHSHIR /         itemized bill (server prices)       "Jonli
   Telegram ticket say so.
 - **No paper ticket** (owner decision). The patient gets the number by:
   - the kassa saying it aloud;
-  - a Telegram message, if the patient's Telegram account is linked (verified identity only);
+  - **the Telegram QR on the kassa screen** after payment (also "Telegram QR" in reception's queue).
+    - The patient scans it with the phone camera. The clinic's bot sends the ticket, then **"you are
+      called"** when the number is called.
+    - "🔄 Navbatim" shows the live position.
+    - The QR follows **this visit's queue only**. It does not link the Telegram account to the card, and
+      records or results cannot be reached through it, even if someone else scans it.
+    - It works once, for one Telegram user, for 24 hours. A new QR replaces an unused one.
+  - a Telegram message, if the patient's own Telegram account is already linked to the card (they booked
+    through the bot);
   - the waiting-room screen `/queue/<clinic id>`, which shows numbers and doctor names only — never a patient
     name;
   - the Mini App page "Mening qabullarim", which shows the live position.
@@ -31,6 +40,24 @@ find patient (№ / JSHSHIR /         itemized bill (server prices)       "Jonli
   visit is queued at registration.
 - **Unfinished visits stay in the queue across midnight.** Their number keeps its day; they are listed before
   the new day's numbers.
+
+## Finding the patient (owner, 2026-10-08)
+
+- **Type the passport/ID number (`AB1234567`) or JSHSHIR, and the date of birth as `dd.mm.yyyy`.** Dots,
+  slashes or dashes all work.
+  - **One card matches both:** it opens at once.
+  - **No card:** the new-patient form opens with the document and date filled in. Type the name, then
+    register.
+  - **The document matches but the date of birth does not:** reception is told, and the card is not shown.
+    Ask the patient again; this catches a wrong patient or a typo.
+- **No document with them** (for example a patient in pain): search by name, phone or card number, check the
+  date of birth by asking, and take the card with **"Hujjat yo‘q — davom etish"**. Care is never held up by
+  identity.
+- **There is no physical document check and no face check in Health AI.**
+  - A typed ID is a lookup key, not verification.
+  - Identity is verified by MyID once it is integrated. That needs a contract, and MyID is not a pilot
+    blocker.
+  - With MyID, a first-time patient's name and JSHSHIR will fill in at the no-card step.
 
 ## Who may do what
 
@@ -41,6 +68,7 @@ find patient (№ / JSHSHIR /         itemized bill (server prices)       "Jonli
 | Take payment | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Refund (full or partial, reason required) | ✓ | ✓ | — | — | only with a grant | — | — |
 | Give or withdraw a cashier's refund grant | ✓ | ✓ | — | — | — | — | — |
+| Show a visit's Telegram QR | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Start or complete a consultation | — | — | — | — | — | the visit's own doctor | — |
 | Start collection or complete a lab visit | — | — | — | — | — | — | ✓ |
 

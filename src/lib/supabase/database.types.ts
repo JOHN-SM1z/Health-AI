@@ -3256,6 +3256,69 @@ export type Database = {
           },
         ]
       }
+      visit_follow_tokens: {
+        Row: {
+          claimed_at: string | null
+          claimed_by_telegram_user_id: number | null
+          clinic_id: string
+          created_at: string
+          created_by: string
+          expires_at: string
+          id: string
+          token_hash: string
+          visit_id: string
+        }
+        Insert: {
+          claimed_at?: string | null
+          claimed_by_telegram_user_id?: number | null
+          clinic_id: string
+          created_at?: string
+          created_by: string
+          expires_at: string
+          id?: string
+          token_hash: string
+          visit_id: string
+        }
+        Update: {
+          claimed_at?: string | null
+          claimed_by_telegram_user_id?: number | null
+          clinic_id?: string
+          created_at?: string
+          created_by?: string
+          expires_at?: string
+          id?: string
+          token_hash?: string
+          visit_id?: string
+        }
+        Relationships: []
+      }
+      visit_followers: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          id: string
+          telegram_user_id: number
+          token_id: string
+          visit_id: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          id?: string
+          telegram_user_id: number
+          token_id: string
+          visit_id: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          telegram_user_id?: number
+          token_id?: string
+          visit_id?: string
+        }
+        Relationships: []
+      }
       visits: {
         Row: {
           lab_order_id: string | null
@@ -3794,6 +3857,23 @@ export type Database = {
         }
         Returns: Json
       }
+      claim_visit_follow_token: {
+        Args: {
+          p_clinic: string
+          p_telegram_user_id: number
+          p_token_hash: string
+        }
+        Returns: Json
+      }
+      create_visit_follow_token: {
+        Args: {
+          p_actor: string
+          p_clinic: string
+          p_token_hash: string
+          p_visit: string
+        }
+        Returns: Json
+      }
       transition_visit: {
         Args: {
           p_actor: string
@@ -3961,6 +4041,7 @@ export type Database = {
         | "lab_result_corrected"
         | "lab_order_cancelled"
         | "queue_ticket"
+        | "queue_called"
       patient_sex: "female" | "male"
       payment_provider: "manual" | "click" | "payme" | "cash" | "card_terminal"
       payment_status:
@@ -4227,6 +4308,7 @@ export const Constants = {
         "lab_result_corrected",
         "lab_order_cancelled",
         "queue_ticket",
+        "queue_called",
       ],
       patient_sex: ["female", "male"],
       payment_provider: ["manual", "click", "payme", "cash", "card_terminal"],

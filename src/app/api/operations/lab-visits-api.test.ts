@@ -30,6 +30,7 @@ import { POST as voidCharge } from "./charges/[id]/void/route";
 import { GET as labQueue } from "../lab/visits/route";
 import { POST as labAct } from "../lab/visits/[id]/route";
 import { GET as publicQueue } from "../queue/[clinicId]/route";
+import { POST as followLink } from "./visits/[id]/follow-link/route";
 
 const describeDb = describe.skipIf(!localDbAvailable());
 type Body = { ok: boolean; data?: Record<string, unknown>; code?: string };
@@ -69,6 +70,16 @@ describeDb("laboratory walk-ins — routes", () => {
       { id: tests.ferritin, clinic_id: clinic, code: `FER${suffix}`.slice(0, 30), name: `Ferritin ${suffix}`, sample_type: "Qon", price: 90000 },
     ]);
     await admin.from("app_settings").insert({ clinic_id: clinic, key: "lab", value: { paymentPolicy: "before_collection" } });
+    await admin.from("clinic_telegram_integrations").insert({
+      clinic_id: clinic,
+      telegram_bot_token: `${800000 + Math.floor(Math.random() * 1000)}:LABAPI_${suffix}`,
+      telegram_bot_id: 800000 + Math.floor(Math.random() * 100000),
+      telegram_username: `labapi_${suffix}_bot`,
+      telegram_bot_name: "Lab API",
+      status: "active",
+      enabled: true,
+      validated_at: new Date().toISOString(),
+    });
   }, 60_000);
 
   afterAll(async () => {
@@ -78,6 +89,7 @@ describeDb("laboratory walk-ins — routes", () => {
         await tx`delete from public.visit_transactions where clinic_id = ${clinic}`;
         await tx`delete from public.visit_charges where clinic_id = ${clinic}`;
         await tx`delete from public.notification_jobs where clinic_id = ${clinic}`;
+        await tx`delete from public.visit_follow_tokens where clinic_id = ${clinic}`;
         await tx`update public.lab_orders set visit_id = null where clinic_id = ${clinic}`;
         await tx`delete from public.visits where clinic_id = ${clinic}`;
       });
@@ -142,5 +154,24 @@ describeDb("laboratory walk-ins — routes", () => {
     const lab = (screen.body.data!.doctors as Array<{ name: string; waiting: number[] }>).find((d) => d.name === "Laboratoriya");
     expect(lab?.waiting).toContain(paid.body.data!.queueNumber);
     expect(JSON.stringify(screen.body)).not.toContain("Ekran Bemor");
+  });
+
+  it("the kassa's Telegram QR link: desk and kassa only, this clinic's visits only", async () => {
+    as(people.reception, "receptionist");
+    const r = await read(await registerLab(new NextRequest("http://x", json("POST", { key: randomUUID(), testIds: [tests.cbc], newPatient: { fullName: `QR Bemor ${suffix}`, dateOfBirth: "1993-03-03" } }))));
+    const visitId = r.body.data!.visitId as string;
+    as(people.cashier, "cashier");
+    await pay(new NextRequest("http://x", json("POST", { key: randomUUID(), expectedOutstanding: 40000, lines: [{ method: "cash", amount: 40000 }] })), params({ visitId }));
+
+    const link = await read(await followLink(new NextRequest("http://x", json("POST", {})), params({ id: visitId })));
+    expect(link.status).toBe(201);
+    expect(link.body.data!.url).toMatch(new RegExp(`^https://t\\.me/labapi_${suffix}_bot\\?start=v_[A-Za-z0-9_-]{32}$`));
+
+    // Not a lab or doctor action; not someone else's visit.
+    as(people.lab, "lab");
+    expect((await read(await followLink(new NextRequest("http://x", json("POST", {})), params({ id: visitId })))).status).toBe(403);
+    as(people.reception, "receptionist");
+    expect((await read(await followLink(new NextRequest("http://x", json("POST", {})), params({ id: randomUUID() })))).status).toBe(404);
+    expect((await read(await followLink(new NextRequest("http://x", json("POST", {})), params({ id: "not-a-uuid" })))).status).toBe(404);
   });
 });

@@ -13,7 +13,8 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
   - `20260930000006_tenant_integrity_hardening` (check whether it is present by name first);
   - the 21 laboratory migrations `20261005000001`–`021`;
   - the outpatient migrations `20261007000001`–`003`;
-  - the laboratory-visit migration `20261008000001_lab_visits` (needs the laboratory migrations).
+  - the laboratory-visit migration `20261008000001_lab_visits` (needs the laboratory migrations);
+  - the Telegram queue follow-up `20261008000002_queue_called_enum` and `20261008000003_visit_follow`.
 - **The live app is `health-ai-w1vc.vercel.app`, which runs `main`.** This branch (PR #14) is not deployed.
 - **The scheduler secret is not aligned.** The Vault `health_ai_cron_secret` must equal `CRON_SECRET` on
   health-ai-w1vc. Reminders fail with 401 until it does.
@@ -40,7 +41,7 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
    - Write down the time and the backup id.
 2. **Rehearse on staging first.**
    - Staging project `qoupbbsspzfyjqfzykuk` has the schema up to the lab module.
-   - Apply `20261007000001`–`003` and `20261008000001` there by name, then run the acceptance checks in §5 against a staging
+   - Apply `20261007000001`–`003` and `20261008000001`–`003` there by name, then run the acceptance checks in §5 against a staging
      deployment.
 3. **Pre-flight on production (read-only):**
    - migration names present;
@@ -50,7 +51,10 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
    - first, the lab files `20261005000001`–`021`, if the lab module is part of the release (decision needed);
    - then `20261007000001_operations_enums`, `20261007000002_outpatient_operations` and
      `20261007000003_visit_actual_end`;
-   - then, with the lab files, `20261008000001_lab_visits` (laboratory on the visit bill, lab queue).
+   - then, with the lab files, `20261008000001_lab_visits` (laboratory on the visit bill, lab queue);
+   - then `20261008000002_queue_called_enum` and `20261008000003_visit_follow` (the kassa's Telegram QR and
+     "you are called"). The enum file must be committed before the next one, so they are separate
+     transactions.
    - Every existing clinic becomes `operating_mode = 'mixed'`, so bookings keep working.
 5. **Deploy the app** by merging the release branch into `main`; Vercel builds `health-ai-w1vc`. Then check
    that `/api/health` and `/login` respond.
@@ -109,6 +113,15 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
 - [ ] The kassa cannot remove a test line. A test cancelled in the lab leaves the bill; if paid, the kassa shows
       "Qaytarilishi kerak".
 - [ ] The waiting-room screen shows the lab's numbers under "Laboratoriya".
+- [ ] Reception: passport + `dd.mm.yyyy` opens a returning card at once.
+  - With no card, the new-patient form opens with both filled in.
+  - A wrong date of birth is caught.
+  - A patient without a document is taken with "Hujjat yo‘q — davom etish".
+- [ ] **With the clinic's real bot**, scan the kassa QR with a test phone. The ticket arrives in Telegram.
+  - Calling the number delivers "Navbatingiz keldi" within seconds.
+  - "🔄 Navbatim" shows the position.
+  - Scanning the same QR from a second phone gets the neutral refusal.
+  - This is the only check of real Telegram delivery: local tests use a stand-in bot.
 
 ## 6. Monitoring (SQL, read-only; run daily during the pilot)
 
@@ -122,6 +135,9 @@ select status, count(*) from public.notification_jobs where type = 'queue_ticket
 -- Visits with money held but cancelled (should be 0: cancel requires refund first)
 select v.id from public.visits v join public.visit_transactions t on t.visit_id = v.id where v.status = 'cancelled'
  group by v.id having sum(case when t.kind = 'collection' then t.amount else -t.amount end) <> 0;
+-- "You are called" messages not delivered today (failed, or still pending after 5 minutes)
+select status, count(*) from public.notification_jobs where type = 'queue_called' and created_at > now() - interval '1 day'
+   and (status = 'failed' or (status = 'pending' and created_at < now() - interval '5 minutes')) group by status;
 -- Visit-billed lab tests still held although the visit owes nothing (should be 0)
 select i.id from public.lab_order_items i join public.lab_orders o on o.id = i.order_id
  where o.visit_id is not null and i.status = 'ordered'

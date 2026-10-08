@@ -4,14 +4,20 @@ import { useMemo, useState } from "react";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AModal, AInput, ASelect } from "@/components/admin/ui";
 import { adminApi, AdminApiError } from "@/lib/admin/client";
 import { freshnessLabel, money, useLive, VISIT_STATUS } from "@/components/operations/use-live";
+import { FollowQr } from "@/components/operations/follow-qr";
+import { classifyQuery, formatDob, isIdentityDocument, parseDob } from "@/lib/operations/identity-query";
 import { Search, UserCheck, UserPlus, Users } from "lucide-react";
 
 /**
- * Reception (outpatient pilot): identify the patient once — by patient
- * number, JSHSHIR, passport/ID, phone or name — confirm identity before
- * selecting, then register the arrival with the doctor and services. The
- * server prices the services and creates the bill; the patient then pays at
- * the kassa, which issues the queue number. Reception never takes money.
+ * Reception (outpatient pilot). The owner's walk-in flow (2026-10-08): type
+ * the passport/ID number or JSHSHIR and the date of birth (dd.mm.yyyy) — the
+ * patient's card opens at once; no card → the new-patient form opens with
+ * them filled in. A patient without a document is found by name, phone or
+ * card number and taken with "Hujjat yo‘q — davom etish": care is never held
+ * up by identity. A typed document is a lookup key, not verification (that is
+ * MyID's, once integrated). Then the doctor or laboratory and the services;
+ * the server prices them and creates the bill; the patient pays at the kassa,
+ * which issues the queue number. Reception never takes money.
  */
 
 type Match = {
@@ -23,6 +29,7 @@ type Match = {
   documentHint: string | null;
   phoneHint: string | null;
 };
+type SearchResult = { patients: Match[]; exact: boolean; dobMismatch: boolean };
 type Catalog = {
   clinic: { currency: string; operating_mode: string; queue_after_payment: boolean };
   doctors: Array<{ id: string; name: string; title: string | null; services: Array<{ id: string; name: string; price: number }> }>;
@@ -43,6 +50,11 @@ type Visit = {
 };
 
 const newKey = () => crypto.randomUUID();
+/** Today in the browser (the desk's own day) — dates of birth cannot be later. */
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 const EMPTY_NEW = { fullName: "", dateOfBirth: "", sex: "", phone: "", documentNumber: "", pinfl: "" };
 
 export default function ReceptionPage() {
@@ -54,9 +66,10 @@ export default function ReceptionPage() {
   const [dob, setDob] = useState("");
   const [matches, setMatches] = useState<Match[] | null>(null);
   const [searching, setSearching] = useState(false);
-  const [candidate, setCandidate] = useState<Match | null>(null);
-  const [confirmed, setConfirmed] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [patient, setPatient] = useState<Match | null>(null);
+  // How the card was taken: by document + date of birth, or without a document.
+  const [foundBy, setFoundBy] = useState<"document" | "no_document">("document");
   const [creating, setCreating] = useState(false);
   const [np, setNp] = useState(EMPTY_NEW);
 
@@ -71,6 +84,7 @@ export default function ReceptionPage() {
   const [existingId, setExistingId] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<Visit | null>(null);
+  const [qrFor, setQrFor] = useState<Visit | null>(null);
   const [cancelReason, setCancelReason] = useState("");
 
   const isLab = doctorId === LAB;
@@ -85,14 +99,51 @@ export default function ReceptionPage() {
   );
   const currency = catalog.data?.clinic.currency ?? "UZS";
 
-  const search = async () => {
+  const choose = (m: Match, by: "document" | "no_document") => {
+    setPatient(m);
+    setFoundBy(by);
+    setMatches(null);
+    setNotice(null);
+  };
+
+  const find = async (text: string, dobText: string) => {
     setError(null);
+    setNotice(null);
+    const term = classifyQuery(text);
+    const dobIso = dobText.trim() ? parseDob(dobText, today()) : null;
+    if (dobText.trim() && !dobIso) {
+      setError("Tug‘ilgan sanani kk.oo.yyyy ko‘rinishida kiriting (masalan, 21.09.1988)");
+      return;
+    }
+    if (isIdentityDocument(term) && !dobIso) {
+      setError("Pasport yoki JSHSHIR bilan birga tug‘ilgan sanani ham kiriting");
+      return;
+    }
     setSearching(true);
     try {
-      const params = new URLSearchParams({ q });
-      if (dob) params.set("dob", dob);
-      const res = await adminApi.get<{ patients: Match[] }>(`/api/operations/patients?${params}`);
-      setMatches(res.patients);
+      const params = new URLSearchParams({ q: text });
+      if (dobIso) params.set("dob", dobIso);
+      const res = await adminApi.get<SearchResult>(`/api/operations/patients?${params}`);
+      if (res.exact) {
+        // Passport/JSHSHIR and date of birth match one card: it opens at once.
+        choose(res.patients[0], "document");
+      } else if (res.dobMismatch) {
+        setMatches([]);
+        setNotice("Bu hujjat bilan karta bor, lekin tug‘ilgan sana mos emas — sanani bemordan qayta so‘rang.");
+      } else if (isIdentityDocument(term) && res.patients.length === 0) {
+        // No card yet: start one with what was typed.
+        setMatches(null);
+        setCreating(true);
+        setNp({
+          ...EMPTY_NEW,
+          documentNumber: term.kind === "document" ? term.value : "",
+          pinfl: term.kind === "pinfl" ? term.value : "",
+          dateOfBirth: dobText.trim(),
+        });
+        setNotice("Bu hujjat bilan karta yo‘q — yangi bemorning F.I.Sh.ini kiriting. MyID ulangach ma’lumotlar avtomatik to‘ldiriladi.");
+      } else {
+        setMatches(res.patients);
+      }
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Qidirib bo‘lmadi");
     } finally {
@@ -108,6 +159,7 @@ export default function ReceptionPage() {
     setServiceIds([]);
     setPanelIds([]);
     setMatches(null);
+    setNotice(null);
     setQ("");
     setDob("");
     setKey(newKey());
@@ -125,7 +177,7 @@ export default function ReceptionPage() {
         : {
             newPatient: {
               fullName: np.fullName,
-              dateOfBirth: np.dateOfBirth,
+              dateOfBirth: parseDob(np.dateOfBirth, today()),
               sex: np.sex || null,
               phone: np.phone || null,
               documentNumber: np.documentNumber || null,
@@ -170,11 +222,12 @@ export default function ReceptionPage() {
     }
   };
 
-  const canRegister = !!doctorId && serviceIds.length + panelIds.length > 0 && (patient !== null || (creating && np.fullName.trim().length >= 2 && !!np.dateOfBirth));
+  const newDob = parseDob(np.dateOfBirth, today());
+  const canRegister = !!doctorId && serviceIds.length + panelIds.length > 0 && (patient !== null || (creating && np.fullName.trim().length >= 2 && !!newDob));
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader title="Qabulxona" subtitle="Bemorni aniqlang, shaxsini tasdiqlang va ro‘yxatga oling. To‘lov — kassada." />
+      <PageHeader title="Qabulxona" subtitle="Pasport yoki JSHSHIR va tug‘ilgan sana bilan bemorni toping va ro‘yxatga oling. To‘lov — kassada." />
       {error && <AError message={error} />}
       {existingId && (
         <div className="-mt-3">
@@ -182,16 +235,19 @@ export default function ReceptionPage() {
             variant="secondary"
             size="sm"
             onClick={async () => {
-              // Open the existing record for confirmation instead of creating a duplicate.
-              const res = await adminApi.get<{ patients: Match[] }>(`/api/operations/patients?q=${encodeURIComponent(np.pinfl || np.documentNumber || np.fullName)}${np.dateOfBirth ? `&dob=${np.dateOfBirth}` : ""}`);
-              const found = res.patients.find((p) => p.id === existingId) ?? null;
-              setMatches(found ? [found] : res.patients);
+              // Open the existing card instead of creating a duplicate.
               setCreating(false);
               setExistingId(null);
+              await find(np.pinfl || np.documentNumber || np.fullName, np.dateOfBirth);
             }}
           >
             Mavjud kartani ko‘rish
           </AButton>
+        </div>
+      )}
+      {notice && (
+        <div role="status" className="rounded-xl border border-hairline bg-surface-2 px-4 py-3 text-sm">
+          {notice}
         </div>
       )}
       {done && (
@@ -208,7 +264,10 @@ export default function ReceptionPage() {
               <div>
                 <p className="font-semibold text-pine-deep">{patient.fullName}</p>
                 <p className="text-xs text-pine-deep">
-                  Karta № {patient.patientNumber} · {patient.dateOfBirth ?? "tug‘ilgan sana yo‘q"}
+                  Karta № {patient.patientNumber} · {formatDob(patient.dateOfBirth)} · tel. {patient.phoneHint ?? "—"}
+                </p>
+                <p className="mt-1 text-[11px] text-pine-deep">
+                  {foundBy === "document" ? "Hujjat va tug‘ilgan sana bo‘yicha topildi" : "Hujjatsiz tanlandi"}
                 </p>
               </div>
               <AButton variant="outline" size="sm" onClick={() => setPatient(null)}>
@@ -223,7 +282,7 @@ export default function ReceptionPage() {
               </label>
               <label className="text-xs font-medium">
                 Tug‘ilgan sana*
-                <AInput type="date" value={np.dateOfBirth} onChange={(v) => setNp({ ...np, dateOfBirth: v })} aria-label="Tug‘ilgan sana" />
+                <AInput value={np.dateOfBirth} onChange={(v) => setNp({ ...np, dateOfBirth: v })} placeholder="kk.oo.yyyy" aria-label="Tug‘ilgan sana" />
               </label>
               <label className="text-xs font-medium">
                 Jinsi
@@ -251,38 +310,45 @@ export default function ReceptionPage() {
                 <AInput value={np.phone} onChange={(v) => setNp({ ...np, phone: v })} placeholder="+998 90 123 45 67" aria-label="Telefon" />
               </label>
               <div className="sm:col-span-2">
-                <AButton variant="ghost" size="sm" onClick={() => setCreating(false)}>
+                <AButton
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setCreating(false);
+                    setNotice(null);
+                  }}
+                >
                   Bekor qilish — qidiruvga qaytish
                 </AButton>
               </div>
             </div>
           ) : (
             <div className="flex flex-col gap-3">
-              <div className="grid gap-2 sm:grid-cols-[1fr_11rem_auto]">
-                <AInput value={q} onChange={setQ} placeholder="Karta №, JSHSHIR, pasport, telefon yoki F.I.Sh." aria-label="Bemorni qidirish" />
-                <AInput type="date" value={dob} onChange={setDob} aria-label="Tug‘ilgan sana (ixtiyoriy)" />
-                <AButton onClick={search} loading={searching} disabled={q.trim().length < 2}>
-                  <Search className="h-4 w-4" /> Qidirish
+              <form
+                className="grid gap-2 sm:grid-cols-[1fr_9rem_auto]"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (q.trim().length >= 2) void find(q, dob);
+                }}
+              >
+                <AInput value={q} onChange={setQ} placeholder="Pasport (AB1234567) yoki JSHSHIR" aria-label="Bemorni qidirish" />
+                <AInput value={dob} onChange={setDob} placeholder="kk.oo.yyyy" aria-label="Tug‘ilgan sana (kk.oo.yyyy)" />
+                <AButton type="submit" loading={searching} disabled={q.trim().length < 2}>
+                  <Search className="h-4 w-4" /> Topish
                 </AButton>
-              </div>
-              {matches && matches.length === 0 && <p className="text-sm text-ink-muted">Topilmadi.</p>}
+              </form>
+              <p className="text-[11px] text-ink-muted">Hujjati yo‘q bemorni F.I.Sh., telefon yoki karta raqami bilan toping.</p>
+              {matches && matches.length === 0 && !notice && <p className="text-sm text-ink-muted">Topilmadi.</p>}
               {matches?.map((m) => (
                 <div key={m.id} className="flex items-center justify-between gap-3 rounded-xl border border-hairline p-3">
                   <div className="text-sm">
                     <p className="font-semibold">{m.fullName ?? "—"}</p>
                     <p className="text-xs text-ink-muted">
-                      Karta № {m.patientNumber} · {m.dateOfBirth ?? "—"} · hujjat {m.documentHint ?? "—"} · tel. {m.phoneHint ?? "—"}
+                      Karta № {m.patientNumber} · tug‘ilgan {formatDob(m.dateOfBirth)} · tel. {m.phoneHint ?? "—"}
                     </p>
                   </div>
-                  <AButton
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setCandidate(m);
-                      setConfirmed(false);
-                    }}
-                  >
-                    Tanlash
+                  <AButton variant="outline" size="sm" onClick={() => choose(m, "no_document")}>
+                    Hujjat yo‘q — davom etish
                   </AButton>
                 </div>
               ))}
@@ -384,6 +450,11 @@ export default function ReceptionPage() {
                         Navbatga qaytarish
                       </AButton>
                     )}
+                    {v.queueNumber !== null && ["waiting", "called"].includes(v.status) && (
+                      <AButton size="sm" variant="outline" onClick={() => setQrFor(v)}>
+                        Telegram QR
+                      </AButton>
+                    )}
                     {["awaiting_payment", "waiting", "called"].includes(v.status) && (
                       <AButton size="sm" variant="ghost" onClick={() => setCancelling(v)}>
                         Bekor qilish
@@ -397,38 +468,9 @@ export default function ReceptionPage() {
         )}
       </Card>
 
-      {candidate && (
-        <AModal
-          title="Shaxsini tasdiqlang"
-          onClose={() => setCandidate(null)}
-          footer={
-            <>
-              <AButton variant="outline" onClick={() => setCandidate(null)}>
-                Yo‘q, boshqa odam
-              </AButton>
-              <AButton
-                disabled={!confirmed}
-                onClick={() => {
-                  setPatient(candidate);
-                  setCandidate(null);
-                  setMatches(null);
-                }}
-              >
-                Tanlash
-              </AButton>
-            </>
-          }
-        >
-          <div className="text-sm">
-            <p className="text-lg font-semibold">{candidate.fullName}</p>
-            <p>Tug‘ilgan sana: {candidate.dateOfBirth ?? "—"}</p>
-            <p>Hujjat: {candidate.documentHint ?? "—"} · Telefon: {candidate.phoneHint ?? "—"}</p>
-            <p className="text-ink-muted">Karta № {candidate.patientNumber}</p>
-          </div>
-          <label className="flex items-start gap-2 text-sm">
-            <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
-            Bemorning hujjati va tug‘ilgan sanasini tekshirdim — bu shu odam (Shaxsi tasdiqlandi)
-          </label>
+      {qrFor && (
+        <AModal title={`Navbat № ${qrFor.queueNumber} — Telegramda kuzatish`} onClose={() => setQrFor(null)}>
+          <FollowQr visitId={qrFor.id} auto />
         </AModal>
       )}
 

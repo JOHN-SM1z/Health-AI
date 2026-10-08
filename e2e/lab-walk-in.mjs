@@ -43,7 +43,7 @@ async function run() {
       await page.goto(`${BASE}/admin/reception`);
       await page.getByRole("button", { name: "Yangi bemor" }).click();
       await page.getByLabel("F.I.Sh.").fill(PATIENT);
-      await page.getByLabel("Tug‘ilgan sana", { exact: true }).fill("1988-09-21");
+      await page.getByLabel("Tug‘ilgan sana", { exact: true }).fill("21.09.1988");
       await page.getByLabel("Shifokor").selectOption({ label: "Laboratoriya — tahlil topshirish" });
       const tests = page.getByRole("group", { name: "Tahlillar" });
       await tests.getByText(testA.name).click();

@@ -48,6 +48,11 @@ vi.mock("@/lib/telegram/handlers", () => ({
   requestHumanHandoff: vi.fn(async () => undefined),
 }));
 
+vi.mock("@/lib/telegram/queue-follow", () => ({
+  handleQueueFollowStart: vi.fn(async () => undefined),
+  handleQueueStatus: vi.fn(async () => undefined),
+}));
+
 vi.mock("@/lib/rate-limit", () => ({
   rateLimit: vi.fn(() => ({ ok: true, retryAfterSeconds: 0 })),
   keyFromIp: vi.fn(() => "test-ip"),
@@ -61,6 +66,7 @@ import {
   releaseWebhookProcessing,
 } from "@/lib/telegram/idempotency";
 import { handleTelegramMessage, handleMenuButton, handleTelegramCommand } from "@/lib/telegram/handlers";
+import { handleQueueFollowStart, handleQueueStatus } from "@/lib/telegram/queue-follow";
 
 const resolveMock = vi.mocked(resolveClinicByBotUsername);
 const claimMock = vi.mocked(claimWebhookProcessing);
@@ -193,6 +199,28 @@ describe("telegram webhook route (per-clinic bots)", () => {
       expect.objectContaining({ command: "/chiqish", clinicId: "clinic-1" }),
     );
     expect(handleMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("routes the kassa QR (/start v_<token>) to the queue follow-up only — no patient card is made", async () => {
+    handleCommandMock.mockClear();
+    const followMock = vi.mocked(handleQueueFollowStart);
+    followMock.mockClear();
+    const token = "A".repeat(16) + "b_-9".repeat(4);
+    const res = await post({ ...textUpdate(70), message: { ...textUpdate(70).message, text: `/start v_${token}` } });
+    expect(res.status).toBe(200);
+    expect(followMock).toHaveBeenCalledWith({ clinicId: "clinic-1", chatId: 42, telegramUserId: 42, token });
+    expect(handleCommandMock).not.toHaveBeenCalled();
+
+    // A plain /start is unchanged.
+    await post({ ...textUpdate(71), message: { ...textUpdate(71).message, text: "/start" } });
+    expect(handleCommandMock).toHaveBeenCalledWith(expect.objectContaining({ command: "/start" }));
+    expect(followMock).toHaveBeenCalledTimes(1);
+
+    // "🔄 Navbatim" asks for the live position, for the user who pressed it.
+    await post({ update_id: 72, callback_query: { id: "c9", from: { id: 42 }, data: "queue_status", message: { chat: { id: 42 } } } });
+    expect(vi.mocked(handleQueueStatus)).toHaveBeenCalledWith({ clinicId: "clinic-1", chatId: 42, telegramUserId: 42 });
+    expect(answerCallbackMock).toHaveBeenCalledWith("c9", "clinic-1");
+    answerCallbackMock.mockClear();
   });
 
   it("drops duplicates without dispatching any work", async () => {

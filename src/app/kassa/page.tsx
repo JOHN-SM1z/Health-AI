@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { PageHeader, Card, ABadge, AEmpty, AError, AButton, AModal, AInput, ASelect } from "@/components/admin/ui";
 import { adminApi, AdminApiError } from "@/lib/admin/client";
+import { FollowQr } from "@/components/operations/follow-qr";
 import { freshnessLabel, money, useLive, VISIT_STATUS } from "@/components/operations/use-live";
 import { Wallet } from "lucide-react";
 
@@ -47,6 +48,8 @@ export default function KassaPage() {
   const currency = kassa.data?.currency ?? "UZS";
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The visit just paid and queued: its Telegram QR is shown with the number.
+  const [queuedVisit, setQueuedVisit] = useState<string | null>(null);
 
   // Payment modal
   const [paying, setPaying] = useState<Visit | null>(null);
@@ -94,9 +97,10 @@ export default function KassaPage() {
       });
       setNotice(
         r.queueNumber
-          ? `To‘lov qabul qilindi. Navbat raqami: ${r.queueNumber} — bemorga ayting (Telegram bo‘lsa, unga ham yuboriladi).`
+          ? `To‘lov qabul qilindi. Navbat raqami: ${r.queueNumber} — bemorga ayting. Telegramda kuzatish uchun QR kodni skanerlasin.`
           : "To‘lov qabul qilindi.",
       );
+      setQueuedVisit(r.queueNumber ? paying.id : null);
       setPaying(null);
       await refreshAll();
     } catch (e) {
@@ -123,6 +127,7 @@ export default function KassaPage() {
         amount: toNum(refundAmount),
         reason: refundReason,
       });
+      setQueuedVisit(null);
       setNotice("Qaytarish qayd etildi. Pulni bemorga bering (naqd) yoki terminal orqali qaytaring.");
       setRefunding(null);
       await refreshAll();
@@ -256,8 +261,9 @@ export default function KassaPage() {
       <p className={`-mt-3 text-xs ${kassa.stale ? "font-semibold text-danger" : "text-ink-muted"}`}>{freshnessLabel(kassa.updatedAt, kassa.stale)}</p>
       {error && <AError message={error} />}
       {notice && (
-        <div role="status" className="rounded-xl border border-pine/25 bg-pine-tint px-4 py-3 text-sm font-medium text-pine-deep">
-          {notice}
+        <div role="status" className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-pine/25 bg-pine-tint px-4 py-3 text-sm font-medium text-pine-deep">
+          <span>{notice}</span>
+          {queuedVisit && <FollowQr key={queuedVisit} visitId={queuedVisit} auto />}
         </div>
       )}
 

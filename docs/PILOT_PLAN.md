@@ -34,15 +34,18 @@ Legend: **V** implemented and verified · **U** implemented, unverified · **M**
 |---|---|---|
 | Patient search by name/phone (staff) | V | `/admin/patients`, `src/app/api/admin/patients` tests |
 | Stable patient identifiers: PINFL, document number, DOB, sex stored | V | `20261005000001_patient_lab_identity.sql`; DOB/sex entry `patient-demographics.test.ts` |
-| Search by document number / PINFL + DOB with identity confirmation before selecting | V | `/admin/reception`; masked hints; confirmation tick required (`e2e/outpatient-journey.mjs`) |
+| One-step lookup: passport/ID or JSHSHIR + DOB typed as dd.mm.yyyy opens the card (owner 2026-10-08) | V | `/admin/reception`: exact match opens the card, no card opens the new-patient form with both filled in, a wrong DOB is caught and the card not shown (`outpatient-api.test.ts`, `e2e/outpatient-journey.mjs`) |
+| Patient without a document: found by name/phone/card number, "Hujjat yo‘q — davom etish" | V | care is never held up by identity; the old "I checked the document" tick is removed (owner: no physical check) |
 | Human-readable patient number | V | per-clinic `patients.patient_number`, immutable (`20261007000002`) |
 | Walk-in arrival registered in one transaction (patient, arrival, charges) | V | `register_arrival`; duplicate-identity refusal (`outpatient-operations.test.ts`) |
 | Live queue (awaiting payment / waiting / called / in progress) | V | reception board, doctor "Jonli navbat", 10 s refresh with stale warning |
 | Queue ticket — **digital, no paper** (owner 2026-10-07) | V / B | Telegram ticket job with real delivery status, Mini App position, waiting-room screen `/queue/[clinic]`; SMS **B** (no gateway contract) |
+| Walk-in follows the queue in Telegram from a QR at the kassa (owner 2026-10-08) | V (local) / U (live Telegram) | one-time link per visit, this visit's queue only — no card link, no records (`20261008000003`; `visit-follow.test.ts`, `queue-follow.test.ts`, E2E with a simulated signed update). Real delivery needs the clinic's live bot |
+| "You are called" in Telegram, delivered at once | V (local) / U (live Telegram) | `queue_called` job for the linked patient and every follower, sent right after the call instead of the 15-minute worker |
 | Unfinished arrivals survive midnight | V | listed regardless of day; number keeps its day (DB test) |
 | Duplicate-retry and concurrent-arrival safety | V | idempotency keys + clinic lock; 8 concurrent retries → 1 visit; 8 payments → distinct numbers |
 | Walk-in / scheduled / mixed operation setting | U | `clinics.operating_mode` stored (existing clinics `mixed`); screens do not yet switch on it |
-| Online identity via MyID / OneID | B | needs a UZINFOCOM / OneID contract, test credentials and documentation |
+| Online identity via MyID / OneID | B — **not a pilot blocker** | needs a UZINFOCOM / OneID contract, test credentials and documentation. Owner 2026-10-08: identity is verified by MyID once integrated (no physical check, no face step in Health AI); it would fill a first-time patient's name/JSHSHIR at the no-card step. Whether MyID allows a lookup by passport + DOB without the person's face is for MyID to confirm |
 | SMS queue notifications for patients without a smartphone | B | needs an SMS gateway contract and credentials; only Telegram exists |
 
 ### Billing and cashier

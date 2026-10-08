@@ -341,6 +341,29 @@ regression test (unit, route, database or E2E):
 | F20 | Deleting a clinic failed (audit rows written for the clinic being erased) | the erasure is marked for the transaction; its audit trail goes with it |
 | F21 | A second click on reception's walk-in booking could fail with 500 (~1 in 40): the upsert on `id` raced the `(id, clinic_id)` key | plain insert; a duplicate means the attempt's patient already exists |
 
+## Following a visit's queue in Telegram (2026-10-08)
+
+The kassa shows a QR code: a one-time link `t.me/<clinic bot>?start=v_<token>`. It lets a walk-in patient
+follow the queue without linking their Telegram to their card (owner decision).
+- **The token.**
+  - It is 192 random bits.
+  - Only its SHA-256 is stored (`visit_follow_tokens`).
+  - It is valid 24 hours, claimed once by one Telegram user, and refused once the visit is finished.
+  - A new link replaces an unused one.
+  - Only reception, the kassa and management can issue one, for their own clinic's visits.
+- **A claim** (`claim_visit_follow_token`) is resolved only for the bot the webhook already authenticated. It
+  is race-safe: of 8 concurrent claims, exactly 1 wins.
+  - Every failure gives the same neutral answer.
+  - It creates no patient row and links or merges no identity.
+- **What a follower gets** (`visit_followers`): status messages for that one visit — the number, the doctor
+  name or "Laboratoriya", how many are ahead, and "you are called".
+  - No patient name, record, result or other visit is reachable through it.
+  - The worker re-checks that each recipient is still the linked patient or a follower before sending.
+- **Access and audit.**
+  - Both tables have RLS on, no policies, and no grants to `anon` or `authenticated`.
+  - The functions are service-role only and re-check the caller's role.
+  - Audit rows carry token and follower ids, never the token, its hash or the Telegram id.
+
 ## Medical safety (non-security but critical)
 
 `src/lib/safety/policy.ts`:

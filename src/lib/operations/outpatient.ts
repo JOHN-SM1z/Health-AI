@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash, randomBytes } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { logger } from "@/lib/logger";
@@ -6,6 +7,8 @@ import type { StaffContext } from "@/lib/auth/staff";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 import type { Json } from "@/lib/supabase/database.types";
 import { ORDER_ERRORS } from "@/lib/labs/ordering";
+import { classifyQuery, isIdentityDocument } from "@/lib/operations/identity-query";
+import { deliverClinicNotificationsSoon } from "@/lib/notifications/deliver-soon";
 
 /**
  * Outpatient pilot — the server side of 20261007000002. Every write is one
@@ -48,6 +51,7 @@ const REFUSALS: Record<string, [number, string]> = {
   refund_first: [409, "Avval to‘lovni qaytaring"],
   invalid_transition: [409, "Bu amalni hozir bajarib bo‘lmaydi"],
   cancel_lab_test: [409, "Tahlil laboratoriyada bekor qilinadi — keyin u hisobdan avtomatik chiqadi"],
+  visit_finished: [409, "Tashrif yakunlangan"],
   lab_sample_taken: [409, "Namuna allaqachon olingan — tashrifni bekor qilib bo‘lmaydi, laboratoriya hal qiladi"],
   // start_walk_in_consultation's booking-engine codes
   outside_working_hours: [409, "Hozir ish vaqtingiz emas"],
@@ -96,14 +100,25 @@ export type PatientMatch = {
 
 const mask = (v: string | null, keep: number) => (v ? `•••${v.slice(-keep)}` : null);
 
+export type PatientSearch = {
+  patients: PatientMatch[];
+  /** Passport/ID or JSHSHIR and date of birth both matched exactly one card: select it at once. */
+  exact: boolean;
+  /** The document matched a card but the date of birth did not; that card is not offered. */
+  dobMismatch: boolean;
+};
+
 /**
- * Finds a returning patient for identity confirmation: patient number,
- * PINFL, passport/ID number, phone or name (optionally narrowed by date of
- * birth). Merged records are never offered; at most 10 results.
+ * Finds a returning patient: by passport/ID number or JSHSHIR with the date
+ * of birth (one step — the owner's walk-in flow), or by patient number, phone
+ * or name (optionally narrowed by date of birth). A document whose card has a
+ * different date of birth is reported as a mismatch and the card is not
+ * returned: a wrong-patient safety check that also reveals nothing about it.
+ * Merged records are never offered; at most 10 results.
  */
-export async function searchPatients(staff: Staff, q: string, dateOfBirth?: string): Promise<PatientMatch[]> {
-  const text = q.trim();
-  if (text.length < 2) return [];
+export async function searchPatients(staff: Staff, q: string, dateOfBirth?: string): Promise<PatientSearch> {
+  const none: PatientSearch = { patients: [], exact: false, dobMismatch: false };
+  if (q.trim().length < 2) return none;
   const supabase = createAdminClient();
   let query = supabase
     .from("patients")
@@ -112,25 +127,33 @@ export async function searchPatients(staff: Staff, q: string, dateOfBirth?: stri
     .is("merged_into_patient_id", null)
     .limit(10);
 
-  const compact = text.replace(/[\s-]+/g, "").toUpperCase();
-  if (/^\d{1,9}$/.test(compact)) query = query.eq("patient_number", Number(compact));
-  else if (/^\d{14}$/.test(compact)) query = query.eq("pinfl", compact);
-  else if (/^[A-Z]{2}\d{5,10}$/.test(compact)) query = query.eq("document_number", compact);
-  else if (/^\+?\d[\d ()-]{6,}$/.test(text)) query = query.ilike("phone", `%${text.replace(/\D/g, "").slice(-9)}%`);
-  else query = query.ilike("full_name", `%${text.replace(/["\\%*_]/g, "")}%`);
-  if (dateOfBirth) query = query.eq("date_of_birth", dateOfBirth);
+  const term = classifyQuery(q);
+  if (term.kind === "patient_number") query = query.eq("patient_number", Number(term.value));
+  else if (term.kind === "pinfl") query = query.eq("pinfl", term.value);
+  else if (term.kind === "document") query = query.eq("document_number", term.value);
+  else if (term.kind === "phone") query = query.ilike("phone", `%${term.value}%`);
+  else query = query.ilike("full_name", `%${term.value.replace(/["\\%*_]/g, "")}%`);
+  // A document is matched first and its date of birth compared below.
+  const byDocument = isIdentityDocument(term) && !!dateOfBirth;
+  if (dateOfBirth && !byDocument) query = query.eq("date_of_birth", dateOfBirth);
 
   const { data, error } = await query.order("patient_number", { ascending: false });
   if (error) throw new ApiError(500, "Qidirib bo‘lmadi");
-  return (data ?? []).map((p) => ({
-    id: p.id,
-    patientNumber: Number(p.patient_number),
-    fullName: p.full_name,
-    dateOfBirth: p.date_of_birth,
-    sex: p.sex,
-    documentHint: mask(p.document_number, 3),
-    phoneHint: mask(p.phone?.replace(/\D/g, "") ?? null, 4),
-  }));
+  const rows = data ?? [];
+  const kept = byDocument ? rows.filter((p) => p.date_of_birth === dateOfBirth) : rows;
+  return {
+    patients: kept.map((p) => ({
+      id: p.id,
+      patientNumber: Number(p.patient_number),
+      fullName: p.full_name,
+      dateOfBirth: p.date_of_birth,
+      sex: p.sex,
+      documentHint: mask(p.document_number, 3),
+      phoneHint: mask(p.phone?.replace(/\D/g, "") ?? null, 4),
+    })),
+    exact: byDocument && kept.length === 1,
+    dobMismatch: byDocument && rows.length > 0 && kept.length === 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +192,8 @@ export async function registerArrival(
     p_doctor: input.doctorId,
     p_service_ids: input.serviceIds,
   });
+  // A free visit is queued at once: its Telegram ticket goes out now.
+  deliverClinicNotificationsSoon(staff.clinicId);
   return { visitId: r.visit_id, replayed: r.replayed };
 }
 
@@ -323,7 +348,7 @@ export async function transitionVisit(
   visitId: string,
   input: { expected: VisitStatus; status: VisitStatus; reason?: string | null },
 ): Promise<{ status: VisitStatus }> {
-  return rpc<{ status: VisitStatus }>("transition_visit", {
+  const r = await rpc<{ status: VisitStatus }>("transition_visit", {
     p_clinic: staff.clinicId,
     p_actor: staff.profileId,
     p_visit: visitId,
@@ -331,6 +356,9 @@ export async function transitionVisit(
     p_status: input.status,
     p_reason: input.reason ?? null,
   });
+  // "You are called" reaches the patient's Telegram now, not at the next scheduled run.
+  if (r.status === "called") deliverClinicNotificationsSoon(staff.clinicId);
+  return r;
 }
 
 export async function addVisitCharge(staff: Staff, visitId: string, input: { key: string; serviceId: string }) {
@@ -388,6 +416,7 @@ export async function registerLabArrival(
     throw refusal(error, "register_lab_arrival");
   }
   const r = data as { visit_id: string; lab_order_id?: string; replayed: boolean };
+  deliverClinicNotificationsSoon(staff.clinicId);
   return { visitId: r.visit_id, labOrderId: r.lab_order_id ?? null, replayed: r.replayed };
 }
 
@@ -408,6 +437,8 @@ export async function recordVisitPayment(
     p_lines: input.lines as unknown as Json,
     p_expected_outstanding: input.expectedOutstanding,
   });
+  // Paid: the queue ticket goes to the patient's Telegram now.
+  deliverClinicNotificationsSoon(staff.clinicId);
   return { queueNumber: r.queue_number ?? null, replayed: r.replayed };
 }
 
@@ -589,6 +620,7 @@ export async function publicQueue(clinicId: string): Promise<PublicQueue | null>
 
 export type PatientQueuePosition = {
   visitId: string;
+  kind: "doctor" | "lab";
   status: VisitStatus;
   queueNumber: number | null;
   doctorName: string;
@@ -596,14 +628,13 @@ export type PatientQueuePosition = {
   outstanding: number;
 };
 
-/** The patient's own unfinished visits with their live position (Mini App). */
-export async function patientQueuePositions(clinicId: string, patientIds: string[]): Promise<PatientQueuePosition[]> {
-  if (patientIds.length === 0) return [];
-  const mine = (await listOpenVisits(clinicId)).filter((v) => patientIds.includes(v.patient.id));
+async function queuePositions(clinicId: string, pick: (v: VisitSummary) => boolean): Promise<PatientQueuePosition[]> {
+  const mine = (await listOpenVisits(clinicId)).filter(pick);
   if (mine.length === 0) return [];
   const all = await listOpenVisits(clinicId, { statuses: ["waiting", "called"] });
   return mine.map((v) => ({
     visitId: v.id,
+    kind: v.kind,
     status: v.status,
     queueNumber: v.queueNumber,
     doctorName: queueLabel(v),
@@ -613,4 +644,75 @@ export async function patientQueuePositions(clinicId: string, patientIds: string
         : all.filter((o) => sameQueue(v, o) && o.id !== v.id && queueOrder(o, v) < 0).length,
     outstanding: v.balance.outstanding,
   }));
+}
+
+/** The patient's own unfinished visits with their live position (Mini App). */
+export async function patientQueuePositions(clinicId: string, patientIds: string[]): Promise<PatientQueuePosition[]> {
+  if (patientIds.length === 0) return [];
+  return queuePositions(clinicId, (v) => patientIds.includes(v.patient.id));
+}
+
+// ---------------------------------------------------------------------------
+// Following a visit's queue in Telegram (20261008000003, owner 2026-10-08)
+// ---------------------------------------------------------------------------
+
+const followTokenHash = (token: string) => createHash("sha256").update(token, "utf8").digest("hex");
+
+/** The start parameter's token: 32 base64url characters (192 random bits). */
+export const FOLLOW_TOKEN = /^[A-Za-z0-9_-]{32}$/;
+
+/**
+ * A one-time link for the patient to follow THIS visit's queue in the
+ * clinic's Telegram bot, shown as a QR code at the kassa or reception. Only
+ * the token's hash is stored; a new link replaces an unused one. Following
+ * gives the queue only — never the card, records or results.
+ */
+export async function createVisitFollowLink(staff: Staff, visitId: string): Promise<{ url: string; expiresAt: string }> {
+  const { data: bot, error } = await createAdminClient()
+    .from("clinic_telegram_integrations")
+    .select("telegram_username, enabled, status")
+    .eq("clinic_id", staff.clinicId)
+    .maybeSingle();
+  if (error) throw new ApiError(500, "Telegram botini tekshirib bo‘lmadi");
+  if (!bot?.telegram_username || !bot.enabled || bot.status !== "active") {
+    throw new ApiError(409, "Klinikaning Telegram boti ulanmagan — navbat raqamini bemorga ayting", "bot_not_configured");
+  }
+  const token = randomBytes(24).toString("base64url");
+  const r = await rpc<{ token_id: string; expires_at: string }>("create_visit_follow_token", {
+    p_clinic: staff.clinicId,
+    p_actor: staff.profileId,
+    p_visit: visitId,
+    p_token_hash: followTokenHash(token),
+  });
+  return { url: `https://t.me/${bot.telegram_username}?start=v_${token}`, expiresAt: r.expires_at };
+}
+
+export type FollowClaim = { status: "subscribed" | "already" | "invalid"; visitId?: string };
+
+/** The bot's side: the Telegram user who opened the link starts following the visit. */
+export async function claimVisitFollow(clinicId: string, token: string, telegramUserId: number): Promise<FollowClaim> {
+  if (!FOLLOW_TOKEN.test(token)) return { status: "invalid" };
+  const r = await rpc<{ status: FollowClaim["status"]; visit_id?: string }>("claim_visit_follow_token", {
+    p_clinic: clinicId,
+    p_token_hash: followTokenHash(token),
+    p_telegram_user_id: telegramUserId,
+  });
+  return { status: r.status, visitId: r.visit_id };
+}
+
+/**
+ * Every unfinished visit this Telegram user may see the queue of in this
+ * clinic: the ones they follow, and their own linked card's.
+ */
+export async function telegramQueuePositions(clinicId: string, telegramUserId: number): Promise<PatientQueuePosition[]> {
+  const db = createAdminClient();
+  const [followed, own] = await Promise.all([
+    db.from("visit_followers").select("visit_id").eq("clinic_id", clinicId).eq("telegram_user_id", telegramUserId),
+    db.from("patients").select("id").eq("clinic_id", clinicId).eq("telegram_user_id", telegramUserId),
+  ]);
+  if (followed.error || own.error) throw new ApiError(500, "Navbatni yuklab bo‘lmadi");
+  const visitIds = new Set((followed.data ?? []).map((f) => f.visit_id));
+  const patientIds = new Set((own.data ?? []).map((p) => p.id));
+  if (visitIds.size === 0 && patientIds.size === 0) return [];
+  return queuePositions(clinicId, (v) => visitIds.has(v.id) || patientIds.has(v.patient.id));
 }
