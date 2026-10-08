@@ -163,7 +163,12 @@ async function run() {
       await fitsWidth(page, "tablet: referrals list");
       await page.goto(`${BASE}/doctor/referrals/${referralId}`);
       await page.getByRole("button", { name: "Qabul qilish" }).waitFor();
-      check(await page.getByText("Tarix yo‘llanmani qabul qilganingizdan keyin ko‘rinadi.").isVisible(), "before accepting, A's history is withheld");
+      // No accept step to read (owner decision 2026-10-07): A's visits are listed while pending.
+      check(
+        (await page.getByText("Tarix yo‘llanmani qabul qilganingizdan keyin ko‘rinadi.").count()) === 0 &&
+          (await page.getByRole("table").count()) > 0,
+        "before accepting, A's visit history is already shared",
+      );
       await tappable(page.getByRole("button", { name: "Qabul qilish" }), "tablet: accept button");
       await page.getByRole("button", { name: "Qabul qilish" }).click();
       await page.getByText("Yo‘llanma qabul qilindi").waitFor();

@@ -271,17 +271,17 @@ describeDb("referral lifecycle — transitions, access termination and audit (da
 
   // ---------- Transitions ----------
 
-  it("created → PENDING: Dr B sees the patient and the consultation it came from — nothing else", async () => {
+  it("created → PENDING: Dr A's history opens to Dr B at once — no accept step (owner decision 2026-10-07)", async () => {
     const x = await patientX();
     const referral = await refer(x);
 
     expectWellFormed(await lastAudit(referral), x.id, referral, "referral_created", profiles.a);
-    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: false, active_referral_ids: [referral], history_doctor_ids: [] });
-    expect(await reach(profiles.b, x.id, referral)).toEqual({ patient: true, appointments: [x.consultation], records: [x.recConsultation], referral: true });
+    expect(await access(doctors.b, x.id)).toMatchObject({ own_patient: false, active_referral_ids: [referral], history_doctor_ids: [doctors.a] });
+    expect(await reach(profiles.b, x.id, referral)).toEqual({ patient: true, appointments: x.aVisits, records: x.aRecords, referral: true });
     expect(await reach(profiles.c, x.id, referral)).toEqual(nothing);
   });
 
-  it("PENDING → ACCEPTED: Dr A's history opens to Dr B", async () => {
+  it("PENDING → ACCEPTED: Dr B keeps Dr A's history", async () => {
     const x = await patientX();
     const referral = await refer(x);
     await accept(referral);

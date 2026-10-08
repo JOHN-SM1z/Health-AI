@@ -429,6 +429,8 @@ export type Database = {
       }
       clinics: {
         Row: {
+          queue_after_payment: boolean
+          operating_mode: string
           address: string | null
           created_at: string
           currency: string
@@ -444,6 +446,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          queue_after_payment?: boolean
+          operating_mode?: string
           address?: string | null
           created_at?: string
           currency?: string
@@ -459,6 +463,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          queue_after_payment?: boolean
+          operating_mode?: string
           address?: string | null
           created_at?: string
           currency?: string
@@ -2257,6 +2263,7 @@ export type Database = {
       }
       notification_jobs: {
         Row: {
+          visit_id: string | null
           appointment_id: string | null
           attempts: number
           channel: string
@@ -2281,6 +2288,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          visit_id?: string | null
           appointment_id?: string | null
           attempts?: number
           channel?: string
@@ -2305,6 +2313,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          visit_id?: string | null
           appointment_id?: string | null
           attempts?: number
           channel?: string
@@ -2462,6 +2471,7 @@ export type Database = {
       }
       patients: {
         Row: {
+          patient_number: number
           clinic_id: string
           consent_given: boolean
           consent_given_at: string | null
@@ -2485,6 +2495,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          patient_number?: number
           clinic_id: string
           consent_given?: boolean
           consent_given_at?: string | null
@@ -2508,6 +2519,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          patient_number?: number
           clinic_id?: string
           consent_given?: boolean
           consent_given_at?: string | null
@@ -3057,6 +3069,268 @@ export type Database = {
           },
         ]
       }
+      clinic_counters: {
+        Row: {
+          clinic_id: string
+          name: string
+          value: number
+        }
+        Insert: {
+          clinic_id: string
+          name: string
+          value: number
+        }
+        Update: {
+          clinic_id?: string
+          name?: string
+          value?: number
+        }
+        Relationships: []
+      }
+      refund_grants: {
+        Row: {
+          clinic_id: string
+          granted_at: string
+          granted_by: string
+          id: string
+          profile_id: string
+          revoke_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+        }
+        Insert: {
+          clinic_id: string
+          granted_at?: string
+          granted_by: string
+          id?: string
+          profile_id: string
+          revoke_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+        }
+        Update: {
+          clinic_id?: string
+          granted_at?: string
+          granted_by?: string
+          id?: string
+          profile_id?: string
+          revoke_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+        }
+        Relationships: []
+      }
+      visit_charges: {
+        Row: {
+          amount: number
+          clinic_id: string
+          created_at: string
+          created_by: string
+          currency: string
+          id: string
+          idempotency_key: string | null
+          patient_id: string
+          quantity: number
+          service_id: string
+          service_name: string
+          status: string
+          unit_price: number
+          visit_id: string
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          amount: number
+          clinic_id: string
+          created_at?: string
+          created_by: string
+          currency: string
+          id?: string
+          idempotency_key?: string | null
+          patient_id: string
+          quantity?: number
+          service_id: string
+          service_name: string
+          status?: string
+          unit_price: number
+          visit_id: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          amount?: number
+          clinic_id?: string
+          created_at?: string
+          created_by?: string
+          currency?: string
+          id?: string
+          idempotency_key?: string | null
+          patient_id?: string
+          quantity?: number
+          service_id?: string
+          service_name?: string
+          status?: string
+          unit_price?: number
+          visit_id?: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "visit_charges_visit_fkey"
+            columns: ["visit_id", "clinic_id", "patient_id"]
+            isOneToOne: false
+            referencedRelation: "visits"
+            referencedColumns: ["id", "clinic_id", "patient_id"]
+          },
+        ]
+      }
+      visit_transactions: {
+        Row: {
+          amount: number
+          authorized_by: string
+          clinic_id: string
+          created_at: string
+          currency: string
+          executed_by: string
+          id: string
+          kind: string
+          method: string
+          patient_id: string
+          reason: string | null
+          refund_grant_id: string | null
+          request_fingerprint: string
+          request_key: string
+          visit_id: string
+        }
+        Insert: {
+          amount: number
+          authorized_by: string
+          clinic_id: string
+          created_at?: string
+          currency: string
+          executed_by: string
+          id?: string
+          kind: string
+          method: string
+          patient_id: string
+          reason?: string | null
+          refund_grant_id?: string | null
+          request_fingerprint: string
+          request_key: string
+          visit_id: string
+        }
+        Update: {
+          amount?: number
+          authorized_by?: string
+          clinic_id?: string
+          created_at?: string
+          currency?: string
+          executed_by?: string
+          id?: string
+          kind?: string
+          method?: string
+          patient_id?: string
+          reason?: string | null
+          refund_grant_id?: string | null
+          request_fingerprint?: string
+          request_key?: string
+          visit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "visit_transactions_visit_fkey"
+            columns: ["visit_id", "clinic_id", "patient_id"]
+            isOneToOne: false
+            referencedRelation: "visits"
+            referencedColumns: ["id", "clinic_id", "patient_id"]
+          },
+        ]
+      }
+      visits: {
+        Row: {
+          appointment_id: string | null
+          arrived_at: string
+          called_at: string | null
+          cancel_reason: string | null
+          cancelled_at: string | null
+          clinic_id: string
+          completed_at: string | null
+          created_by: string
+          doctor_id: string
+          id: string
+          idempotency_key: string
+          patient_id: string
+          queue_date: string | null
+          queue_number: number | null
+          queued_at: string | null
+          request_fingerprint: string
+          started_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          appointment_id?: string | null
+          arrived_at?: string
+          called_at?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          clinic_id: string
+          completed_at?: string | null
+          created_by: string
+          doctor_id: string
+          id?: string
+          idempotency_key: string
+          patient_id: string
+          queue_date?: string | null
+          queue_number?: number | null
+          queued_at?: string | null
+          request_fingerprint: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          appointment_id?: string | null
+          arrived_at?: string
+          called_at?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          clinic_id?: string
+          completed_at?: string | null
+          created_by?: string
+          doctor_id?: string
+          id?: string
+          idempotency_key?: string
+          patient_id?: string
+          queue_date?: string | null
+          queue_number?: number | null
+          queued_at?: string | null
+          request_fingerprint?: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "visits_patient_fkey"
+            columns: ["patient_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "visits_doctor_fkey"
+            columns: ["doctor_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "doctors"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
       voice_messages: {
         Row: {
           clinic_id: string
@@ -3186,6 +3460,7 @@ export type Database = {
           telegram_message_id: number | null
           type: Database["public"]["Enums"]["notification_job_type"]
           updated_at: string
+          visit_id: string | null
         }[]
         SetofOptions: {
           from: "*"
@@ -3424,6 +3699,110 @@ export type Database = {
           lab_result_id: string
         }[]
       }
+      add_visit_charge: {
+        Args: {
+          p_actor: string
+          p_clinic: string
+          p_key: string
+          p_service: string
+          p_visit: string
+        }
+        Returns: Json
+      }
+      grant_refund_permission: {
+        Args: {
+          p_actor: string
+          p_cashier: string
+          p_clinic: string
+        }
+        Returns: Json
+      }
+      record_visit_payment: {
+        Args: {
+          p_actor: string
+          p_clinic: string
+          p_expected_outstanding: number
+          p_key: string
+          p_lines: Json
+          p_visit: string
+        }
+        Returns: Json
+      }
+      refund_visit_payment: {
+        Args: {
+          p_actor: string
+          p_amount: number
+          p_clinic: string
+          p_key: string
+          p_method: string
+          p_reason: string
+          p_visit: string
+        }
+        Returns: Json
+      }
+      register_arrival: {
+        Args: {
+          p_actor: string
+          p_clinic: string
+          p_doctor: string
+          p_key: string
+          p_new_patient: Json | null
+          p_patient: string | null
+          p_service_ids: string[]
+        }
+        Returns: Json
+      }
+      revoke_refund_permission: {
+        Args: {
+          p_actor: string
+          p_cashier: string
+          p_clinic: string
+          p_reason: string
+        }
+        Returns: Json
+      }
+      start_visit_consultation: {
+        Args: {
+          p_actor: string
+          p_clinic: string
+          p_expected: string
+          p_visit: string
+        }
+        Returns: Json
+      }
+      transition_visit: {
+        Args: {
+          p_actor: string
+          p_clinic: string
+          p_expected: string
+          p_reason: string | null
+          p_status: string
+          p_visit: string
+        }
+        Returns: Json
+      }
+      visit_balance: {
+        Args: {
+          p_visit: string
+        }
+        Returns: {
+          cash_net: number
+          charged: number
+          collected: number
+          outstanding: number
+          refunded: number
+          terminal_net: number
+        }[]
+      }
+      void_visit_charge: {
+        Args: {
+          p_actor: string
+          p_charge: string
+          p_clinic: string
+          p_reason: string
+        }
+        Returns: Json
+      }
       start_walk_in_consultation: {
         Args: {
           p_actor: string
@@ -3557,6 +3936,7 @@ export type Database = {
         | "lab_result_verified"
         | "lab_result_corrected"
         | "lab_order_cancelled"
+        | "queue_ticket"
       patient_sex: "female" | "male"
       payment_provider: "manual" | "click" | "payme" | "cash" | "card_terminal"
       payment_status:
@@ -3580,6 +3960,7 @@ export type Database = {
         | "manager"
         | "admin"
         | "receptionist"
+        | "cashier"
         | "lab"
         | "doctor"
       telegram_bot_status: "disabled" | "active" | "error"
@@ -3821,6 +4202,7 @@ export const Constants = {
         "lab_result_verified",
         "lab_result_corrected",
         "lab_order_cancelled",
+        "queue_ticket",
       ],
       patient_sex: ["female", "male"],
       payment_provider: ["manual", "click", "payme", "cash", "card_terminal"],
@@ -3847,6 +4229,7 @@ export const Constants = {
         "manager",
         "admin",
         "receptionist",
+        "cashier",
         "lab",
         "doctor",
       ],

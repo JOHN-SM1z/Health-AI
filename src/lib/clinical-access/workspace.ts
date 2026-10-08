@@ -88,9 +88,30 @@ function referralAccessUntil(referrals: PatientReferral[]): string | null {
   return open.length > 0 ? open.map((r) => r.expiresAt).sort().at(-1)! : null;
 }
 
-/** Whether `access` lets the doctor start a consultation (own patient or an accepted referral). */
-export function canStartConsultation(access: ClinicalAccess): boolean {
-  return access.allowed && (access.scope.ownAppointments || access.scope.sharedHistoryDoctorIds.length > 0);
+/**
+ * Whether `access` lets the doctor start a consultation: their own patient
+ * (an appointment or a walk-in visit with them), or an accepted referral.
+ * Reading the referring doctor's history does not need acceptance (owner
+ * decision 2026-10-07: a pending referral shares it at once), so acceptance
+ * is checked on the referral itself, not inferred from the shared history.
+ */
+export function canStartConsultation(access: ClinicalAccess, hasAcceptedReferral: boolean): boolean {
+  return access.allowed && (access.scope.ownAppointments || hasAcceptedReferral);
+}
+
+/** An open referral of `access` to this doctor that they accepted (or are already seeing the patient for). */
+export async function hasAcceptedReferral(doctor: LinkedDoctor, access: ClinicalAccess): Promise<boolean> {
+  if (access.activeReferralIds.length === 0) return false;
+  const { data, error } = await createAdminClient()
+    .from("referrals")
+    .select("id")
+    .eq("clinic_id", doctor.clinicId)
+    .eq("referred_to_doctor_id", doctor.doctorId)
+    .in("id", access.activeReferralIds)
+    .in("status", ["accepted", "in_progress"])
+    .limit(1);
+  if (error) throw new ApiError(500, "Yo‘llanmani tekshirib bo‘lmadi");
+  return (data ?? []).length > 0;
 }
 
 async function doctorServices(doctor: LinkedDoctor): Promise<Array<{ id: string; name: string }>> {
@@ -188,7 +209,10 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
           a.startAt >= today.start &&
           a.startAt < today.end,
       ) ?? null;
-  const canStart = canStartConsultation(access);
+  const canStart = canStartConsultation(
+    access,
+    referrals.some((r) => r.role === "receiver" && ["accepted", "in_progress"].includes(r.status)),
+  );
 
   // The access log names the patient, the referral the access rests on (when
   // exactly one does), and every record of another doctor released — ids

@@ -22,7 +22,8 @@ export type StaffContext = {
  * only passes for literal doctors (receptionist weight 0 < doctor weight 1).
  * Lab staff weigh -1: no weight-based check ever admits them, not even
  * requireStaff("receptionist"); lab routes name their roles exactly
- * (requireLabCapability / requireRoles).
+ * (requireLabCapability / requireRoles). Cashiers likewise weigh -1: they
+ * reach only the kassa routes, which name the role explicitly.
  */
 const ROLE_WEIGHT: Record<StaffRole, number> = {
   owner: 4,
@@ -30,6 +31,7 @@ const ROLE_WEIGHT: Record<StaffRole, number> = {
   manager: 3,
   doctor: 1,
   receptionist: 0,
+  cashier: -1,
   lab: -1,
 };
 
@@ -55,7 +57,7 @@ export function isCallCenterStaff(ctx: StaffContext | null): boolean {
   return !!ctx && hasAnyRole(ctx.roles, ["manager", "receptionist"]);
 }
 
-const ADMIN_WORKSPACE_ROLES: StaffRole[] = ["owner", "admin", "manager", "receptionist"];
+const ADMIN_WORKSPACE_ROLES: StaffRole[] = ["owner", "admin", "manager", "receptionist", "cashier"];
 
 /**
  * Where a signed-in staff session belongs when it lands on the clinic

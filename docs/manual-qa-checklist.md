@@ -61,7 +61,7 @@ notifications, and a human's eye on every screen.
 - [ ] Double-clicking *Yo‘llanma yuborish* creates one referral and one `referral_created` audit row
 - [ ] Receiving doctor's `/doctor` dashboard shows *Sizga kelgan yo‘llanmalar (n)* with patient, referrer and priority only
 - [ ] Referral appears as *Kutilmoqda* under *Yuborilgan* (referrer) and *Kelgan* (receiver)
-- [ ] Receiver sees no appointment history until *Qabul qilish*; after accepting, history with the referrer appears
+- [ ] Receiver sees the history with the referrer as soon as the referral exists (before *Qabul qilish*); starting a consultation from it still needs *Qabul qilish*
 - [ ] Declining/revoking with a reason works; the receiver can no longer open a declined/revoked referral (404 page)
 - [ ] A doctor who is not a party gets *Yo‘llanma topilmadi* for the referral URL
 - [ ] Reception: patient panel shows *Yo‘llanmalar* (doctors, status, priority) but never the reason/handoff note; *Qabulga yozish* books with the receiving doctor only, then disappears

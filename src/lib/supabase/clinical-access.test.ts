@@ -254,17 +254,17 @@ describeDb("referral-based clinical access — database layer (doctor_patient_ac
     await asServer((tx) => tx`insert into public.payments ${tx({ clinic_id: clinicA, appointment_id: x.consultation, patient_id: x.id, amount: 100000 })}`);
     const referral = await refer(x.id, x.consultation);
 
-    // Pending: the patient record and the consultation it came from, so Dr B can decide.
+    // Pending already shares X's visits with the referring doctor — no accept
+    // step (owner decision 2026-10-07) — never Dr E's visit, never payments.
     expect(await access(doctors.b, x.id)).toMatchObject({
       own_patient: false,
       active_referral_ids: [referral],
-      history_doctor_ids: [],
+      history_doctor_ids: [doctors.a],
       referral_appointment_ids: [x.consultation],
     });
-    expect(await seenBy(profiles.b, x.id)).toEqual({ patient: true, appointments: [x.consultation], payments: 0 });
+    expect(await seenBy(profiles.b, x.id)).toEqual({ patient: true, appointments: [...x.withA].sort(), payments: 0 });
 
-    // Accepted: also X's visits with the referring doctor — never Dr E's
-    // visit, never payments.
+    // Accepted: unchanged.
     await accept(referral);
     expect(await access(doctors.b, x.id)).toMatchObject({ active_referral_ids: [referral], history_doctor_ids: [doctors.a] });
     expect(await seenBy(profiles.b, x.id)).toEqual({ patient: true, appointments: [...x.withA].sort(), payments: 0 });

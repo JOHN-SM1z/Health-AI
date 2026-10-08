@@ -205,7 +205,10 @@ diagnoses, prescriptions, laboratory orders and results, medical history and fol
   access once a referral is declined, revoked or expired, and a completed one at its
   `expires_at` (see [Referral lifecycle and access termination](#referral-lifecycle-and-access-termination)).
 - The receiving doctor sees the patient's appointment history with the referring doctor
-  (date, service, status — no clinical text) only after accepting.
+  (date, service, status — no clinical text) as soon as the referral exists — pending
+  included, no accept step to read (owner decision 2026-10-07, `20261007000002`). Starting a
+  consultation from a referral still requires accepting it; a walk-in visit registered with
+  that doctor needs no acceptance.
 - Lifecycle (`20260928000002_clinical_handoff.sql`): `pending → accepted → in_progress →
   completed`, `pending → declined`, `revoked`/`expired` while open. `in_progress` is set by the
   database only — when the receiving doctor's own consultation linked as the follow-up has

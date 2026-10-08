@@ -335,11 +335,10 @@ describeDb("clinical records — database layer", () => {
     expect(await readable(profiles.e, x.id)).toEqual([x.recE]);
     expect(await readable(profiles.b, x.id)).toEqual([]);
 
-    // Pending referral: only the records of the consultation it came from.
+    // A referral (pending — no accept step needed) opens all of Dr A's records for X — never Dr E's.
     const referral = await refer(x.id, x.consultation);
-    expect(await readable(profiles.b, x.id)).toEqual([x.recConsultation]);
+    expect(await readable(profiles.b, x.id)).toEqual(aRecords);
 
-    // Accepted: all of Dr A's records for X — never Dr E's.
     await transition(referral, { status: "accepted", accepted_by: profiles.b });
     expect(await readable(profiles.b, x.id)).toEqual(aRecords);
 

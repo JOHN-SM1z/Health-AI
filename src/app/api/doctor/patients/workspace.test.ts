@@ -332,8 +332,8 @@ describeDb("referred-patient clinical workspace", () => {
     const x = await patientX();
     const referral = await refer(x);
 
-    // Pending: only the records of the consultation the referral came from.
-    expect(recordIds(ws(await workspace("b", x.id)))).toEqual([x.recConsultation]);
+    // Pending already: Dr A's records (no accept step to read — owner decision 2026-10-07).
+    expect(recordIds(ws(await workspace("b", x.id)))).toEqual(x.aRecords);
 
     // Accepted: Dr A's records, attributed to Dr A — never Dr E's.
     await act("b", referral, { action: "accept" });

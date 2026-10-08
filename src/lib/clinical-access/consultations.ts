@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/api/errors";
 import { trackAnalytics } from "@/lib/analytics";
 import type { LinkedDoctor } from "@/lib/auth/guards";
 import { canDoctorAccessPatientClinicalData } from "@/lib/clinical-access/access";
-import { canStartConsultation } from "@/lib/clinical-access/workspace";
+import { canStartConsultation, hasAcceptedReferral } from "@/lib/clinical-access/workspace";
 import { patientAccessDenied } from "@/lib/clinical-access/denial";
 import { startConsultationInDatabase, startWalkInInDatabase } from "@/lib/clinical-access/consultation-start";
 import { BookingError, bookingError } from "@/lib/booking/engine";
@@ -57,7 +57,7 @@ export async function startConsultation(
 ): Promise<{ appointmentId: string; started: boolean }> {
   const access = await canDoctorAccessPatientClinicalData(doctor.doctorId, patientId);
   if (!access.allowed) throw await patientAccessDenied(doctor, patientId);
-  if (!canStartConsultation(access)) {
+  if (!canStartConsultation(access, access.scope.ownAppointments || (await hasAcceptedReferral(doctor, access)))) {
     throw new ApiError(409, "Avval yo‘llanmani qabul qiling", "referral_not_accepted");
   }
 

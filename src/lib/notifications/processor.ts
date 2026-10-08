@@ -51,6 +51,8 @@ const MESSAGE_TEMPLATES: Record<
   lab_result_entered: () => "",
   lab_result_verified: () => "",
   lab_result_corrected: () => "",
+  // Built by processQueueTicketJob from the visit, not an appointment.
+  queue_ticket: () => "",
 };
 
 type AppointmentContext = {
@@ -149,6 +151,13 @@ export async function processDueNotificationJobs(
       if (!job.patient_telegram_user_id) {
         await markJob(jobId, "failed", nextAttempts, "no telegram recipient", supabase);
         failed += 1;
+        continue;
+      }
+
+      if (job.type === "queue_ticket") {
+        const outcome = await processQueueTicketJob(supabase, job);
+        if (outcome === "sent") sent += 1;
+        else if (outcome === "failed") failed += 1;
         continue;
       }
 
@@ -335,6 +344,72 @@ async function processLabOrderCancelledJob(
       chatId: job.patient_telegram_user_id,
       text: `Laboratoriya buyurtmangiz bekor qilindi.\n\nSavollaringiz bo‘lsa, klinikaga murojaat qiling.`,
       replyMarkup: { inline_keyboard: [[{ text: "👤 Operator bilan bog‘lanish", callback_data: "contact_operator" }]] },
+    },
+    job.clinic_id,
+  );
+  if (messageId !== null) {
+    try {
+      await supabase
+        .from("notification_jobs")
+        .update({ status: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, attempts: nextAttempts })
+        .eq("id", job.id);
+    } catch (e) {
+      logger.error("notification sent but not recorded", { jobId: job.id, error: e instanceof Error ? e.message : String(e) });
+      await markJob(job.id, "failed", nextAttempts, "sent but not recorded", supabase);
+      return "failed";
+    }
+    return "sent";
+  }
+  if (nextAttempts >= (job.max_attempts ?? 3)) {
+    await markJob(job.id, "failed", nextAttempts, "send failed after retries", supabase);
+    return "failed";
+  }
+  await markJob(job.id, "pending", nextAttempts, "send failed, retrying", supabase);
+  return "retry";
+}
+
+/**
+ * The patient's digital queue ticket (no paper talon). Sent only while the
+ * visit is still waiting or called, and only to the visit's own patient's
+ * verified Telegram chat. States arrival order, never a time.
+ */
+async function processQueueTicketJob(
+  supabase: ReturnType<typeof createAdminClient>,
+  job: ClaimedJob,
+): Promise<"sent" | "failed" | "skipped" | "retry"> {
+  const nextAttempts = job.attempts + 1;
+  const { data: visit } = await supabase
+    .from("visits")
+    .select("id, clinic_id, status, queue_date, queue_number, doctor_id, patients!inner(telegram_user_id), doctors!inner(name)")
+    .eq("id", job.visit_id ?? "")
+    .eq("clinic_id", job.clinic_id)
+    .maybeSingle();
+  if (!visit || visit.queue_number === null || !["waiting", "called"].includes(visit.status)) {
+    await markJob(job.id, "skipped", nextAttempts, "visit no longer waiting", supabase);
+    return "skipped";
+  }
+  const patientChat = visit.patients?.telegram_user_id ?? null;
+  if (!job.patient_telegram_user_id || patientChat === null || Number(patientChat) !== Number(job.patient_telegram_user_id)) {
+    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    return "skipped";
+  }
+  const { count: ahead } = await supabase
+    .from("visits")
+    .select("id", { count: "exact", head: true })
+    .eq("clinic_id", visit.clinic_id)
+    .eq("doctor_id", visit.doctor_id)
+    .in("status", ["waiting", "called"])
+    .or(`queue_date.lt.${visit.queue_date},and(queue_date.eq.${visit.queue_date},queue_number.lt.${visit.queue_number})`);
+  const appUrl = resolveHttpsAppUrl(`/my-appointments?clinic=${encodeURIComponent(job.clinic_id)}`);
+  const messageId = await sendTelegramMessage(
+    {
+      chatId: job.patient_telegram_user_id,
+      text:
+        `🎫 Navbat raqamingiz: ${visit.queue_number}\n\n` +
+        `👨‍⚕️ Shifokor: ${visit.doctors?.name ?? "Shifokor"}\n` +
+        `👥 Sizdan oldin: ${ahead ?? 0} bemor\n\n` +
+        `Bu kelish tartibi, aniq qabul vaqti emas. Navbatingiz kelganda chaqirasiz.`,
+      ...(appUrl ? { replyMarkup: { inline_keyboard: [[{ text: "📋 Navbatni kuzatish", web_app: { url: appUrl } }]] } } : {}),
     },
     job.clinic_id,
   );
