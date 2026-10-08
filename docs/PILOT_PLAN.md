@@ -104,7 +104,7 @@ Legend: **V** implemented and verified · **U** implemented, unverified · **M**
 | RLS on every exposed table; server-only clinical reads | V | `security/*`, `e2e/redteam-http.mjs` |
 | Tenant isolation, forged clinic/actor/patient/payment rejected | V | tenant-isolation and red-team suites |
 | Notification claims atomic; uncertain delivery never re-sent | V | processor tests (Phase 16) |
-| Retention: database refuses to destroy clinical history | M | clinic/patient deletes still cascade (decision record §1) |
+| Retention: database refuses to destroy clinical history | V | `20261008000004`: delete/truncate of clinics, patients, clinical records and referrals refused (`retention-guard.test.ts`); test databases only via a seeded marker that production never has |
 | Clinic suspended/terminated enforcement | M | decision record §2 |
 | Backup / restore rehearsal, downtime procedure, monitoring | M | Phase 4 package |
 | Inpatient (beds, admission, transfers, packages) | M | Phase 5, after the outpatient pilot |

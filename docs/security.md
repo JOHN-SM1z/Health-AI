@@ -364,6 +364,27 @@ follow the queue without linking their Telegram to their card (owner decision).
   - The functions are service-role only and re-check the caller's role.
   - Audit rows carry token and follower ids, never the token, its hash or the Telegram id.
 
+## Retention: the database keeps clinical history (2026-10-08)
+
+Owner decision 2026-10-07 §1: clinical and lab records are kept indefinitely, terminating a clinic keeps its
+data, and there is no patient-deletion workflow. `20261008000004_retention_guard` makes the database enforce
+it.
+- **What is refused:** `DELETE` and `TRUNCATE` on `clinics`, `patients`, `clinical_records` and `referrals`,
+  with errcode `42501` and hint `retention`.
+  - This applies to every role, including `service_role`.
+  - Deleting a clinic or patient was the only way to cascade into appointments, payments and conversations,
+    so those are covered too.
+- **Already protected:** lab results, values and documents (deletable only during a whole-clinic erase,
+  which is now impossible outside tests), visits (`RESTRICT`), the kassa ledger and charges (append-only),
+  and the audit trail (no update or delete for the service role).
+- **The test-database marker.** A row in `internal.retention_override` lifts the guard so test suites can
+  erase what they create. Only `supabase/seed.sql` (local and CI) inserts it.
+  - No API role can use the `internal` schema.
+  - A test asserts that no migration and not the production setup file insert it.
+  - Staging and production must have **0 rows** (runbook pre-flight and monitoring).
+- **Limit:** the database owner can disable triggers. The guard stops the application, a leaked service key
+  and accidental SQL; it is not a defence against the database owner.
+
 ## Medical safety (non-security but critical)
 
 `src/lib/safety/policy.ts`:

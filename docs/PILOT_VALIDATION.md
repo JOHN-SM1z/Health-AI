@@ -197,3 +197,23 @@ Everything listed under Runs 1 and 2, minus "lab orders on the visit bill", plus
 - **MyID / OneID** (no contract) and SMS.
 - **Earlier runs:** everything listed under Runs 1–3.
 
+## Run 5 — 2026-10-08 (retention guard)
+
+| Gate | Result |
+|---|---|
+| Database | rebuilt with `supabase db reset` (75 migrations). The seed marked it as a test database (1 row in `internal.retention_override`). Owner account and E2E demo created as in CI. |
+| Lint / types | 0 errors / 0 errors |
+| `npm test` | **1119 passed, 0 skipped** (121 files). Includes 5 new retention tests. Every existing suite's clean-up still works on the test database. |
+| `full-db-setup.sql` | regenerated from 75 migrations; contains no test-database marker (asserted by a test) |
+| Browser E2E | **21 scripts, 378 checks, all passed** |
+
+**What the retention tests prove.** With the test marker removed inside a rolled-back transaction (as on
+staging and production):
+- deleting a clinic, a patient, a clinical record or a referral is refused, also as `service_role`;
+- truncating any of the four tables is refused;
+- every row is still there afterwards;
+- no API role can read or write the marker.
+
+**Staging rehearsal (owner-approved, staging only).** Started; production untouched. Status and the
+connector limits are in `PILOT_RUNBOOK.md` §3.2.
+

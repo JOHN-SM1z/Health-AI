@@ -53,11 +53,23 @@ and auditability.
   No application route issues these deletes, but a manual `delete from clinics` or `delete from patients`
   would silently erase history.
 
-**Proposed change**
-- Replace these cascades with `RESTRICT`, so the database itself refuses to delete a clinic or patient that
-  owns clinical history.
-- Add a test proving the refusal.
-- Update `docs/labs/PRODUCTION_READINESS.md`, where retention is recorded as an "open owner decision".
+**Built (2026-10-08, `20261008000004_retention_guard`)**
+- The database refuses `DELETE` and `TRUNCATE` of `clinics`, `patients`, `clinical_records` and `referrals`.
+  - It uses guard triggers, errcode `42501`, hint `retention`.
+  - With clinics and patients undeletable, none of the cascades above can run.
+  - Lab data, visits, the kassa ledger and the audit trail were already protected.
+- **Why not RESTRICT on each foreign key** (the original proposal): about 60 test suites clean up by deleting
+  the clinic they create. RESTRICT would also not stop the `postgres` role.
+- **Instead, one guard with an explicit test-database marker.** A row in `internal.retention_override` is
+  seeded only in local and CI databases (`supabase/seed.sql`).
+  - No migration inserts it.
+  - The production setup file does not contain it.
+  - No API role can read or write the `internal` schema.
+  - Staging and production must keep it empty; the runbook checks this.
+- **Tests:** `retention-guard.test.ts`. Each refusal is checked with the marker removed inside a rolled-back
+  transaction, which is exactly the production behaviour.
+- **What it does not stop:** the database owner can still disable triggers. The guard protects against the
+  app, a leaked service key and accidental SQL.
 
 ## 2. Clinic subscription termination
 

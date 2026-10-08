@@ -14,7 +14,8 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
   - the 21 laboratory migrations `20261005000001`–`021`;
   - the outpatient migrations `20261007000001`–`003`;
   - the laboratory-visit migration `20261008000001_lab_visits` (needs the laboratory migrations);
-  - the Telegram queue follow-up `20261008000002_queue_called_enum` and `20261008000003_visit_follow`.
+  - the Telegram queue follow-up `20261008000002_queue_called_enum` and `20261008000003_visit_follow`;
+  - the retention guard `20261008000004_retention_guard`.
 - **The live app is `health-ai-w1vc.vercel.app`, which runs `main`.** This branch (PR #14) is not deployed.
 - **The scheduler secret is not aligned.** The Vault `health_ai_cron_secret` must equal `CRON_SECRET` on
   health-ai-w1vc. Reminders fail with 401 until it does.
@@ -40,13 +41,30 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
      `pg_dump` first.
    - Write down the time and the backup id.
 2. **Rehearse on staging first.**
-   - Staging project `qoupbbsspzfyjqfzykuk` has the schema up to the lab module.
-   - Apply `20261007000001`–`003` and `20261008000001`–`003` there by name, then run the acceptance checks in §5 against a staging
-     deployment.
+   - Staging project `qoupbbsspzfyjqfzykuk` ("Health AI staging") has the repository's migrations up to
+     `20261005000021`, with matching stamps. Spot-checked 2026-10-08: function sources identical to the repo.
+   - Apply `20261007000001`–`003` and `20261008000001`–`004` there by name. Then run the acceptance checks in
+     §5 against a staging deployment.
+   - **Progress 2026-10-08:**
+     - Applied, owner-approved, through the Supabase connector:
+       - `operations_enums`;
+       - `20261007000002` in parts: `outpatient_operations_part1_schema`, `…part2a_helpers_registration`,
+         `…part2b_kassa`, `…part2c_charges_queue`.
+     - **Stopped before** `start_visit_consultation` and `doctor_patient_access`, then `20261007000003` and
+       `20261008000001`–`004`.
+       - The connector holds every statement containing `delete`/`drop` for the owner's confirmation; from
+         the agent's session that times out.
+       - Finish in the Supabase SQL editor, or approve the connector prompts.
+     - Staging is safe in this partial state: the new tables are server-only and the old
+       `doctor_patient_access` still applies.
+   - **The connector times out on large files.** Apply `20261007000002` as separate parts, or use the SQL
+     editor. Each function's revoke/grant goes in the same part as the function.
 3. **Pre-flight on production (read-only):**
    - migration names present;
    - no rows that would violate the new constraints. The new tables are empty; `patients.patient_number` is
      backfilled by the migration in `created_at` order.
+   - after `20261008000004`: `select count(*) from internal.retention_override` **must be 0**. A row there
+     would make clinics and patients deletable. It is only ever seeded on local and CI test databases.
 4. **Apply to production by name, one file per transaction:**
    - first, the lab files `20261005000001`–`021`, if the lab module is part of the release (decision needed);
    - then `20261007000001_operations_enums`, `20261007000002_outpatient_operations` and
@@ -54,7 +72,9 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
    - then, with the lab files, `20261008000001_lab_visits` (laboratory on the visit bill, lab queue);
    - then `20261008000002_queue_called_enum` and `20261008000003_visit_follow` (the kassa's Telegram QR and
      "you are called"). The enum file must be committed before the next one, so they are separate
-     transactions.
+     transactions;
+   - then `20261008000004_retention_guard` (clinics, patients, clinical records and referrals can no longer
+     be deleted). It changes no data. To roll back, drop the triggers, which nobody should need.
    - Every existing clinic becomes `operating_mode = 'mixed'`, so bookings keep working.
 5. **Deploy the app** by merging the release branch into `main`; Vercel builds `health-ai-w1vc`. Then check
    that `/api/health` and `/login` respond.
@@ -138,6 +158,8 @@ select v.id from public.visits v join public.visit_transactions t on t.visit_id 
 -- "You are called" messages not delivered today (failed, or still pending after 5 minutes)
 select status, count(*) from public.notification_jobs where type = 'queue_called' and created_at > now() - interval '1 day'
    and (status = 'failed' or (status = 'pending' and created_at < now() - interval '5 minutes')) group by status;
+-- Retention guard active: must be 0 (a row makes clinics and patients deletable)
+select count(*) from internal.retention_override;
 -- Visit-billed lab tests still held although the visit owes nothing (should be 0)
 select i.id from public.lab_order_items i join public.lab_orders o on o.id = i.order_id
  where o.visit_id is not null and i.status = 'ordered'

@@ -15,7 +15,10 @@ Three features are not ready to switch on, and all three ship switched off:
 - This is an engineering review of the code, the database and the evidence from tests.
 - **Nothing was deployed and no production or staging migration was applied.** Everything ran against a local Supabase stack (PostgreSQL 17.11).
 - **This document makes no claim of legal or regulatory compliance.** That includes data protection, medical-records law, fiscal receipts, and AI-provider data processing. Those questions are open and are listed as owner decisions.
-- **No retention period is set or assumed anywhere.** Lab data is kept until a decision is made.
+- **Retention decided (owner, 2026-10-07):** clinical and lab data are kept indefinitely; terminating a clinic
+  keeps its data. Since `20261008000004` the database refuses to delete clinics, patients, clinical records
+  and referrals, so lab data cannot be erased through them either. Legal review of the policy is still the
+  owner's.
 
 ## 1. Verdicts at a glance
 
@@ -233,7 +236,7 @@ Results:
   - A merged patient cannot be deleted before unmerging.
   - Erasing a whole clinic removes its lab data ("erases a clinic together with all of its lab data"). There is no application feature for either deletion.
   - (The pre-existing `clinical_records` still cascade with a patient. That is the open legal question from `TASKS.md`, and is unchanged by this module.)
-- **Retention behaviour:** none. Nothing is purged automatically. Results, documents and import evidence (`lab_import_rows.raw`) are kept until the owner decides a policy.
+- **Retention behaviour:** kept indefinitely (owner decision 2026-10-07). Nothing is purged automatically; results, documents and import evidence (`lab_import_rows.raw`) stay, and the retention guard (`20261008000004`) stops clinic or patient deletion from erasing them.
 
 **Owner decisions (conditions)**
 - Retention periods and legal requirements for lab results, documents and import evidence.
