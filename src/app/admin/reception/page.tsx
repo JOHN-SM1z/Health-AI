@@ -91,6 +91,7 @@ export default function ReceptionPage() {
   const [doctorId, setDoctorId] = useState("");
   const [serviceIds, setServiceIds] = useState<string[]>([]);
   const [panelIds, setPanelIds] = useState<string[]>([]);
+  const [smsConsent, setSmsConsent] = useState(false);
   // One key per intended registration: a retry after a network error is the same request.
   const [key, setKey] = useState(newKey);
   const [saving, setSaving] = useState(false);
@@ -172,6 +173,7 @@ export default function ReceptionPage() {
     setDoctorId("");
     setServiceIds([]);
     setPanelIds([]);
+    setSmsConsent(false);
     setMatches(null);
     setNotice(null);
     setQ("");
@@ -199,8 +201,8 @@ export default function ReceptionPage() {
             },
           };
       // A lab walk-in: tests (and panels) on the visit's bill; otherwise a doctor and services.
-      if (isLab) await adminApi.post<{ visitId: string }>("/api/operations/lab-arrivals", { key, testIds: serviceIds, panelIds, ...who });
-      else await adminApi.post<{ visitId: string }>("/api/operations/arrivals", { key, doctorId, serviceIds, ...who });
+      if (isLab) await adminApi.post<{ visitId: string }>("/api/operations/lab-arrivals", { key, testIds: serviceIds, panelIds, smsConsent, ...who });
+      else await adminApi.post<{ visitId: string }>("/api/operations/arrivals", { key, doctorId, serviceIds, smsConsent, ...who });
       const name = patient?.fullName ?? np.fullName;
       setDone(
         catalog.data?.clinic.queue_after_payment && total > 0
@@ -422,6 +424,13 @@ export default function ReceptionPage() {
               </label>
             ))}
           </div>
+          <label className="mt-3 flex items-start gap-2 text-sm">
+            <input type="checkbox" checked={smsConsent} onChange={(e) => setSmsConsent(e.target.checked)} aria-label="SMS roziligi" />
+            <span>
+              Telegrami yo‘q bo‘lsa, navbat raqami va chaqiruvni SMS orqali yuborish (bemor rozi)
+              <span className="block text-[11px] text-ink-muted">SMSda faqat klinika nomi va navbat raqami bo‘ladi.</span>
+            </span>
+          </label>
           <div className="mt-4 flex items-center justify-between gap-3">
             <p className="text-sm">
               Jami: <span className="font-numeric font-semibold">{money(total, currency)}</span>

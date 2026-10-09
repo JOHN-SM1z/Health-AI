@@ -47,6 +47,9 @@ type PatientDetail = {
   /** Recorded or not — the values themselves stay on the server (owner decision 2026-10-08). */
   has_date_of_birth: boolean;
   has_sex: boolean;
+  /** Queue SMS (20261008000013): only for a patient without Telegram who agreed. */
+  has_telegram: boolean;
+  sms_consent: boolean;
 };
 
 type AppointmentLite = {
@@ -186,6 +189,16 @@ export default function PatientsPage() {
       setError(e instanceof AdminApiError ? e.message : "Izohni saqlab bo‘lmadi");
     } finally {
       setNotesSaving(false);
+    }
+  };
+
+  const saveSmsConsent = async (consent: boolean) => {
+    if (!detailId) return;
+    try {
+      const res = await adminApi.post<{ smsConsent: boolean }>(`/api/operations/patients/${detailId}/sms-consent`, { consent });
+      setDetail((prev) => (prev?.patient ? { ...prev, patient: { ...prev.patient, sms_consent: res.smsConsent } } : prev));
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "SMS roziligini saqlab bo‘lmadi");
     }
   };
 
@@ -414,6 +427,23 @@ export default function PatientsPage() {
                   </>
                 )}
               </section>
+
+              {!selected.has_telegram && !selected.merged_into_patient_id && (
+                <section aria-label="SMS xabarnomalar" className="rounded-xl border border-hairline p-3 text-sm">
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selected.sms_consent}
+                      onChange={(e) => void saveSmsConsent(e.target.checked)}
+                      aria-label="SMS orqali navbat xabarlari"
+                    />
+                    <span>
+                      Bemor navbat raqami va chaqiruv SMS orqali kelishiga rozi
+                      <span className="block text-xs text-ink-muted">Telegrami yo‘q bemorlar uchun. Klinikada SMS yoqilgan bo‘lishi kerak.</span>
+                    </span>
+                  </label>
+                </section>
+              )}
 
               <div>
                 <p className="mb-2 font-display text-sm font-bold text-foreground">Operatsion izoh</p>

@@ -59,11 +59,15 @@ export function IdentityStep({ identity, clinicPhone, onDone }: { identity: stri
   const [sex, setSex] = useState<"" | "female" | "male">("");
   const [address, setAddress] = useState("");
   const polling = useRef(0);
+  const [smsAvailable, setSmsAvailable] = useState(false);
+  const [codeSent, setCodeSent] = useState<string | null>(null);
+  const [code, setCode] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    void apiPost<{ profile: OnlineProfile | null }>("/api/mini-app/identity/status", {}, identity).then((res) => {
+    void apiPost<{ profile: OnlineProfile | null; smsAvailable?: boolean }>("/api/mini-app/identity/status", {}, identity).then((res) => {
       if (cancelled) return;
+      if (res.ok) setSmsAvailable(res.data.smsAvailable === true);
       if (res.ok && res.data.profile) setView({ name: "confirm", profile: res.data.profile });
       setLoading(false);
     });
@@ -127,6 +131,26 @@ export function IdentityStep({ identity, clinicPhone, onDone }: { identity: stri
     void waitForPhone(lookupId);
   };
 
+  /** The second proof: a code to the phone on the card (same answer whether a card exists or not). */
+  const sendCode = async (lookupId: string) => {
+    setBusy(true);
+    setError(null);
+    const res = await apiPost<{ sent: string }>("/api/mini-app/identity/sms", { lookupId }, identity);
+    setBusy(false);
+    if (!res.ok) return setError(res.error);
+    setCode("");
+    setCodeSent(lookupId);
+  };
+
+  const verifyCode = async (lookupId: string) => {
+    setBusy(true);
+    setError(null);
+    const res = await apiPost<Step>("/api/mini-app/identity/sms/verify", { lookupId, code: code.trim() }, identity);
+    setBusy(false);
+    if (!res.ok) return setError(res.error);
+    follow(res.data);
+  };
+
   const submitDetails = async (lookupId: string) => {
     setBusy(true);
     setError(null);
@@ -181,6 +205,25 @@ export function IdentityStep({ identity, clinicPhone, onDone }: { identity: stri
             </Button>
           </Card>
         </>
+      )}
+
+      {view.name === "details" && smsAvailable && (
+        <Card className="flex flex-col gap-2">
+          <p className="text-sm">Klinikada kartangiz bormi, lekin unda boshqa telefon raqam yozilganmi?</p>
+          {codeSent === view.lookupId ? (
+            <>
+              <p className="text-xs text-[var(--tg-hint)]">Agar kartangizda telefon raqam bo‘lsa, unga 6 xonali kod yuborildi.</p>
+              <LabeledInput label="SMS kod" value={code} onChange={setCode} placeholder="000000" inputMode="numeric" />
+              <Button size="full" loading={busy} disabled={!/^\d{6}$/.test(code.trim())} onClick={() => verifyCode(view.lookupId)}>
+                Kodni tasdiqlash
+              </Button>
+            </>
+          ) : (
+            <Button variant="outline" size="full" loading={busy} onClick={() => sendCode(view.lookupId)}>
+              Kartadagi raqamga SMS kod yuborish
+            </Button>
+          )}
+        </Card>
       )}
 
       {view.name === "details" && (

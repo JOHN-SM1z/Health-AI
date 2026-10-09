@@ -26,6 +26,8 @@ const schema = z
     newPatient: newPatient.nullish(),
     doctorId: uuidSchema,
     serviceIds: z.array(uuidSchema).min(1, "Xizmatni tanlang").max(10),
+    // The patient agreed at the desk to queue SMS (used only when they have no Telegram, 20261008000013).
+    smsConsent: z.boolean().optional(),
   })
   .strict()
   .refine((b) => !!b.patientId !== !!b.newPatient, { message: "Bemorni tanlang yoki yangi bemor kiriting" });

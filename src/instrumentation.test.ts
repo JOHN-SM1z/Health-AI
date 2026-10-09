@@ -23,6 +23,22 @@ describe("instrumentation register() — production fail-closed checks", () => {
     vi.stubEnv("ONLINE_PAYMENT_PROVIDER", undefined);
     vi.stubEnv("ALLOW_TEST_ONLINE_PAYMENT", undefined);
     vi.stubEnv("TEST_ONLINE_PAYMENT_SECRET", undefined);
+    vi.stubEnv("SMS_PROVIDER", undefined);
+    vi.stubEnv("ALLOW_TEST_SMS", undefined);
+  });
+
+  it("refuses the test SMS outbox in a real deployment, and Eskiz without credentials or a strong callback secret", () => {
+    vi.stubEnv("SMS_PROVIDER", "test");
+    expect(() => register()).toThrow(/SMS_PROVIDER=test/);
+    vi.stubEnv("SMS_PROVIDER", "eskiz");
+    expect(() => register()).toThrow(/ESKIZ_EMAIL/);
+    vi.stubEnv("ESKIZ_EMAIL", "clinic@example.uz");
+    vi.stubEnv("ESKIZ_PASSWORD", "pw");
+    vi.stubEnv("ESKIZ_CALLBACK_SECRET", "short");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://clinic.example.uz");
+    expect(() => register()).toThrow(/ESKIZ_CALLBACK_SECRET/);
+    vi.stubEnv("ESKIZ_CALLBACK_SECRET", "f3a9c1d27b4e8a6f0c2d9e1b7a5c3f8e2d4b6a9c");
+    expect(() => register()).not.toThrow();
   });
 
   afterEach(() => {

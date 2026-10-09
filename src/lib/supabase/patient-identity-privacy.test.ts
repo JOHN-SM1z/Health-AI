@@ -106,13 +106,13 @@ describeDb("patient identity privacy — database layer", () => {
     expect(elsewhere).toEqual([]);
     // Copies of identity values (merge history, raw import rows, online lookups, verified phones, identity claims) stay
     // server-only, and the online-identity functions are the server's alone.
-    for (const fn of ["online_identity_lookup", "link_card_to_telegram", "complete_online_patient", "record_telegram_verified_phone", "normalize_uz_phone"]) {
+    for (const fn of ["online_identity_lookup", "link_card_to_telegram", "complete_online_patient", "record_telegram_verified_phone", "normalize_uz_phone", "claim_due_sms_jobs", "issue_card_link_otp", "verify_card_link_otp", "settle_online_payment", "create_online_invoice", "mark_booked_arrived", "mark_online_refund_done"]) {
       const [{ can }] = await sql<{ can: boolean }[]>`
         select bool_or(has_function_privilege('authenticated', p.oid, 'EXECUTE') or has_function_privilege('anon', p.oid, 'EXECUTE')) as can
           from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = ${fn}`;
       expect(can, fn).toBe(false);
     }
-    for (const table of ["patient_merges", "lab_import_rows", "online_identity_lookups", "telegram_verified_phones", "patient_identity_claims"]) {
+    for (const table of ["patient_merges", "lab_import_rows", "online_identity_lookups", "telegram_verified_phones", "patient_identity_claims", "sms_messages", "card_link_otps", "payment_invoices", "payment_provider_events", "payment_refunds"]) {
       const [{ can }] = await sql<{ can: boolean }[]>`select has_table_privilege('authenticated', ${`public.${table}`}, 'SELECT') as can`;
       expect(can, table).toBe(false);
     }

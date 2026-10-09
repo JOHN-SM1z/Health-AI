@@ -6,6 +6,7 @@ import { PageHeader, Card, AEmpty, AError, AButton, AInput, LoadingRow } from "@
 import { BotIntegrationPanel } from "@/components/admin/bot-integration";
 import { Settings as SettingsIcon } from "lucide-react";
 import { adminApi, AdminApiError } from "@/lib/admin/client";
+import { OnlineFeatures } from "@/components/admin/online-features";
 
 type Setting = { key: string; value: unknown };
 
@@ -57,6 +58,9 @@ export default function SettingsPage() {
   return (
     <div>
       <PageHeader title="Sozlamalar" subtitle="Klinika matn sozlamalari" />
+      <div className="mb-4 max-w-xl">
+        <OnlineFeatures />
+      </div>
       {error && <AError message={error} />}
       {settings === null ? (
         <Card><LoadingRow /></Card>

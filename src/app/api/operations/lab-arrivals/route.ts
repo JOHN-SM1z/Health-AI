@@ -25,6 +25,7 @@ const schema = z
     newPatient: newPatient.nullish(),
     testIds: z.array(uuidSchema).max(50).default([]),
     panelIds: z.array(uuidSchema).max(50).default([]),
+    smsConsent: z.boolean().optional(),
   })
   .strict()
   .refine((b) => !!b.patientId !== !!b.newPatient, { message: "Bemorni tanlang yoki yangi bemor kiriting" })
