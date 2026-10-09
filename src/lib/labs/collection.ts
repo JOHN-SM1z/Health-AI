@@ -1,4 +1,5 @@
 import "server-only";
+import { ageInYears } from "@/lib/patients/age";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { anyColumnContains } from "@/lib/api/postgrest";
@@ -58,7 +59,8 @@ export type QueueOrder = {
   createdAt: string;
   source: string;
   status: string;
-  patient: { id: string; fullName: string | null; dateOfBirth: string | null };
+  /** Name and age only: the date of birth stays on the server (owner decision 2026-10-08). */
+  patient: { id: string; fullName: string | null; age: number | null };
   items: QueueItem[];
   samples: QueueSample[];
 };
@@ -147,7 +149,7 @@ export async function getWorkQueue(staff: ClinicStaff): Promise<QueueOrder[]> {
       createdAt: o.created_at,
       source: o.source,
       status: o.status,
-      patient: { id: o.patients?.id ?? "", fullName: o.patients?.full_name ?? null, dateOfBirth: o.patients?.date_of_birth ?? null },
+      patient: { id: o.patients?.id ?? "", fullName: o.patients?.full_name ?? null, age: ageInYears(o.patients?.date_of_birth, staff.clinicTimezone) },
       items: o.lab_order_items
         .map((i) => ({
           id: i.id,
@@ -240,7 +242,8 @@ export async function rejectSample(staff: ClinicStaff, sampleId: string, reason:
 // Walk-in orders (reception / lab desk)
 // ---------------------------------------------------------------------------
 
-export type PatientMatch = { id: string; fullName: string | null; dateOfBirth: string | null; phoneTail: string | null };
+/** Name, age and phone — enough to pick the right person; no date of birth or document (owner decision 2026-10-08). */
+export type PatientMatch = { id: string; fullName: string | null; age: number | null; phone: string | null };
 
 /** Patients of the clinic by name or phone — just enough to pick the right person. */
 export async function searchPatients(staff: ClinicStaff, q: string): Promise<PatientMatch[]> {
@@ -258,8 +261,8 @@ export async function searchPatients(staff: ClinicStaff, q: string): Promise<Pat
   return (data ?? []).map((p) => ({
     id: p.id,
     fullName: p.full_name,
-    dateOfBirth: p.date_of_birth,
-    phoneTail: p.phone ? p.phone.replace(/\D/g, "").slice(-4) || null : null,
+    age: ageInYears(p.date_of_birth, staff.clinicTimezone),
+    phone: p.phone,
   }));
 }
 

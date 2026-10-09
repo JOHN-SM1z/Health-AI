@@ -44,8 +44,9 @@ type PatientDetail = {
   created_at: string;
   operational_notes: string | null;
   merged_into_patient_id: string | null;
-  date_of_birth: string | null;
-  sex: "female" | "male" | null;
+  /** Recorded or not — the values themselves stay on the server (owner decision 2026-10-08). */
+  has_date_of_birth: boolean;
+  has_sex: boolean;
 };
 
 type AppointmentLite = {
@@ -163,8 +164,9 @@ export default function PatientsPage() {
       const res = await adminApi.get<DetailResponse>(`/api/admin/patients?id=${id}`);
       setDetail(res);
       setNotesDraft(res.patient?.operational_notes ?? "");
-      setDobDraft(res.patient?.date_of_birth ?? "");
-      setSexDraft(res.patient?.sex ?? "");
+      // Write-only fields: the form starts empty; staff type a value only to set or correct it.
+      setDobDraft("");
+      setSexDraft("");
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Bemor ma'lumotlarini yuklab bo‘lmadi");
     } finally {
@@ -188,13 +190,19 @@ export default function PatientsPage() {
   };
 
   const saveDemographics = async () => {
-    if (!detailId || !dobDraft) return;
+    if (!detailId || (!dobDraft && !sexDraft)) return;
     setDemoSaving(true);
     setDemoSaved(false);
     try {
-      const sex = sexDraft === "female" || sexDraft === "male" ? sexDraft : null;
-      await adminApi.patch(`/api/admin/patients/demographics`, { patientId: detailId, dateOfBirth: dobDraft, sex });
-      setDetail((prev) => (prev?.patient ? { ...prev, patient: { ...prev.patient, date_of_birth: dobDraft, sex } } : prev));
+      const body: { patientId: string; dateOfBirth?: string; sex?: "female" | "male" } = { patientId: detailId };
+      if (dobDraft) body.dateOfBirth = dobDraft;
+      if (sexDraft === "female" || sexDraft === "male") body.sex = sexDraft;
+      const res = await adminApi.patch<{ hasDateOfBirth: boolean; hasSex: boolean }>(`/api/admin/patients/demographics`, body);
+      setDetail((prev) =>
+        prev?.patient ? { ...prev, patient: { ...prev.patient, has_date_of_birth: res.hasDateOfBirth, has_sex: res.hasSex } } : prev,
+      );
+      setDobDraft("");
+      setSexDraft("");
       setDemoSaved(true);
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Saqlab bo‘lmadi");
@@ -233,7 +241,7 @@ export default function PatientsPage() {
   const pageCount = Math.max(1, Math.ceil(total / 25));
   const selected = detail?.patient ?? null;
   const notesDirty = notesDraft.trim() !== (selected?.operational_notes ?? "").trim();
-  const demoDirty = dobDraft !== (selected?.date_of_birth ?? "") || sexDraft !== (selected?.sex ?? "");
+  const demoDirty = dobDraft !== "" || sexDraft !== "";
 
   const visitStats = useMemo(() => {
     const completed = (detail?.appointments ?? []).filter((a) => a.status === "completed");
@@ -373,19 +381,22 @@ export default function PatientsPage() {
                   <>
                     <p className="mb-2 text-xs text-ink-muted">
                       Laboratoriya tahlili buyurtmasi uchun tug‘ilgan sana kerak. Jins va yosh klinika belgilagan me’yor oralig‘ini tanlash uchun ishlatiladi.
+                      Bu ma’lumotlar xodimlarga ko‘rsatilmaydi — faqat kiritilgan yoki kiritilmaganligi.
                     </p>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <label className="text-sm text-foreground">
-                        <span className="mb-1 block text-xs text-ink-muted">Tug‘ilgan sana</span>
+                        <span className="mb-1 block text-xs text-ink-muted">
+                          Tug‘ilgan sana — {selected.has_date_of_birth ? "kiritilgan (o‘zgartirish uchun yangisini kiriting)" : "kiritilmagan"}
+                        </span>
                         <AInput type="date" value={dobDraft} onChange={(v) => { setDobDraft(v); setDemoSaved(false); }} aria-label="Tug‘ilgan sana" />
                       </label>
                       <label className="text-sm text-foreground">
-                        <span className="mb-1 block text-xs text-ink-muted">Jins</span>
+                        <span className="mb-1 block text-xs text-ink-muted">Jins — {selected.has_sex ? "kiritilgan" : "kiritilmagan"}</span>
                         <ASelect
                           value={sexDraft}
                           onChange={(v) => { setSexDraft(v); setDemoSaved(false); }}
                           options={[
-                            { value: "", label: "Ko‘rsatilmagan" },
+                            { value: "", label: "O‘zgartirmaslik" },
                             { value: "female", label: "Ayol" },
                             { value: "male", label: "Erkak" },
                           ]}
@@ -394,11 +405,11 @@ export default function PatientsPage() {
                       </label>
                     </div>
                     <div className="mt-2 flex items-center gap-2">
-                      <AButton size="sm" loading={demoSaving} disabled={!demoDirty || !dobDraft} onClick={() => void saveDemographics()}>
+                      <AButton size="sm" loading={demoSaving} disabled={!demoDirty} onClick={() => void saveDemographics()}>
                         Ma’lumotlarni saqlash
                       </AButton>
                       {demoSaved && !demoDirty && <span className="text-xs text-pine-deep">Saqlandi ✓</span>}
-                      {!selected.date_of_birth && !demoSaved && <ABadge tone="amber">Tug‘ilgan sana kiritilmagan</ABadge>}
+                      {!selected.has_date_of_birth && !demoSaved && <ABadge tone="amber">Tug‘ilgan sana kiritilmagan</ABadge>}
                     </div>
                   </>
                 )}

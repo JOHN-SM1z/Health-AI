@@ -1,4 +1,5 @@
 import "server-only";
+import { ageInYears } from "@/lib/patients/age";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { recordAudit } from "@/lib/audit";
@@ -114,7 +115,8 @@ export type EntryParameter = {
 
 export type ResultEntry = {
   item: { id: string; orderId: string; testName: string; testCode: string; status: string; orderedAt: string };
-  patient: { fullName: string | null; dateOfBirth: string | null; sex: string | null };
+  /** Clinical context for the reference ranges: an age and sex, never the date of birth (owner decision 2026-10-08). */
+  patient: { fullName: string | null; age: number | null; sex: string | null };
   /** The version being worked on (draft / submitted) or else the current verified one. */
   result: (VersionMeta & { mine: boolean; labComment: string | null }) | null;
   parameters: EntryParameter[];
@@ -286,7 +288,7 @@ export async function getResultEntry(staff: ClinicStaff, itemId: string): Promis
 
   return {
     item: { id: item.id, orderId: item.order_id, testName: item.test_name_snapshot, testCode: item.test_code_snapshot, status: item.status, orderedAt: item.created_at },
-    patient: { fullName: patient.data.full_name, dateOfBirth: patient.data.date_of_birth, sex: patient.data.sex },
+    patient: { fullName: patient.data.full_name, age: ageInYears(patient.data.date_of_birth, staff.clinicTimezone), sex: patient.data.sex },
     result: current ? { ...meta(current), mine: current.entered_by === staff.profileId, labComment: current.lab_comment } : null,
     parameters,
     versions,

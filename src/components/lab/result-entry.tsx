@@ -33,7 +33,7 @@ type Parameter = {
 };
 type Entry = {
   item: { id: string; orderId: string; testName: string; testCode: string; status: string; orderedAt: string };
-  patient: { fullName: string | null; dateOfBirth: string | null; sex: string | null };
+  patient: { fullName: string | null; age: number | null; sex: string | null };
   result: (VersionMeta & { mine: boolean; labComment: string | null }) | null;
   parameters: Parameter[];
   versions: Version[];
@@ -228,7 +228,7 @@ export function ResultEntryDialog({ itemId, onClose, onChanged }: { itemId: stri
             <span className="font-semibold">{entry.patient.fullName ?? "—"}</span>
             <span className="text-ink-muted">
               {" · "}
-              {entry.patient.dateOfBirth ? entry.patient.dateOfBirth.split("-").reverse().join(".") : "tug‘ilgan sana yo‘q"}
+              {entry.patient.age === null ? "yoshi kiritilmagan" : `${entry.patient.age} yosh`}
               {" · "}
               {SEX[entry.patient.sex ?? "unknown"] ?? "jinsi noma’lum"}
             </span>

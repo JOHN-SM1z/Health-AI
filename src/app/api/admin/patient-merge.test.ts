@@ -203,9 +203,16 @@ describeDb("patient merge (real database)", () => {
     expect(pv.plan).toMatchObject({ pinfl: "move", telegram_user_id: "move", date_of_birth: "same", sex: "copy", consent: "copy", full_name: "differs", phone: "differs" });
     expect(pv.warnings).toEqual(expect.arrayContaining(["name_differs", "doctor_access_extends"]));
     expect(pv.doctors_gaining_access.map((d) => [d.doctor_id, d.from]).sort()).toEqual([[doctors.a, "canonical"], [doctors.b, "duplicate"]].sort());
-    // Counts and plan only: no identity values in the preview.
+    // Counts and plan only: no identity values in the preview — an age, never the date of birth (owner decision 2026-10-08).
     expect(JSON.stringify(pv)).not.toContain(pinfl);
     expect(JSON.stringify(pv)).not.toContain(String(telegram));
+    expect(JSON.stringify(pv)).not.toContain("1990-01-30");
+    expect(pv.canonical).not.toHaveProperty("date_of_birth");
+    expect(pv.duplicate).not.toHaveProperty("sex");
+    expect(pv.duplicate).toMatchObject({ has_date_of_birth: true, has_sex: true });
+    expect(typeof (pv.canonical as unknown as { age: unknown }).age).toBe("number");
+    // The browser gets a server-keyed token, not the database's md5 (which hashes the date of birth).
+    expect(pv.fingerprint).toMatch(/^[0-9a-f]{64}$/);
 
     // Without the explicit confirmation, nothing happens.
     const noConfirm = await read(await merge(new NextRequest("http://localhost/api/admin/patients/merge", json({ canonicalId: desk, duplicateId: bot, reason: "x y z", fingerprint: pv.fingerprint }))));
@@ -343,7 +350,8 @@ describeDb("patient merge (real database)", () => {
     const stale = (await getPreview(c, d)).body.data as unknown as Preview;
     await visit(c, doctors.a); // the canonical record changed after the preview
     expect((await doMerge(c, d, stale.fingerprint)).body.code).toBe("preview_changed");
-    expect((await doMerge(c, d, "0".repeat(32))).body.code).toBe("preview_changed");
+    expect((await doMerge(c, d, "0".repeat(32))).body.code).toBe("validation"); // a bare database fingerprint is not accepted
+    expect((await doMerge(c, d, "0".repeat(64))).body.code).toBe("preview_changed");
 
     // Concurrent: the same duplicate into two records, and two records into each other.
     const x = await patient();

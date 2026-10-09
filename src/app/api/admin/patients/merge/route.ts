@@ -26,7 +26,8 @@ const schema = z.object({
   canonicalId: uuidSchema,
   duplicateId: uuidSchema,
   reason: z.string().trim().min(3, "Sababini yozing").max(500),
-  fingerprint: z.string().regex(/^[0-9a-f]{32}$/, "Avval ko‘rib chiqing"),
+  // The server-keyed token of the preview the person saw (see src/lib/patients/merge.ts).
+  fingerprint: z.string().regex(/^[0-9a-f]{64}$/, "Avval ko‘rib chiqing"),
   confirmSamePerson: z.literal(true, { message: "Bu bir odam ekanini tasdiqlang" }),
 });
 

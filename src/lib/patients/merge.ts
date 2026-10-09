@@ -1,5 +1,8 @@
 import "server-only";
+import { timingSafeEqual } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { ageInYears } from "@/lib/patients/age";
+import { serverHmac } from "@/lib/security/server-hmac";
 import { ApiError } from "@/lib/api/errors";
 import { recordAudit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
@@ -15,8 +18,13 @@ import type { StaffContext } from "@/lib/auth/staff";
  * it under row locks and refuses if anything changed, or if any blocker
  * exists. Every merge can be undone (unmerge), and both are audited.
  *
- * The preview shows identity and per-entity COUNTS only — never clinical
- * text, result values or identifier values (PINFL, passport, Telegram id).
+ * The preview shows names, phones and per-entity COUNTS only — never clinical
+ * text, result values or identifier values (PINFL, passport, Telegram id),
+ * and an AGE instead of the date of birth (owner decision 2026-10-08). The
+ * database fingerprint hashes the date of birth among other fields, so the
+ * browser receives a server-keyed HMAC of it instead (a short date space must
+ * not be recoverable by hashing guesses); the merge recomputes the preview and
+ * compares tokens before the database re-checks it under row locks.
  */
 
 type Staff = StaffContext & { clinicId: string };
@@ -41,12 +49,25 @@ function mapError(error: { message?: string; code?: string }, what: string): Api
 }
 
 type Counts = Record<string, number>;
-type Side = {
+type DbSide = {
   id: string;
   full_name: string | null;
   phone: string | null;
   date_of_birth: string | null;
   sex: string | null;
+  has_pinfl: boolean;
+  has_document: boolean;
+  has_telegram: boolean;
+  created_at: string;
+  counts: Counts;
+};
+type Side = {
+  id: string;
+  full_name: string | null;
+  phone: string | null;
+  age: number | null;
+  has_date_of_birth: boolean;
+  has_sex: boolean;
   has_pinfl: boolean;
   has_document: boolean;
   has_telegram: boolean;
@@ -63,14 +84,34 @@ export type MergePreview = {
   fingerprint: string;
 };
 
-export async function getMergePreview(staff: Staff, canonicalId: string, duplicateId: string): Promise<MergePreview> {
+type DbPreview = Omit<MergePreview, "canonical" | "duplicate"> & { canonical: DbSide; duplicate: DbSide };
+
+/** Opaque to the browser: proves which preview the staff member saw without exposing what it hashed. */
+const previewToken = (fingerprint: string) => serverHmac("patient-merge-preview", fingerprint);
+
+function toSide(s: DbSide, timezone: string): Side {
+  const { date_of_birth, sex, ...rest } = s;
+  return { ...rest, age: ageInYears(date_of_birth, timezone), has_date_of_birth: date_of_birth !== null, has_sex: sex !== null };
+}
+
+async function dbPreview(staff: Staff, canonicalId: string, duplicateId: string): Promise<DbPreview> {
   const { data, error } = await createAdminClient().rpc("patient_merge_preview", {
     p_clinic_id: staff.clinicId,
     p_canonical_id: canonicalId,
     p_duplicate_id: duplicateId,
   });
   if (error) throw mapError(error, "preview");
-  const preview = data as unknown as MergePreview;
+  return data as unknown as DbPreview;
+}
+
+export async function getMergePreview(staff: Staff, canonicalId: string, duplicateId: string): Promise<MergePreview> {
+  const raw = await dbPreview(staff, canonicalId, duplicateId);
+  const preview: MergePreview = {
+    ...raw,
+    canonical: toSide(raw.canonical, staff.clinicTimezone),
+    duplicate: toSide(raw.duplicate, staff.clinicTimezone),
+    fingerprint: previewToken(raw.fingerprint),
+  };
   await recordAudit({
     clinicId: staff.clinicId,
     action: "patient_merge_previewed",
@@ -87,13 +128,21 @@ export async function mergePatients(
   staff: Staff,
   input: { canonicalId: string; duplicateId: string; reason: string; fingerprint: string },
 ): Promise<{ mergeId: string }> {
+  // The browser holds a token, not the database fingerprint: recompute the preview, compare tokens, then let the
+  // database compare fingerprints again under its row locks.
+  const current = await dbPreview(staff, input.canonicalId, input.duplicateId);
+  const expected = Buffer.from(previewToken(current.fingerprint), "hex");
+  const given = Buffer.from(input.fingerprint, "hex");
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+    throw new ApiError(409, "Kartalar ko‘rib chiqilgandan keyin o‘zgargan — qayta ko‘rib chiqing", "preview_changed");
+  }
   const { data, error } = await createAdminClient().rpc("merge_patients", {
     p_clinic_id: staff.clinicId,
     p_canonical_id: input.canonicalId,
     p_duplicate_id: input.duplicateId,
     p_actor: staff.profileId,
     p_reason: input.reason,
-    p_fingerprint: input.fingerprint,
+    p_fingerprint: current.fingerprint,
   });
   if (error) throw mapError(error, "merge");
   return { mergeId: data as string };
@@ -115,8 +164,8 @@ export async function unmergePatients(staff: Staff, mergeId: string, reason: str
   };
 }
 
-const patientLine = (p: { full_name: string | null; date_of_birth: string | null; phone: string | null } | null) =>
-  p ? { name: p.full_name, dateOfBirth: p.date_of_birth, phoneTail: p.phone ? p.phone.replace(/\D/g, "").slice(-4) || null : null } : null;
+const patientLine = (p: { full_name: string | null; date_of_birth: string | null; phone: string | null } | null, timezone: string) =>
+  p ? { name: p.full_name, age: ageInYears(p.date_of_birth, timezone), phone: p.phone } : null;
 
 export async function listMerges(staff: Staff) {
   const { data, error } = await createAdminClient()
@@ -149,8 +198,8 @@ export async function listMerges(staff: Staff) {
     id: m.id,
     canonicalId: m.canonical_patient_id,
     duplicateId: m.duplicate_patient_id,
-    canonical: patientLine(m.canonical),
-    duplicate: patientLine(m.duplicate),
+    canonical: patientLine(m.canonical, staff.clinicTimezone),
+    duplicate: patientLine(m.duplicate, staff.clinicTimezone),
     reason: m.reason,
     mergedAt: m.merged_at,
     mergedBy: m.merger?.full_name ?? null,
@@ -170,7 +219,7 @@ export async function listDuplicateCandidates(staff: Staff) {
   if (error) throw mapError(error, "candidates");
   const pairs = (data ?? []) as Array<{ patient_a: string; patient_b: string; reasons: string[] }>;
   const ids = [...new Set(pairs.flatMap((p) => [p.patient_a, p.patient_b]))];
-  const people = new Map<string, { name: string | null; dateOfBirth: string | null; phoneTail: string | null; telegram: boolean; createdAt: string }>();
+  const people = new Map<string, { name: string | null; age: number | null; phone: string | null; telegram: boolean; createdAt: string }>();
   for (let i = 0; i < ids.length; i += 150) {
     const { data: ps, error: pe } = await db
       .from("patients")
@@ -181,8 +230,8 @@ export async function listDuplicateCandidates(staff: Staff) {
     for (const p of ps ?? []) {
       people.set(p.id, {
         name: p.full_name ?? ([p.telegram_first_name, p.telegram_last_name].filter(Boolean).join(" ") || null),
-        dateOfBirth: p.date_of_birth,
-        phoneTail: p.phone ? p.phone.replace(/\D/g, "").slice(-4) || null : null,
+        age: ageInYears(p.date_of_birth, staff.clinicTimezone),
+        phone: p.phone,
         telegram: p.telegram_user_id !== null,
         createdAt: p.created_at,
       });

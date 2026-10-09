@@ -87,18 +87,18 @@ async function rpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
 // Patient identification (reception)
 // ---------------------------------------------------------------------------
 
+/**
+ * What the desk sees of a card: name, phone and card number (owner decision 2026-10-08). The passport/ID number, JSHSHIR,
+ * date of birth and sex stay on the server: they are compared here, never returned.
+ */
 export type PatientMatch = {
   id: string;
   patientNumber: number;
   fullName: string | null;
-  dateOfBirth: string | null;
-  sex: "female" | "male" | null;
-  /** Only the last characters — enough to confirm, not to copy. */
-  documentHint: string | null;
-  phoneHint: string | null;
+  phone: string | null;
+  /** True when the date of birth the desk typed was checked on the server and matches; null when none was typed. */
+  dobMatches: boolean | null;
 };
-
-const mask = (v: string | null, keep: number) => (v ? `•••${v.slice(-keep)}` : null);
 
 export type PatientSearch = {
   patients: PatientMatch[];
@@ -114,20 +114,25 @@ export type PatientSearch = {
  * or name (optionally narrowed by date of birth). A document whose card has a
  * different date of birth is reported as a mismatch and the card is not
  * returned: a wrong-patient safety check that also reveals nothing about it.
- * Merged records are never offered; at most 10 results.
+ * A document or JSHSHIR is never looked up without a date of birth (enforced
+ * here, not only on the screen). Identity values are compared on the server
+ * and never returned. Merged records are never offered; at most 10 results.
  */
 export async function searchPatients(staff: Staff, q: string, dateOfBirth?: string): Promise<PatientSearch> {
   const none: PatientSearch = { patients: [], exact: false, dobMismatch: false };
   if (q.trim().length < 2) return none;
+  const term = classifyQuery(q);
+  if (isIdentityDocument(term) && !dateOfBirth) {
+    throw new ApiError(400, "Pasport yoki JSHSHIR bilan birga tug‘ilgan sanani ham kiriting", "dob_required");
+  }
   const supabase = createAdminClient();
   let query = supabase
     .from("patients")
-    .select("id, patient_number, full_name, date_of_birth, sex, document_number, phone")
+    .select("id, patient_number, full_name, date_of_birth, phone")
     .eq("clinic_id", staff.clinicId)
     .is("merged_into_patient_id", null)
     .limit(10);
 
-  const term = classifyQuery(q);
   if (term.kind === "patient_number") query = query.eq("patient_number", Number(term.value));
   else if (term.kind === "pinfl") query = query.eq("pinfl", term.value);
   else if (term.kind === "document") query = query.eq("document_number", term.value);
@@ -146,10 +151,9 @@ export async function searchPatients(staff: Staff, q: string, dateOfBirth?: stri
       id: p.id,
       patientNumber: Number(p.patient_number),
       fullName: p.full_name,
-      dateOfBirth: p.date_of_birth,
-      sex: p.sex,
-      documentHint: mask(p.document_number, 3),
-      phoneHint: mask(p.phone?.replace(/\D/g, "") ?? null, 4),
+      phone: p.phone,
+      // Every row kept was filtered on the typed date of birth.
+      dobMatches: dateOfBirth ? true : null,
     })),
     exact: byDocument && kept.length === 1,
     dobMismatch: byDocument && rows.length > 0 && kept.length === 0,

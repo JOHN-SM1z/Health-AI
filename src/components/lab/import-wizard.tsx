@@ -39,10 +39,9 @@ type Batch = {
   analysisStale: boolean;
 };
 
-type Person = { id: string; name: string | null; dateOfBirth: string | null; phoneTail: string | null };
+type Person = { id: string; name: string | null; age: number | null; phone: string | null };
 type Row = {
   rowNumber: number;
-  cells: string[];
   status: keyof typeof IMPORT_STATUS_LABELS;
   errors: string[];
   patientKey: string | null;
@@ -79,7 +78,7 @@ const FILTERS = [
 ] as const;
 
 const label = (code: string) => IMPORT_ERROR_LABELS[code as keyof typeof IMPORT_ERROR_LABELS] ?? code;
-const personLine = (p: Person) => [p.name ?? "—", p.dateOfBirth ? formatDay(p.dateOfBirth) : null, p.phoneTail ? `…${p.phoneTail}` : null].filter(Boolean).join(" · ");
+const personLine = (p: Person) => [p.name ?? "—", p.age !== null ? `${p.age} yosh` : null, p.phone].filter(Boolean).join(" · ");
 
 export function LabImportWizard({ batchId }: { batchId: string }) {
   const [batch, setBatch] = useState<Batch | null>(null);

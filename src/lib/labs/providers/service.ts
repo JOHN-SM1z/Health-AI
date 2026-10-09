@@ -1,4 +1,5 @@
 import "server-only";
+import { ageInYears } from "@/lib/patients/age";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { logger } from "@/lib/logger";
@@ -147,7 +148,7 @@ async function buildOrder(row: RequestRow, provider: ProviderRow): Promise<Exter
     patient: {
       reference: row.id,
       sex: patient?.sex ?? null,
-      dateOfBirth: patient?.date_of_birth ?? null,
+      ageYears: ageInYears(patient?.date_of_birth),
       ...(provider.send_patient_name ? { fullName: patient?.full_name ?? null } : {}),
     },
   };

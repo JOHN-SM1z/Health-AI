@@ -235,6 +235,51 @@ async function run() {
       await Promise.all([reception, manager, doctor].map((c) => c.auth.signOut()));
     }
 
+    // 22. Patient identity (owner decision 2026-10-08, 20261008000005): passport/ID, JSHSHIR, date of birth, sex and
+    //     address stay in the database for the server. No account reads them with its own token — over REST, by
+    //     filtering on them, or over GraphQL — and the desk's own lookup answers without them.
+    {
+      const ID = { document: `RT${String(Date.now()).slice(-7)}`, pinfl: `5${String(Date.now()).slice(-13).padStart(13, "1")}`, dob: "1959-08-14", address: `RT manzil ${SECRET}` };
+      await db`update public.patients set document_number = ${ID.document}, pinfl = ${ID.pinfl}, date_of_birth = ${ID.dob}, sex = 'male', home_address = ${ID.address} where id = ${X}`;
+      const leaks = (text) => [ID.document, ID.pinfl, ID.dob, ID.address].some((v) => text.includes(v));
+      const accounts = [
+        [DEMO.reception, "receptionist"], [DEMO.manager, "manager"], [DEMO.owner, "owner"], [DEMO.cashier, "cashier"],
+        [DEMO.lab, "lab"], [DEMO.receiver, "doctor (referral)"], [DEMO.referrer, "doctor (own patient)"],
+      ];
+      for (const [email, label] of accounts) {
+        const client = await restAs(email);
+        for (const column of ["document_number", "pinfl", "date_of_birth", "sex", "home_address"]) {
+          const r = await client.from("patients").select(column).eq("id", X);
+          check(r.error !== null && !leaks(JSON.stringify(r)), `${label}: patients.${column} over REST → refused (${r.error?.code ?? "READABLE"})`);
+        }
+        const probe = await client.from("patients").select("id").eq("pinfl", ID.pinfl);
+        check(probe.error !== null, `${label}: finding a card by JSHSHIR over REST → refused (${probe.error?.code ?? "ALLOWED"})`);
+        const named = await client.from("patients").select("full_name, phone").eq("id", X);
+        check(named.error === null && !leaks(JSON.stringify(named.data)), `${label}: name and phone stay readable where the row policy allows (${named.data?.length ?? 0} row)`);
+        // GraphQL runs with the same column privileges; checked whenever the endpoint is enabled (hosted Supabase).
+        const { data: s } = await client.auth.getSession();
+        const gql = await fetch(`${SUPABASE_URL}/graphql/v1`, {
+          method: "POST",
+          headers: { apikey: ANON_KEY, authorization: `Bearer ${s.session?.access_token}`, "content-type": "application/json" },
+          body: JSON.stringify({ query: `{ patientsCollection(filter: { id: { eq: "${X}" } }) { edges { node { documentNumber pinfl dateOfBirth homeAddress } } } }` }),
+        });
+        const gqlText = await gql.text();
+        if (gql.status !== 404) check(!leaks(gqlText), `${label}: identity over GraphQL → not returned (HTTP ${gql.status})`);
+        await client.auth.signOut();
+      }
+      // The desk's own lookup (passport + date of birth) finds the card and answers without the identity values.
+      const desk = await session(browser, DEMO.reception);
+      const found = await desk.api("GET", `/api/operations/patients?q=${ID.document}&dob=${ID.dob}`);
+      check(found.status === 200 && JSON.parse(found.text).data.exact === true && !leaks(found.text), "reception: passport + date of birth finds the card, no identity in the answer");
+      const alone = await desk.api("GET", `/api/operations/patients?q=${ID.document}`);
+      check(alone.status === 400, `reception: a passport without a date of birth is refused (${alone.status})`);
+      const card = await desk.api("GET", `/api/admin/patients?id=${X}`);
+      check(card.status === 200 && !leaks(card.text), "reception: the patient card says whether a date of birth is recorded, never what it is");
+      await desk.context.close();
+      const [kept] = await db`select document_number, pinfl, date_of_birth::text as dob, home_address from public.patients where id = ${X}`;
+      check(kept.document_number === ID.document && kept.pinfl === ID.pinfl && kept.dob === ID.dob && kept.home_address === ID.address, "the identity values are still stored in our database");
+    }
+
     // 5. Revocation by the referring doctor ends the receiver's access on the next request.
     {
       const a = await session(browser, DEMO.referrer);

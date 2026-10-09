@@ -47,6 +47,10 @@ export async function GET(request: NextRequest) {
         .maybeSingle();
       if (patientError) throw patientError;
       if (!patient) return ok({ patient: null, appointments: [], conversations: [], referrals: [] });
+      // Date of birth and sex are read here only to say whether they are recorded: staff never see the values
+      // (owner decision 2026-10-08, migration 20261008000005).
+      const { date_of_birth: dob, sex, ...visible } = patient;
+      const card = { ...visible, has_date_of_birth: dob !== null, has_sex: sex !== null };
       // The person's visits and conversations across merged records (Phase 14).
       const ids = await patientRecordIds(staff.clinicId, detailId);
 
@@ -73,7 +77,7 @@ export async function GET(request: NextRequest) {
         ]);
       if (appointmentsError) throw appointmentsError;
       if (conversationsError) throw conversationsError;
-      return ok({ patient, appointments: appointments ?? [], conversations: conversations ?? [], referrals });
+      return ok({ patient: card, appointments: appointments ?? [], conversations: conversations ?? [], referrals });
     }
 
     let query = supabase

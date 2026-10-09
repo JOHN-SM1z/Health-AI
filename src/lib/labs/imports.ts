@@ -1,4 +1,6 @@
 import "server-only";
+import { ageInYears } from "@/lib/patients/age";
+import { serverHmac } from "@/lib/security/server-hmac";
 import { createHash } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
@@ -402,7 +404,7 @@ async function analyseAndStore(staff: ClinicStaff, batch: BatchRow, mapping: Imp
   if (problem) throw new ApiError(400, MAPPING_PROBLEM_MESSAGES[problem], `mapping_${problem}`);
 
   const [stored, catalog] = await Promise.all([loadRowsForAnalysis(batch.id), loadCatalog(staff.clinicId)]);
-  const read = readRows(
+  const readPlain = readRows(
     stored.map((r) => ({ rowNumber: r.row_number, cells: (r.raw as string[]).map(String) })),
     headers.length,
     mapping,
@@ -410,6 +412,9 @@ async function analyseAndStore(staff: ClinicStaff, batch: BatchRow, mapping: Imp
     staff.clinicTimezone,
     new Date(),
   );
+  // The key that groups "the same person as written in the file" is built from passport, JSHSHIR, date of birth, phone and
+  // name. It is stored and sent to the browser (to confirm a match) only as a server-keyed token (owner decision 2026-10-08).
+  const read = readPlain.map((r) => ({ ...r, patientKey: r.patientKey ? serverHmac("lab-import-patient", r.patientKey) : r.patientKey }));
 
   // Earlier staff confirmations of a possible match survive re-analysis while
   // the same patient is still the one suggested.
@@ -677,7 +682,7 @@ export async function listImportRows(staff: ClinicStaff, batchId: string, filter
   let q = db
     .from("lab_import_rows")
     .select(
-      "row_number, raw, status, errors, patient_key, patient_id, match_kind, candidate_patient_ids, value_numeric, value_text, value_boolean, performed_at, accession, lab_result_id, " +
+      "row_number, status, errors, patient_key, patient_id, match_kind, candidate_patient_ids, value_numeric, value_text, value_boolean, performed_at, accession, lab_result_id, " +
         "lab_tests!lab_import_rows_test_fkey(name), lab_test_parameters!lab_import_rows_parameter_fkey(name, unit)",
       { count: "exact" },
     )
@@ -691,7 +696,6 @@ export async function listImportRows(staff: ClinicStaff, batchId: string, filter
   if (error) throw loadFailed("rows page", error);
   type Row = {
     row_number: number;
-    raw: string[];
     status: string;
     errors: string[];
     patient_key: string | null;
@@ -710,14 +714,15 @@ export async function listImportRows(staff: ClinicStaff, batchId: string, filter
   const rows = (data ?? []) as unknown as Row[];
 
   const patientIds = [...new Set(rows.flatMap((r) => [r.patient_id, ...r.candidate_patient_ids]).filter((v): v is string => Boolean(v)))];
-  const patients = new Map<string, { name: string | null; dateOfBirth: string | null; phoneTail: string | null }>();
+  // Name, age and phone of the matched/suggested patients — never their date of birth or documents (owner decision 2026-10-08).
+  const patients = new Map<string, { name: string | null; age: number | null; phone: string | null }>();
   for (const part of chunks(patientIds)) {
     const { data: ps, error: pe } = await db.from("patients").select("id, full_name, date_of_birth, phone").eq("clinic_id", staff.clinicId).in("id", part);
     if (pe) throw loadFailed("row patients", pe);
-    for (const p of ps ?? []) patients.set(p.id, { name: p.full_name, dateOfBirth: p.date_of_birth, phoneTail: p.phone ? p.phone.replace(/\D/g, "").slice(-4) || null : null });
+    for (const p of ps ?? []) patients.set(p.id, { name: p.full_name, age: ageInYears(p.date_of_birth, staff.clinicTimezone), phone: p.phone });
   }
 
-  // The page shows result values and identifiers: recorded before it is returned.
+  // The page shows result values (not the file's identity cells, which stay server-side): recorded before it is returned.
   await audit(staff, "lab_import_rows_viewed", batch.id, { filter, offset, rows: rows.length }, true);
 
   return {
@@ -727,13 +732,12 @@ export async function listImportRows(staff: ClinicStaff, batchId: string, filter
     headers: batch.headers as string[],
     rows: rows.map((r) => ({
       rowNumber: r.row_number,
-      cells: r.raw.map(String),
       status: r.status,
       errors: r.errors,
       patientKey: r.patient_key,
-      patient: r.patient_id ? { id: r.patient_id, ...(patients.get(r.patient_id) ?? { name: null, dateOfBirth: null, phoneTail: null }) } : null,
+      patient: r.patient_id ? { id: r.patient_id, ...(patients.get(r.patient_id) ?? { name: null, age: null, phone: null }) } : null,
       matchKind: r.match_kind,
-      candidates: r.candidate_patient_ids.map((id) => ({ id, ...(patients.get(id) ?? { name: null, dateOfBirth: null, phoneTail: null }) })),
+      candidates: r.candidate_patient_ids.map((id) => ({ id, ...(patients.get(id) ?? { name: null, age: null, phone: null }) })),
       test: r.lab_tests?.name ?? null,
       parameter: r.lab_test_parameters?.name ?? null,
       unit: r.lab_test_parameters?.unit ?? null,
