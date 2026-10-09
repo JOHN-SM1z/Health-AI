@@ -37,10 +37,9 @@ await db`insert into public.patients ${db({ clinic_id: clinic, full_name: "Karim
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ viewport: { width: 390, height: 760 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true })).newPage();
 await page.goto(`${BASE}/book?clinic=${clinic}#tgWebAppData=${encodeURIComponent(signInitData(bot.telegram_bot_token, tg))}&tgWebAppVersion=7.0&tgWebAppPlatform=web`);
-await page.getByRole("checkbox").check();
-await page.getByRole("button", { name: "Davom etish" }).click();
 await page.getByLabel("Pasport / ID karta yoki JSHSHIR").fill(doc);
 await page.getByLabel("Tug‘ilgan sana").fill("12.04.1988");
+await page.getByLabel("Shaxsiy ma’lumotlarga rozilik").check();
 await page.screenshot({ path: `${OUT}/1-passport.png` });
 await page.getByRole("button", { name: "Davom etish" }).click();
 await page.getByRole("button", { name: /Raqamni ulashish/ }).waitFor();

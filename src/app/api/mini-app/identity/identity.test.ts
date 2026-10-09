@@ -99,7 +99,7 @@ describeDb("online identity — passport first, proven by the patient's own Tele
     const first = await post(status, tg);
     expect(first.body.data).toMatchObject({ profile: null });
 
-    const step1 = await post(lookup, tg, { document: doc(1).toLowerCase(), dateOfBirth: "1988-04-12" });
+    const step1 = await post(lookup, tg, { consent: true, document: doc(1).toLowerCase(), dateOfBirth: "1988-04-12" });
     expect(step1).toMatchObject({ status: 200, body: { data: { next: "phone" } } });
     const lookupId = step1.body.data!.lookupId as string;
 
@@ -128,7 +128,7 @@ describeDb("online identity — passport first, proven by the patient's own Tele
     await card({ full_name: `Yusupov Bobur ${suffix}`, document_number: doc(2), date_of_birth: "1975-01-30", phone: phoneOf(2) });
     const shape = async (document: string, dateOfBirth: string) => {
       const tg = newTg();
-      const r = await post(lookup, tg, { document, dateOfBirth });
+      const r = await post(lookup, tg, { consent: true, document, dateOfBirth });
       expect(r.status).toBe(200);
       const { lookupId, ...rest } = r.body.data as { lookupId: string };
       expect(lookupId).toMatch(/^[0-9a-f-]{36}$/);
@@ -152,7 +152,7 @@ describeDb("online identity — passport first, proven by the patient's own Tele
   it("someone else's document is never stored on a new record; staff get a claim; the patient's answer is the same", async () => {
     const owner = await card({ full_name: `Haqiqiy Egasi ${suffix}`, document_number: doc(4), date_of_birth: "1990-09-09", phone: phoneOf(4) });
     const intruder = newTg();
-    const r = await post(lookup, intruder, { document: doc(4), dateOfBirth: "1991-01-01" });
+    const r = await post(lookup, intruder, { consent: true, document: doc(4), dateOfBirth: "1991-01-01" });
     await share(intruder, `+99897${String(intruder).slice(-7)}`);
     const lookupId = r.body.data!.lookupId as string;
     expect((await post(phone, intruder, { lookupId })).body.data).toMatchObject({ next: "details" });
@@ -167,7 +167,7 @@ describeDb("online identity — passport first, proven by the patient's own Tele
 
     // A genuinely new patient: the same answer, and the document is stored.
     const fresh = newTg();
-    const f = await post(lookup, fresh, { document: doc(5), dateOfBirth: "2001-02-03" });
+    const f = await post(lookup, fresh, { consent: true, document: doc(5), dateOfBirth: "2001-02-03" });
     await share(fresh, `+99895${String(fresh).slice(-7)}`);
     const fid = f.body.data!.lookupId as string;
     expect((await post(phone, fresh, { lookupId: fid })).body.data).toMatchObject({ next: "details" });
@@ -184,7 +184,7 @@ describeDb("online identity — passport first, proven by the patient's own Tele
   it("only the sender's own contact counts; a forwarded one is ignored", async () => {
     const victim = await card({ full_name: `Qurbon ${suffix}`, document_number: doc(6), date_of_birth: "1980-08-08", phone: phoneOf(6) });
     const attacker = newTg();
-    const r = await post(lookup, attacker, { document: doc(6), dateOfBirth: "1980-08-08" });
+    const r = await post(lookup, attacker, { consent: true, document: doc(6), dateOfBirth: "1980-08-08" });
     const lookupId = r.body.data!.lookupId as string;
     // The victim's contact card forwarded by the attacker: user_id is the victim's account, not the sender's.
     vi.mocked(sendTelegramMessage).mockClear();
@@ -199,9 +199,12 @@ describeDb("online identity — passport first, proven by the patient's own Tele
 
   it("three wrong dates of birth for a document stop the comparison for the day", async () => {
     await card({ full_name: `Himoyalangan ${suffix}`, document_number: doc(7), date_of_birth: "1970-07-07", phone: phoneOf(7) });
-    for (const d of ["1970-07-01", "1970-07-02", "1970-07-03"]) await post(lookup, newTg(), { document: doc(7), dateOfBirth: d });
+    for (const d of ["1970-07-01", "1970-07-02", "1970-07-03"]) {
+      const wrong = await post(lookup, newTg(), { consent: true, document: doc(7), dateOfBirth: d });
+      expect(wrong.status, JSON.stringify(wrong.body)).toBe(200);
+    }
     const tg = newTg();
-    const r = await post(lookup, tg, { document: doc(7), dateOfBirth: "1970-07-07" }); // right date, too late
+    const r = await post(lookup, tg, { consent: true, document: doc(7), dateOfBirth: "1970-07-07" }); // right date, too late
     await share(tg, phoneOf(7)); // even with the card's own phone
     expect((await post(phone, tg, { lookupId: r.body.data!.lookupId as string })).body.data).toMatchObject({ next: "details" });
   });
@@ -211,19 +214,31 @@ describeDb("online identity — passport first, proven by the patient's own Tele
     const tg = newTg();
     await post(status, tg); // creates the Telegram record
     await admin.from("patients").update({ pinfl: `3${String(seed).padStart(13, "1").slice(-13)}` }).eq("clinic_id", clinic).eq("telegram_user_id", tg);
-    const r = await post(lookup, tg, { document: doc(8), dateOfBirth: "1965-06-06" });
+    const r = await post(lookup, tg, { consent: true, document: doc(8), dateOfBirth: "1965-06-06" });
     await share(tg, phoneOf(8));
     expect((await post(phone, tg, { lookupId: r.body.data!.lookupId as string })).body.data).toEqual({ next: "reception" });
     expect(await row(deskCard)).toMatchObject({ telegram_user_id: null });
   });
 
+  it("no passport or date of birth is processed without the patient's consent on the first screen", async () => {
+    const tg = newTg();
+    const r = await post(lookup, tg, { document: doc(10), dateOfBirth: "1990-10-10" }); // no consent
+    expect(r.status).toBe(400);
+    const { count } = await admin.from("online_identity_lookups").select("id", { count: "exact", head: true }).eq("clinic_id", clinic).eq("telegram_user_id", tg);
+    expect(count).toBe(0);
+    // With consent, the patient's own record records it.
+    await post(lookup, tg, { consent: true, document: doc(10), dateOfBirth: "1990-10-10" });
+    const { data } = await admin.from("patients").select("consent_given").eq("clinic_id", clinic).eq("telegram_user_id", tg).single();
+    expect(data).toEqual({ consent_given: true });
+  });
+
   it("another user's lookup id is refused; bad input is refused", async () => {
     const a = newTg();
-    const r = await post(lookup, a, { document: doc(9), dateOfBirth: "1999-09-09" });
+    const r = await post(lookup, a, { consent: true, document: doc(9), dateOfBirth: "1999-09-09" });
     expect((await post(phone, newTg(), { lookupId: r.body.data!.lookupId as string })).body.code).toBe("lookup_expired");
-    expect((await post(lookup, a, { document: "12345", dateOfBirth: "1999-09-09" })).body.code).toBe("invalid_identity");
-    expect((await post(lookup, a, { document: doc(9), dateOfBirth: "2999-01-01" })).body.code).toBe("invalid_identity");
-    expect((await post(lookup, a, { document: doc(9), dateOfBirth: "1999-02-30" })).body.code).toBe("invalid_identity");
+    expect((await post(lookup, a, { consent: true, document: "12345", dateOfBirth: "1999-09-09" })).body.code).toBe("invalid_identity");
+    expect((await post(lookup, a, { consent: true, document: doc(9), dateOfBirth: "2999-01-01" })).body.code).toBe("invalid_identity");
+    expect((await post(lookup, a, { consent: true, document: doc(9), dateOfBirth: "1999-02-30" })).body.code).toBe("invalid_identity");
   });
 
   it("when the clinic requires it, a Mini App booking without a completed identity is refused on the server", async () => {

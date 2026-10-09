@@ -54,8 +54,6 @@ async function run() {
     page.on("pageerror", (e) => report.problems.push(`[patient] pageerror: ${e.message}`));
     page.on("response", (r) => r.status() >= 500 && report.problems.push(`[patient] HTTP ${r.status()} ${r.url()}`));
     await page.goto(`${BASE}/book?clinic=${clinic}${launch(signInitData(bot.telegram_bot_token, tg))}`);
-    await page.getByRole("checkbox").check();
-    await page.getByRole("button", { name: "Davom etish" }).click();
     await page.getByRole("button", { name: "Ha, davom etish" }).click(); // identity already complete
     await page.getByRole("button", { name: "O‘tkazib yuborish" }).click(); // no concern typed
     await page.getByRole("button", { name: /Kerakli xizmatni bilaman/ }).click();

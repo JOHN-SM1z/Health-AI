@@ -10,6 +10,8 @@ const schema = z.object({
   initData: z.string().nullable().optional(),
   document: z.string().trim().min(5).max(30),
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  // Consent is the first screen's checkbox: no passport or date of birth is processed without it.
+  consent: z.literal(true),
 });
 
 /** Step 1: passport/ID or JSHSHIR + date of birth. The answer is the same whatever the database holds. */
