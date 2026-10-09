@@ -9,6 +9,7 @@ import { apiGet, apiPost, getClientClinicId } from "@/lib/client/api";
 import { newIdempotencyKey } from "@/lib/idempotency-key";
 import { IdentityStep, type OnlineProfile } from "@/components/mini-app/identity-step";
 import { ConcernStep } from "@/components/mini-app/concern-step";
+import { OnlinePayment } from "@/components/mini-app/online-payment";
 
 type Catalog = {
   clinic: {
@@ -635,6 +636,7 @@ export function BookingFlow() {
           message={bookingResult?.message ?? ""}
           appointmentId={bookingResult?.appointmentId}
           paymentUrl={bookingResult?.paymentUrl}
+          identity={identity}
           onRetry={
             bookingResult?.ok
               ? undefined
@@ -702,6 +704,7 @@ function ResultView({
   message,
   appointmentId,
   paymentUrl,
+  identity,
   onRetry,
   onDone,
 }: {
@@ -709,6 +712,7 @@ function ResultView({
   message: string;
   appointmentId?: string;
   paymentUrl?: string;
+  identity: string | null;
   onRetry?: () => void;
   onDone: () => void;
 }) {
@@ -728,6 +732,7 @@ function ResultView({
           Boshqa vaqtni tanlash
         </Button>
       )}
+      {ok && appointmentId && identity && <OnlinePayment identity={identity} appointmentId={appointmentId} />}
       {ok && paymentUrl && (
         <a href={paymentUrl} target="_blank" rel="noopener noreferrer" className="block w-full">
           <Button size="full">To‘lov qilish (Click)</Button>

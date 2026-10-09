@@ -19,8 +19,8 @@ import { deliverClinicNotificationsSoon } from "@/lib/notifications/deliver-soon
 
 type Staff = StaffContext & { clinicId: string };
 
-export type VisitStatus = "awaiting_payment" | "waiting" | "called" | "in_progress" | "completed" | "cancelled";
-export type Balance = { charged: number; collected: number; refunded: number; outstanding: number; cashNet: number; terminalNet: number };
+export type VisitStatus = "booked" | "awaiting_payment" | "waiting" | "called" | "in_progress" | "completed" | "cancelled";
+export type Balance = { charged: number; collected: number; refunded: number; outstanding: number; cashNet: number; terminalNet: number; onlineNet: number };
 
 // Database refusals (RAISE … HINT) → what the desk sees.
 const REFUSALS: Record<string, [number, string]> = {
@@ -35,6 +35,7 @@ const REFUSALS: Record<string, [number, string]> = {
   patient_not_found: [404, "Bemor topilmadi"],
   patient_merged: [409, "Bu karta asosiy kartaga birlashtirilgan — asosiy kartani tanlang"],
   patient_exists: [409, "Bu bemor allaqachon ro‘yxatda bor — mavjud kartani tanlang"],
+  not_today: [409, "Bu onlayn yozuv boshqa kun uchun"],
   identity_conflict: [409, "Kiritilgan ma’lumotlar mavjud karta bilan mos kelmaydi — hujjat va tug‘ilgan sanani tekshiring yoki administratorga murojaat qiling"],
   already_registered: [409, "Bemor bu shifokorga allaqachon ro‘yxatdan o‘tgan"],
   already_registered_lab: [409, "Bemor laboratoriya navbatida allaqachon bor"],
@@ -232,9 +233,14 @@ export type VisitSummary = {
   status: VisitStatus;
   queueDate: string | null;
   queueNumber: number | null;
+  /** When the patient registered at the desk; for an online booking, when they were marked arrived (or paid, before). */
   arrivedAt: string;
   queuedAt: string | null;
   calledAt: string | null;
+  /** "online": paid in the Mini App (20261008000012); "desk": registered at reception. */
+  source: "desk" | "online";
+  /** The booked time of an online visit; null for a walk-in. */
+  slotAt: string | null;
   patient: { id: string; patientNumber: number; fullName: string | null };
   /** null for a laboratory visit. */
   doctor: { id: string; name: string } | null;
@@ -246,7 +252,7 @@ export type VisitSummary = {
 export const queueLabel = (v: { kind: string; doctor: { name: string } | null }) => (v.kind === "lab" ? "Laboratoriya" : (v.doctor?.name ?? "Shifokor"));
 
 const VISIT_SELECT =
-  "id, kind, lab_order_id, status, queue_date, queue_number, arrived_at, queued_at, called_at, patient_id, doctor_id, patients!inner(id, patient_number, full_name), doctors(id, name), visit_charges(id, service_name, amount, status, void_reason, created_at, lab_order_item_id)";
+  "id, kind, lab_order_id, status, source, queue_date, queue_number, arrived_at, queued_at, called_at, patient_id, doctor_id, appointments(start_at), patients!inner(id, patient_number, full_name), doctors(id, name), visit_charges(id, service_name, amount, status, void_reason, created_at, lab_order_item_id)";
 
 type VisitRow = {
   id: string;
@@ -255,9 +261,11 @@ type VisitRow = {
   status: VisitStatus;
   queue_date: string | null;
   queue_number: number | null;
-  arrived_at: string;
+  source: "desk" | "online";
+  arrived_at: string | null;
   queued_at: string | null;
   called_at: string | null;
+  appointments: { start_at: string } | null;
   patients: { id: string; patient_number: number; full_name: string | null } | null;
   doctors: { id: string; name: string } | null;
   visit_charges: Array<{ id: string; service_name: string; amount: number; status: "active" | "voided"; void_reason: string | null; created_at: string; lab_order_item_id: string | null }> | null;
@@ -271,15 +279,17 @@ async function balances(visitIds: string[]): Promise<Map<string, Balance>> {
     .select("visit_id, kind, method, amount")
     .in("visit_id", visitIds);
   if (error) throw new ApiError(500, "To‘lovlarni yuklab bo‘lmadi");
-  for (const id of visitIds) out.set(id, { charged: 0, collected: 0, refunded: 0, outstanding: 0, cashNet: 0, terminalNet: 0 });
+  for (const id of visitIds) out.set(id, { charged: 0, collected: 0, refunded: 0, outstanding: 0, cashNet: 0, terminalNet: 0, onlineNet: 0 });
   for (const t of data ?? []) {
     const b = out.get(t.visit_id)!;
     const amount = Number(t.amount);
     const signed = t.kind === "collection" ? amount : -amount;
     if (t.kind === "collection") b.collected += amount;
     else b.refunded += amount;
+    // Online money never counts as the drawer's cash or the terminal's.
     if (t.method === "cash") b.cashNet += signed;
-    else b.terminalNet += signed;
+    else if (t.method === "terminal") b.terminalNet += signed;
+    else b.onlineNet += signed;
   }
   return out;
 }
@@ -298,6 +308,7 @@ async function toSummaries(rows: VisitRow[]): Promise<VisitSummary[]> {
     b.refunded = round2(b.refunded);
     b.cashNet = round2(b.cashNet);
     b.terminalNet = round2(b.terminalNet);
+    b.onlineNet = round2(b.onlineNet);
     b.outstanding = round2(b.charged - b.collected + b.refunded);
     return {
       id: r.id,
@@ -306,9 +317,11 @@ async function toSummaries(rows: VisitRow[]): Promise<VisitSummary[]> {
       status: r.status,
       queueDate: r.queue_date,
       queueNumber: r.queue_number,
-      arrivedAt: r.arrived_at,
+      arrivedAt: r.arrived_at ?? r.queued_at ?? "",
       queuedAt: r.queued_at,
       calledAt: r.called_at,
+      source: r.source ?? "desk",
+      slotAt: r.appointments?.start_at ?? null,
       patient: { id: r.patients!.id, patientNumber: Number(r.patients!.patient_number), fullName: r.patients!.full_name },
       doctor: r.doctors ? { id: r.doctors.id, name: r.doctors.name } : null,
       balance: b,
@@ -320,10 +333,30 @@ async function toSummaries(rows: VisitRow[]): Promise<VisitSummary[]> {
 /** Two visits wait in the same queue: the same doctor's, or both the laboratory's. */
 const sameQueue = (a: VisitSummary, b: VisitSummary) => (a.kind === "lab" ? b.kind === "lab" : b.doctor?.id === a.doctor?.id && b.kind === "doctor");
 
-/** Queue order: earlier clinic day first, then number; unnumbered (awaiting payment) by arrival. */
-function queueOrder(a: VisitSummary, b: VisitSummary): number {
+/** A booked patient who arrives later than this after their time goes behind those already waiting. */
+export const LATE_ARRIVAL_GRACE_MS = 10 * 60_000;
+
+/**
+ * When a numbered visit takes its turn (owner decision 2026-10-08): a patient booked online at their booked time —
+ * unless they arrived more than the grace period late, then at their arrival; a walk-in when they paid (were queued).
+ */
+export function turnTime(v: Pick<VisitSummary, "slotAt" | "arrivedAt" | "queuedAt" | "source">): string {
+  if (v.source === "online" && v.slotAt) {
+    const late = v.arrivedAt && new Date(v.arrivedAt).getTime() > new Date(v.slotAt).getTime() + LATE_ARRIVAL_GRACE_MS;
+    return late ? new Date(v.arrivedAt).toISOString() : new Date(v.slotAt).toISOString();
+  }
+  return new Date(v.queuedAt ?? v.arrivedAt).toISOString();
+}
+
+/**
+ * Queue order: earlier clinic day first; within a day, booked patients by their booked time and walk-ins fitted
+ * between them by when they paid (turnTime), the number breaking ties; unnumbered (awaiting payment) by arrival.
+ */
+export function queueOrder(a: VisitSummary, b: VisitSummary): number {
   if (a.queueNumber !== null && b.queueNumber !== null) {
-    return (a.queueDate ?? "").localeCompare(b.queueDate ?? "") || a.queueNumber - b.queueNumber;
+    return (
+      (a.queueDate ?? "").localeCompare(b.queueDate ?? "") || turnTime(a).localeCompare(turnTime(b)) || a.queueNumber - b.queueNumber
+    );
   }
   if (a.queueNumber === null && b.queueNumber === null) return a.arrivedAt.localeCompare(b.arrivedAt);
   return a.queueNumber === null ? 1 : -1;
@@ -340,7 +373,7 @@ export async function listOpenVisits(clinicId: string, opts: { doctorId?: string
     .select(VISIT_SELECT)
     .eq("clinic_id", clinicId)
     .in("status", opts.statuses ?? ["awaiting_payment", "waiting", "called", "in_progress"])
-    .order("arrived_at", { ascending: true })
+    .order("queued_at", { ascending: true, nullsFirst: false })
     .limit(300);
   if (opts.doctorId) query = query.eq("doctor_id", opts.doctorId);
   const { data, error } = await query;
@@ -367,6 +400,26 @@ export async function listRecentClosedVisits(clinicId: string, sinceIso: string)
     .limit(200);
   if (error) throw new ApiError(500, "Tashriflarni yuklab bo‘lmadi");
   return toSummaries((data ?? []) as unknown as VisitRow[]);
+}
+
+/** Patients who paid online for a clinic day and have not arrived yet (reception's "Keldi" list), by booked time. */
+export async function listBookedVisits(clinicId: string, day: string): Promise<VisitSummary[]> {
+  const { data, error } = await createAdminClient()
+    .from("visits")
+    .select(VISIT_SELECT)
+    .eq("clinic_id", clinicId)
+    .eq("status", "booked")
+    .eq("queue_date", day)
+    .limit(300);
+  if (error) throw new ApiError(500, "Onlayn yozuvlarni yuklab bo‘lmadi");
+  return (await toSummaries((data ?? []) as unknown as VisitRow[])).sort((a, b) => (a.slotAt ?? "").localeCompare(b.slotAt ?? ""));
+}
+
+/** Reception: the patient who paid online is here — they join their doctor's queue at their booked time. */
+export async function markBookedArrived(staff: Staff, visitId: string): Promise<{ visitId: string; queueNumber: number }> {
+  const r = await rpc<{ visit_id: string; queue_number: number }>("mark_booked_arrived", { p_clinic: staff.clinicId, p_actor: staff.profileId, p_visit: visitId });
+  deliverClinicNotificationsSoon(staff.clinicId);
+  return { visitId: r.visit_id, queueNumber: r.queue_number };
 }
 
 export async function transitionVisit(
@@ -488,7 +541,8 @@ export type KassaTotals = {
   from: string;
   to: string;
   scope: "mine" | "clinic";
-  byMethod: Record<"cash" | "terminal", { collected: number; refunded: number; net: number }>;
+  /** "online": paid in the Mini App — never in the drawer or the terminal. */
+  byMethod: Record<"cash" | "terminal" | "online", { collected: number; refunded: number; net: number }>;
   byStaff: Array<{ profileId: string; name: string | null; collected: number; refunded: number }>;
 };
 
@@ -509,19 +563,22 @@ export async function kassaTotals(staff: Staff, fromIso: string, toIso: string, 
   if (!clinicWide) query = query.eq("executed_by", staff.profileId);
   const { data, error } = await query;
   if (error) throw new ApiError(500, "Hisobotni yuklab bo‘lmadi");
-  const byMethod = { cash: { collected: 0, refunded: 0, net: 0 }, terminal: { collected: 0, refunded: 0, net: 0 } };
+  const byMethod = {
+    cash: { collected: 0, refunded: 0, net: 0 },
+    terminal: { collected: 0, refunded: 0, net: 0 },
+    online: { collected: 0, refunded: 0, net: 0 },
+  };
   const staffTotals = new Map<string, { collected: number; refunded: number }>();
   for (const t of data ?? []) {
-    const m = byMethod[t.method as "cash" | "terminal"];
+    const m = byMethod[t.method as "cash" | "terminal" | "online"];
     const amount = Number(t.amount);
+    if (t.kind === "collection") m.collected += amount;
+    else m.refunded += amount;
+    // Online payments have no cashier; an online refund is attributed to the manager who confirmed it.
+    if (!t.executed_by || (t.method === "online" && t.kind === "collection")) continue;
     const s = staffTotals.get(t.executed_by) ?? { collected: 0, refunded: 0 };
-    if (t.kind === "collection") {
-      m.collected += amount;
-      s.collected += amount;
-    } else {
-      m.refunded += amount;
-      s.refunded += amount;
-    }
+    if (t.kind === "collection") s.collected += amount;
+    else s.refunded += amount;
     staffTotals.set(t.executed_by, s);
   }
   for (const m of Object.values(byMethod)) {
@@ -655,7 +712,8 @@ export type PatientQueuePosition = {
 };
 
 async function queuePositions(clinicId: string, pick: (v: VisitSummary) => boolean): Promise<PatientQueuePosition[]> {
-  const mine = (await listOpenVisits(clinicId)).filter(pick);
+  // The patient's own include a booking paid online (number issued, not yet arrived).
+  const mine = (await listOpenVisits(clinicId, { statuses: ["booked", "awaiting_payment", "waiting", "called", "in_progress"] })).filter(pick);
   if (mine.length === 0) return [];
   const all = await listOpenVisits(clinicId, { statuses: ["waiting", "called"] });
   return mine.map((v) => ({

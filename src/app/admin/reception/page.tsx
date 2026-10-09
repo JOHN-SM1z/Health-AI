@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AModal, AInput, ASelect } from "@/components/admin/ui";
-import { adminApi, AdminApiError } from "@/lib/admin/client";
+import { adminApi, AdminApiError, formatTime } from "@/lib/admin/client";
 import { freshnessLabel, money, useLive, VISIT_STATUS } from "@/components/operations/use-live";
 import { FollowQr } from "@/components/operations/follow-qr";
 import { classifyQuery, isIdentityDocument, parseDob } from "@/lib/operations/identity-query";
@@ -61,6 +61,19 @@ const EMPTY_NEW = { fullName: "", dateOfBirth: "", sex: "", phone: "", documentN
 export default function ReceptionPage() {
   const catalog = useLive<Catalog>("/api/operations/catalog", 120_000);
   const queue = useLive<{ visits: Visit[] }>("/api/operations/arrivals", 10_000);
+  // Paid online for today, not here yet (20261008000012): "Keldi" puts them in their doctor's queue.
+  const booked = useLive<{ visits: Array<{ id: string; queueNumber: number; slotAt: string | null; patient: { fullName: string | null; patientNumber: number }; doctor: { name: string } | null }> }>(
+    "/api/operations/booked",
+    30_000,
+  );
+  const markArrived = async (visitId: string) => {
+    try {
+      await adminApi.post(`/api/operations/booked/${visitId}`, {});
+      await Promise.all([booked.reload(), queue.reload()]);
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Belgilab bo‘lmadi");
+    }
+  };
 
   // ---------- identification ----------
   const [q, setQ] = useState("");
@@ -420,6 +433,33 @@ export default function ReceptionPage() {
           </div>
         </Card>
       </div>
+
+      {booked.data && booked.data.visits.length > 0 && (
+        <Card>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="font-display text-sm font-bold">Bugun onlayn to‘laganlar — kelishini belgilang</p>
+            <span className="text-xs text-ink-muted">Shifokor ularni yozilgan vaqtida qabul qiladi</span>
+          </div>
+          <ATable headers={["№", "Bemor", "Shifokor", "Vaqt", ""]}>
+            {booked.data.visits.map((v) => (
+              <tr key={v.id}>
+                <td className="px-4 py-3 font-numeric text-lg font-bold">{v.queueNumber}</td>
+                <td className="px-4 py-3">
+                  <p className="font-medium">{v.patient.fullName}</p>
+                  <p className="text-xs text-ink-muted">Karta № {v.patient.patientNumber}</p>
+                </td>
+                <td className="px-4 py-3">{v.doctor?.name}</td>
+                <td className="px-4 py-3 font-numeric">{v.slotAt ? formatTime(v.slotAt) : "—"}</td>
+                <td className="px-4 py-3 text-right">
+                  <AButton size="sm" onClick={() => markArrived(v.id)}>
+                    Keldi
+                  </AButton>
+                </td>
+              </tr>
+            ))}
+          </ATable>
+        </Card>
+      )}
 
       <Card>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

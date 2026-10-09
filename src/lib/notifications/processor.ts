@@ -7,7 +7,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { resolveHttpsAppUrl } from "@/lib/telegram/bots";
 // The one approved gateway from patient-facing code to lab results (Phase 12).
 import { loadLabOrderNotice, loadLabResultNotice } from "@/lib/labs/patient-results";
-import { queueCalledText, queueStatusButton, queueTicketText } from "@/lib/operations/queue-messages";
+import { bookedTicketText, queueCalledText, queueStatusButton, queueTicketText } from "@/lib/operations/queue-messages";
 
 
 const MESSAGE_TEMPLATES: Record<
@@ -381,12 +381,14 @@ type QueueVisit = {
   doctor_id: string | null;
   patients: { telegram_user_id: number | null } | null;
   doctors: { name: string } | null;
+  appointments: { start_at: string } | null;
+  clinics: { timezone: string } | null;
 };
 
 async function loadQueueVisit(supabase: ReturnType<typeof createAdminClient>, job: ClaimedJob): Promise<QueueVisit | null> {
   const { data } = await supabase
     .from("visits")
-    .select("id, clinic_id, kind, status, queue_date, queue_number, doctor_id, patients!inner(telegram_user_id), doctors(name)")
+    .select("id, clinic_id, kind, status, queue_date, queue_number, doctor_id, patients!inner(telegram_user_id), doctors(name), appointments(start_at), clinics(timezone)")
     .eq("id", job.visit_id ?? "")
     .eq("clinic_id", job.clinic_id)
     .maybeSingle();
@@ -451,13 +453,31 @@ async function processQueueTicketJob(
 ): Promise<"sent" | "failed" | "skipped" | "retry"> {
   const nextAttempts = job.attempts + 1;
   const visit = await loadQueueVisit(supabase, job);
-  if (!visit || visit.queue_number === null || !["waiting", "called"].includes(visit.status)) {
+  if (!visit || visit.queue_number === null || !["booked", "waiting", "called"].includes(visit.status)) {
     await markJob(job.id, "skipped", nextAttempts, "visit no longer waiting", supabase);
     return "skipped";
   }
   if ((await isQueueRecipient(supabase, visit, job.patient_telegram_user_id)) !== "patient") {
     await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
     return "skipped";
+  }
+  // Paid online, not yet arrived: the number, the booked time, and what to do at the clinic.
+  if (visit.status === "booked") {
+    const appUrl = resolveHttpsAppUrl(`/my-appointments?clinic=${encodeURIComponent(job.clinic_id)}`);
+    const messageId = await sendTelegramMessage(
+      {
+        chatId: job.patient_telegram_user_id!,
+        text: bookedTicketText({
+          queueNumber: visit.queue_number,
+          doctorName: visit.doctors?.name ?? null,
+          startAt: visit.appointments?.start_at ?? null,
+          timezone: visit.clinics?.timezone ?? "Asia/Tashkent",
+        }),
+        ...(appUrl ? { replyMarkup: { inline_keyboard: [[{ text: "📋 Yozuvlarim", web_app: { url: appUrl } }]] } } : {}),
+      },
+      job.clinic_id,
+    );
+    return finishQueueSend(supabase, job, messageId, nextAttempts);
   }
   // The same queue: this doctor's, or the laboratory's.
   let aheadQuery = supabase

@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTelegramInitData } from "@/components/mini-app/telegram-provider";
+import { OnlinePayment } from "@/components/mini-app/online-payment";
 import { apiGet, apiPost } from "@/lib/client/api";
 import { Button, Card, Badge, Spinner, ErrorBanner, SectionTitle, EmptyState } from "@/components/mini-app/ui";
 import { CalendarCheck, RefreshCw } from "lucide-react";
@@ -21,7 +22,7 @@ type Appointment = {
 
 type QueueTicket = {
   visitId: string;
-  status: "awaiting_payment" | "waiting" | "called" | "in_progress" | "completed" | "cancelled";
+  status: "booked" | "awaiting_payment" | "waiting" | "called" | "in_progress" | "completed" | "cancelled";
   queueNumber: number | null;
   doctorName: string;
   ahead: number | null;
@@ -197,11 +198,19 @@ function MyAppointmentsInner() {
         ) : (
           upcoming.map((a) => (
             <AppointmentCard key={a.id} a={a} timeZone={timeZone} highlight={a.id === searchParams.get("id")}>
+              {["pending", "confirmed"].includes(a.status) && a.payments && identity && (
+                <div className="mt-3">
+                  <OnlinePayment identity={identity} appointmentId={a.id} />
+                </div>
+              )}
               {["pending", "confirmed"].includes(a.status) && (
                 <div className="mt-3">
                   <Button variant="outline" size="sm" loading={cancelling === a.id} onClick={() => cancelAppointment(a.id)}>
                     Bekor qilish
                   </Button>
+                  {a.payments?.status === "paid" && (
+                    <p className="mt-1 text-xs text-[var(--tg-hint,#8a9699)]">Bekor qilsangiz, to‘lov to‘liq qaytariladi.</p>
+                  )}
                 </div>
               )}
             </AppointmentCard>
@@ -224,7 +233,9 @@ function MyAppointmentsInner() {
 /** The digital queue ticket (no paper): arrival order, never a promised time. */
 function QueueTicketCard({ t }: { t: QueueTicket }) {
   const label =
-    t.status === "awaiting_payment"
+    t.status === "booked"
+      ? "Onlayn to‘langan — kelishingiz kutilmoqda"
+      : t.status === "awaiting_payment"
       ? "Kassada to‘lovni kutmoqda"
       : t.status === "called"
         ? "Sizni chaqirishdi — shifokor xonasiga kiring"
@@ -243,6 +254,9 @@ function QueueTicketCard({ t }: { t: QueueTicket }) {
       <p className="mt-2 text-sm font-medium text-[var(--tg-text,var(--foreground))]">{t.doctorName}</p>
       {t.ahead !== null && t.status === "waiting" && (
         <p className="mt-1 text-xs text-[var(--tg-text,var(--foreground))]">Sizdan oldin: {t.ahead} bemor</p>
+      )}
+      {t.status === "booked" && (
+        <p className="mt-1 text-xs text-[var(--tg-text,var(--foreground))]">Klinikaga kelganingizda qabulxonaga ayting. Shifokor sizni yozilgan vaqtingizda qabul qiladi.</p>
       )}
       {t.status === "awaiting_payment" && (
         <p className="mt-1 text-xs text-[var(--tg-text,var(--foreground))]">Navbat raqami kassada to‘lovdan so‘ng beriladi.</p>

@@ -39,6 +39,15 @@ const envSchema = z.object({
   PAYMENT_PROVIDER: z.enum(["manual", "click", "payme", "uzum"]).default("manual"),
   NEXT_PUBLIC_PAYMENT_PROVIDER: z.enum(["manual", "click", "payme", "uzum"]).default("manual"),
 
+  // Online payment in the Mini App (20261008000012). "none" = patients pay at the kassa. "rahmat" fails closed until its
+  // adapter is implemented from Rahmat's merchant documentation. "test_online" is for local runs and E2E only.
+  ONLINE_PAYMENT_PROVIDER: z.enum(["none", "rahmat", "test_online"]).default("none"),
+  TEST_ONLINE_PAYMENT_SECRET: z.string().optional(),
+  ALLOW_TEST_ONLINE_PAYMENT: z.enum(["true", "false"]).default("false"),
+  RAHMAT_MERCHANT_ID: z.string().optional(),
+  RAHMAT_SECRET_KEY: z.string().optional(),
+  RAHMAT_API_BASE_URL: optionalUrl(),
+
   CLICK_MERCHANT_ID: z.string().optional(),
   CLICK_SERVICE_ID: z.string().optional(),
   CLICK_SECRET_KEY: z.string().optional(),

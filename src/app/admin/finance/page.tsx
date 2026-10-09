@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader, Card, StatCard, AEmpty, AError, ASelect, ATable, ABadge, LoadingRow } from "@/components/admin/ui";
 import { TrendingUp, TrendingDown, Receipt, Landmark, ShieldAlert } from "lucide-react";
+import { OnlineRefunds } from "@/components/admin/online-refunds";
 import {
   adminApi,
   AdminApiError,
@@ -96,6 +97,9 @@ export default function FinancePage() {
         }
       />
       {error && <AError message={error} />}
+      <div className="mb-4">
+        <OnlineRefunds />
+      </div>
 
       {data !== null && !data.can_view_payment_dynamics ? (
         <Card>

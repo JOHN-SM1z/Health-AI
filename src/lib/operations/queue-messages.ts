@@ -23,6 +23,22 @@ export function queueTicketText(p: QueuePlace & { ahead: number }): string {
   );
 }
 
+/**
+ * Paid online (20261008000012): the number is issued now; at the clinic the doctor sees booked patients in the order
+ * of their booked times. The patient tells reception they have arrived.
+ */
+export function bookedTicketText(p: { queueNumber: number; doctorName: string | null; startAt: string | null; timezone: string }): string {
+  const when = p.startAt
+    ? new Date(p.startAt).toLocaleString("uz-UZ", { timeZone: p.timezone, day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })
+    : null;
+  return (
+    `✅ To‘lov qabul qilindi.\n\n🎫 Navbat raqamingiz: ${p.queueNumber}\n` +
+    `👨‍⚕️ Shifokor: ${p.doctorName ?? "Shifokor"}\n` +
+    (when ? `🕘 Qabul vaqti: ${when}\n` : "") +
+    `\nKlinikaga kelganingizda qabulxonaga navbat raqamingizni ayting.`
+  );
+}
+
 export function queueCalledText(p: QueuePlace): string {
   return `📣 Navbatingiz keldi — № ${p.queueNumber}\n\n` + (p.lab ? "🧪 Laboratoriyaga kiring." : `👨‍⚕️ ${p.doctorName ?? "Shifokor"} qabuliga kiring.`);
 }
