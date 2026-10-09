@@ -17,13 +17,19 @@ const schema = z.object({ initData: z.string().nullable().optional() });
  * instance (sharedRateLimit), since these routes return lab data.
  */
 export async function requireMiniAppPatient(request: NextRequest, bucket: string) {
+  const { clinic, patient } = await requireMiniAppPatientWith(request, bucket, schema);
+  return { clinicId: clinic.id, patientId: patient.id };
+}
+
+/** As requireMiniAppPatient, for a body with more fields than initData; returns the clinic, patient and parsed body. */
+export async function requireMiniAppPatientWith<S extends z.ZodType<{ initData?: string | null }>>(request: NextRequest, bucket: string, bodySchema: S) {
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   const limit = rateLimit({ key: keyFromIp(ip, bucket), limit: 30, windowMs: 60_000 });
   if (!limit.ok) throw new ApiError(429, "Juda ko‘p so‘rov", "rate_limited");
 
-  let body: z.infer<typeof schema>;
+  let body: z.infer<S>;
   try {
-    body = schema.parse(await request.json());
+    body = bodySchema.parse(await request.json());
   } catch {
     throw new ApiError(400, "Noto‘g‘ri so‘rov formati", "bad_json");
   }
@@ -35,5 +41,5 @@ export async function requireMiniAppPatient(request: NextRequest, bucket: string
   if (!resolved) throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
   const shared = await sharedRateLimit({ key: `${bucket}:${clinic.id}:${resolved.patient.id}`, limit: 30, windowMs: 60_000 });
   if (!shared.ok) throw new ApiError(429, "Juda ko‘p so‘rov", "rate_limited");
-  return { clinicId: clinic.id, patientId: resolved.patient.id };
+  return { clinic, patient: resolved.patient, body };
 }

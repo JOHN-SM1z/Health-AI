@@ -33,7 +33,7 @@ type Visit = {
 type KassaData = { open: Visit[]; closed: Visit[]; canRefund: boolean; canManageRefundGrants: boolean; currency: string };
 type Totals = {
   scope: "mine" | "clinic";
-  byMethod: Record<"cash" | "terminal", { collected: number; refunded: number; net: number }>;
+  byMethod: Record<"cash" | "terminal", { collected: number; refunded: number; net: number }> & { online?: { collected: number; refunded: number; net: number } };
   byStaff: Array<{ profileId: string; name: string | null; collected: number; refunded: number }>;
 };
 type Grants = { cashiers: Array<{ profileId: string; name: string | null; grant: { grantedAt: string } | null }> };
@@ -303,6 +303,13 @@ export default function KassaPage() {
                   <p className="font-semibold">Sof: <span className="font-numeric">{money(totals.data!.byMethod[m].net, currency)}</span></p>
                 </div>
               ))}
+              {totals.data.scope === "clinic" && (totals.data.byMethod.online?.collected ?? 0) > 0 && (
+                <div className="rounded-xl border border-dashed border-hairline p-3 text-sm sm:col-span-2">
+                  <p className="font-semibold">Onlayn (Mini App) — kassaga kirmaydi</p>
+                  <p>Qabul qilingan: <span className="font-numeric">{money(totals.data.byMethod.online?.collected ?? 0, currency)}</span></p>
+                  <p>Qaytarilgan: <span className="font-numeric">{money(totals.data.byMethod.online?.refunded ?? 0, currency)}</span></p>
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-sm text-ink-muted">{totals.error ?? "Yuklanmoqda…"}</p>

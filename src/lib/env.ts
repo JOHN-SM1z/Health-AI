@@ -32,9 +32,21 @@ const envSchema = z.object({
   TRANSCRIPTION_API_KEY: z.string().optional(),
   TRANSCRIPTION_MODEL: z.string().default("whisper-1"),
   ENABLE_TRANSCRIPTION: z.enum(["true", "false"]).default("false"),
+  // Hosts a patient's spoken health concern may be sent to (comma-separated): self-hosted or in-country speech
+  // services only. Empty = no voice concerns (patients type). Known foreign providers are refused even if listed.
+  HEALTH_AUDIO_ALLOWED_HOSTS: z.string().optional(),
 
   PAYMENT_PROVIDER: z.enum(["manual", "click", "payme", "uzum"]).default("manual"),
   NEXT_PUBLIC_PAYMENT_PROVIDER: z.enum(["manual", "click", "payme", "uzum"]).default("manual"),
+
+  // Online payment in the Mini App (20261008000012). "none" = patients pay at the kassa. "rahmat" fails closed until its
+  // adapter is implemented from Rahmat's merchant documentation. "test_online" is for local runs and E2E only.
+  ONLINE_PAYMENT_PROVIDER: z.enum(["none", "rahmat", "test_online"]).default("none"),
+  TEST_ONLINE_PAYMENT_SECRET: z.string().optional(),
+  ALLOW_TEST_ONLINE_PAYMENT: z.enum(["true", "false"]).default("false"),
+  RAHMAT_MERCHANT_ID: z.string().optional(),
+  RAHMAT_SECRET_KEY: z.string().optional(),
+  RAHMAT_API_BASE_URL: optionalUrl(),
 
   CLICK_MERCHANT_ID: z.string().optional(),
   CLICK_SERVICE_ID: z.string().optional(),

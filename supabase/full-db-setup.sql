@@ -15096,3 +15096,877 @@ comment on column public.patients.sex is
 revoke select on public.patients from authenticated;
 grant select (id, clinic_id, patient_number, full_name, phone, telegram_username, telegram_first_name, preferred_language, merged_into_patient_id)
   on public.patients to authenticated;
+
+-- =====================================================================
+-- FILE: 20261008000010_online_identity.sql
+-- =====================================================================
+-- Online identity for the Telegram Mini App (Slice B, owner decision 2026-10-08).
+--
+-- A patient booking online starts with passport/ID or JSHSHIR + date of birth. Those are a LOOKUP KEY, not proof:
+-- anyone can type someone else's. Proof is a phone number Telegram itself vouches for — the patient shares their own
+-- contact with the clinic's bot (the bot accepts it only when contact.user_id is the sender) — that equals the phone on
+-- the card. No MyID, no face check, no per-check fee. An SMS one-time code to the card's phone is the second proof
+-- (Slice D).
+--
+--   * telegram_verified_phones: the last nine digits of the phone each Telegram user proved, per clinic.
+--   * online_identity_lookups: what the patient typed (server-only, 30 minutes), and whether it matched a card. The
+--     browser holds only the lookup id. The patient gets the SAME answer whether there is no card, the date of birth
+--     is wrong, or the card is not yet proven — typing a passport number reveals nothing about anyone.
+--   * link_card_to_telegram(): proven → the card takes the patient's Telegram identity, in one transaction, audited.
+--     The Telegram-only record the Mini App created on first open gives it up only while it has nothing recorded on it
+--     (conversations stay with it); otherwise reception merges the two with merge_patients().
+--   * complete_online_patient(): no card → the patient's own record gets the details. A passport/JSHSHIR already on
+--     another card is NOT stored; a claim goes to the owner/administrator instead. The patient sees the same answer.
+--   * patient_identity_claims: those conflicts, for staff to resolve at the desk.
+--
+-- Every table here is server-only: RLS on, no policies, nothing granted to anon or authenticated.
+
+-- ---------------------------------------------------------------------------
+-- Columns
+-- ---------------------------------------------------------------------------
+
+alter table public.patients
+  add column telegram_linked_at timestamptz,
+  add column telegram_link_method text
+    constraint patients_telegram_link_method_check check (telegram_link_method in ('contact_phone', 'sms_code', 'reception'));
+
+comment on column public.patients.telegram_linked_at is
+  'When this card took a Telegram identity through online proof (link_card_to_telegram). Not granted to signed-in roles.';
+
+-- Per clinic: the Mini App booking requires a completed online identity (passport/JSHSHIR + date of birth, proven or
+-- recorded). Off by default so existing clinics keep working until the owner turns it on.
+alter table public.clinics
+  add column online_identity_required boolean not null default false;
+
+-- ---------------------------------------------------------------------------
+-- normalize_uz_phone: the nine national digits of an Uzbek number, however it was written; null for anything else.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.normalize_uz_phone(p_value text)
+returns text
+language sql
+immutable
+set search_path = public, pg_temp
+as $$
+  select case
+    when d ~ '^998[0-9]{9}$' then right(d, 9)
+    when d ~ '^[0-9]{9}$' then d
+    else null
+  end
+  from (select regexp_replace(coalesce(p_value, ''), '[^0-9]', '', 'g') as d) s;
+$$;
+
+revoke all on function public.normalize_uz_phone(text) from public, anon, authenticated;
+grant execute on function public.normalize_uz_phone(text) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- Tables
+-- ---------------------------------------------------------------------------
+
+create table public.telegram_verified_phones (
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  telegram_user_id bigint not null,
+  phone_key text not null constraint telegram_verified_phones_key_check check (phone_key ~ '^[0-9]{9}$'),
+  verified_at timestamptz not null default now(),
+  primary key (clinic_id, telegram_user_id)
+);
+
+create table public.online_identity_lookups (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  telegram_user_id bigint not null,
+  -- Server-keyed HMAC of the normalised document: per-document limits without keeping the value longer than needed.
+  document_key text not null constraint online_identity_lookups_key_check check (document_key ~ '^[0-9a-f]{64}$'),
+  document_number text,
+  pinfl text,
+  date_of_birth date not null,
+  matched_patient_id uuid,
+  dob_mismatch boolean not null default false,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '30 minutes',
+  completed_at timestamptz,
+  constraint online_identity_lookups_one_document check ((document_number is null) <> (pinfl is null))
+);
+create index online_identity_lookups_document_idx on public.online_identity_lookups (clinic_id, document_key, created_at);
+create index online_identity_lookups_user_idx on public.online_identity_lookups (clinic_id, telegram_user_id, created_at);
+
+create table public.patient_identity_claims (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  patient_id uuid not null,
+  conflicting_patient_id uuid,
+  reason text not null constraint patient_identity_claims_reason_check check (reason in ('document_in_use', 'details_differ')),
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz,
+  resolved_by uuid
+);
+create index patient_identity_claims_open_idx on public.patient_identity_claims (clinic_id, created_at) where resolved_at is null;
+
+alter table public.telegram_verified_phones enable row level security;
+alter table public.online_identity_lookups enable row level security;
+alter table public.patient_identity_claims enable row level security;
+revoke all on table public.telegram_verified_phones, public.online_identity_lookups, public.patient_identity_claims
+  from public, anon, authenticated;
+grant select, insert, update, delete on table public.telegram_verified_phones, public.online_identity_lookups,
+  public.patient_identity_claims to service_role;
+
+-- ---------------------------------------------------------------------------
+-- record_telegram_verified_phone: the bot received the sender's OWN contact (the server checked contact.user_id).
+-- ---------------------------------------------------------------------------
+
+create or replace function public.record_telegram_verified_phone(p_clinic uuid, p_telegram_user_id bigint, p_phone text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_key text := public.normalize_uz_phone(p_phone);
+begin
+  if v_key is null or p_clinic is null or p_telegram_user_id is null then
+    return false;
+  end if;
+  insert into public.telegram_verified_phones (clinic_id, telegram_user_id, phone_key, verified_at)
+  values (p_clinic, p_telegram_user_id, v_key, now())
+  on conflict (clinic_id, telegram_user_id) do update set phone_key = excluded.phone_key, verified_at = excluded.verified_at;
+  return true;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- online_identity_lookup: record what the patient typed and whether it matches a card. Returns the lookup id only.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.online_identity_lookup(
+  p_clinic uuid, p_telegram_user_id bigint, p_document_key text, p_document text, p_pinfl text, p_dob date)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_doc text := public.normalize_identity_document(p_document);
+  v_pinfl text := public.normalize_identity_document(p_pinfl);
+  v_card record;
+  v_blocked boolean;
+  v_id uuid;
+begin
+  if (v_doc is null) = (v_pinfl is null) or p_dob is null or p_document_key !~ '^[0-9a-f]{64}$' then
+    raise exception using message = 'online identity: one document and a date of birth are required', errcode = '22023', hint = 'invalid_identity';
+  end if;
+
+  -- Lookups older than a day are kept no longer than the per-document limit needs them.
+  delete from public.online_identity_lookups where clinic_id = p_clinic and created_at < now() - interval '1 day';
+
+  -- Three wrong dates of birth for one document in a day: stop comparing (the answer looks the same either way).
+  select count(*) >= 3 into v_blocked
+    from public.online_identity_lookups
+   where clinic_id = p_clinic and document_key = p_document_key and dob_mismatch;
+
+  select id, date_of_birth into v_card
+    from public.patients
+   where clinic_id = p_clinic and merged_into_patient_id is null
+     and ((v_doc is not null and document_number = v_doc) or (v_pinfl is not null and pinfl = v_pinfl))
+   order by created_at
+   limit 1;
+
+  insert into public.online_identity_lookups
+    (clinic_id, telegram_user_id, document_key, document_number, pinfl, date_of_birth, matched_patient_id, dob_mismatch)
+  values (
+    p_clinic, p_telegram_user_id, p_document_key, v_doc, v_pinfl, p_dob,
+    case when v_card.id is not null and not v_blocked and v_card.date_of_birth = p_dob then v_card.id end,
+    v_card.id is not null and not v_blocked and v_card.date_of_birth is not null and v_card.date_of_birth <> p_dob)
+  returning id into v_id;
+  return v_id;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- link_card_to_telegram: the patient proved the card is theirs. Returns
+--   'linked' | 'already_linked' | 'card_has_telegram' | 'needs_reception'.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.link_card_to_telegram(
+  p_clinic uuid, p_patient uuid, p_telegram_user_id bigint, p_method text,
+  p_username text default null, p_first_name text default null, p_last_name text default null)
+returns text
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  d public.patients%rowtype;
+  t public.patients%rowtype;
+begin
+  if p_method not in ('contact_phone', 'sms_code') then
+    raise exception using message = 'online identity: unknown proof', errcode = '22023', hint = 'invalid_identity';
+  end if;
+
+  select * into d from public.patients where id = p_patient and clinic_id = p_clinic for update;
+  if not found or d.merged_into_patient_id is not null then
+    return 'needs_reception';
+  end if;
+  if d.telegram_user_id = p_telegram_user_id then
+    return 'already_linked';
+  end if;
+  if d.telegram_user_id is not null then
+    return 'card_has_telegram';
+  end if;
+
+  select * into t from public.patients where clinic_id = p_clinic and telegram_user_id = p_telegram_user_id for update;
+  if found then
+    -- The Telegram-only record gives up its identity only while nothing is recorded on it. Its conversations and
+    -- analytics stay with it; anything else (a booking, a visit, a payment, a lab order, an online identity of its
+    -- own) means the two records are joined by reception with merge_patients(), never silently here.
+    if t.merged_into_patient_id is not null
+       or t.document_number is not null or t.pinfl is not null
+       or exists (select 1 from public.appointments where patient_id = t.id)
+       or exists (select 1 from public.visits where patient_id = t.id)
+       or exists (select 1 from public.payments where patient_id = t.id)
+       or exists (select 1 from public.lab_orders where patient_id = t.id)
+       or exists (select 1 from public.referrals where patient_id = t.id)
+       or exists (select 1 from public.clinical_records where patient_id = t.id)
+       or exists (select 1 from public.lab_import_rows where patient_id = t.id)
+       or exists (select 1 from public.patient_merges where canonical_patient_id = t.id or duplicate_patient_id = t.id) then
+      return 'needs_reception';
+    end if;
+    update public.patients
+       set telegram_user_id = null, telegram_username = null, telegram_first_name = null, telegram_last_name = null
+     where id = t.id;
+  end if;
+
+  update public.patients
+     set telegram_user_id = p_telegram_user_id,
+         telegram_username = p_username,
+         telegram_first_name = p_first_name,
+         telegram_last_name = p_last_name,
+         telegram_linked_at = now(),
+         telegram_link_method = p_method,
+         last_seen_at = now()
+   where id = d.id;
+
+  insert into public.audit_events (clinic_id, actor_id, actor_type, action, entity_type, entity_id, patient_id, metadata)
+  values (p_clinic, null, 'patient', 'patient_telegram_linked', 'patients', d.id::text, d.id,
+          jsonb_build_object('method', p_method, 'detached_patient_id', t.id));
+  return 'linked';
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- complete_online_patient: no card was proven — the patient's own (Telegram) record gets the details they typed.
+-- Returns 'completed' | 'completed_with_claim'. The server answers the patient the same way for both.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.complete_online_patient(
+  p_clinic uuid, p_telegram_user_id bigint, p_lookup uuid, p_full_name text,
+  p_sex public.patient_sex default null, p_address text default null)
+returns text
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  l public.online_identity_lookups%rowtype;
+  t public.patients%rowtype;
+  v_phone text;
+  v_name text := btrim(p_full_name);
+  v_address text := nullif(btrim(coalesce(p_address, '')), '');
+  v_other uuid;
+  v_claim text;
+  v_fields text[] := '{}';
+begin
+  if v_name is null or char_length(v_name) not between 2 and 120 then
+    raise exception using message = 'online identity: name required', errcode = '22023', hint = 'invalid_identity';
+  end if;
+  if v_address is not null and char_length(v_address) > 300 then
+    raise exception using message = 'online identity: address too long', errcode = '22023', hint = 'invalid_identity';
+  end if;
+
+  select * into l from public.online_identity_lookups
+   where id = p_lookup and clinic_id = p_clinic and telegram_user_id = p_telegram_user_id
+   for update;
+  if not found or l.completed_at is not null or l.expires_at < now() then
+    raise exception using message = 'online identity: lookup expired', errcode = '22023', hint = 'lookup_expired';
+  end if;
+
+  select * into t from public.patients where clinic_id = p_clinic and telegram_user_id = p_telegram_user_id for update;
+  if not found or t.merged_into_patient_id is not null then
+    raise exception using message = 'online identity: no patient record', errcode = '22023', hint = 'needs_reception';
+  end if;
+
+  -- The Telegram-verified phone (record_telegram_verified_phone), never a typed one.
+  select '+998' || phone_key into v_phone
+    from public.telegram_verified_phones
+   where clinic_id = p_clinic and telegram_user_id = p_telegram_user_id;
+
+  -- A document already on another card is never written onto this one.
+  select id into v_other from public.patients
+   where clinic_id = p_clinic and id <> t.id
+     and ((l.document_number is not null and document_number = l.document_number) or (l.pinfl is not null and pinfl = l.pinfl))
+   order by created_at limit 1;
+  if v_other is not null then
+    v_claim := 'document_in_use';
+  elsif (t.document_number is not null and t.document_number is distinct from l.document_number and l.document_number is not null)
+     or (t.pinfl is not null and t.pinfl is distinct from l.pinfl and l.pinfl is not null)
+     or (t.date_of_birth is not null and t.date_of_birth <> l.date_of_birth) then
+    v_claim := 'details_differ';
+  end if;
+
+  if v_claim is null then
+    if t.document_number is null and l.document_number is not null then v_fields := array_append(v_fields, 'document_number'); end if;
+    if t.pinfl is null and l.pinfl is not null then v_fields := array_append(v_fields, 'pinfl'); end if;
+    if t.date_of_birth is null then v_fields := array_append(v_fields, 'date_of_birth'); end if;
+  end if;
+  if t.full_name is null then v_fields := array_append(v_fields, 'full_name'); end if;
+  if t.phone is null and v_phone is not null then v_fields := array_append(v_fields, 'phone'); end if;
+  if t.sex is null and p_sex is not null then v_fields := array_append(v_fields, 'sex'); end if;
+  if t.home_address is null and v_address is not null then v_fields := array_append(v_fields, 'home_address'); end if;
+
+  update public.patients
+     set document_number = case when 'document_number' = any(v_fields) then l.document_number else document_number end,
+         pinfl = case when 'pinfl' = any(v_fields) then l.pinfl else pinfl end,
+         date_of_birth = case when 'date_of_birth' = any(v_fields) then l.date_of_birth else date_of_birth end,
+         full_name = case when 'full_name' = any(v_fields) then v_name else full_name end,
+         phone = case when 'phone' = any(v_fields) then v_phone else phone end,
+         sex = case when 'sex' = any(v_fields) then p_sex else sex end,
+         home_address = case when 'home_address' = any(v_fields) then v_address else home_address end,
+         consent_given = true,
+         consent_given_at = coalesce(consent_given_at, now()),
+         last_seen_at = now()
+   where id = t.id;
+
+  update public.online_identity_lookups set completed_at = now() where id = l.id;
+
+  if v_claim is not null then
+    insert into public.patient_identity_claims (clinic_id, patient_id, conflicting_patient_id, reason)
+    values (p_clinic, t.id, v_other, v_claim);
+  end if;
+
+  insert into public.audit_events (clinic_id, actor_id, actor_type, action, entity_type, entity_id, patient_id, metadata)
+  values (p_clinic, null, 'patient', 'patient_online_details_completed', 'patients', t.id::text, t.id,
+          jsonb_build_object('fields', to_jsonb(v_fields), 'claim', v_claim));
+  return case when v_claim is null then 'completed' else 'completed_with_claim' end;
+end;
+$$;
+
+revoke all on function public.record_telegram_verified_phone(uuid, bigint, text) from public, anon, authenticated;
+revoke all on function public.online_identity_lookup(uuid, bigint, text, text, text, date) from public, anon, authenticated;
+revoke all on function public.link_card_to_telegram(uuid, uuid, bigint, text, text, text, text) from public, anon, authenticated;
+revoke all on function public.complete_online_patient(uuid, bigint, uuid, text, public.patient_sex, text) from public, anon, authenticated;
+grant execute on function public.record_telegram_verified_phone(uuid, bigint, text) to service_role;
+grant execute on function public.online_identity_lookup(uuid, bigint, text, text, text, date) to service_role;
+grant execute on function public.link_card_to_telegram(uuid, uuid, bigint, text, text, text, text) to service_role;
+grant execute on function public.complete_online_patient(uuid, bigint, uuid, text, public.patient_sex, text) to service_role;
+
+-- =====================================================================
+-- FILE: 20261008000011_online_payment_providers.sql
+-- =====================================================================
+-- Online payment providers (Slice C, owner decision 2026-10-08: Rahmat). Separate from 20261008000012 because a new
+-- enum value cannot be used in the transaction that adds it.
+--   * rahmat      — the clinic's online payment provider. Its adapter fails closed until Rahmat's merchant API
+--                   documentation, webhook signature scheme and credentials are in place.
+--   * test_online — a signed test provider for local development and E2E only; production refuses to start with it.
+alter type public.payment_provider add value if not exists 'rahmat';
+alter type public.payment_provider add value if not exists 'test_online';
+
+-- New enum values must be committed before any later statement uses them.
+commit;
+
+-- =====================================================================
+-- FILE: 20261008000012_online_payments.sql
+-- =====================================================================
+-- Pay online, get the queue number online (Slice C, owner decision 2026-10-08).
+--
+-- An online booking is an appointment with its own payment row (server-priced when it was booked). Online payment:
+--   1. create_online_invoice(): one live invoice per payment, for exactly the amount the server priced.
+--   2. The provider's webhook — signature verified by the server before anything here runs — calls
+--      settle_online_payment(). Each provider event is claimed once (payment_provider_events); the amount and currency
+--      must equal the invoice. In ONE transaction the payment becomes paid, the appointment confirmed, and a visit is
+--      created for the slot's day with the next queue number of that day (status 'booked': paid, not yet arrived) and
+--      the Telegram ticket queued. A second payment, or a payment for a slot that is gone, becomes a refund request.
+--   3. At the clinic, reception marks the patient arrived (mark_booked_arrived): 'booked' → 'waiting'. The doctor's
+--      queue orders booked patients by their slot time, walk-ins by when they paid (src/lib/operations/outpatient.ts).
+--   4. Cancelling the appointment cancels its booked visit and requests a refund (appointments trigger).
+--      mark_online_refund_done(): owner/manager confirm the money went back.
+--
+-- Online money is recorded in the visit ledger with method 'online' (never cash or terminal), so the kassa's cash and
+-- terminal totals stay exactly what the cashier holds. No raw provider payload is stored anywhere.
+
+-- ---------------------------------------------------------------------------
+-- Visits, charges and the ledger accept online rows
+-- ---------------------------------------------------------------------------
+
+alter table public.visits
+  add column source text not null default 'desk' constraint visits_source_check check (source in ('desk', 'online'));
+
+alter table public.visits drop constraint visits_status_check;
+alter table public.visits add constraint visits_status_check
+  check (status in ('booked', 'awaiting_payment', 'waiting', 'called', 'in_progress', 'completed', 'cancelled'));
+
+-- A visit created by an online payment has no staff author and has not arrived yet.
+alter table public.visits alter column created_by drop not null;
+alter table public.visits alter column arrived_at drop not null;
+alter table public.visits add constraint visits_online_actor_check check (created_by is not null or source = 'online');
+alter table public.visits add constraint visits_arrival_check
+  check (arrived_at is not null or (source = 'online' and status in ('booked', 'cancelled')));
+alter table public.visits add constraint visits_booked_check check (status <> 'booked' or (source = 'online' and appointment_id is not null));
+
+comment on column public.visits.status is
+  'booked = paid online, not yet arrived (has its queue number, not in today''s waiting list until reception marks arrival).';
+
+alter table public.visit_charges alter column created_by drop not null;
+comment on column public.visit_charges.created_by is 'Staff who added the line; null only for the line settle_online_payment() adds.';
+
+alter table public.visit_transactions drop constraint visit_transactions_method_check;
+alter table public.visit_transactions add constraint visit_transactions_method_check check (method in ('cash', 'terminal', 'online'));
+alter table public.visit_transactions alter column executed_by drop not null;
+alter table public.visit_transactions alter column authorized_by drop not null;
+alter table public.visit_transactions add constraint visit_transactions_actor_check
+  check (method = 'online' or (executed_by is not null and authorized_by is not null));
+
+-- ---------------------------------------------------------------------------
+-- Invoices, provider events, refunds
+-- ---------------------------------------------------------------------------
+
+-- Every reference below stays inside its clinic (composite keys with clinic_id, as the tenant-integrity suite requires).
+alter table public.payments add constraint payments_id_clinic_id_key unique (id, clinic_id);
+
+create table public.payment_invoices (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  payment_id uuid not null,
+  appointment_id uuid not null,
+  patient_id uuid not null,
+  provider public.payment_provider not null constraint payment_invoices_provider_check check (provider in ('rahmat', 'test_online')),
+  amount numeric(12, 2) not null check (amount > 0),
+  currency text not null,
+  status text not null default 'open' constraint payment_invoices_status_check check (status in ('open', 'paid', 'expired', 'cancelled')),
+  provider_invoice_id text,
+  pay_url text,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  paid_at timestamptz,
+  constraint payment_invoices_id_clinic_id_key unique (id, clinic_id),
+  constraint payment_invoices_payment_fkey foreign key (payment_id, clinic_id) references public.payments (id, clinic_id) on delete restrict,
+  constraint payment_invoices_appointment_fkey foreign key (appointment_id, clinic_id) references public.appointments (id, clinic_id) on delete restrict,
+  constraint payment_invoices_patient_fkey foreign key (patient_id, clinic_id) references public.patients (id, clinic_id) on delete restrict
+);
+create unique index payment_invoices_one_open on public.payment_invoices (payment_id) where status = 'open';
+create index payment_invoices_appointment_idx on public.payment_invoices (clinic_id, appointment_id);
+
+create table public.payment_provider_events (
+  provider public.payment_provider not null,
+  event_id text not null check (char_length(event_id) between 1 and 200),
+  invoice_id uuid,
+  amount numeric(12, 2),
+  currency text,
+  outcome text,
+  received_at timestamptz not null default now(),
+  primary key (provider, event_id)
+);
+
+create table public.payment_refunds (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  payment_id uuid not null,
+  invoice_id uuid,
+  visit_id uuid,
+  amount numeric(12, 2) not null check (amount > 0),
+  currency text not null,
+  reason text not null constraint payment_refunds_reason_check
+    check (reason in ('duplicate_payment', 'slot_unavailable', 'booking_cancelled')),
+  status text not null default 'requested' constraint payment_refunds_status_check check (status in ('requested', 'done')),
+  provider_reference text,
+  requested_at timestamptz not null default now(),
+  done_at timestamptz,
+  done_by uuid references public.profiles(id),
+  constraint payment_refunds_done_check check ((status = 'done') = (done_at is not null and done_by is not null)),
+  constraint payment_refunds_payment_fkey foreign key (payment_id, clinic_id) references public.payments (id, clinic_id) on delete restrict,
+  constraint payment_refunds_invoice_fkey foreign key (invoice_id, clinic_id) references public.payment_invoices (id, clinic_id) on delete restrict,
+  constraint payment_refunds_visit_fkey foreign key (visit_id, clinic_id) references public.visits (id, clinic_id) on delete restrict
+);
+create index payment_refunds_open_idx on public.payment_refunds (clinic_id, requested_at) where status = 'requested';
+
+alter table public.payment_invoices enable row level security;
+alter table public.payment_provider_events enable row level security;
+alter table public.payment_refunds enable row level security;
+revoke all on table public.payment_invoices, public.payment_provider_events, public.payment_refunds from public, anon, authenticated;
+grant select, insert, update on table public.payment_invoices, public.payment_provider_events, public.payment_refunds to service_role;
+
+-- ---------------------------------------------------------------------------
+-- Numbering for any clinic day (the slot's day for an online visit)
+-- ---------------------------------------------------------------------------
+
+create or replace function public.visit_next_number(p_clinic uuid, p_date date)
+returns integer
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_number integer;
+begin
+  -- The same lock visit_enqueue() takes: one numbering at a time per clinic.
+  perform pg_advisory_xact_lock(hashtextextended('visit-queue:' || p_clinic::text, 0));
+  select coalesce(max(queue_number), 0) + 1 into v_number from public.visits where clinic_id = p_clinic and queue_date = p_date;
+  return v_number;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- create_online_invoice
+-- ---------------------------------------------------------------------------
+
+create or replace function public.create_online_invoice(
+  p_clinic uuid, p_patient uuid, p_appointment uuid, p_provider public.payment_provider, p_ttl_minutes integer default 15)
+returns public.payment_invoices
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  a public.appointments;
+  p public.payments;
+  i public.payment_invoices;
+begin
+  if p_provider not in ('rahmat', 'test_online') then
+    raise exception using message = 'online payment: unknown provider', errcode = '22023', hint = 'provider_unavailable';
+  end if;
+  select * into a from public.appointments where id = p_appointment and clinic_id = p_clinic and patient_id = p_patient for update;
+  if not found then
+    raise exception using message = 'online payment: appointment not found', errcode = '22023', hint = 'appointment_not_found';
+  end if;
+  if a.status not in ('pending', 'confirmed') or a.start_at < now() then
+    raise exception using message = 'online payment: this booking cannot be paid', errcode = '22023', hint = 'not_payable';
+  end if;
+  select * into p from public.payments where appointment_id = a.id and clinic_id = p_clinic for update;
+  if not found or p.status not in ('unpaid', 'pending', 'failed') or p.amount <= 0 then
+    raise exception using message = 'online payment: nothing to pay', errcode = '22023', hint = 'nothing_due';
+  end if;
+
+  update public.payment_invoices set status = 'expired' where payment_id = p.id and status = 'open' and expires_at < now();
+  select * into i from public.payment_invoices where payment_id = p.id and status = 'open';
+  if found and i.provider = p_provider then
+    return i;
+  end if;
+  if found then
+    update public.payment_invoices set status = 'cancelled' where id = i.id;
+  end if;
+
+  insert into public.payment_invoices (clinic_id, payment_id, appointment_id, patient_id, provider, amount, currency, expires_at)
+  values (p_clinic, p.id, a.id, a.patient_id, p_provider, p.amount, p.currency,
+          now() + make_interval(mins => greatest(5, least(coalesce(p_ttl_minutes, 15), 60))))
+  returning * into i;
+  return i;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- settle_online_payment — the webhook, after the server verified the provider's signature
+-- ---------------------------------------------------------------------------
+
+create or replace function public.settle_online_payment(
+  p_provider public.payment_provider, p_event_id text, p_invoice uuid, p_amount numeric, p_currency text,
+  p_provider_reference text default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  i public.payment_invoices;
+  p public.payments;
+  a public.appointments;
+  v public.visits;
+  v_tz text;
+  v_day date;
+  v_number integer;
+  v_service record;
+  v_tg bigint;
+  v_outcome text;
+  v_refund uuid;
+  v_existing text;
+begin
+  -- 1. Each provider event once: a replay returns what the first delivery decided.
+  insert into public.payment_provider_events (provider, event_id, invoice_id, amount, currency)
+  values (p_provider, p_event_id, p_invoice, p_amount, p_currency)
+  on conflict (provider, event_id) do nothing;
+  if not found then
+    select outcome into v_existing from public.payment_provider_events where provider = p_provider and event_id = p_event_id;
+    return jsonb_build_object('outcome', 'replayed', 'first_outcome', v_existing);
+  end if;
+
+  select * into i from public.payment_invoices where id = p_invoice and provider = p_provider for update;
+  if not found then
+    v_outcome := 'unknown_invoice';
+  elsif p_amount is distinct from i.amount or p_currency is distinct from i.currency then
+    -- Never "paid" for a different amount: the payment goes to manual review for a person to resolve.
+    v_outcome := 'amount_mismatch';
+    update public.payments set status = 'manual_review', metadata = metadata || jsonb_build_object('online_review', 'amount_mismatch', 'invoice_id', i.id)
+     where id = i.payment_id and status in ('unpaid', 'pending', 'failed');
+  end if;
+  if v_outcome is not null then
+    update public.payment_provider_events set outcome = v_outcome where provider = p_provider and event_id = p_event_id;
+    return jsonb_build_object('outcome', 'rejected', 'reason', v_outcome);
+  end if;
+
+  select * into p from public.payments where id = i.payment_id for update;
+  select * into a from public.appointments where id = i.appointment_id for update;
+
+  -- 2. Already paid (a second payment), or the slot is gone: the money goes back.
+  if i.status = 'paid' or p.status in ('paid', 'refunded') then
+    insert into public.payment_refunds (clinic_id, payment_id, invoice_id, amount, currency, reason, provider_reference)
+    values (i.clinic_id, p.id, i.id, p_amount, p_currency, 'duplicate_payment', p_provider_reference)
+    returning id into v_refund;
+    v_outcome := 'refund_requested';
+  elsif a.status not in ('pending', 'confirmed') or a.end_at < now() then
+    update public.payment_invoices set status = 'paid', paid_at = now(), provider_invoice_id = coalesce(p_provider_reference, provider_invoice_id) where id = i.id;
+    update public.payments set status = 'paid', provider = p_provider, provider_reference = p_provider_reference, paid_at = now(), paid_by = null
+     where id = p.id;
+    insert into public.payment_refunds (clinic_id, payment_id, invoice_id, amount, currency, reason, provider_reference)
+    values (i.clinic_id, p.id, i.id, p_amount, p_currency, 'slot_unavailable', p_provider_reference)
+    returning id into v_refund;
+    v_outcome := 'refund_requested';
+  else
+    -- 3. Paid: payment, appointment, visit with its number, ticket — together.
+    update public.payment_invoices set status = 'paid', paid_at = now(), provider_invoice_id = coalesce(p_provider_reference, provider_invoice_id) where id = i.id;
+    update public.payments set status = 'paid', provider = p_provider, provider_reference = p_provider_reference, paid_at = now(), paid_by = null
+     where id = p.id;
+    update public.appointments set status = 'confirmed' where id = a.id and status = 'pending';
+
+    select timezone into v_tz from public.clinics where id = a.clinic_id;
+    v_day := (a.start_at at time zone v_tz)::date;
+    select * into v from public.visits where appointment_id = a.id;
+    if not found then
+      v_number := public.visit_next_number(a.clinic_id, v_day);
+      insert into public.visits (clinic_id, patient_id, doctor_id, kind, status, source, queue_date, queue_number, queued_at, arrived_at,
+                                 appointment_id, created_by, idempotency_key, request_fingerprint)
+      values (a.clinic_id, a.patient_id, a.doctor_id, 'doctor', 'booked', 'online', v_day, v_number, now(), null,
+              a.id, null, i.id, 'online:' || p.id::text)
+      returning * into v;
+
+      select s.id, s.name into v_service from public.services s where s.id = a.service_id;
+      insert into public.visit_charges (clinic_id, visit_id, patient_id, service_id, service_name, unit_price, quantity, amount, currency, created_by)
+      values (a.clinic_id, v.id, a.patient_id, v_service.id, v_service.name, p_amount, 1, p_amount, p_currency, null);
+      insert into public.visit_transactions (clinic_id, visit_id, patient_id, kind, method, amount, currency, executed_by, authorized_by,
+                                             request_key, request_fingerprint)
+      values (a.clinic_id, v.id, a.patient_id, 'collection', 'online', p_amount, p_currency, null, null, i.id, 'online:' || p_event_id);
+
+      select telegram_user_id into v_tg from public.patients where id = a.patient_id;
+      if v_tg is not null then
+        insert into public.notification_jobs (clinic_id, visit_id, type, patient_telegram_user_id, scheduled_for, idempotency_key)
+        values (a.clinic_id, v.id, 'queue_ticket', v_tg, now(), 'queue_ticket:' || v.id::text)
+        on conflict (idempotency_key) do nothing;
+      end if;
+    end if;
+    v_outcome := 'settled';
+  end if;
+
+  update public.payment_provider_events set outcome = v_outcome where provider = p_provider and event_id = p_event_id;
+  insert into public.audit_events (clinic_id, actor_id, actor_type, action, entity_type, entity_id, patient_id, metadata)
+  values (i.clinic_id, null, 'system', 'online_payment_' || v_outcome, 'payments', p.id::text, i.patient_id,
+          jsonb_build_object('provider', p_provider, 'invoice_id', i.id, 'visit_id', v.id, 'refund_id', v_refund, 'queue_number', v.queue_number));
+  return jsonb_build_object('outcome', v_outcome, 'visit_id', v.id, 'queue_number', v.queue_number, 'queue_date', v.queue_date, 'refund_id', v_refund);
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- mark_booked_arrived — reception: the online patient is here
+-- ---------------------------------------------------------------------------
+
+create or replace function public.mark_booked_arrived(p_clinic uuid, p_actor uuid, p_visit uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v public.visits;
+  v_today date;
+begin
+  perform public.ops_require_role(p_clinic, p_actor, array['owner', 'manager', 'admin', 'receptionist']::public.staff_role[]);
+  select * into v from public.visits where id = p_visit and clinic_id = p_clinic for update;
+  if not found then
+    raise exception using message = 'operations: visit not found', errcode = '22023', hint = 'visit_not_found';
+  end if;
+  if v.status <> 'booked' then
+    raise exception using message = 'operations: not an online booking waiting for arrival', errcode = '22023', hint = 'invalid_transition';
+  end if;
+  select (now() at time zone timezone)::date into v_today from public.clinics where id = p_clinic;
+  if v.queue_date <> v_today then
+    raise exception using message = 'operations: the booking is for another day', errcode = '22023', hint = 'not_today';
+  end if;
+  update public.visits set status = 'waiting', arrived_at = now(), updated_at = now() where id = v.id returning * into v;
+  update public.appointments set status = 'checked_in' where id = v.appointment_id and status in ('pending', 'confirmed');
+  insert into public.audit_events (clinic_id, actor_id, actor_type, action, entity_type, entity_id, patient_id)
+  values (p_clinic, p_actor, 'staff', 'visit_booked_arrived', 'visits', v.id::text, v.patient_id);
+  return jsonb_build_object('visit_id', v.id, 'queue_number', v.queue_number);
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- A cancelled appointment cancels its booked visit and asks for the money back
+-- ---------------------------------------------------------------------------
+
+create or replace function public.appointments_cancel_online_visit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v public.visits;
+  p public.payments;
+begin
+  select * into v from public.visits where appointment_id = new.id and status = 'booked' for update;
+  if not found then
+    return new;
+  end if;
+  update public.visits
+     set status = 'cancelled', cancelled_at = now(),
+         cancel_reason = case when new.status = 'no_show' then 'Bemor kelmadi' else 'Onlayn yozuv bekor qilindi' end,
+         updated_at = now()
+   where id = v.id;
+  -- Refund defaults (decision record): a cancelled booking is refunded in full; a no-show is not.
+  select * into p from public.payments where appointment_id = new.id and status = 'paid';
+  if found and new.status = 'cancelled' then
+    insert into public.payment_refunds (clinic_id, payment_id, visit_id, amount, currency, reason)
+    select p.clinic_id, p.id, v.id, p.amount, p.currency, 'booking_cancelled'
+     where not exists (select 1 from public.payment_refunds r where r.payment_id = p.id and r.reason = 'booking_cancelled');
+  end if;
+  insert into public.audit_events (clinic_id, actor_id, actor_type, action, entity_type, entity_id, patient_id)
+  values (new.clinic_id, null, 'system', 'online_visit_cancelled', 'visits', v.id::text, v.patient_id);
+  return new;
+end;
+$$;
+
+create trigger appointments_cancel_online_visit
+  after update of status on public.appointments
+  for each row when (new.status in ('cancelled', 'no_show') and old.status is distinct from new.status)
+  execute function public.appointments_cancel_online_visit();
+
+-- ---------------------------------------------------------------------------
+-- mark_online_refund_done — owner/manager: the provider returned the money
+-- ---------------------------------------------------------------------------
+
+create or replace function public.mark_online_refund_done(p_clinic uuid, p_actor uuid, p_refund uuid, p_reference text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  r public.payment_refunds;
+  v_visit uuid;
+  v_patient uuid;
+begin
+  perform public.ops_require_role(p_clinic, p_actor, array['owner', 'manager']::public.staff_role[]);
+  if p_reference is null or char_length(btrim(p_reference)) not between 3 and 120 then
+    raise exception using message = 'online payment: refund reference required', errcode = '22023', hint = 'reason_required';
+  end if;
+  select * into r from public.payment_refunds where id = p_refund and clinic_id = p_clinic for update;
+  if not found then
+    raise exception using message = 'online payment: refund not found', errcode = '22023', hint = 'refund_not_found';
+  end if;
+  if r.status = 'done' then
+    return jsonb_build_object('refund_id', r.id, 'replayed', true);
+  end if;
+  update public.payment_refunds set status = 'done', done_at = now(), done_by = p_actor, provider_reference = btrim(p_reference) where id = r.id;
+
+  -- The payment is refunded when this refund returned its (only) money; a duplicate payment's refund leaves it paid.
+  if r.reason <> 'duplicate_payment' then
+    update public.payments set status = 'refunded' where id = r.payment_id and status = 'paid';
+    select v.id, v.patient_id into v_visit, v_patient from public.visits v join public.payments p on p.appointment_id = v.appointment_id
+     where p.id = r.payment_id;
+    if v_visit is not null then
+      insert into public.visit_transactions (clinic_id, visit_id, patient_id, kind, method, amount, currency, reason, executed_by, authorized_by,
+                                             request_key, request_fingerprint)
+      values (p_clinic, v_visit, v_patient, 'refund', 'online', r.amount, r.currency, 'Onlayn to‘lov qaytarildi', p_actor, p_actor,
+              r.id, 'online-refund:' || r.id::text);
+    end if;
+  end if;
+  insert into public.audit_events (clinic_id, actor_id, actor_type, action, entity_type, entity_id, metadata)
+  values (p_clinic, p_actor, 'staff', 'online_refund_done', 'payment_refunds', r.id::text, jsonb_build_object('reason', r.reason));
+  return jsonb_build_object('refund_id', r.id, 'replayed', false);
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- start_visit_consultation: an online visit starts its own appointment
+-- ---------------------------------------------------------------------------
+
+create or replace function public.start_visit_consultation(p_clinic uuid, p_actor uuid, p_visit uuid, p_expected text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v public.visits;
+  v_service uuid;
+  v_result jsonb;
+  v_appointment uuid;
+  v_status public.appointment_status;
+begin
+  perform public.ops_require_role(p_clinic, p_actor, array['doctor']::public.staff_role[]);
+  select * into v from public.visits where id = p_visit and clinic_id = p_clinic for update;
+  if not found or not exists (
+    select 1 from public.doctors d where d.id = v.doctor_id and d.clinic_id = p_clinic and d.profile_id = p_actor and d.active
+  ) then
+    raise exception using message = 'operations: not your patient', errcode = '42501', hint = 'forbidden';
+  end if;
+  if v.status <> p_expected then
+    raise exception using message = 'operations: the queue changed; refresh', errcode = '40001', hint = 'stale';
+  end if;
+  if v.status not in ('waiting', 'called') then
+    raise exception using message = 'operations: this patient is not in the queue', errcode = '22023', hint = 'invalid_transition';
+  end if;
+
+  if v.appointment_id is not null then
+    -- Booked online: the consultation is the booked appointment itself (no second appointment).
+    select status into v_status from public.appointments where id = v.appointment_id;
+    v_result := public.start_consultation(p_clinic, v.appointment_id, v_status, p_actor, 'doctor_queue', false, v.doctor_id);
+    if not coalesce((v_result ->> 'started')::boolean, false) and v_status <> 'in_progress' then
+      raise exception using message = 'operations: the queue changed; refresh', errcode = '40001', hint = 'stale';
+    end if;
+    v_appointment := v.appointment_id;
+  else
+    select service_id into v_service from public.visit_charges
+     where visit_id = v.id and status = 'active' order by created_at, id limit 1;
+    if v_service is null then
+      raise exception using message = 'operations: the visit has no service', errcode = '22023', hint = 'invalid_services';
+    end if;
+
+    v_result := public.start_walk_in_consultation(
+      p_clinic, v.patient_id, v.doctor_id, v_service, date_trunc('minute', now()) + interval '1 minute', p_actor
+    );
+    v_appointment := (v_result ->> 'appointment_id')::uuid;
+    if v_appointment is null then
+      raise exception using message = 'operations: the consultation could not start', errcode = '22023',
+        hint = coalesce(v_result ->> 'error_code', 'booking_failed');
+    end if;
+    delete from public.payments where appointment_id = v_appointment and status = 'unpaid';
+  end if;
+
+  update public.visits set status = 'in_progress', started_at = now(), appointment_id = v_appointment, updated_at = now()
+   where id = v.id returning * into v;
+
+  insert into public.audit_events (clinic_id, actor_id, actor_type, action, entity_type, entity_id, new_values)
+  values (p_clinic, p_actor, 'staff', 'visit_consultation_started', 'visits', v.id::text, jsonb_build_object('appointment_id', v_appointment));
+  return jsonb_build_object('visit_id', v.id, 'appointment_id', v_appointment, 'referral_id', v_result ->> 'referral_id');
+end;
+$$;
+
+revoke all on function public.visit_next_number(uuid, date) from public, anon, authenticated;
+revoke all on function public.create_online_invoice(uuid, uuid, uuid, public.payment_provider, integer) from public, anon, authenticated;
+revoke all on function public.settle_online_payment(public.payment_provider, text, uuid, numeric, text, text) from public, anon, authenticated;
+revoke all on function public.mark_booked_arrived(uuid, uuid, uuid) from public, anon, authenticated;
+revoke all on function public.appointments_cancel_online_visit() from public, anon, authenticated;
+revoke all on function public.mark_online_refund_done(uuid, uuid, uuid, text) from public, anon, authenticated;
+revoke all on function public.start_visit_consultation(uuid, uuid, uuid, text) from public, anon, authenticated;
+grant execute on function public.visit_next_number(uuid, date) to service_role;
+grant execute on function public.create_online_invoice(uuid, uuid, uuid, public.payment_provider, integer) to service_role;
+grant execute on function public.settle_online_payment(public.payment_provider, text, uuid, numeric, text, text) to service_role;
+grant execute on function public.mark_booked_arrived(uuid, uuid, uuid) to service_role;
+grant execute on function public.mark_online_refund_done(uuid, uuid, uuid, text) to service_role;
+grant execute on function public.start_visit_consultation(uuid, uuid, uuid, text) to service_role;

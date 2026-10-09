@@ -12,6 +12,7 @@ import {
   handleVoiceCorrect,
   handleVoiceWrong,
   requestHumanHandoff,
+  handleContactShared,
 } from "@/lib/telegram/handlers";
 import { answerCallbackQuery } from "@/lib/telegram/bot";
 import { handleQueueFollowStart, handleQueueStatus } from "@/lib/telegram/queue-follow";
@@ -34,6 +35,7 @@ type TelegramUpdate = {
     chat?: { id?: number };
     from?: { id?: number; first_name?: string; last_name?: string; username?: string };
     voice?: { file_id: string; file_unique_id?: string; duration?: number; mime_type?: string; file_size?: number };
+    contact?: { phone_number?: string; user_id?: number; first_name?: string };
   };
   callback_query?: {
     id?: string;
@@ -160,6 +162,13 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
       last_name: rawFrom.last_name,
       username: rawFrom.username,
     };
+
+    // A shared contact (the Mini App's "share my phone", or the bot's contact button) proves the sender's own phone
+    // for online identity — kept only when the contact is theirs.
+    if (message.contact) {
+      await handleContactShared({ clinicId, chatId, from, contact: message.contact });
+      return;
+    }
 
     const text = message.text?.trim() ?? "";
 

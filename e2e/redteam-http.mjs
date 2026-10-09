@@ -254,6 +254,11 @@ async function run() {
         }
         const probe = await client.from("patients").select("id").eq("pinfl", ID.pinfl);
         check(probe.error !== null, `${label}: finding a card by JSHSHIR over REST → refused (${probe.error?.code ?? "ALLOWED"})`);
+        // Online identity (20261008000010): typed documents, verified phones and identity claims are the server's.
+        for (const table of ["online_identity_lookups", "telegram_verified_phones", "patient_identity_claims"]) {
+          const r = await client.from(table).select("*").limit(1);
+          check(r.error !== null || (r.data ?? []).length === 0, `${label}: ${table} over REST → nothing (${r.error?.code ?? "empty"})`);
+        }
         const named = await client.from("patients").select("full_name, phone").eq("id", X);
         check(named.error === null && !leaks(JSON.stringify(named.data)), `${label}: name and phone stay readable where the row policy allows (${named.data?.length ?? 0} row)`);
         // GraphQL runs with the same column privileges; checked whenever the endpoint is enabled (hosted Supabase).
@@ -278,6 +283,39 @@ async function run() {
       await desk.context.close();
       const [kept] = await db`select document_number, pinfl, date_of_birth::text as dob, home_address from public.patients where id = ${X}`;
       check(kept.document_number === ID.document && kept.pinfl === ID.pinfl && kept.dob === ID.dob && kept.home_address === ID.address, "the identity values are still stored in our database");
+    }
+
+    // 23. Online payment (20261008000012): a webhook without the provider's signature changes nothing, whatever it
+    //     claims; payment tables are the server's; a checkout needs the patient's own verified Telegram identity.
+    {
+      const [someInvoice] = await db`select id, amount, currency from public.payment_invoices order by created_at desc limit 1`;
+      const forgedBody = JSON.stringify({ eventId: `rt-${SECRET}`, invoiceId: someInvoice?.id ?? "00000000-0000-0000-0000-000000000000", amount: Number(someInvoice?.amount ?? 1), currency: someInvoice?.currency ?? "UZS" });
+      for (const provider of ["test_online", "rahmat", "click"]) {
+        for (const signature of [undefined, "0".repeat(64)]) {
+          const r = await fetch(`${BASE}/api/payments/${provider}/webhook`, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...(signature ? { "x-test-signature": signature } : {}) },
+            body: forgedBody,
+          });
+          check(r.status === 401, `${provider} webhook ${signature ? "with a wrong signature" : "unsigned"} → 401 (${r.status})`);
+        }
+      }
+      const [{ events }] = await db`select count(*)::int as events from public.payment_provider_events where event_id = ${`rt-${SECRET}`}`;
+      check(events === 0, "forged webhooks left no trace in the payment ledger");
+      const owner = await restAs(DEMO.owner);
+      for (const table of ["payment_invoices", "payment_provider_events", "payment_refunds"]) {
+        const r = await owner.from(table).select("*").limit(1);
+        check(r.error !== null || (r.data ?? []).length === 0, `owner: ${table} over REST → nothing (${r.error?.code ?? "empty"})`);
+      }
+      const settled = await owner.rpc("settle_online_payment", { p_provider: "test_online", p_event_id: "x", p_invoice: someInvoice?.id ?? null, p_amount: 1, p_currency: "UZS" });
+      check(settled.error !== null, `owner: settle_online_payment over REST → refused (${settled.error?.code ?? "ALLOWED"})`);
+      await owner.auth.signOut();
+      const checkout = await fetch(`${BASE}/api/me/payments/invoice`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ initData: "user=%7B%22id%22%3A1%7D&hash=deadbeef", appointmentId: "00000000-0000-0000-0000-000000000000" }),
+      });
+      check(checkout.status === 401, `a checkout with a forged Telegram identity → 401 (${checkout.status})`);
     }
 
     // 5. Revocation by the referring doctor ends the receiver's access on the next request.

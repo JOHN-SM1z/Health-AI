@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getClinicFromRequest } from "@/lib/clinics/context";
 import { resolvePatientFromInitData, devIdentityAllowed, getOrCreateWebPatient } from "@/lib/patients/identity";
+import { onlineProfile } from "@/lib/patients/online-identity";
 import { handleApiError, ApiError, ok, fail } from "@/lib/api/errors";
 import { parseBody } from "@/lib/api/validate";
 import { phoneSchema, nameSchema, uuidSchema } from "@/lib/api/validate";
@@ -52,6 +53,10 @@ export async function POST(request: NextRequest) {
         throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
       }
       patient = resolved.patient;
+      // The clinic requires passport/JSHSHIR + date of birth first (Mini App identity step); the server holds the line.
+      if (clinic.online_identity_required && !(await onlineProfile(clinic.id, patient.id)).complete) {
+        throw new ApiError(409, "Avval hujjat va tug‘ilgan sanani kiriting", "identity_required");
+      }
       // Attribution only: the patient's identity is verified via initData
       // above; the source merely records which entry point was used. A
       // Telegram patient can never be mis-attributed as web, and a
@@ -71,17 +76,25 @@ export async function POST(request: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // A verified Telegram patient keeps their own record current (consent,
-    // name, phone). A website visitor's details were recorded above only on a
-    // record of their own — never written onto an existing one.
+    // A verified Telegram patient records consent. The typed name and phone only fill a record that has none: they
+    // come from the browser, so they never replace what is already on a card — a card reception registered, or one
+    // linked by a verified phone. Corrections go through reception. A website visitor's details were recorded above
+    // only on a record of their own — never written onto an existing one.
     if (body.initData) {
+      const { data: current, error: currentError } = await supabase
+        .from("patients")
+        .select("full_name, phone")
+        .eq("id", patient.id)
+        .eq("clinic_id", clinic.id)
+        .single();
+      if (currentError || !current) throw new ApiError(500, "Bemor ma‘lumotlarini saqlab bo‘lmadi");
       const { error: patientUpdateError } = await supabase
         .from("patients")
         .update({
           consent_given: true,
           consent_given_at: new Date().toISOString(),
-          full_name: body.patientName,
-          phone: body.phone,
+          ...(current.full_name ? {} : { full_name: body.patientName }),
+          ...(current.phone ? {} : { phone: body.phone }),
         })
         .eq("id", patient.id)
         .eq("clinic_id", clinic.id);

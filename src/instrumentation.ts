@@ -16,6 +16,16 @@ function weakSecret(value: string): boolean {
   return value.length < MIN_SECRET_LENGTH || PLACEHOLDER_SECRETS.has(value.toLowerCase()) || /^(.)\1*$/.test(value);
 }
 
+/** The test payment provider in a production build: explicit flag and a local Supabase stack (E2E only). */
+function testOnlinePaymentAllowed(): boolean {
+  return (
+    process.env.ALLOW_TEST_ONLINE_PAYMENT === "true" &&
+    !!process.env.TEST_ONLINE_PAYMENT_SECRET &&
+    !weakSecret(process.env.TEST_ONLINE_PAYMENT_SECRET) &&
+    /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "")
+  );
+}
+
 export function register() {
   if (process.env.NODE_ENV !== "production") return;
   if (process.env.NEXT_PHASE === "phase-production-build") return;
@@ -62,6 +72,19 @@ export function register() {
 
   if (process.env.ENABLE_TELEGRAM_DEV_MODE === "true") {
     missing.push("ENABLE_TELEGRAM_DEV_MODE must not be enabled in production");
+  }
+
+  // Online payment (Mini App): the test provider only against a local database with the explicit flag (E2E of a
+  // production build); Rahmat only once its adapter is implemented — never a provider that cannot verify payments.
+  const online = process.env.ONLINE_PAYMENT_PROVIDER ?? "none";
+  if (online === "test_online" && !testOnlinePaymentAllowed()) {
+    missing.push("ONLINE_PAYMENT_PROVIDER=test_online is for local development and E2E only");
+  }
+  if (online === "rahmat") {
+    missing.push("ONLINE_PAYMENT_PROVIDER=rahmat (the Rahmat adapter is not implemented yet: merchant API documentation, webhook signature scheme and credentials are required)");
+  }
+  if (!["none", "rahmat", "test_online"].includes(online)) {
+    missing.push(`ONLINE_PAYMENT_PROVIDER=${online} is not a known provider`);
   }
 
   if ((process.env.PAYMENT_PROVIDER ?? "manual") !== "manual") {

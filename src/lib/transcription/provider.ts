@@ -57,6 +57,32 @@ export class OpenAICompatibleTranscriber implements TranscriptionProvider {
 
 let shared: TranscriptionProvider | null = null;
 
+/** Speech services outside Uzbekistan; a patient's spoken health concern is never sent to them. */
+const FOREIGN_SPEECH_HOSTS = /(^|\.)(openai\.com|groq\.com|deepgram\.com|assemblyai\.com|googleapis\.com|azure\.com|amazonaws\.com|elevenlabs\.io|speechmatics\.com|rev\.ai)$/i;
+
+/**
+ * The provider for a patient's spoken health concern in the Mini App (owner decision 2026-10-08: local voice models,
+ * e.g. Voicelab/Aisha or a self-hosted Whisper). Only an OpenAI-compatible endpoint whose host is explicitly allowed in
+ * HEALTH_AUDIO_ALLOWED_HOSTS and is not a known foreign service; otherwise null and the patient types instead.
+ * (Aisha/Voicelab's own API is not wired yet — it needs their documentation and keys.)
+ */
+export function getHealthTranscriptionProvider(): TranscriptionProvider | null {
+  if (!transcriptionEnabled() || !env.TRANSCRIPTION_BASE_URL) return null;
+  const allowed = (env.HEALTH_AUDIO_ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+  let host: string;
+  try {
+    host = new URL(env.TRANSCRIPTION_BASE_URL).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (!allowed.includes(host) || FOREIGN_SPEECH_HOSTS.test(host)) return null;
+  if (!shared) shared = new OpenAICompatibleTranscriber();
+  return shared;
+}
+
 /** Active transcription provider or null when disabled. */
 export function getTranscriptionProvider(): TranscriptionProvider | null {
   if (!transcriptionEnabled()) return null;

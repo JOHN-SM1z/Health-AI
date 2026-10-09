@@ -13,6 +13,8 @@ type ButtonProps = {
   disabled?: boolean;
   loading?: boolean;
   className?: string;
+  /** Accessible name for icon-only buttons (e.g. the day arrows). */
+  "aria-label"?: string;
 };
 
 export function Button({
@@ -24,6 +26,7 @@ export function Button({
   disabled,
   loading,
   className,
+  "aria-label": ariaLabel,
 }: ButtonProps) {
   const styles: Record<NonNullable<ButtonProps["variant"]>, string> = {
     primary:
@@ -47,6 +50,7 @@ export function Button({
     <button
       type={type}
       onClick={onClick}
+      aria-label={ariaLabel}
       disabled={disabled || loading}
       className={cn(
         "inline-flex items-center justify-center gap-2 font-medium transition-[filter,background-color,box-shadow,opacity] duration-150 disabled:cursor-not-allowed disabled:opacity-50",

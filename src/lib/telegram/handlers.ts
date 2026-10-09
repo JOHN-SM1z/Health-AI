@@ -4,6 +4,7 @@ import { adminChatIds, env } from "@/lib/env";
 import { getClinicById } from "@/lib/clinics/context";
 import { getClinicContact } from "@/lib/clinics/contact";
 import { getOrCreatePatient } from "@/lib/patients/identity";
+import { recordSharedContact } from "@/lib/patients/online-identity";
 import { getOrCreateConversation, appendMessage, conversationIsHeld, updateConversationState } from "@/lib/telegram/store";
 import { sendTelegramMessage, getTelegramFileUrl } from "@/lib/telegram/bot";
 import { appUrlCandidates, resolveHttpsAppUrl } from "@/lib/telegram/bots";
@@ -293,6 +294,26 @@ export async function handleTelegramCommand(opts: {
   }
 }
 
+/**
+ * A contact arrived in the chat (the Mini App's "share my phone" sends it here). Kept as the sender's verified phone
+ * only when it is their own; the number itself is never echoed back, logged or audited.
+ */
+export async function handleContactShared(opts: {
+  clinicId: string;
+  chatId: number;
+  from: { id: number };
+  contact: { phone_number?: string; user_id?: number };
+}) {
+  const outcome = await recordSharedContact(opts.clinicId, opts.from, opts.contact);
+  const text =
+    outcome === "verified"
+      ? "✅ Telefon raqamingiz tasdiqlandi. Ilovaga qayting — yozilishni davom ettiramiz."
+      : outcome === "not_own"
+        ? "Faqat o‘zingizning Telegram raqamingizni yuboring (“Raqamni ulashish” tugmasi orqali)."
+        : "Onlayn tasdiqlash faqat O‘zbekiston raqamlari (+998) uchun ishlaydi. Iltimos, qabulxonaga murojaat qiling.";
+  await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: { remove_keyboard: true } }, opts.clinicId);
+}
+
 /** Menu button handler — the shared text-based commands. */
 export async function handleMenuButton(opts: {
   clinicId: string;
@@ -504,6 +525,24 @@ async function escalateUrgent(opts: {
   });
   await trackAnalytics({ clinicId: opts.clinicId, patientId: opts.patientId, eventType: "urgent_flag" });
   await notifyAdmins(`⚠️ Shoshilinch holat ehtimoli: bemor ${opts.patientLabel}`);
+}
+
+/**
+ * Urgent wording typed (or spoken) in the Mini App's concern step: the same escalation as in the chat. The patient's
+ * conversation with the clinic's bot is flagged urgent for staff, automation stops, and the approved urgent-care
+ * message goes to their Telegram chat as well as the Mini App. No booking is offered.
+ */
+export async function escalateUrgentFromMiniApp(opts: { clinicId: string; patientId: string; telegramUserId: number; text: string; patientLabel: string }) {
+  const conversation = await getOrCreateConversation({ clinicId: opts.clinicId, patientId: opts.patientId, channel: "telegram" });
+  await appendMessage({ conversationId: conversation.id, clinicId: opts.clinicId, role: "patient", type: "text", content: opts.text, metadata: { via: "mini_app_concern" } });
+  await escalateUrgent({
+    clinicId: opts.clinicId,
+    patientId: opts.patientId,
+    conversationId: conversation.id,
+    chatId: opts.telegramUserId,
+    text: opts.text,
+    patientLabel: opts.patientLabel,
+  });
 }
 
 export async function requestHumanHandoff(opts: {

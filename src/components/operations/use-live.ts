@@ -55,6 +55,7 @@ export function freshnessLabel(updatedAt: Date | null, stale: boolean): string {
 }
 
 export const VISIT_STATUS: Record<string, { label: string; tone: "amber" | "blue" | "green" | "gray" | "red" | "purple" }> = {
+  booked: { label: "Onlayn to‘langan, kelmagan", tone: "purple" },
   awaiting_payment: { label: "Kassada to‘lov kutilmoqda", tone: "amber" },
   waiting: { label: "Navbatda", tone: "blue" },
   called: { label: "Chaqirildi", tone: "purple" },

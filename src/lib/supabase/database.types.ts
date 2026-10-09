@@ -430,6 +430,7 @@ export type Database = {
       clinics: {
         Row: {
           queue_after_payment: boolean
+          online_identity_required: boolean
           operating_mode: string
           address: string | null
           created_at: string
@@ -447,6 +448,7 @@ export type Database = {
         }
         Insert: {
           queue_after_payment?: boolean
+          online_identity_required?: boolean
           operating_mode?: string
           address?: string | null
           created_at?: string
@@ -464,6 +466,7 @@ export type Database = {
         }
         Update: {
           queue_after_payment?: boolean
+          online_identity_required?: boolean
           operating_mode?: string
           address?: string | null
           created_at?: string
@@ -2494,6 +2497,8 @@ export type Database = {
           sex: Database["public"]["Enums"]["patient_sex"] | null
           telegram_first_name: string | null
           telegram_last_name: string | null
+          telegram_link_method: string | null
+          telegram_linked_at: string | null
           telegram_user_id: number | null
           telegram_username: string | null
           updated_at: string
@@ -2519,6 +2524,8 @@ export type Database = {
           sex?: Database["public"]["Enums"]["patient_sex"] | null
           telegram_first_name?: string | null
           telegram_last_name?: string | null
+          telegram_link_method?: string | null
+          telegram_linked_at?: string | null
           telegram_user_id?: number | null
           telegram_username?: string | null
           updated_at?: string
@@ -2544,6 +2551,8 @@ export type Database = {
           sex?: Database["public"]["Enums"]["patient_sex"] | null
           telegram_first_name?: string | null
           telegram_last_name?: string | null
+          telegram_link_method?: string | null
+          telegram_linked_at?: string | null
           telegram_user_id?: number | null
           telegram_username?: string | null
           updated_at?: string
@@ -3036,6 +3045,234 @@ export type Database = {
           },
         ]
       }
+      online_identity_lookups: {
+        Row: {
+          clinic_id: string
+          completed_at: string | null
+          created_at: string
+          date_of_birth: string
+          document_key: string
+          document_number: string | null
+          dob_mismatch: boolean
+          expires_at: string
+          id: string
+          matched_patient_id: string | null
+          pinfl: string | null
+          telegram_user_id: number
+        }
+        Insert: {
+          clinic_id: string
+          completed_at?: string | null
+          created_at?: string
+          date_of_birth: string
+          document_key: string
+          document_number?: string | null
+          dob_mismatch?: boolean
+          expires_at?: string
+          id?: string
+          matched_patient_id?: string | null
+          pinfl?: string | null
+          telegram_user_id: number
+        }
+        Update: {
+          clinic_id?: string
+          completed_at?: string | null
+          created_at?: string
+          date_of_birth?: string
+          document_key?: string
+          document_number?: string | null
+          dob_mismatch?: boolean
+          expires_at?: string
+          id?: string
+          matched_patient_id?: string | null
+          pinfl?: string | null
+          telegram_user_id?: number
+        }
+        Relationships: []
+      }
+      patient_identity_claims: {
+        Row: {
+          clinic_id: string
+          conflicting_patient_id: string | null
+          created_at: string
+          id: string
+          patient_id: string
+          reason: string
+          resolved_at: string | null
+          resolved_by: string | null
+        }
+        Insert: {
+          clinic_id: string
+          conflicting_patient_id?: string | null
+          created_at?: string
+          id?: string
+          patient_id: string
+          reason: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+        }
+        Update: {
+          clinic_id?: string
+          conflicting_patient_id?: string | null
+          created_at?: string
+          id?: string
+          patient_id?: string
+          reason?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+        }
+        Relationships: []
+      }
+      payment_invoices: {
+        Row: {
+          amount: number
+          appointment_id: string
+          clinic_id: string
+          created_at: string
+          currency: string
+          expires_at: string
+          id: string
+          paid_at: string | null
+          patient_id: string
+          pay_url: string | null
+          payment_id: string
+          provider: Database["public"]["Enums"]["payment_provider"]
+          provider_invoice_id: string | null
+          status: string
+        }
+        Insert: {
+          amount: number
+          appointment_id: string
+          clinic_id: string
+          created_at?: string
+          currency: string
+          expires_at: string
+          id?: string
+          paid_at?: string | null
+          patient_id: string
+          pay_url?: string | null
+          payment_id: string
+          provider: Database["public"]["Enums"]["payment_provider"]
+          provider_invoice_id?: string | null
+          status?: string
+        }
+        Update: {
+          amount?: number
+          appointment_id?: string
+          clinic_id?: string
+          created_at?: string
+          currency?: string
+          expires_at?: string
+          id?: string
+          paid_at?: string | null
+          patient_id?: string
+          pay_url?: string | null
+          payment_id?: string
+          provider?: Database["public"]["Enums"]["payment_provider"]
+          provider_invoice_id?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
+      payment_provider_events: {
+        Row: {
+          amount: number | null
+          currency: string | null
+          event_id: string
+          invoice_id: string | null
+          outcome: string | null
+          provider: Database["public"]["Enums"]["payment_provider"]
+          received_at: string
+        }
+        Insert: {
+          amount?: number | null
+          currency?: string | null
+          event_id: string
+          invoice_id?: string | null
+          outcome?: string | null
+          provider: Database["public"]["Enums"]["payment_provider"]
+          received_at?: string
+        }
+        Update: {
+          amount?: number | null
+          currency?: string | null
+          event_id?: string
+          invoice_id?: string | null
+          outcome?: string | null
+          provider?: Database["public"]["Enums"]["payment_provider"]
+          received_at?: string
+        }
+        Relationships: []
+      }
+      payment_refunds: {
+        Row: {
+          amount: number
+          clinic_id: string
+          currency: string
+          done_at: string | null
+          done_by: string | null
+          id: string
+          invoice_id: string | null
+          payment_id: string
+          provider_reference: string | null
+          reason: string
+          requested_at: string
+          status: string
+          visit_id: string | null
+        }
+        Insert: {
+          amount: number
+          clinic_id: string
+          currency: string
+          done_at?: string | null
+          done_by?: string | null
+          id?: string
+          invoice_id?: string | null
+          payment_id: string
+          provider_reference?: string | null
+          reason: string
+          requested_at?: string
+          status?: string
+          visit_id?: string | null
+        }
+        Update: {
+          amount?: number
+          clinic_id?: string
+          currency?: string
+          done_at?: string | null
+          done_by?: string | null
+          id?: string
+          invoice_id?: string | null
+          payment_id?: string
+          provider_reference?: string | null
+          reason?: string
+          requested_at?: string
+          status?: string
+          visit_id?: string | null
+        }
+        Relationships: []
+      }
+      telegram_verified_phones: {
+        Row: {
+          clinic_id: string
+          phone_key: string
+          telegram_user_id: number
+          verified_at: string
+        }
+        Insert: {
+          clinic_id: string
+          phone_key: string
+          telegram_user_id: number
+          verified_at?: string
+        }
+        Update: {
+          clinic_id?: string
+          phone_key?: string
+          telegram_user_id?: number
+          verified_at?: string
+        }
+        Relationships: []
+      }
       staff_roles: {
         Row: {
           clinic_id: string
@@ -3132,7 +3369,7 @@ export type Database = {
           amount: number
           clinic_id: string
           created_at: string
-          created_by: string
+          created_by: string | null
           currency: string
           id: string
           idempotency_key: string | null
@@ -3152,7 +3389,7 @@ export type Database = {
           amount: number
           clinic_id: string
           created_at?: string
-          created_by: string
+          created_by: string | null
           currency: string
           id?: string
           idempotency_key?: string | null
@@ -3172,7 +3409,7 @@ export type Database = {
           amount?: number
           clinic_id?: string
           created_at?: string
-          created_by?: string
+          created_by?: string | null
           currency?: string
           id?: string
           idempotency_key?: string | null
@@ -3200,11 +3437,11 @@ export type Database = {
       visit_transactions: {
         Row: {
           amount: number
-          authorized_by: string
+          authorized_by: string | null
           clinic_id: string
           created_at: string
           currency: string
-          executed_by: string
+          executed_by: string | null
           id: string
           kind: string
           method: string
@@ -3217,11 +3454,11 @@ export type Database = {
         }
         Insert: {
           amount: number
-          authorized_by: string
+          authorized_by: string | null
           clinic_id: string
           created_at?: string
           currency: string
-          executed_by: string
+          executed_by: string | null
           id?: string
           kind: string
           method: string
@@ -3234,11 +3471,11 @@ export type Database = {
         }
         Update: {
           amount?: number
-          authorized_by?: string
+          authorized_by?: string | null
           clinic_id?: string
           created_at?: string
           currency?: string
-          executed_by?: string
+          executed_by?: string | null
           id?: string
           kind?: string
           method?: string
@@ -3327,13 +3564,13 @@ export type Database = {
           lab_order_id: string | null
           kind: string
           appointment_id: string | null
-          arrived_at: string
+          arrived_at: string | null
           called_at: string | null
           cancel_reason: string | null
           cancelled_at: string | null
           clinic_id: string
           completed_at: string | null
-          created_by: string
+          created_by: string | null
           doctor_id: string | null
           id: string
           idempotency_key: string
@@ -3342,6 +3579,7 @@ export type Database = {
           queue_number: number | null
           queued_at: string | null
           request_fingerprint: string
+          source: string
           started_at: string | null
           status: string
           updated_at: string
@@ -3350,13 +3588,13 @@ export type Database = {
           lab_order_id?: string | null
           kind?: string
           appointment_id?: string | null
-          arrived_at?: string
+          arrived_at?: string | null
           called_at?: string | null
           cancel_reason?: string | null
           cancelled_at?: string | null
           clinic_id: string
           completed_at?: string | null
-          created_by: string
+          created_by: string | null
           doctor_id?: string | null
           id?: string
           idempotency_key: string
@@ -3365,6 +3603,7 @@ export type Database = {
           queue_number?: number | null
           queued_at?: string | null
           request_fingerprint: string
+          source: string
           started_at?: string | null
           status?: string
           updated_at?: string
@@ -3373,13 +3612,13 @@ export type Database = {
           lab_order_id?: string | null
           kind?: string
           appointment_id?: string | null
-          arrived_at?: string
+          arrived_at?: string | null
           called_at?: string | null
           cancel_reason?: string | null
           cancelled_at?: string | null
           clinic_id?: string
           completed_at?: string | null
-          created_by?: string
+          created_by?: string | null
           doctor_id?: string | null
           id?: string
           idempotency_key?: string
@@ -3388,6 +3627,7 @@ export type Database = {
           queue_number?: number | null
           queued_at?: string | null
           request_fingerprint?: string
+          source?: string
           started_at?: string | null
           status?: string
           updated_at?: string
@@ -3498,6 +3738,62 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      create_online_invoice: {
+        Args: { p_appointment: string; p_clinic: string; p_patient: string; p_provider: Database["public"]["Enums"]["payment_provider"]; p_ttl_minutes?: number }
+        Returns: Json
+      }
+      mark_booked_arrived: { Args: { p_actor: string; p_clinic: string; p_visit: string }; Returns: Json }
+      mark_online_refund_done: { Args: { p_actor: string; p_clinic: string; p_reference: string; p_refund: string }; Returns: Json }
+      settle_online_payment: {
+        Args: {
+          p_amount: number
+          p_currency: string
+          p_event_id: string
+          p_invoice: string
+          p_provider: Database["public"]["Enums"]["payment_provider"]
+          p_provider_reference?: string | null
+        }
+        Returns: Json
+      }
+      complete_online_patient: {
+        Args: {
+          p_address?: string
+          p_clinic: string
+          p_full_name: string
+          p_lookup: string
+          p_sex?: Database["public"]["Enums"]["patient_sex"]
+          p_telegram_user_id: number
+        }
+        Returns: string
+      }
+      link_card_to_telegram: {
+        Args: {
+          p_clinic: string
+          p_first_name?: string | null
+          p_last_name?: string | null
+          p_method: string
+          p_patient: string
+          p_telegram_user_id: number
+          p_username?: string | null
+        }
+        Returns: string
+      }
+      normalize_uz_phone: { Args: { p_value: string }; Returns: string }
+      online_identity_lookup: {
+        Args: {
+          p_clinic: string
+          p_dob: string
+          p_document: string | null
+          p_document_key: string
+          p_pinfl: string | null
+          p_telegram_user_id: number
+        }
+        Returns: string
+      }
+      record_telegram_verified_phone: {
+        Args: { p_clinic: string; p_phone: string; p_telegram_user_id: number }
+        Returns: boolean
+      }
       book_appointment: {
         Args: {
           p_clinic_id: string
@@ -4046,7 +4342,7 @@ export type Database = {
         | "queue_ticket"
         | "queue_called"
       patient_sex: "female" | "male"
-      payment_provider: "manual" | "click" | "payme" | "cash" | "card_terminal"
+      payment_provider: "manual" | "click" | "payme" | "cash" | "card_terminal" | "rahmat" | "test_online"
       payment_status:
         | "unpaid"
         | "pending"
@@ -4314,7 +4610,7 @@ export const Constants = {
         "queue_called",
       ],
       patient_sex: ["female", "male"],
-      payment_provider: ["manual", "click", "payme", "cash", "card_terminal"],
+      payment_provider: ["manual", "click", "payme", "cash", "card_terminal", "rahmat", "test_online"],
       payment_status: [
         "unpaid",
         "pending",
