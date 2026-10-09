@@ -13,7 +13,7 @@
 // (`npm run build && npm start`). Rerunnable.
 import { mkdirSync } from "node:fs";
 import { chromium } from "playwright";
-import { BASE, DEMO, DEMO_NAMES, VIEWPORTS, assertLocalOnly, connect, createReport, signIn } from "./lib.mjs";
+import { BASE, DEMO, DEMO_NAMES, VIEWPORTS, assertLocalOnly, connect, createReport, pickSlot, signIn } from "./lib.mjs";
 
 assertLocalOnly();
 const SHOTS = process.env.E2E_ARTIFACTS_DIR ?? "test-results/e2e";
@@ -24,11 +24,6 @@ const db = connect();
 const suffix = Date.now().toString(36);
 const UNAVAILABLE = "Bu vaqt endi bo‘sh emas. Iltimos, boshqa vaqtni tanlang.";
 
-/** The slot's button: its day's grid (days render in slot order), then its time. */
-function slotButton(page, slots, slot) {
-  const days = [...new Set(slots.map((s) => s.dayLocal))];
-  return page.locator("div.grid.grid-cols-3").nth(days.indexOf(slot.dayLocal)).getByRole("button", { name: slot.startLocal, exact: true });
-}
 
 async function run() {
   const [doctor] = await db`
@@ -57,7 +52,7 @@ async function run() {
     // A slot a few hours out, on today's list or the next day's.
     const target = shown.find((s) => new Date(s.start).getTime() > Date.now() + 2 * 3_600_000) ?? shown[shown.length - 1];
     check(!!target, `availability offers slots (${shown.length})`);
-    await slotButton(patient, shown, target).click();
+    await pickSlot(patient, shown, target);
     await patient.getByRole("button", { name: /^Davom etish: / }).click();
     await patient.locator("#patient-name").fill(`Veb Bemor ${suffix}`);
     await patient.locator("#patient-phone").fill("+998901112233");
@@ -99,7 +94,7 @@ async function run() {
 
     // ---------- A different time succeeds; a double tap books it once ----------
     const second = fresh.find((s) => s.dayLocal === target.dayLocal && s.start > target.start) ?? fresh.find((s) => s.start > target.start);
-    await slotButton(patient, fresh, second).click();
+    await pickSlot(patient, fresh, second);
     await patient.getByRole("button", { name: /^Davom etish: / }).click();
     await patient.getByRole("button", { name: "Davom etish" }).click();
     await patient.getByRole("button", { name: "Tasdiqlash va yozilish" }).dblclick();

@@ -8,6 +8,7 @@ import { Button, Card, Input, Badge, Spinner, EmptyState, ErrorBanner, NoticeBan
 import { apiGet, apiPost, getClientClinicId } from "@/lib/client/api";
 import { newIdempotencyKey } from "@/lib/idempotency-key";
 import { IdentityStep, type OnlineProfile } from "@/components/mini-app/identity-step";
+import { ConcernStep } from "@/components/mini-app/concern-step";
 
 type Catalog = {
   clinic: {
@@ -56,6 +57,7 @@ type AppointmentResponse = {
 type Step =
   | { name: "consent" }
   | { name: "identity" }
+  | { name: "concern" }
   | { name: "choose" }
   | { name: "service"; mode: "known" | "help"; specialtyId: string | null }
   | { name: "doctor" }
@@ -150,6 +152,10 @@ export function BookingFlow() {
     }
     return [...groups.entries()];
   }, [slots]);
+  // The day on screen: the first day with free time when slots load, then wherever the patient steps.
+  const [dayIndex, setDayIndex] = useState(0);
+  useEffect(() => setDayIndex(0), [slots]);
+  const shownDay = groupSlotsByDay[Math.min(dayIndex, groupSlotsByDay.length - 1)] ?? null;
 
   const loadSlots = useCallback(
     async (sid: string, did: string) => {
@@ -330,8 +336,23 @@ export function BookingFlow() {
             setProfile(p);
             if (p.fullName) setPatientName(p.fullName);
             if (p.phone) setPhone(p.phone);
+            setStep({ name: "concern" });
+          }}
+        />
+      )}
+
+      {step.name === "concern" && (
+        <ConcernStep
+          identity={identity}
+          onChoose={(specialtyId, concern) => {
+            setNotes(concern.slice(0, 300));
+            setStep({ name: "service", mode: "help", specialtyId });
+          }}
+          onSkip={(concern) => {
+            setNotes(concern.slice(0, 300));
             setStep({ name: "choose" });
           }}
+          onUrgentExit={() => router.push("/")}
         />
       )}
 
@@ -474,13 +495,28 @@ export function BookingFlow() {
             />
           ) : (
             <div className="flex flex-col gap-4">
-              {groupSlotsByDay.map(([day, daySlots]) => (
-                <div key={day}>
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--tg-hint,#8a9699)]">
-                    {new Date(`${day}T00:00:00`).toLocaleDateString("uz-UZ", { weekday: "long", day: "numeric", month: "long" })}
-                  </p>
+              {/* One day at a time (owner decision 2026-10-08): the patient steps through days that have free time. */}
+              {shownDay && (
+                <div key={shownDay[0]} data-testid="slot-day">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <Button variant="ghost" size="sm" disabled={dayIndex <= 0} onClick={() => setDayIndex(dayIndex - 1)} aria-label="Oldingi kun">
+                      ‹
+                    </Button>
+                    <p className="text-center text-sm font-semibold text-[var(--tg-text,var(--foreground))]">
+                      {dayTitle(shownDay[0])}
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={dayIndex >= groupSlotsByDay.length - 1}
+                      onClick={() => setDayIndex(dayIndex + 1)}
+                      aria-label="Keyingi kun"
+                    >
+                      ›
+                    </Button>
+                  </div>
                   <div className="grid grid-cols-3 gap-2">
-                    {daySlots.map((s) => (
+                    {shownDay[1].map((s) => (
                       <button
                         key={s.start}
                         onClick={() => setSelectedSlot(s)}
@@ -496,7 +532,7 @@ export function BookingFlow() {
                     ))}
                   </div>
                 </div>
-              ))}
+              )}
               <Button
                 size="full"
                 disabled={!selectedSlot}
@@ -623,10 +659,24 @@ export function BookingFlow() {
   );
 }
 
+/** "Bugun, 9-oktabr" / "Ertaga, …" / "Juma, 11-oktabr" for a clinic-local YYYY-MM-DD (the slot's own day). */
+function dayTitle(day: string): string {
+  const date = new Date(`${day}T00:00:00`);
+  const label = date.toLocaleDateString("uz-UZ", { day: "numeric", month: "long" });
+  const local = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  if (day === local(today)) return `Bugun, ${label}`;
+  if (day === local(tomorrow)) return `Ertaga, ${label}`;
+  const weekday = date.toLocaleDateString("uz-UZ", { weekday: "long" });
+  return `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)}, ${label}`;
+}
+
 function StepHeader({ step }: { step: string }) {
   const labels: Record<string, string> = {
     consent: "1/7 · Rozilik",
     identity: "Shaxsni tasdiqlash",
+    concern: "Shikoyat",
     choose: "2/7 · Tanlov",
     service: "3/7 · Xizmat",
     doctor: "4/7 · Shifokor",

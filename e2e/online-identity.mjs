@@ -9,7 +9,7 @@
 // Rerunnable: run-unique documents, phones and Telegram ids.
 import { createHmac } from "node:crypto";
 import { chromium } from "playwright";
-import { BASE, DEMO, DEMO_NAMES, assertLocalOnly, connect, createReport, runFixture } from "./lib.mjs";
+import { BASE, DEMO, DEMO_NAMES, assertLocalOnly, connect, createReport, pickSlot, runFixture } from "./lib.mjs";
 
 assertLocalOnly();
 const report = createReport("online identity E2E");
@@ -86,13 +86,21 @@ async function run() {
       check(Number(linked.telegram_user_id) === tg.returning && linked.telegram_link_method === "contact_phone", "the desk card is linked to the patient's Telegram");
 
       await page.getByRole("button", { name: "Ha, davom etish" }).click();
+      // The concern, in the patient's words; the clinic has no matching direction, so the patient chooses.
+      const concernText = `Qon bosimim ko‘tariladi ${suffix}`;
+      await page.getByLabel("Shikoyatingiz").fill(concernText);
+      await page.getByRole("button", { name: "Davom etish" }).click();
+      await page.getByRole("button", { name: "Yo‘nalishni o‘zim tanlayman" }).click();
+      check(true, "after identity the patient describes the concern and confirms or picks the direction");
       await page.getByRole("button", { name: /Kerakli xizmatni bilaman/ }).click();
       await page.getByRole("button", { name: new RegExp(DEMO_NAMES.generalService.replace(/[()]/g, "\\$&")) }).click();
       const slotsResponse = page.waitForResponse((r) => r.url().includes("/api/availability"));
       await page.getByRole("button", { name: new RegExp(DEMO_NAMES.referrer) }).click();
       const shown = (await (await slotsResponse).json()).data.slots;
       const target = shown.find((s) => new Date(s.start).getTime() > Date.now() + 3 * 3_600_000) ?? shown[shown.length - 1];
-      await page.getByRole("button", { name: target.startLocal, exact: true }).first().click();
+      await page.getByTestId("slot-day").waitFor();
+      check((await page.getByTestId("slot-day").count()) === 1, "times are shown one day at a time");
+      await pickSlot(page, shown, target);
       await page.getByRole("button", { name: /^Davom etish: / }).click();
       await page.getByRole("button", { name: "Tasdiqlash va yozilish" }).waitFor();
       check((await page.locator("#patient-name").count()) === 0, "no name/phone form: the proven card's details are used");
@@ -100,8 +108,9 @@ async function run() {
       await page.getByRole("button", { name: "Tasdiqlash va yozilish" }).click();
       const res = await created;
       check(res.status() === 201, `the booking is created (${res.status()})`);
-      const [appt] = await db`select patient_id from public.appointments where id = ${(await res.json()).data.appointment.id}`;
+      const [appt] = await db`select patient_id, notes from public.appointments where id = ${(await res.json()).data.appointment.id}`;
       check(appt?.patient_id === desk.id, "the appointment is on the patient's own desk card");
+      check(appt?.notes === concernText, "the concern travels with the booking as its note");
       await ctx.close();
     }
 
@@ -117,6 +126,16 @@ async function run() {
       await page.getByRole("button", { name: "Ha, davom etish" }).waitFor();
       const [row] = await db`select document_number, date_of_birth::text as dob, full_name from public.patients where clinic_id = ${clinic} and telegram_user_id = ${tg.fresh}`;
       check(row?.document_number === newDoc && row?.dob === "2001-03-02" && row?.full_name === `Yangi Onlayn ${suffix}`, "the new patient's own record holds their passport and date of birth");
+
+      // Urgent wording ends the booking with the approved message; staff are alerted.
+      await page.getByRole("button", { name: "Ha, davom etish" }).click();
+      await page.getByLabel("Shikoyatingiz").fill("Nafas ololmayapman, ko‘kragim qattiq og‘riyapti");
+      await page.getByRole("button", { name: "Davom etish" }).click();
+      await page.getByText("Shoshilinch yordam").first().waitFor();
+      check((await page.getByRole("button", { name: /Kerakli xizmatni bilaman/ }).count()) === 0, "urgent wording: no booking is offered");
+      const [conv] = await db`select c.urgent_at, c.ai_enabled from public.conversations c join public.patients p on p.id = c.patient_id
+                              where p.clinic_id = ${clinic} and p.telegram_user_id = ${tg.fresh}`;
+      check(!!conv?.urgent_at && conv.ai_enabled === false, "urgent wording flags the patient's conversation for staff");
       await ctx.close();
     }
 

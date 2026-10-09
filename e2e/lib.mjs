@@ -124,3 +124,17 @@ export async function signIn(browser, report, email, viewport = "desktop", { exp
   await page.waitForLoadState("networkidle");
   return { context, page };
 }
+
+/**
+ * Picks a slot in the Mini App's one-day view: steps to the slot's day with the day arrows (days with free time, in
+ * order), then clicks its time. `slots` is the /api/availability answer the page rendered.
+ */
+export async function pickSlot(page, slots, slot) {
+  const days = [...new Set(slots.map((s) => s.dayLocal))];
+  const day = page.getByTestId("slot-day");
+  await day.waitFor();
+  const previous = page.getByRole("button", { name: "Oldingi kun" });
+  while (await previous.isEnabled()) await previous.click();
+  for (let i = 0; i < days.indexOf(slot.dayLocal); i++) await page.getByRole("button", { name: "Keyingi kun" }).click();
+  await day.getByRole("button", { name: slot.startLocal, exact: true }).click();
+}
