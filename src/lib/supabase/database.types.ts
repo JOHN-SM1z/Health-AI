@@ -431,6 +431,7 @@ export type Database = {
         Row: {
           queue_after_payment: boolean
           online_identity_required: boolean
+          sms_enabled: boolean
           operating_mode: string
           address: string | null
           created_at: string
@@ -449,6 +450,7 @@ export type Database = {
         Insert: {
           queue_after_payment?: boolean
           online_identity_required?: boolean
+          sms_enabled?: boolean
           operating_mode?: string
           address?: string | null
           created_at?: string
@@ -467,6 +469,7 @@ export type Database = {
         Update: {
           queue_after_payment?: boolean
           online_identity_required?: boolean
+          sms_enabled?: boolean
           operating_mode?: string
           address?: string | null
           created_at?: string
@@ -2284,6 +2287,7 @@ export type Database = {
           max_attempts: number
           patient_telegram_user_id: number | null
           read_at: string | null
+          recipient_patient_id: string | null
           recipient_profile_id: string | null
           recipient_type: string
           scheduled_for: string
@@ -2309,6 +2313,7 @@ export type Database = {
           max_attempts?: number
           patient_telegram_user_id?: number | null
           read_at?: string | null
+          recipient_patient_id?: string | null
           recipient_profile_id?: string | null
           recipient_type?: string
           scheduled_for: string
@@ -2334,6 +2339,7 @@ export type Database = {
           max_attempts?: number
           patient_telegram_user_id?: number | null
           read_at?: string | null
+          recipient_patient_id?: string | null
           recipient_profile_id?: string | null
           recipient_type?: string
           scheduled_for?: string
@@ -2499,6 +2505,7 @@ export type Database = {
           telegram_last_name: string | null
           telegram_link_method: string | null
           telegram_linked_at: string | null
+          sms_consent_at: string | null
           telegram_user_id: number | null
           telegram_username: string | null
           updated_at: string
@@ -2526,6 +2533,7 @@ export type Database = {
           telegram_last_name?: string | null
           telegram_link_method?: string | null
           telegram_linked_at?: string | null
+          sms_consent_at?: string | null
           telegram_user_id?: number | null
           telegram_username?: string | null
           updated_at?: string
@@ -2553,6 +2561,7 @@ export type Database = {
           telegram_last_name?: string | null
           telegram_link_method?: string | null
           telegram_linked_at?: string | null
+          sms_consent_at?: string | null
           telegram_user_id?: number | null
           telegram_username?: string | null
           updated_at?: string
@@ -3252,6 +3261,84 @@ export type Database = {
         }
         Relationships: []
       }
+      card_link_otps: {
+        Row: {
+          attempts: number
+          clinic_id: string
+          code_hmac: string
+          created_at: string
+          expires_at: string
+          id: string
+          lookup_id: string
+          patient_id: string
+          telegram_user_id: number
+          used_at: string | null
+        }
+        Insert: {
+          attempts?: number
+          clinic_id: string
+          code_hmac: string
+          created_at?: string
+          expires_at: string
+          id?: string
+          lookup_id: string
+          patient_id: string
+          telegram_user_id: number
+          used_at?: string | null
+        }
+        Update: {
+          attempts?: number
+          clinic_id?: string
+          code_hmac?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          lookup_id?: string
+          patient_id?: string
+          telegram_user_id?: number
+          used_at?: string | null
+        }
+        Relationships: []
+      }
+      sms_messages: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          delivered_at: string | null
+          error_code: string | null
+          id: string
+          job_id: string | null
+          provider: string
+          provider_message_id: string | null
+          purpose: string
+          status: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          delivered_at?: string | null
+          error_code?: string | null
+          id?: string
+          job_id?: string | null
+          provider: string
+          provider_message_id?: string | null
+          purpose: string
+          status?: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          delivered_at?: string | null
+          error_code?: string | null
+          id?: string
+          job_id?: string | null
+          provider?: string
+          provider_message_id?: string | null
+          purpose?: string
+          status?: string
+        }
+        Relationships: []
+      }
       telegram_verified_phones: {
         Row: {
           clinic_id: string
@@ -3738,6 +3825,23 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      claim_due_sms_jobs: {
+        Args: { p_clinic_ids?: string[]; p_limit: number }
+        Returns: Database["public"]["Tables"]["notification_jobs"]["Row"][]
+      }
+      issue_card_link_otp: { Args: { p_clinic: string; p_code_hmac: string; p_lookup: string; p_telegram_user_id: number }; Returns: string | null }
+      verify_card_link_otp: {
+        Args: {
+          p_clinic: string
+          p_code_hmac: string
+          p_first_name?: string | null
+          p_last_name?: string | null
+          p_lookup: string
+          p_telegram_user_id: number
+          p_username?: string | null
+        }
+        Returns: string
+      }
       create_online_invoice: {
         Args: { p_appointment: string; p_clinic: string; p_patient: string; p_provider: Database["public"]["Enums"]["payment_provider"]; p_ttl_minutes?: number }
         Returns: Json
@@ -3826,6 +3930,7 @@ export type Database = {
           max_attempts: number
           patient_telegram_user_id: number | null
           read_at: string | null
+          recipient_patient_id: string | null
           recipient_profile_id: string | null
           recipient_type: string
           scheduled_for: string

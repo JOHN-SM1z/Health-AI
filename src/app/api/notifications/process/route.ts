@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { isCronRequest } from "@/lib/cron-auth";
 import { processDueNotificationJobs } from "@/lib/notifications/processor";
+import { processDueSmsJobs } from "@/lib/sms/processor";
 import { purgeExpiredVoiceMessages } from "@/lib/voice/retention";
 import { logger } from "@/lib/logger";
 import { handleApiError } from "@/lib/api/errors";
@@ -30,6 +31,13 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await processDueNotificationJobs();
+    // Queue SMS for patients without Telegram (20261008000013); a failure never holds back the Telegram messages.
+    let sms = { processed: 0, sent: 0, failed: 0, skipped: 0 };
+    try {
+      sms = await processDueSmsJobs();
+    } catch (e) {
+      logger.error("sms run threw", { error: e instanceof Error ? e.message : String(e) });
+    }
     // The same scheduled run enforces voice-message retention (privacy page
     // §2); a failure there never holds back the reminders.
     let voice = { purged: 0, failed: 0 };
@@ -38,7 +46,7 @@ export async function POST(request: NextRequest) {
     } catch (e) {
       logger.error("voice retention run threw", { error: e instanceof Error ? e.message : String(e) });
     }
-    return NextResponse.json({ ok: true, ...result, voicePurged: voice.purged, voicePurgeFailed: voice.failed });
+    return NextResponse.json({ ok: true, ...result, sms, voicePurged: voice.purged, voicePurgeFailed: voice.failed });
   } catch (e) {
     return handleApiError(e);
   }

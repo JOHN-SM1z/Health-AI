@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
       const { data: patient, error: patientError } = await supabase
         .from("patients")
         .select(
-          "id, full_name, phone, telegram_username, telegram_first_name, telegram_last_name, consent_given, consent_given_at, last_seen_at, created_at, operational_notes, merged_into_patient_id, merged_at, date_of_birth, sex",
+          "id, full_name, phone, telegram_username, telegram_first_name, telegram_last_name, consent_given, consent_given_at, last_seen_at, created_at, operational_notes, merged_into_patient_id, merged_at, date_of_birth, sex, sms_consent_at, telegram_user_id",
         )
         .eq("id", detailId)
         .eq("clinic_id", staff.clinicId)
@@ -49,8 +49,15 @@ export async function GET(request: NextRequest) {
       if (!patient) return ok({ patient: null, appointments: [], conversations: [], referrals: [] });
       // Date of birth and sex are read here only to say whether they are recorded: staff never see the values
       // (owner decision 2026-10-08, migration 20261008000005).
-      const { date_of_birth: dob, sex, ...visible } = patient;
-      const card = { ...visible, has_date_of_birth: dob !== null, has_sex: sex !== null };
+      const { date_of_birth: dob, sex, sms_consent_at: smsConsentAt, telegram_user_id: telegramUserId, ...visible } = patient;
+      const card = {
+        ...visible,
+        has_date_of_birth: dob !== null,
+        has_sex: sex !== null,
+        // Queue SMS (20261008000013): only for a patient without Telegram who agreed at the desk.
+        has_telegram: telegramUserId !== null,
+        sms_consent: smsConsentAt !== null,
+      };
       // The person's visits and conversations across merged records (Phase 14).
       const ids = await patientRecordIds(staff.clinicId, detailId);
 

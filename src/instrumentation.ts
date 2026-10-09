@@ -87,6 +87,19 @@ export function register() {
     missing.push(`ONLINE_PAYMENT_PROVIDER=${online} is not a known provider`);
   }
 
+  // SMS (20261008000013): the test outbox only for an E2E run against a local database; Eskiz only with credentials
+  // and a strong callback secret (its delivery reports are unsigned).
+  const sms = process.env.SMS_PROVIDER ?? "none";
+  if (sms === "test" && !(process.env.ALLOW_TEST_SMS === "true" && /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""))) {
+    missing.push("SMS_PROVIDER=test is for local development and E2E only");
+  }
+  if (sms === "eskiz") {
+    if (!process.env.ESKIZ_EMAIL || !process.env.ESKIZ_PASSWORD) missing.push("ESKIZ_EMAIL and ESKIZ_PASSWORD (SMS_PROVIDER=eskiz)");
+    if (weakSecret(process.env.ESKIZ_CALLBACK_SECRET ?? "")) missing.push(`ESKIZ_CALLBACK_SECRET (at least ${MIN_SECRET_LENGTH} random characters — it guards Eskiz delivery reports)`);
+    if (!process.env.NEXT_PUBLIC_APP_URL) missing.push("NEXT_PUBLIC_APP_URL (Eskiz delivery reports are sent to it)");
+  }
+  if (!["none", "eskiz", "test"].includes(sms)) missing.push(`SMS_PROVIDER=${sms} is not a known provider`);
+
   if ((process.env.PAYMENT_PROVIDER ?? "manual") !== "manual") {
     missing.push(
       "PAYMENT_PROVIDER (only 'manual' is implemented; Click/Payme require merchant credentials and a verified adapter — failing at startup instead of during a patient's payment attempt)",

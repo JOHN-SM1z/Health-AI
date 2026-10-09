@@ -4,6 +4,9 @@ import { ApiError } from "@/lib/api/errors";
 import { logger } from "@/lib/logger";
 import { serverHmac } from "@/lib/security/server-hmac";
 import { sharedRateLimit } from "@/lib/rate-limit-shared";
+import { randomInt } from "node:crypto";
+import { activeSmsProvider } from "@/lib/sms/provider";
+import { cardLinkCodeSms } from "@/lib/sms/templates";
 
 /**
  * Online identity for the Mini App booking (Slice B, 20261008000010, owner decision 2026-10-08).
@@ -227,6 +230,61 @@ export async function completeOnlineDetails(
   });
   if (error) throw refusal(error, "complete_online_patient");
   return { next: "done", profile: await onlineProfile(clinicId, patient.id) };
+}
+
+/**
+ * The second proof (20261008000013): a one-time code by SMS to the phone ON THE CARD the lookup matched — for a patient
+ * whose Telegram number differs from the card's. The answer is the same whether a code went out or not (no card, no
+ * phone, SMS off, limits reached), so it reveals nothing; only the code's HMAC is stored.
+ */
+export async function sendCardLinkCode(clinicId: string, patient: OnlinePatient, lookupId: string): Promise<{ sent: "if_card" }> {
+  if (!patient.telegram_user_id) throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
+  await limit(`online-identity:otp-send:${clinicId}:${patient.telegram_user_id}`, 5, 3_600_000);
+  await openLookup(clinicId, patient.telegram_user_id, lookupId);
+  const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+  const db = createAdminClient();
+  const { data: phone, error } = await db.rpc("issue_card_link_otp", {
+    p_clinic: clinicId,
+    p_telegram_user_id: patient.telegram_user_id,
+    p_lookup: lookupId,
+    p_code_hmac: serverHmac("card-link-otp", `${lookupId}\u0000${code}`),
+  });
+  if (error) throw refusal(error, "issue_card_link_otp");
+  const provider = activeSmsProvider();
+  if (phone && provider) {
+    const { data: clinic } = await db.from("clinics").select("name").eq("id", clinicId).single();
+    const result = await provider.send(phone, cardLinkCodeSms(clinic?.name ?? "Klinika", code), lookupId);
+    if (result.accepted) {
+      await db.from("sms_messages").insert({ clinic_id: clinicId, purpose: "card_link_otp", provider: provider.name, provider_message_id: result.providerMessageId });
+    } else {
+      logger.warn("card link code not accepted by the sms provider", { error: result.error });
+    }
+  }
+  return { sent: "if_card" };
+}
+
+export async function verifyCardLinkCode(clinicId: string, patient: OnlinePatient, lookupId: string, code: string): Promise<IdentityStep> {
+  if (!patient.telegram_user_id) throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
+  if (!/^\d{6}$/.test(code)) throw new ApiError(400, "Kod 6 ta raqamdan iborat", "wrong_code");
+  await limit(`online-identity:otp-verify:${clinicId}:${patient.telegram_user_id}`, 15, 3_600_000);
+  const db = createAdminClient();
+  const { data: outcome, error } = await db.rpc("verify_card_link_otp", {
+    p_clinic: clinicId,
+    p_telegram_user_id: patient.telegram_user_id,
+    p_lookup: lookupId,
+    p_code_hmac: serverHmac("card-link-otp", `${lookupId}\u0000${code}`),
+    p_username: patient.telegram_username ?? null,
+    p_first_name: patient.telegram_first_name ?? null,
+    p_last_name: patient.telegram_last_name ?? null,
+  });
+  if (error) throw refusal(error, "verify_card_link_otp");
+  if (outcome === "wrong_code") throw new ApiError(400, "Kod noto‘g‘ri", "wrong_code");
+  if (outcome === "expired") throw new ApiError(409, "Kod eskirgan — yangisini so‘rang", "code_expired");
+  if (outcome === "linked" || outcome === "already_linked") {
+    const { data: card } = await db.from("patients").select("id").eq("clinic_id", clinicId).eq("telegram_user_id", patient.telegram_user_id).single();
+    return { next: "done", profile: await onlineProfile(clinicId, card!.id) };
+  }
+  return { next: "reception" };
 }
 
 /**

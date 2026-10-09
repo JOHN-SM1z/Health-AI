@@ -9,6 +9,7 @@ import type { Json } from "@/lib/supabase/database.types";
 import { ORDER_ERRORS } from "@/lib/labs/ordering";
 import { classifyQuery, isIdentityDocument } from "@/lib/operations/identity-query";
 import { deliverClinicNotificationsSoon } from "@/lib/notifications/deliver-soon";
+import { recordAudit } from "@/lib/audit";
 
 /**
  * Outpatient pilot — the server side of 20261007000002. Every write is one
@@ -198,7 +199,7 @@ export type NewPatientInput = {
 
 export async function registerArrival(
   staff: Staff,
-  input: { key: string; patientId?: string | null; newPatient?: NewPatientInput | null; doctorId: string; serviceIds: string[] },
+  input: { key: string; patientId?: string | null; newPatient?: NewPatientInput | null; doctorId: string; serviceIds: string[]; smsConsent?: boolean },
 ): Promise<{ visitId: string; replayed: boolean }> {
   const np = input.newPatient
     ? {
@@ -221,6 +222,7 @@ export async function registerArrival(
   }).catch((e: unknown) => existingCardOnly(e, staff.clinicId, input.newPatient));
   // A free visit is queued at once: its Telegram ticket goes out now.
   deliverClinicNotificationsSoon(staff.clinicId);
+  if (input.smsConsent) await smsConsentForVisit(staff, r.visit_id);
   return { visitId: r.visit_id, replayed: r.replayed };
 }
 
@@ -402,6 +404,37 @@ export async function listRecentClosedVisits(clinicId: string, sinceIso: string)
   return toSummaries((data ?? []) as unknown as VisitRow[]);
 }
 
+/**
+ * The patient agreed (or no longer agrees) at the desk to queue SMS (20261008000013) — used only when they have no
+ * Telegram and the clinic has SMS on. Audited with ids only.
+ */
+export async function setSmsConsent(staff: Staff, patientId: string, consent: boolean): Promise<{ smsConsent: boolean }> {
+  const db = createAdminClient();
+  const { data, error } = await db
+    .from("patients")
+    .update({ sms_consent_at: consent ? new Date().toISOString() : null })
+    .eq("clinic_id", staff.clinicId)
+    .eq("id", patientId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw new ApiError(500, "Saqlab bo‘lmadi");
+  if (!data) throw new ApiError(404, REFUSALS.patient_not_found[1], "patient_not_found");
+  await recordAudit({
+    clinicId: staff.clinicId,
+    action: consent ? "patient_sms_consent_given" : "patient_sms_consent_withdrawn",
+    entityType: "patients",
+    entityId: patientId,
+    patientId,
+    actor: { actorType: "staff", actorId: staff.profileId },
+  });
+  return { smsConsent: consent };
+}
+
+async function smsConsentForVisit(staff: Staff, visitId: string) {
+  const { data } = await createAdminClient().from("visits").select("patient_id").eq("clinic_id", staff.clinicId).eq("id", visitId).maybeSingle();
+  if (data) await setSmsConsent(staff, data.patient_id, true);
+}
+
 /** Patients who paid online for a clinic day and have not arrived yet (reception's "Keldi" list), by booked time. */
 export async function listBookedVisits(clinicId: string, day: string): Promise<VisitSummary[]> {
   const { data, error } = await createAdminClient()
@@ -467,7 +500,7 @@ export async function voidVisitCharge(staff: Staff, chargeId: string, reason: st
  */
 export async function registerLabArrival(
   staff: Staff,
-  input: { key: string; patientId?: string | null; newPatient?: NewPatientInput | null; testIds: string[]; panelIds: string[] },
+  input: { key: string; patientId?: string | null; newPatient?: NewPatientInput | null; testIds: string[]; panelIds: string[]; smsConsent?: boolean },
 ): Promise<{ visitId: string; labOrderId: string | null; replayed: boolean }> {
   const np = input.newPatient
     ? {
@@ -496,6 +529,7 @@ export async function registerLabArrival(
   }
   const r = data as { visit_id: string; lab_order_id?: string; replayed: boolean };
   deliverClinicNotificationsSoon(staff.clinicId);
+  if (input.smsConsent) await smsConsentForVisit(staff, r.visit_id);
   return { visitId: r.visit_id, labOrderId: r.lab_order_id ?? null, replayed: r.replayed };
 }
 

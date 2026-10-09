@@ -39,6 +39,14 @@ const envSchema = z.object({
   PAYMENT_PROVIDER: z.enum(["manual", "click", "payme", "uzum"]).default("manual"),
   NEXT_PUBLIC_PAYMENT_PROVIDER: z.enum(["manual", "click", "payme", "uzum"]).default("manual"),
 
+  // SMS for patients without Telegram (20261008000013). "none" = no SMS. "test" records sends locally (E2E only).
+  SMS_PROVIDER: z.enum(["none", "eskiz", "test"]).default("none"),
+  ESKIZ_EMAIL: z.string().optional(),
+  ESKIZ_PASSWORD: z.string().optional(),
+  ESKIZ_FROM: z.string().default("4546"),
+  ESKIZ_API_BASE_URL: optionalUrl(),
+  ESKIZ_CALLBACK_SECRET: z.string().optional(),
+
   // Online payment in the Mini App (20261008000012). "none" = patients pay at the kassa. "rahmat" fails closed until its
   // adapter is implemented from Rahmat's merchant documentation. "test_online" is for local runs and E2E only.
   ONLINE_PAYMENT_PROVIDER: z.enum(["none", "rahmat", "test_online"]).default("none"),

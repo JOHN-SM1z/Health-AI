@@ -2,6 +2,7 @@ import "server-only";
 import { after } from "next/server";
 import { logger } from "@/lib/logger";
 import { processDueNotificationJobs } from "@/lib/notifications/processor";
+import { processDueSmsJobs } from "@/lib/sms/processor";
 
 /**
  * Delivers a clinic's due notification jobs right after this response,
@@ -17,6 +18,7 @@ export function deliverClinicNotificationsSoon(clinicId: string): void {
     after(async () => {
       try {
         await processDueNotificationJobs(20, [clinicId]);
+        await processDueSmsJobs(20, [clinicId]);
       } catch (e) {
         logger.error("notifications: immediate delivery failed", { clinicId, error: e instanceof Error ? e.message : String(e) });
       }
