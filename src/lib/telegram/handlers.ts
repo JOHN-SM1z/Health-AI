@@ -527,6 +527,24 @@ async function escalateUrgent(opts: {
   await notifyAdmins(`⚠️ Shoshilinch holat ehtimoli: bemor ${opts.patientLabel}`);
 }
 
+/**
+ * Urgent wording typed (or spoken) in the Mini App's concern step: the same escalation as in the chat. The patient's
+ * conversation with the clinic's bot is flagged urgent for staff, automation stops, and the approved urgent-care
+ * message goes to their Telegram chat as well as the Mini App. No booking is offered.
+ */
+export async function escalateUrgentFromMiniApp(opts: { clinicId: string; patientId: string; telegramUserId: number; text: string; patientLabel: string }) {
+  const conversation = await getOrCreateConversation({ clinicId: opts.clinicId, patientId: opts.patientId, channel: "telegram" });
+  await appendMessage({ conversationId: conversation.id, clinicId: opts.clinicId, role: "patient", type: "text", content: opts.text, metadata: { via: "mini_app_concern" } });
+  await escalateUrgent({
+    clinicId: opts.clinicId,
+    patientId: opts.patientId,
+    conversationId: conversation.id,
+    chatId: opts.telegramUserId,
+    text: opts.text,
+    patientLabel: opts.patientLabel,
+  });
+}
+
 export async function requestHumanHandoff(opts: {
   clinicId: string;
   patientId: string;

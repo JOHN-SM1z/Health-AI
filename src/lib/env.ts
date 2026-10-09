@@ -32,6 +32,9 @@ const envSchema = z.object({
   TRANSCRIPTION_API_KEY: z.string().optional(),
   TRANSCRIPTION_MODEL: z.string().default("whisper-1"),
   ENABLE_TRANSCRIPTION: z.enum(["true", "false"]).default("false"),
+  // Hosts a patient's spoken health concern may be sent to (comma-separated): self-hosted or in-country speech
+  // services only. Empty = no voice concerns (patients type). Known foreign providers are refused even if listed.
+  HEALTH_AUDIO_ALLOWED_HOSTS: z.string().optional(),
 
   PAYMENT_PROVIDER: z.enum(["manual", "click", "payme", "uzum"]).default("manual"),
   NEXT_PUBLIC_PAYMENT_PROVIDER: z.enum(["manual", "click", "payme", "uzum"]).default("manual"),
