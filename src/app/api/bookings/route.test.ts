@@ -55,6 +55,7 @@ function stubSuccess() {
     if (table === "patients") {
       return {
         update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })) })),
+        select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { full_name: null, phone: null }, error: null })) })) })) })),
       };
     }
     return {
@@ -149,6 +150,7 @@ describe("POST /api/bookings", () => {
       if (table === "patients") {
         return {
           update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })) })),
+          select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { full_name: null, phone: null }, error: null })) })) })) })),
         };
       }
       return {
@@ -242,6 +244,7 @@ describe("POST /api/bookings — appointment source attribution (audit finding)"
       if (table === "patients") {
         return {
           update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })) })),
+          select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { full_name: null, phone: null }, error: null })) })) })) })),
         };
       }
       return {

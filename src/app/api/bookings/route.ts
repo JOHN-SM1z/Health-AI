@@ -71,17 +71,25 @@ export async function POST(request: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // A verified Telegram patient keeps their own record current (consent,
-    // name, phone). A website visitor's details were recorded above only on a
-    // record of their own — never written onto an existing one.
+    // A verified Telegram patient records consent. The typed name and phone only fill a record that has none: they
+    // come from the browser, so they never replace what is already on a card — a card reception registered, or one
+    // linked by a verified phone. Corrections go through reception. A website visitor's details were recorded above
+    // only on a record of their own — never written onto an existing one.
     if (body.initData) {
+      const { data: current, error: currentError } = await supabase
+        .from("patients")
+        .select("full_name, phone")
+        .eq("id", patient.id)
+        .eq("clinic_id", clinic.id)
+        .single();
+      if (currentError || !current) throw new ApiError(500, "Bemor ma‘lumotlarini saqlab bo‘lmadi");
       const { error: patientUpdateError } = await supabase
         .from("patients")
         .update({
           consent_given: true,
           consent_given_at: new Date().toISOString(),
-          full_name: body.patientName,
-          phone: body.phone,
+          ...(current.full_name ? {} : { full_name: body.patientName }),
+          ...(current.phone ? {} : { phone: body.phone }),
         })
         .eq("id", patient.id)
         .eq("clinic_id", clinic.id);

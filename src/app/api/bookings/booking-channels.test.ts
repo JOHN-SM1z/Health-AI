@@ -362,6 +362,22 @@ describeDb("online and offline booking share one engine — real routes, real da
     ]);
     for (const r of cases) expect(JSON.stringify(r.body)).not.toMatch(/violat|constraint|postgres|sqlstate|23P01|P0001/i);
   });
+  it("a Telegram booking never overwrites the name or phone on a card; it only fills a record that has none", async () => {
+    // online[1] already has a name (from beforeAll) and gets a phone here, as a desk card would.
+    await sql`update public.patients set phone = '+998 93 000 11 22' where id = ${online[1]}`;
+    const [before] = await sql<{ full_name: string }[]>`select full_name from public.patients where id = ${online[1]}`;
+    expect((await bookOnline(online[1], freshSlot())).status).toBe(201); // sends "Onlayn Bemor" / +998901234567
+    const [after] = await sql<{ full_name: string; phone: string; consent_given: boolean }[]>`
+      select full_name, phone, consent_given from public.patients where id = ${online[1]}`;
+    expect(after).toEqual({ full_name: before.full_name, phone: "+998 93 000 11 22", consent_given: true });
+
+    // A Telegram-only record with nothing on it yet takes the typed details.
+    await sql`update public.patients set full_name = null, phone = null where id = ${online[2]}`;
+    expect((await bookOnline(online[2], freshSlot())).status).toBe(201);
+    const [filled] = await sql<{ full_name: string; phone: string }[]>`select full_name, phone from public.patients where id = ${online[2]}`;
+    expect(filled).toEqual({ full_name: "Onlayn Bemor", phone: "+998901234567" });
+  });
+
   it("a website booking never takes over or edits someone else's patient record — it reuses one only on a name and phone match", async () => {
     const phone = `+99890${String(Math.floor(Math.random() * 10_000_000)).padStart(7, "0")}`;
     const telegramPatient = randomUUID();
