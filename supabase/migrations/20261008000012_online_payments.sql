@@ -51,10 +51,13 @@ alter table public.visit_transactions add constraint visit_transactions_actor_ch
 -- Invoices, provider events, refunds
 -- ---------------------------------------------------------------------------
 
+-- Every reference below stays inside its clinic (composite keys with clinic_id, as the tenant-integrity suite requires).
+alter table public.payments add constraint payments_id_clinic_id_key unique (id, clinic_id);
+
 create table public.payment_invoices (
   id uuid primary key default gen_random_uuid(),
   clinic_id uuid not null references public.clinics(id) on delete cascade,
-  payment_id uuid not null references public.payments(id) on delete restrict,
+  payment_id uuid not null,
   appointment_id uuid not null,
   patient_id uuid not null,
   provider public.payment_provider not null constraint payment_invoices_provider_check check (provider in ('rahmat', 'test_online')),
@@ -65,7 +68,11 @@ create table public.payment_invoices (
   pay_url text,
   expires_at timestamptz not null,
   created_at timestamptz not null default now(),
-  paid_at timestamptz
+  paid_at timestamptz,
+  constraint payment_invoices_id_clinic_id_key unique (id, clinic_id),
+  constraint payment_invoices_payment_fkey foreign key (payment_id, clinic_id) references public.payments (id, clinic_id) on delete restrict,
+  constraint payment_invoices_appointment_fkey foreign key (appointment_id, clinic_id) references public.appointments (id, clinic_id) on delete restrict,
+  constraint payment_invoices_patient_fkey foreign key (patient_id, clinic_id) references public.patients (id, clinic_id) on delete restrict
 );
 create unique index payment_invoices_one_open on public.payment_invoices (payment_id) where status = 'open';
 create index payment_invoices_appointment_idx on public.payment_invoices (clinic_id, appointment_id);
@@ -84,8 +91,8 @@ create table public.payment_provider_events (
 create table public.payment_refunds (
   id uuid primary key default gen_random_uuid(),
   clinic_id uuid not null references public.clinics(id) on delete cascade,
-  payment_id uuid not null references public.payments(id) on delete restrict,
-  invoice_id uuid references public.payment_invoices(id) on delete restrict,
+  payment_id uuid not null,
+  invoice_id uuid,
   visit_id uuid,
   amount numeric(12, 2) not null check (amount > 0),
   currency text not null,
@@ -96,7 +103,10 @@ create table public.payment_refunds (
   requested_at timestamptz not null default now(),
   done_at timestamptz,
   done_by uuid references public.profiles(id),
-  constraint payment_refunds_done_check check ((status = 'done') = (done_at is not null and done_by is not null))
+  constraint payment_refunds_done_check check ((status = 'done') = (done_at is not null and done_by is not null)),
+  constraint payment_refunds_payment_fkey foreign key (payment_id, clinic_id) references public.payments (id, clinic_id) on delete restrict,
+  constraint payment_refunds_invoice_fkey foreign key (invoice_id, clinic_id) references public.payment_invoices (id, clinic_id) on delete restrict,
+  constraint payment_refunds_visit_fkey foreign key (visit_id, clinic_id) references public.visits (id, clinic_id) on delete restrict
 );
 create index payment_refunds_open_idx on public.payment_refunds (clinic_id, requested_at) where status = 'requested';
 

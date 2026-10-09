@@ -83,8 +83,15 @@ describeDb("online payment → queue number (signed test provider, real database
   /** A pending online booking of the doctor today (clinic time), each one 20 minutes later than the last. */
   const booking = async () => {
     slotMinutes += 20;
-    const start = new Date(Date.now() + slotMinutes * 60_000);
+    let start = new Date(Date.now() + slotMinutes * 60_000);
     start.setUTCSeconds(0, 0);
+    // Working hours end at 23:59 clinic time (UTC+5): near midnight, book the next morning instead (arrival is then
+    // checked as "not today").
+    const local = new Date(start.getTime() + 5 * 3_600_000);
+    if (local.getUTCHours() * 60 + local.getUTCMinutes() > 23 * 60 + 30) {
+      const nextMorning = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() + 1, 9 - 5, 0);
+      start = new Date(nextMorning + slotMinutes * 60_000);
+    }
     const [a] = await sql<{ id: string }[]>`
       insert into public.appointments ${sql({ clinic_id: clinic, patient_id: patient, doctor_id: doctor, service_id: service, start_at: start, end_at: new Date(start.getTime() + 20 * 60_000), status: "pending", source: "telegram_mini_app" })}
       returning id`;
