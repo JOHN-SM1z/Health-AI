@@ -626,6 +626,7 @@ export function BookingFlow() {
 function StepHeader({ step }: { step: string }) {
   const labels: Record<string, string> = {
     consent: "1/7 · Rozilik",
+    identity: "Shaxsni tasdiqlash",
     choose: "2/7 · Tanlov",
     service: "3/7 · Xizmat",
     doctor: "4/7 · Shifokor",
