@@ -430,6 +430,7 @@ export type Database = {
       clinics: {
         Row: {
           queue_after_payment: boolean
+          online_identity_required: boolean
           operating_mode: string
           address: string | null
           created_at: string
@@ -447,6 +448,7 @@ export type Database = {
         }
         Insert: {
           queue_after_payment?: boolean
+          online_identity_required?: boolean
           operating_mode?: string
           address?: string | null
           created_at?: string
@@ -464,6 +466,7 @@ export type Database = {
         }
         Update: {
           queue_after_payment?: boolean
+          online_identity_required?: boolean
           operating_mode?: string
           address?: string | null
           created_at?: string
@@ -2494,6 +2497,8 @@ export type Database = {
           sex: Database["public"]["Enums"]["patient_sex"] | null
           telegram_first_name: string | null
           telegram_last_name: string | null
+          telegram_link_method: string | null
+          telegram_linked_at: string | null
           telegram_user_id: number | null
           telegram_username: string | null
           updated_at: string
@@ -2519,6 +2524,8 @@ export type Database = {
           sex?: Database["public"]["Enums"]["patient_sex"] | null
           telegram_first_name?: string | null
           telegram_last_name?: string | null
+          telegram_link_method?: string | null
+          telegram_linked_at?: string | null
           telegram_user_id?: number | null
           telegram_username?: string | null
           updated_at?: string
@@ -2544,6 +2551,8 @@ export type Database = {
           sex?: Database["public"]["Enums"]["patient_sex"] | null
           telegram_first_name?: string | null
           telegram_last_name?: string | null
+          telegram_link_method?: string | null
+          telegram_linked_at?: string | null
           telegram_user_id?: number | null
           telegram_username?: string | null
           updated_at?: string
@@ -3036,6 +3045,105 @@ export type Database = {
           },
         ]
       }
+      online_identity_lookups: {
+        Row: {
+          clinic_id: string
+          completed_at: string | null
+          created_at: string
+          date_of_birth: string
+          document_key: string
+          document_number: string | null
+          dob_mismatch: boolean
+          expires_at: string
+          id: string
+          matched_patient_id: string | null
+          pinfl: string | null
+          telegram_user_id: number
+        }
+        Insert: {
+          clinic_id: string
+          completed_at?: string | null
+          created_at?: string
+          date_of_birth: string
+          document_key: string
+          document_number?: string | null
+          dob_mismatch?: boolean
+          expires_at?: string
+          id?: string
+          matched_patient_id?: string | null
+          pinfl?: string | null
+          telegram_user_id: number
+        }
+        Update: {
+          clinic_id?: string
+          completed_at?: string | null
+          created_at?: string
+          date_of_birth?: string
+          document_key?: string
+          document_number?: string | null
+          dob_mismatch?: boolean
+          expires_at?: string
+          id?: string
+          matched_patient_id?: string | null
+          pinfl?: string | null
+          telegram_user_id?: number
+        }
+        Relationships: []
+      }
+      patient_identity_claims: {
+        Row: {
+          clinic_id: string
+          conflicting_patient_id: string | null
+          created_at: string
+          id: string
+          patient_id: string
+          reason: string
+          resolved_at: string | null
+          resolved_by: string | null
+        }
+        Insert: {
+          clinic_id: string
+          conflicting_patient_id?: string | null
+          created_at?: string
+          id?: string
+          patient_id: string
+          reason: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+        }
+        Update: {
+          clinic_id?: string
+          conflicting_patient_id?: string | null
+          created_at?: string
+          id?: string
+          patient_id?: string
+          reason?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+        }
+        Relationships: []
+      }
+      telegram_verified_phones: {
+        Row: {
+          clinic_id: string
+          phone_key: string
+          telegram_user_id: number
+          verified_at: string
+        }
+        Insert: {
+          clinic_id: string
+          phone_key: string
+          telegram_user_id: number
+          verified_at?: string
+        }
+        Update: {
+          clinic_id?: string
+          phone_key?: string
+          telegram_user_id?: number
+          verified_at?: string
+        }
+        Relationships: []
+      }
       staff_roles: {
         Row: {
           clinic_id: string
@@ -3498,6 +3606,45 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      complete_online_patient: {
+        Args: {
+          p_address?: string
+          p_clinic: string
+          p_full_name: string
+          p_lookup: string
+          p_sex?: Database["public"]["Enums"]["patient_sex"]
+          p_telegram_user_id: number
+        }
+        Returns: string
+      }
+      link_card_to_telegram: {
+        Args: {
+          p_clinic: string
+          p_first_name?: string | null
+          p_last_name?: string | null
+          p_method: string
+          p_patient: string
+          p_telegram_user_id: number
+          p_username?: string | null
+        }
+        Returns: string
+      }
+      normalize_uz_phone: { Args: { p_value: string }; Returns: string }
+      online_identity_lookup: {
+        Args: {
+          p_clinic: string
+          p_dob: string
+          p_document: string | null
+          p_document_key: string
+          p_pinfl: string | null
+          p_telegram_user_id: number
+        }
+        Returns: string
+      }
+      record_telegram_verified_phone: {
+        Args: { p_clinic: string; p_phone: string; p_telegram_user_id: number }
+        Returns: boolean
+      }
       book_appointment: {
         Args: {
           p_clinic_id: string

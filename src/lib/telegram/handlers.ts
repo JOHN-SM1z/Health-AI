@@ -4,6 +4,7 @@ import { adminChatIds, env } from "@/lib/env";
 import { getClinicById } from "@/lib/clinics/context";
 import { getClinicContact } from "@/lib/clinics/contact";
 import { getOrCreatePatient } from "@/lib/patients/identity";
+import { recordSharedContact } from "@/lib/patients/online-identity";
 import { getOrCreateConversation, appendMessage, conversationIsHeld, updateConversationState } from "@/lib/telegram/store";
 import { sendTelegramMessage, getTelegramFileUrl } from "@/lib/telegram/bot";
 import { appUrlCandidates, resolveHttpsAppUrl } from "@/lib/telegram/bots";
@@ -291,6 +292,26 @@ export async function handleTelegramCommand(opts: {
         clinic.id,
       );
   }
+}
+
+/**
+ * A contact arrived in the chat (the Mini App's "share my phone" sends it here). Kept as the sender's verified phone
+ * only when it is their own; the number itself is never echoed back, logged or audited.
+ */
+export async function handleContactShared(opts: {
+  clinicId: string;
+  chatId: number;
+  from: { id: number };
+  contact: { phone_number?: string; user_id?: number };
+}) {
+  const outcome = await recordSharedContact(opts.clinicId, opts.from, opts.contact);
+  const text =
+    outcome === "verified"
+      ? "✅ Telefon raqamingiz tasdiqlandi. Ilovaga qayting — yozilishni davom ettiramiz."
+      : outcome === "not_own"
+        ? "Faqat o‘zingizning Telegram raqamingizni yuboring (“Raqamni ulashish” tugmasi orqali)."
+        : "Onlayn tasdiqlash faqat O‘zbekiston raqamlari (+998) uchun ishlaydi. Iltimos, qabulxonaga murojaat qiling.";
+  await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: { remove_keyboard: true } }, opts.clinicId);
 }
 
 /** Menu button handler — the shared text-based commands. */
