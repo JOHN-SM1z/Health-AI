@@ -35,6 +35,7 @@ const REFUSALS: Record<string, [number, string]> = {
   patient_not_found: [404, "Bemor topilmadi"],
   patient_merged: [409, "Bu karta asosiy kartaga birlashtirilgan — asosiy kartani tanlang"],
   patient_exists: [409, "Bu bemor allaqachon ro‘yxatda bor — mavjud kartani tanlang"],
+  identity_conflict: [409, "Kiritilgan ma’lumotlar mavjud karta bilan mos kelmaydi — hujjat va tug‘ilgan sanani tekshiring yoki administratorga murojaat qiling"],
   already_registered: [409, "Bemor bu shifokorga allaqachon ro‘yxatdan o‘tgan"],
   already_registered_lab: [409, "Bemor laboratoriya navbatida allaqachon bor"],
   visit_not_found: [404, "Tashrif topilmadi"],
@@ -64,7 +65,8 @@ function refusal(error: { code?: string; hint?: string | null; message?: string;
   const hint = error.hint ?? "";
   const known = REFUSALS[hint];
   if (known) {
-    const details = hint === "patient_exists" && error.details ? { patientId: error.details } : undefined;
+    // The matched card's id stays on the server: `existingCardOnly` decides whether reception may see it.
+    const details = hint === "patient_exists" && error.details ? { matchedPatientId: error.details } : undefined;
     return new ApiError(known[0], known[1], hint, details);
   }
   if (error.code === "42501") return new ApiError(403, REFUSALS.forbidden[1], "forbidden");
@@ -83,22 +85,42 @@ async function rpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
   return data;
 }
 
+/**
+ * A new-patient registration matched an existing card (same JSHSHIR, passport/ID, or name + date of birth). Reception
+ * is offered that card only when the typed date of birth matches it too; otherwise the answer says only that the
+ * details conflict — it never tells the desk whose document it is (owner decision 2026-10-08).
+ */
+async function existingCardOnly(e: unknown, clinicId: string, newPatient: NewPatientInput | null | undefined): Promise<never> {
+  if (!(e instanceof ApiError) || e.code !== "patient_exists") throw e;
+  const matched = e.details?.matchedPatientId;
+  if (typeof matched === "string" && newPatient?.dateOfBirth) {
+    const { data } = await createAdminClient()
+      .from("patients")
+      .select("id, date_of_birth")
+      .eq("clinic_id", clinicId)
+      .eq("id", matched)
+      .maybeSingle();
+    if (data && data.date_of_birth === newPatient.dateOfBirth) throw new ApiError(409, e.message, "patient_exists", { patientId: data.id });
+  }
+  throw new ApiError(REFUSALS.identity_conflict[0], REFUSALS.identity_conflict[1], "identity_conflict");
+}
+
 // ---------------------------------------------------------------------------
 // Patient identification (reception)
 // ---------------------------------------------------------------------------
 
+/**
+ * What the desk sees of a card: name, phone and card number (owner decision 2026-10-08). The passport/ID number, JSHSHIR,
+ * date of birth and sex stay on the server: they are compared here, never returned.
+ */
 export type PatientMatch = {
   id: string;
   patientNumber: number;
   fullName: string | null;
-  dateOfBirth: string | null;
-  sex: "female" | "male" | null;
-  /** Only the last characters — enough to confirm, not to copy. */
-  documentHint: string | null;
-  phoneHint: string | null;
+  phone: string | null;
+  /** True when the date of birth the desk typed was checked on the server and matches; null when none was typed. */
+  dobMatches: boolean | null;
 };
-
-const mask = (v: string | null, keep: number) => (v ? `•••${v.slice(-keep)}` : null);
 
 export type PatientSearch = {
   patients: PatientMatch[];
@@ -114,20 +136,25 @@ export type PatientSearch = {
  * or name (optionally narrowed by date of birth). A document whose card has a
  * different date of birth is reported as a mismatch and the card is not
  * returned: a wrong-patient safety check that also reveals nothing about it.
- * Merged records are never offered; at most 10 results.
+ * A document or JSHSHIR is never looked up without a date of birth (enforced
+ * here, not only on the screen). Identity values are compared on the server
+ * and never returned. Merged records are never offered; at most 10 results.
  */
 export async function searchPatients(staff: Staff, q: string, dateOfBirth?: string): Promise<PatientSearch> {
   const none: PatientSearch = { patients: [], exact: false, dobMismatch: false };
   if (q.trim().length < 2) return none;
+  const term = classifyQuery(q);
+  if (isIdentityDocument(term) && !dateOfBirth) {
+    throw new ApiError(400, "Pasport yoki JSHSHIR bilan birga tug‘ilgan sanani ham kiriting", "dob_required");
+  }
   const supabase = createAdminClient();
   let query = supabase
     .from("patients")
-    .select("id, patient_number, full_name, date_of_birth, sex, document_number, phone")
+    .select("id, patient_number, full_name, date_of_birth, phone")
     .eq("clinic_id", staff.clinicId)
     .is("merged_into_patient_id", null)
     .limit(10);
 
-  const term = classifyQuery(q);
   if (term.kind === "patient_number") query = query.eq("patient_number", Number(term.value));
   else if (term.kind === "pinfl") query = query.eq("pinfl", term.value);
   else if (term.kind === "document") query = query.eq("document_number", term.value);
@@ -146,10 +173,9 @@ export async function searchPatients(staff: Staff, q: string, dateOfBirth?: stri
       id: p.id,
       patientNumber: Number(p.patient_number),
       fullName: p.full_name,
-      dateOfBirth: p.date_of_birth,
-      sex: p.sex,
-      documentHint: mask(p.document_number, 3),
-      phoneHint: mask(p.phone?.replace(/\D/g, "") ?? null, 4),
+      phone: p.phone,
+      // Every row kept was filtered on the typed date of birth.
+      dobMatches: dateOfBirth ? true : null,
     })),
     exact: byDocument && kept.length === 1,
     dobMismatch: byDocument && rows.length > 0 && kept.length === 0,
@@ -191,7 +217,7 @@ export async function registerArrival(
     p_new_patient: np as Json,
     p_doctor: input.doctorId,
     p_service_ids: input.serviceIds,
-  });
+  }).catch((e: unknown) => existingCardOnly(e, staff.clinicId, input.newPatient));
   // A free visit is queued at once: its Telegram ticket goes out now.
   deliverClinicNotificationsSoon(staff.clinicId);
   return { visitId: r.visit_id, replayed: r.replayed };
@@ -413,7 +439,7 @@ export async function registerLabArrival(
     // create_lab_order's own refusals (no date of birth, inactive test, …).
     const known = ORDER_ERRORS.find(([pattern]) => pattern.test(error.message ?? ""));
     if (known && !error.hint) throw new ApiError(known[1], known[2], known[3]);
-    throw refusal(error, "register_lab_arrival");
+    return existingCardOnly(refusal(error, "register_lab_arrival"), staff.clinicId, input.newPatient);
   }
   const r = data as { visit_id: string; lab_order_id?: string; replayed: boolean };
   deliverClinicNotificationsSoon(staff.clinicId);

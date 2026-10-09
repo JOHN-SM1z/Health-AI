@@ -20,14 +20,16 @@ import { ArrowLeftRight } from "lucide-react";
  * nothing recorded for either is moved, changed or deleted.
  */
 
-type Person = { id: string; name: string | null; dateOfBirth: string | null; phoneTail: string | null; telegram?: boolean; createdAt?: string; hasMergedRecords?: boolean };
+/** Name, age and phone — the date of birth and documents stay on the server (owner decision 2026-10-08). */
+type Person = { id: string; name: string | null; age: number | null; phone: string | null; telegram?: boolean; createdAt?: string; hasMergedRecords?: boolean };
 type Pair = { a: Person; b: Person; reasons: string[] };
 type Side = {
   id: string;
   full_name: string | null;
   phone: string | null;
-  date_of_birth: string | null;
-  sex: string | null;
+  age: number | null;
+  has_date_of_birth: boolean;
+  has_sex: boolean;
   has_pinfl: boolean;
   has_document: boolean;
   has_telegram: boolean;
@@ -45,8 +47,8 @@ type Preview = {
 };
 type Merge = {
   id: string;
-  canonical: { name: string | null; dateOfBirth: string | null } | null;
-  duplicate: { name: string | null; dateOfBirth: string | null } | null;
+  canonical: { name: string | null; age: number | null; phone: string | null } | null;
+  duplicate: { name: string | null; age: number | null; phone: string | null } | null;
   reason: string;
   mergedAt: string;
   mergedBy: string | null;
@@ -59,8 +61,8 @@ type Merge = {
 type SearchPatient = { id: string; full_name: string | null; phone: string | null };
 
 const err = (e: unknown, fallback: string) => (e instanceof AdminApiError ? e.message : fallback);
-const who = (p: { name: string | null; dateOfBirth: string | null } | null) =>
-  p ? [p.name ?? "—", p.dateOfBirth ? formatDay(p.dateOfBirth) : null].filter(Boolean).join(" · ") : "—";
+const who = (p: { name: string | null; age: number | null; phone?: string | null } | null) =>
+  p ? [p.name ?? "—", p.age !== null ? `${p.age} yosh` : null, p.phone ?? null].filter(Boolean).join(" · ") : "—";
 
 function PatientPicker({ label, value, onPick }: { label: string; value: SearchPatient | null; onPick: (p: SearchPatient) => void }) {
   const [q, setQ] = useState("");
@@ -196,7 +198,7 @@ export function PatientMerge() {
     <div className="space-y-1 rounded-lg border border-hairline p-3 text-sm">
       <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">{title}</p>
       <p className="font-medium">{s.full_name ?? "—"}</p>
-      <p>{[s.date_of_birth ? formatDay(s.date_of_birth) : "tug‘ilgan sana yo‘q", s.phone ?? "telefon yo‘q"].join(" · ")}</p>
+      <p>{[s.age !== null ? `${s.age} yosh` : "tug‘ilgan sana yo‘q", s.phone ?? "telefon yo‘q"].join(" · ")}</p>
       <p className="text-xs text-ink-muted">
         {[s.has_pinfl && "JShShIR", s.has_document && "pasport", s.has_telegram && "Telegram"].filter(Boolean).join(", ") || "identifikator yo‘q"} · yaratilgan {formatDay(s.created_at)}
       </p>

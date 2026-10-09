@@ -97,7 +97,9 @@ async function run() {
       await page.getByLabel("Bemorni qidirish").fill(DOC.toLowerCase());
       await page.getByLabel("Tug‘ilgan sana (kk.oo.yyyy)").fill("12/04/1991");
       await page.getByRole("button", { name: "Topish" }).click();
-      await page.getByText(`Karta № ${visit.patient_number} · 12.04.1991`).waitFor();
+      // Staff see card number, phone and "date of birth matches" — never the date itself (owner decision 2026-10-08).
+      await page.getByText(new RegExp(`Karta № ${visit.patient_number} · tel\\. .*tug‘ilgan sana mos`)).first().waitFor();
+      check((await page.getByText(/12\.04\.1991|1991-04-12/).count()) === 0, "the found card does not show the date of birth");
       check(
         (await page.getByText("Hujjat va tug‘ilgan sana bo‘yicha topildi").isVisible()) && (await page.getByRole("dialog").count()) === 0,
         "a returning patient's card opens straight from passport + date of birth",

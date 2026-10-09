@@ -5,7 +5,7 @@ import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AModal, AInp
 import { adminApi, AdminApiError } from "@/lib/admin/client";
 import { freshnessLabel, money, useLive, VISIT_STATUS } from "@/components/operations/use-live";
 import { FollowQr } from "@/components/operations/follow-qr";
-import { classifyQuery, formatDob, isIdentityDocument, parseDob } from "@/lib/operations/identity-query";
+import { classifyQuery, isIdentityDocument, parseDob } from "@/lib/operations/identity-query";
 import { Search, UserCheck, UserPlus, Users } from "lucide-react";
 
 /**
@@ -14,20 +14,21 @@ import { Search, UserCheck, UserPlus, Users } from "lucide-react";
  * patient's card opens at once; no card → the new-patient form opens with
  * them filled in. A patient without a document is found by name, phone or
  * card number and taken with "Hujjat yo‘q — davom etish": care is never held
- * up by identity. A typed document is a lookup key, not verification (that is
- * MyID's, once integrated). Then the doctor or laboratory and the services;
+ * up by identity. A typed document is a lookup key, not verification. Staff see
+ * the name, phone and card number only: passport/ID, JSHSHIR and date of birth
+ * are compared on the server and never shown (owner decision 2026-10-08). Then the doctor or laboratory and the services;
  * the server prices them and creates the bill; the patient pays at the kassa,
  * which issues the queue number. Reception never takes money.
  */
 
+/** What the server returns for a card: no passport/ID, JSHSHIR or date of birth (they are compared on the server). */
 type Match = {
   id: string;
   patientNumber: number;
   fullName: string | null;
-  dateOfBirth: string | null;
-  sex: "female" | "male" | null;
-  documentHint: string | null;
-  phoneHint: string | null;
+  phone: string | null;
+  /** The date of birth typed at the desk was checked on the server and matches. */
+  dobMatches: boolean | null;
 };
 type SearchResult = { patients: Match[]; exact: boolean; dobMismatch: boolean };
 type Catalog = {
@@ -140,7 +141,7 @@ export default function ReceptionPage() {
           pinfl: term.kind === "pinfl" ? term.value : "",
           dateOfBirth: dobText.trim(),
         });
-        setNotice("Bu hujjat bilan karta yo‘q — yangi bemorning F.I.Sh.ini kiriting. MyID ulangach ma’lumotlar avtomatik to‘ldiriladi.");
+        setNotice("Bu hujjat bilan karta yo‘q — yangi bemorning F.I.Sh.ini kiriting. Hujjat va tug‘ilgan sana kartada saqlanadi, lekin xodimlarga ko‘rsatilmaydi.");
       } else {
         setMatches(res.patients);
       }
@@ -264,7 +265,8 @@ export default function ReceptionPage() {
               <div>
                 <p className="font-semibold text-pine-deep">{patient.fullName}</p>
                 <p className="text-xs text-pine-deep">
-                  Karta № {patient.patientNumber} · {formatDob(patient.dateOfBirth)} · tel. {patient.phoneHint ?? "—"}
+                  Karta № {patient.patientNumber} · tel. {patient.phone ?? "—"}
+                  {patient.dobMatches ? " · tug‘ilgan sana mos" : ""}
                 </p>
                 <p className="mt-1 text-[11px] text-pine-deep">
                   {foundBy === "document" ? "Hujjat va tug‘ilgan sana bo‘yicha topildi" : "Hujjatsiz tanlandi"}
@@ -337,14 +339,18 @@ export default function ReceptionPage() {
                   <Search className="h-4 w-4" /> Topish
                 </AButton>
               </form>
-              <p className="text-[11px] text-ink-muted">Hujjati yo‘q bemorni F.I.Sh., telefon yoki karta raqami bilan toping.</p>
+              <p className="text-[11px] text-ink-muted">
+                Hujjati yo‘q bemorni F.I.Sh., telefon yoki karta raqami bilan toping. Tug‘ilgan sanani so‘rab kiriting — tizim uni o‘zi tekshiradi
+                (xodimlarga ko‘rsatilmaydi).
+              </p>
               {matches && matches.length === 0 && !notice && <p className="text-sm text-ink-muted">Topilmadi.</p>}
               {matches?.map((m) => (
                 <div key={m.id} className="flex items-center justify-between gap-3 rounded-xl border border-hairline p-3">
                   <div className="text-sm">
                     <p className="font-semibold">{m.fullName ?? "—"}</p>
                     <p className="text-xs text-ink-muted">
-                      Karta № {m.patientNumber} · tug‘ilgan {formatDob(m.dateOfBirth)} · tel. {m.phoneHint ?? "—"}
+                      Karta № {m.patientNumber} · tel. {m.phone ?? "—"}
+                      {m.dobMatches ? " · tug‘ilgan sana mos" : ""}
                     </p>
                   </div>
                   <AButton variant="outline" size="sm" onClick={() => choose(m, "no_document")}>

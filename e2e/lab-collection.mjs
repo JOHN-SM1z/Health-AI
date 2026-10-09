@@ -71,7 +71,11 @@ async function run() {
 
     const card = r.getByRole("region", { name: `${patientName} buyurtmasi` });
     await card.waitFor();
-    check(await card.getByText("14.03.1979").isVisible(), "reception: the queue shows the patient's date of birth for identification");
+    // An age identifies the patient; the date of birth itself stays on the server (owner decision 2026-10-08).
+    const now = new Date(Date.now() + 5 * 3_600_000); // the clinic's calendar day (Asia/Tashkent)
+    const age = now.getUTCFullYear() - 1979 - (now.getUTCMonth() < 2 || (now.getUTCMonth() === 2 && now.getUTCDate() < 14) ? 1 : 0);
+    check(await card.getByText(new RegExp(`${age} yosh`)).isVisible(), "reception: the queue shows the patient's age for identification");
+    check((await card.getByText("14.03.1979").count()) === 0 && !(await r.content()).includes("1979-03-14"), "reception: the queue does not show the date of birth");
     await card.getByRole("button", { name: "Vena qoni namunasini olish (2)" }).click();
     const collect = r.getByRole("dialog", { name: "Vena qoni namunasini olish" });
     check(await collect.getByText("8 soat och qoringa").isVisible(), "reception: preparation is shown when collecting");

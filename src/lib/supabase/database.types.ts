@@ -2482,6 +2482,7 @@ export type Database = {
           date_of_birth: string | null
           document_number: string | null
           full_name: string | null
+          home_address: string | null
           id: string
           last_seen_at: string | null
           merged_at: string | null
@@ -2506,6 +2507,7 @@ export type Database = {
           date_of_birth?: string | null
           document_number?: string | null
           full_name?: string | null
+          home_address?: string | null
           id?: string
           last_seen_at?: string | null
           merged_at?: string | null
@@ -2530,6 +2532,7 @@ export type Database = {
           date_of_birth?: string | null
           document_number?: string | null
           full_name?: string | null
+          home_address?: string | null
           id?: string
           last_seen_at?: string | null
           merged_at?: string | null

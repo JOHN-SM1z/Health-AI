@@ -44,6 +44,8 @@ describeDb("patient date of birth and sex (real database)", () => {
     session.ctx = { profileId, clinicId, clinicName: "Demo", clinicTimezone: "Asia/Tashkent", roles: [role], platformAdmin: false };
   };
   const json = (method: string, body: unknown) => ({ method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const patch = async (body: Record<string, unknown>) =>
+    read(await setDemographics(new NextRequest("http://localhost/api/admin/patients/demographics", json("PATCH", body))));
   const set = async (patientId: string, dateOfBirth: unknown, sex: unknown = null) =>
     read(await setDemographics(new NextRequest("http://localhost/api/admin/patients/demographics", json("PATCH", { patientId, dateOfBirth, sex }))));
   const order = async (patientId: string) =>
@@ -94,12 +96,22 @@ describeDb("patient date of birth and sex (real database)", () => {
 
     as(people.reception, "receptionist");
     const saved = await set(patient, "1984-02-29", "female");
-    expect(saved).toMatchObject({ status: 200, body: { data: { dateOfBirth: "1984-02-29", sex: "female", changed: true } } });
+    // Write-only (owner decision 2026-10-08): the answer says it is recorded, never what was recorded.
+    expect(saved).toMatchObject({ status: 200, body: { data: { changed: true, hasDateOfBirth: true, hasSex: true } } });
+    expect(JSON.stringify(saved.body)).not.toMatch(/1984|female/);
     expect(await row(patient)).toEqual({ date_of_birth: "1984-02-29", sex: "female" });
 
-    // The patient card shows what was recorded.
+    // The patient card shows only that both are recorded.
     const card = await read(await patients(new NextRequest(`http://localhost/api/admin/patients?id=${patient}`)));
-    expect(card.body.data!.patient).toMatchObject({ date_of_birth: "1984-02-29", sex: "female" });
+    expect(card.body.data!.patient).toMatchObject({ has_date_of_birth: true, has_sex: true });
+    expect(card.body.data!.patient).not.toHaveProperty("date_of_birth");
+    expect(card.body.data!.patient).not.toHaveProperty("sex");
+    expect(JSON.stringify(card.body)).not.toMatch(/1984-02-29|female/);
+
+    // Either value can be corrected alone, without knowing (or re-typing) the other.
+    expect((await patch({ patientId: patient, sex: "male" })).body.data).toMatchObject({ changed: true });
+    expect(await row(patient)).toEqual({ date_of_birth: "1984-02-29", sex: "male" });
+    expect((await patch({ patientId: patient })).status).toBe(400);
 
     as(people.lab, "lab");
     expect((await order(patient)).status).toBe(201);

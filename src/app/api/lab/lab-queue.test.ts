@@ -33,7 +33,7 @@ const describeDb = describe.skipIf(!localDbAvailable());
 type Body = { ok: boolean; data?: Record<string, unknown>; code?: string };
 type QueueOrder = {
   id: string;
-  patient: { id: string; fullName: string; dateOfBirth: string | null };
+  patient: { id: string; fullName: string; age: number | null };
   items: Array<{ id: string; status: string; sampleType: string; sampleId: string | null }>;
   samples: Array<{ id: string; code: string; status: string; itemIds: string[] }>;
 };
@@ -141,8 +141,10 @@ describeDb("lab work queue and sample collection (real database)", () => {
   it("orders a walk-in at the desk with catalog prices; another clinic's patient is refused", async () => {
     as(people.reception, "receptionist");
     const search = await read(await findPatients(new NextRequest("http://localhost/api/lab/patients?q=Navbat")));
-    const found = search.body.data!.patients as Array<{ id: string; dateOfBirth: string; phoneTail: string }>;
-    expect(found).toEqual([{ id: patientA, fullName: `Navbat Bemor ${suffix}`, dateOfBirth: "1985-04-02", phoneTail: "4567" }]);
+    const found = search.body.data!.patients as Array<{ id: string; age: number; phone: string }>;
+    // Name, age and phone — never the date of birth (owner decision 2026-10-08).
+    expect(found).toEqual([{ id: patientA, fullName: `Navbat Bemor ${suffix}`, age: expect.any(Number), phone: expect.stringMatching(/4567$/) }]);
+    expect(JSON.stringify(search.body)).not.toContain("1985-04-02");
 
     const key = randomUUID();
     const res = await read(await walkIn(json("http://localhost/api/lab/orders", { idempotencyKey: key, patientId: patientA, testIds: [blood], panelIds: [], price: 1 })));
@@ -163,7 +165,8 @@ describeDb("lab work queue and sample collection (real database)", () => {
     as(people.lab, "lab");
     const res = await queue();
     const row = (res.body.data!.orders as QueueOrder[]).find((o) => o.id === orderId)!;
-    expect(row.patient).toEqual({ id: patientA, fullName: `Navbat Bemor ${suffix}`, dateOfBirth: "1985-04-02" });
+    expect(row.patient).toEqual({ id: patientA, fullName: `Navbat Bemor ${suffix}`, age: expect.any(Number) });
+    expect(JSON.stringify(res.body)).not.toContain("1985-04-02");
     expect(row.items.map((i) => [i.sampleType, i.status]).sort()).toEqual([["Qon", "ready_for_collection"], ["Siydik", "ready_for_collection"]]);
     const keys = new Set<string>();
     const walk = (v: unknown) => {

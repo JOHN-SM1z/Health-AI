@@ -36,11 +36,11 @@ type Order = {
   createdAt: string;
   source: string;
   status: string;
-  patient: { id: string; fullName: string | null; dateOfBirth: string | null };
+  patient: { id: string; fullName: string | null; age: number | null };
   items: Item[];
   samples: Sample[];
 };
-type PatientMatch = { id: string; fullName: string | null; dateOfBirth: string | null; phoneTail: string | null };
+type PatientMatch = { id: string; fullName: string | null; age: number | null; phone: string | null };
 
 const SAMPLE_STATUS: Record<string, { label: string; tone: "blue" | "green" | "gray" }> = {
   collected: { label: "Olingan", tone: "blue" },
@@ -82,7 +82,8 @@ const SEND_OUT_REVIEW: Record<string, string> = {
 const LIVE_SEND_OUT = new Set(["queued", "sent", "in_progress"]);
 
 const errorText = (e: unknown, fallback: string) => (e instanceof AdminApiError ? e.message : fallback);
-const dob = (d: string | null) => (d ? d.split("-").reverse().join(".") : "tug‘ilgan sana yo‘q");
+/** Staff see an age, never the date of birth (owner decision 2026-10-08). */
+const age = (a: number | null) => (a === null ? "yoshi kiritilmagan" : `${a} yosh`);
 
 function inView(order: Order, view: View): boolean {
   if (view === "all") return true;
@@ -367,7 +368,7 @@ function QueueCard({
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
             <p className="font-semibold text-foreground">{order.patient.fullName ?? "—"}</p>
-            <p className="text-xs text-ink-muted">{dob(order.patient.dateOfBirth)} · buyurtma {formatDateTime(order.createdAt)}</p>
+            <p className="text-xs text-ink-muted">{age(order.patient.age)} · buyurtma {formatDateTime(order.createdAt)}</p>
           </div>
           {awaitingPayment && <ABadge tone="amber">To‘lov kutilmoqda</ABadge>}
           {order.status === "completed" && <ABadge tone="green">Yakunlangan</ABadge>}
@@ -508,7 +509,7 @@ function CollectDialog({ order, items, onClose, onDone }: { order: Order; items:
     >
       {error && <AError message={error} />}
       <p className="text-sm text-foreground">
-        <span className="font-semibold">{order.patient.fullName ?? "—"}</span> · {dob(order.patient.dateOfBirth)}
+        <span className="font-semibold">{order.patient.fullName ?? "—"}</span> · {age(order.patient.age)}
       </p>
       <p className="text-xs text-ink-muted">Bemorning ismi va tug‘ilgan sanasini so‘rab tasdiqlang.</p>
       <div className="flex flex-col gap-1">
@@ -644,8 +645,8 @@ function PatientPicker({ onClose, onPick }: { onClose: () => void; onPick: (p: P
               <button type="button" className="w-full rounded-lg px-2 py-1.5 text-left text-sm hover:bg-sand" onClick={() => onPick(p)}>
                 <span className="font-medium text-foreground">{p.fullName ?? "—"}</span>
                 <span className="block text-xs text-ink-muted">
-                  {dob(p.dateOfBirth)}
-                  {p.phoneTail ? ` · tel. …${p.phoneTail}` : ""}
+                  {age(p.age)}
+                  {p.phone ? ` · tel. ${p.phone}` : ""}
                 </span>
               </button>
             </li>

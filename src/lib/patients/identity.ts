@@ -7,6 +7,13 @@ import { logger } from "@/lib/logger";
 export const DEV_TELEGRAM_USER_ID = 777000; // matches the dev seed patient
 
 /**
+ * The columns a patient session needs. Never `*`: passport/ID, JSHSHIR, date of birth, sex and address stay out of
+ * every object that could be spread into a response (owner decision 2026-10-08).
+ */
+const SESSION_COLUMNS =
+  "id, clinic_id, full_name, phone, telegram_user_id, telegram_username, telegram_first_name, telegram_last_name, consent_given, consent_given_at, preferred_language, merged_into_patient_id";
+
+/**
  * Resolves (or creates) the patient row for a verified Telegram user.
  * The telegram identity is always verified server-side first.
  */
@@ -19,7 +26,7 @@ export async function getOrCreatePatient(opts: {
 
   const { data: existing } = await supabase
     .from("patients")
-    .select("*")
+    .select(SESSION_COLUMNS)
     .eq("clinic_id", opts.clinicId)
     .eq("telegram_user_id", telegramUserId)
     .maybeSingle();
@@ -47,7 +54,7 @@ export async function getOrCreatePatient(opts: {
       telegram_last_name: opts.user.last_name ?? null,
       last_seen_at: new Date().toISOString(),
     })
-    .select("*")
+    .select(SESSION_COLUMNS)
     .single();
 
   if (error) {
@@ -89,7 +96,7 @@ export async function getOrCreateWebPatient(opts: {
 
   const { data: candidates, error: lookupError } = await supabase
     .from("patients")
-    .select("*")
+    .select(SESSION_COLUMNS)
     .eq("clinic_id", opts.clinicId)
     .eq("phone", opts.phone)
     .is("telegram_user_id", null)
@@ -127,7 +134,7 @@ export async function getOrCreateWebPatient(opts: {
       consent_given_at: now,
       last_seen_at: now,
     })
-    .select("*")
+    .select(SESSION_COLUMNS)
     .single();
 
   if (error) {
@@ -150,7 +157,7 @@ export async function resolvePatientFromInitData(initData: string | null | undef
     const supabase = createAdminClient();
     const { data } = await supabase
       .from("patients")
-      .select("*")
+      .select(SESSION_COLUMNS)
       .eq("clinic_id", clinicId)
       .eq("telegram_user_id", DEV_TELEGRAM_USER_ID)
       .maybeSingle();

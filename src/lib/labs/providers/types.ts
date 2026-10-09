@@ -41,7 +41,8 @@ export type ExternalOrderRequest = {
     /** A pseudonymous reference (the send-out id), not the patient's record id. */
     reference: string;
     sex: "male" | "female" | null;
-    dateOfBirth: string | null;
+    /** Age in whole years for the provider's reference ranges — the date of birth stays in our database (owner decision 2026-10-08). */
+    ageYears: number | null;
     /** Only when the provider requires it (lab_providers.send_patient_name). */
     fullName?: string | null;
   };

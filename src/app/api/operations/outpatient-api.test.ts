@@ -167,14 +167,26 @@ describeDb("outpatient pilot — routes", () => {
     // …nor take money.
     expect((await payVisit(r.body.data!.visitId as string, [{ method: "cash", amount: 180000 }], 180000)).status).toBe(403);
 
-    // The same person is found again by passport number — masked — and is never duplicated.
-    const found = await read(await searchPatients(new NextRequest(`http://x/api/operations/patients?q=${encodeURIComponent("ac1234567")}`)));
-    const matches = found.body.data!.patients as Array<{ id: string; documentHint: string; phoneHint: string; patientNumber: number }>;
+    // A passport alone is never looked up: the date of birth is required, on the server too.
+    const bare = await read(await searchPatients(new NextRequest(`http://x/api/operations/patients?q=${encodeURIComponent("ac1234567")}`)));
+    expect(bare).toMatchObject({ status: 400, body: { code: "dob_required" } });
+    // The same person is found again by passport + date of birth and is never duplicated. Staff see name, phone and
+    // card number only — no passport, JSHSHIR, date of birth or sex (owner decision 2026-10-08).
+    const found = await read(await searchPatients(new NextRequest(`http://x/api/operations/patients?q=${encodeURIComponent("ac1234567")}&dob=1990-05-06`)));
+    const matches = found.body.data!.patients as Array<{ id: string; phone: string; patientNumber: number; dobMatches: boolean }>;
     expect(matches).toHaveLength(1);
-    expect(matches[0].documentHint).toBe("•••567");
-    expect(matches[0].phoneHint).toBe("•••2233");
+    expect(matches[0]).toMatchObject({ phone: "+998 90 111 22 33", dobMatches: true });
+    expect(Object.keys(matches[0]).sort()).toEqual(["dobMatches", "fullName", "id", "patientNumber", "phone"]);
+    expect(JSON.stringify(found.body)).not.toMatch(/1234567|1990-05-06|female|male/i);
     const dup = await registerNew(`Boshqa ism ${suffix}`, { documentNumber: "AC1234567" });
     expect(dup).toMatchObject({ status: 409, body: { code: "patient_exists", details: { patientId: matches[0].id } } });
+    // The same passport with another date of birth: still never a second card, but the desk is not told whose
+    // document it is — no card, no id, no name (owner decision 2026-10-08).
+    const conflict = await registerNew(`Boshqa ism ${suffix}`, { documentNumber: "AC1234567", dateOfBirth: "1970-01-01" });
+    expect(conflict).toMatchObject({ status: 409, body: { code: "identity_conflict" } });
+    expect(JSON.stringify(conflict.body)).not.toContain(matches[0].id);
+    expect(JSON.stringify(conflict.body)).not.toMatch(/Aliyeva|1990-05-06|matchedPatientId/);
+    expect(((await sql`select count(*)::int as n from public.patients where clinic_id = ${clinicA} and document_number = 'AC1234567'`)[0] as { n: number }).n).toBe(1);
 
     // The owner's one-step lookup: passport + date of birth → exactly this card.
     const exact = (await read(await searchPatients(new NextRequest("http://x?q=AC1234567&dob=1990-05-06")))).body.data!;
@@ -188,7 +200,7 @@ describeDb("outpatient pilot — routes", () => {
 
     // Another clinic's reception finds nothing of clinic A.
     as(people.receptionB, "receptionist", clinicB);
-    expect(((await read(await searchPatients(new NextRequest("http://x?q=AC1234567")))).body.data!.patients as unknown[]).length).toBe(0);
+    expect(((await read(await searchPatients(new NextRequest("http://x?q=AC1234567&dob=1990-05-06")))).body.data!.patients as unknown[]).length).toBe(0);
   });
 
   it("the cashier takes a split payment; the queue number appears only then; totals reconcile by method", async () => {
