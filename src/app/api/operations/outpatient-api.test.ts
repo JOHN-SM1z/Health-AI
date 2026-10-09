@@ -180,6 +180,13 @@ describeDb("outpatient pilot — routes", () => {
     expect(JSON.stringify(found.body)).not.toMatch(/1234567|1990-05-06|female|male/i);
     const dup = await registerNew(`Boshqa ism ${suffix}`, { documentNumber: "AC1234567" });
     expect(dup).toMatchObject({ status: 409, body: { code: "patient_exists", details: { patientId: matches[0].id } } });
+    // The same passport with another date of birth: still never a second card, but the desk is not told whose
+    // document it is — no card, no id, no name (owner decision 2026-10-08).
+    const conflict = await registerNew(`Boshqa ism ${suffix}`, { documentNumber: "AC1234567", dateOfBirth: "1970-01-01" });
+    expect(conflict).toMatchObject({ status: 409, body: { code: "identity_conflict" } });
+    expect(JSON.stringify(conflict.body)).not.toContain(matches[0].id);
+    expect(JSON.stringify(conflict.body)).not.toMatch(/Aliyeva|1990-05-06|matchedPatientId/);
+    expect(((await sql`select count(*)::int as n from public.patients where clinic_id = ${clinicA} and document_number = 'AC1234567'`)[0] as { n: number }).n).toBe(1);
 
     // The owner's one-step lookup: passport + date of birth → exactly this card.
     const exact = (await read(await searchPatients(new NextRequest("http://x?q=AC1234567&dob=1990-05-06")))).body.data!;

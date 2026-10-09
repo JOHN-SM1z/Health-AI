@@ -35,6 +35,7 @@ const REFUSALS: Record<string, [number, string]> = {
   patient_not_found: [404, "Bemor topilmadi"],
   patient_merged: [409, "Bu karta asosiy kartaga birlashtirilgan — asosiy kartani tanlang"],
   patient_exists: [409, "Bu bemor allaqachon ro‘yxatda bor — mavjud kartani tanlang"],
+  identity_conflict: [409, "Kiritilgan ma’lumotlar mavjud karta bilan mos kelmaydi — hujjat va tug‘ilgan sanani tekshiring yoki administratorga murojaat qiling"],
   already_registered: [409, "Bemor bu shifokorga allaqachon ro‘yxatdan o‘tgan"],
   already_registered_lab: [409, "Bemor laboratoriya navbatida allaqachon bor"],
   visit_not_found: [404, "Tashrif topilmadi"],
@@ -64,7 +65,8 @@ function refusal(error: { code?: string; hint?: string | null; message?: string;
   const hint = error.hint ?? "";
   const known = REFUSALS[hint];
   if (known) {
-    const details = hint === "patient_exists" && error.details ? { patientId: error.details } : undefined;
+    // The matched card's id stays on the server: `existingCardOnly` decides whether reception may see it.
+    const details = hint === "patient_exists" && error.details ? { matchedPatientId: error.details } : undefined;
     return new ApiError(known[0], known[1], hint, details);
   }
   if (error.code === "42501") return new ApiError(403, REFUSALS.forbidden[1], "forbidden");
@@ -81,6 +83,26 @@ async function rpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
   ) => Promise<{ data: T; error: { code?: string; hint?: string; message?: string; details?: string } | null }>)(name, args);
   if (error) throw refusal(error, name);
   return data;
+}
+
+/**
+ * A new-patient registration matched an existing card (same JSHSHIR, passport/ID, or name + date of birth). Reception
+ * is offered that card only when the typed date of birth matches it too; otherwise the answer says only that the
+ * details conflict — it never tells the desk whose document it is (owner decision 2026-10-08).
+ */
+async function existingCardOnly(e: unknown, clinicId: string, newPatient: NewPatientInput | null | undefined): Promise<never> {
+  if (!(e instanceof ApiError) || e.code !== "patient_exists") throw e;
+  const matched = e.details?.matchedPatientId;
+  if (typeof matched === "string" && newPatient?.dateOfBirth) {
+    const { data } = await createAdminClient()
+      .from("patients")
+      .select("id, date_of_birth")
+      .eq("clinic_id", clinicId)
+      .eq("id", matched)
+      .maybeSingle();
+    if (data && data.date_of_birth === newPatient.dateOfBirth) throw new ApiError(409, e.message, "patient_exists", { patientId: data.id });
+  }
+  throw new ApiError(REFUSALS.identity_conflict[0], REFUSALS.identity_conflict[1], "identity_conflict");
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +217,7 @@ export async function registerArrival(
     p_new_patient: np as Json,
     p_doctor: input.doctorId,
     p_service_ids: input.serviceIds,
-  });
+  }).catch((e: unknown) => existingCardOnly(e, staff.clinicId, input.newPatient));
   // A free visit is queued at once: its Telegram ticket goes out now.
   deliverClinicNotificationsSoon(staff.clinicId);
   return { visitId: r.visit_id, replayed: r.replayed };
@@ -417,7 +439,7 @@ export async function registerLabArrival(
     // create_lab_order's own refusals (no date of birth, inactive test, …).
     const known = ORDER_ERRORS.find(([pattern]) => pattern.test(error.message ?? ""));
     if (known && !error.hint) throw new ApiError(known[1], known[2], known[3]);
-    throw refusal(error, "register_lab_arrival");
+    return existingCardOnly(refusal(error, "register_lab_arrival"), staff.clinicId, input.newPatient);
   }
   const r = data as { visit_id: string; lab_order_id?: string; replayed: boolean };
   deliverClinicNotificationsSoon(staff.clinicId);
