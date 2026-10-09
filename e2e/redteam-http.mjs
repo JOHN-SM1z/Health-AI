@@ -254,6 +254,11 @@ async function run() {
         }
         const probe = await client.from("patients").select("id").eq("pinfl", ID.pinfl);
         check(probe.error !== null, `${label}: finding a card by JSHSHIR over REST → refused (${probe.error?.code ?? "ALLOWED"})`);
+        // Online identity (20261008000010): typed documents, verified phones and identity claims are the server's.
+        for (const table of ["online_identity_lookups", "telegram_verified_phones", "patient_identity_claims"]) {
+          const r = await client.from(table).select("*").limit(1);
+          check(r.error !== null || (r.data ?? []).length === 0, `${label}: ${table} over REST → nothing (${r.error?.code ?? "empty"})`);
+        }
         const named = await client.from("patients").select("full_name, phone").eq("id", X);
         check(named.error === null && !leaks(JSON.stringify(named.data)), `${label}: name and phone stay readable where the row policy allows (${named.data?.length ?? 0} row)`);
         // GraphQL runs with the same column privileges; checked whenever the endpoint is enabled (hosted Supabase).

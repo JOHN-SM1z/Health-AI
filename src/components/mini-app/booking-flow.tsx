@@ -7,6 +7,7 @@ import { useTelegramInitData } from "@/components/mini-app/telegram-provider";
 import { Button, Card, Input, Badge, Spinner, EmptyState, ErrorBanner, NoticeBanner, SectionTitle, cn } from "@/components/mini-app/ui";
 import { apiGet, apiPost, getClientClinicId } from "@/lib/client/api";
 import { newIdempotencyKey } from "@/lib/idempotency-key";
+import { IdentityStep, type OnlineProfile } from "@/components/mini-app/identity-step";
 
 type Catalog = {
   clinic: {
@@ -54,6 +55,7 @@ type AppointmentResponse = {
 
 type Step =
   | { name: "consent" }
+  | { name: "identity" }
   | { name: "choose" }
   | { name: "service"; mode: "known" | "help"; specialtyId: string | null }
   | { name: "doctor" }
@@ -95,6 +97,10 @@ export function BookingFlow() {
   const [patientName, setPatientName] = useState("");
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
+  // Telegram patients identify first (passport/JSHSHIR + date of birth, proven by their Telegram phone); their own
+  // proven details then fill the booking, and the details form is skipped. Website visitors have no Telegram identity.
+  const [profile, setProfile] = useState<OnlineProfile | null>(null);
+  const identityFirst = Boolean(initData) || devMode;
   const [bookingResult, setBookingResult] = useState<{
     ok: boolean;
     message: string;
@@ -310,10 +316,23 @@ export function BookingFlow() {
               </span>
             </label>
           </Card>
-          <Button size="full" disabled={!consentChecked} onClick={() => setStep({ name: "choose" })}>
+          <Button size="full" disabled={!consentChecked} onClick={() => setStep(identityFirst ? { name: "identity" } : { name: "choose" })}>
             Davom etish
           </Button>
         </div>
+      )}
+
+      {step.name === "identity" && (
+        <IdentityStep
+          identity={identity}
+          clinicPhone={catalog?.clinic.phone ?? null}
+          onDone={(p) => {
+            setProfile(p);
+            if (p.fullName) setPatientName(p.fullName);
+            if (p.phone) setPhone(p.phone);
+            setStep({ name: "choose" });
+          }}
+        />
       )}
 
       {step.name === "choose" && (
@@ -481,7 +500,7 @@ export function BookingFlow() {
               <Button
                 size="full"
                 disabled={!selectedSlot}
-                onClick={() => setStep({ name: "details" })}
+                onClick={() => setStep(profile && detailsValid ? { name: "review" } : { name: "details" })}
               >
                 Davom etish: {selectedSlot ? selectedSlot.startLocal : ""}
               </Button>
