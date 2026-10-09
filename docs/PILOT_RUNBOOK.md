@@ -3,6 +3,11 @@
 This runbook is preparation only. **No production migration, deployment or patient-facing activation is
 authorized by this document.** Each of those needs the owner's explicit go-ahead at the time.
 
+> **2026-10-08 additions** — identity privacy, online identity, online payment and SMS add migrations
+> `20261008000005` and `20261008000010`–`20261008000013`. Operator guide: `docs/PILOT_ONLINE_SERVICES.md`.
+> Decisions: `docs/decisions/2026-10-08-identity-online-booking-payments-sms.md`. All switches are off by default;
+> the same apply-by-name rule below holds for these files.
+
 ## 1. What production has today (read-only check, 2026-10-07)
 
 - **Supabase project `cpoiachyfozjnlguaykz`.** It has 24 migrations, ending with `20260930000005_unified_booking_engine`.

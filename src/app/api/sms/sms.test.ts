@@ -20,6 +20,7 @@ vi.mock("@/lib/telegram/bot", () => ({
 }));
 
 import { processDueSmsJobs } from "@/lib/sms/processor";
+import { ticketChannels } from "@/lib/operations/outpatient";
 import { testOutbox } from "@/lib/sms/test-provider";
 import { POST as eskizCallback } from "./eskiz/callback/route";
 import { POST as lookup } from "@/app/api/mini-app/identity/lookup/route";
@@ -187,6 +188,18 @@ describeDb("queue SMS and the SMS-code card link (test outbox, real database)", 
     expect(linked).toEqual({ telegram_user_id: String(user), telegram_link_method: "sms_code" });
     // A used code does not work twice.
     expect((await mini(smsVerify, user, { lookupId, code })).body.code).toBe("code_expired");
+  });
+
+  it("the pilot's smartphone measure: how each queue number reached its patient (counts only)", async () => {
+    const from = new Date(Date.now() - 3_600_000).toISOString();
+    const to = new Date(Date.now() + 3_600_000).toISOString();
+    const viaTelegram = await visit(pts.telegram, 41);
+    await sql`insert into public.notification_jobs ${sql({ clinic_id: clinic, visit_id: viaTelegram, type: "queue_ticket", patient_telegram_user_id: 1, scheduled_for: new Date(), idempotency_key: `queue_ticket:${viaTelegram}` })}`;
+    const t = await ticketChannels(clinic, from, to);
+    expect(t.telegram).toBeGreaterThanOrEqual(1);
+    expect(t.sms).toBeGreaterThanOrEqual(1);
+    expect(t.none).toBeGreaterThanOrEqual(1); // e.g. the patient who did not agree to SMS
+    expect(t.telegram + t.sms + t.none).toBe(t.numbered);
   });
 
   it("five wrong codes end the code; it cannot be guessed", async () => {
