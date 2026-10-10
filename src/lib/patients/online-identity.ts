@@ -7,6 +7,7 @@ import { sharedRateLimit } from "@/lib/rate-limit-shared";
 import { randomInt } from "node:crypto";
 import { activeSmsProvider } from "@/lib/sms/provider";
 import { cardLinkCodeSms } from "@/lib/sms/templates";
+import { checkPinflAgainstBirthDate } from "@/lib/identity/pinfl";
 
 /**
  * Online identity for the Mini App booking (Slice B, 20261008000010, owner decision 2026-10-08).
@@ -67,6 +68,8 @@ export type OnlineProfile = {
   dateOfBirth: string | null;
   homeAddress: string | null;
   complete: boolean;
+  /** The state identification system (OneID) confirmed these details. */
+  identityVerified: boolean;
 };
 
 export type IdentityStep =
@@ -78,6 +81,8 @@ export type IdentityStep =
 
 const REFUSALS: Record<string, [number, string]> = {
   invalid_identity: [400, "Hujjat va tug‘ilgan sanani tekshiring"],
+  pinfl_invalid: [400, "JSHSHIR noto‘g‘ri: 14 ta raqamni hujjatingizdan qaytadan ko‘chiring"],
+  pinfl_birth_date_mismatch: [400, "JSHSHIR va tug‘ilgan sana mos kelmaydi. Ikkalasini hujjatingizdan tekshiring"],
   lookup_expired: [409, "Vaqt tugadi — hujjat va tug‘ilgan sanani qaytadan kiriting"],
   needs_reception: [409, "Ma’lumotlaringizni qabulxonada tasdiqlang"],
 };
@@ -98,7 +103,7 @@ async function limit(key: string, max: number, windowMs: number) {
 export async function onlineProfile(clinicId: string, patientId: string): Promise<OnlineProfile> {
   const { data, error } = await createAdminClient()
     .from("patients")
-    .select("full_name, phone, date_of_birth, home_address, document_number, pinfl")
+    .select("full_name, phone, date_of_birth, home_address, document_number, pinfl, identity_verified_at")
     .eq("clinic_id", clinicId)
     .eq("id", patientId)
     .single();
@@ -109,6 +114,7 @@ export async function onlineProfile(clinicId: string, patientId: string): Promis
     dateOfBirth: data.date_of_birth,
     homeAddress: data.home_address,
     complete: !!data.full_name && !!data.date_of_birth && !!(data.document_number || data.pinfl),
+    identityVerified: !!data.identity_verified_at,
   };
 }
 
@@ -121,6 +127,15 @@ export async function lookupOnlineIdentity(
   if (!patient.telegram_user_id) throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
   const doc = parseIdentityDocument(input.document);
   if (!doc || !plausibleDateOfBirth(input.dateOfBirth)) throw new ApiError(400, REFUSALS.invalid_identity[1], "invalid_identity");
+  // A JSHSHIR carries its owner's date of birth: one that disagrees with the typed date is a typo or invented — said
+  // at once, before anything is recorded (it reveals nothing about anyone else).
+  if (doc.kind === "pinfl") {
+    const check = checkPinflAgainstBirthDate(doc.value, input.dateOfBirth);
+    if (check !== "ok") {
+      const code = check === "invalid" ? "pinfl_invalid" : "pinfl_birth_date_mismatch";
+      throw new ApiError(400, REFUSALS[code][1], code);
+    }
+  }
 
   // Guessing is slow: per Telegram user, and per document across everyone (wrong dates of birth are also counted in
   // the database, which stops comparing after three a day).

@@ -5,6 +5,7 @@ import { requireMiniAppPatientWith } from "@/lib/patients/mini-app-patient";
 import { onlineProfile } from "@/lib/patients/online-identity";
 import { getHealthTranscriptionProvider } from "@/lib/transcription/provider";
 import { activeSmsProvider } from "@/lib/sms/provider";
+import { oneIdConfig } from "@/lib/identity/oneid";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,8 @@ export async function POST(request: NextRequest) {
       voiceAvailable: getHealthTranscriptionProvider() !== null,
       // Whether "send a code to the phone on my card" may be offered (clinic SMS on and a provider configured).
       smsAvailable: clinic.sms_enabled === true && activeSmsProvider() !== null,
+      // Whether "verify with OneID" may be offered (the operator has the OneID agreement and credentials).
+      oneIdAvailable: oneIdConfig() !== null,
     });
   } catch (e) {
     return handleApiError(e);

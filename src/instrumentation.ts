@@ -100,6 +100,12 @@ export function register() {
   }
   if (!["none", "eskiz", "test"].includes(sms)) missing.push(`SMS_PROVIDER=${sms} is not a known provider`);
 
+  // OneID: either fully configured (both credentials and an HTTPS callback base) or off — never half on.
+  if (process.env.ONEID_CLIENT_ID || process.env.ONEID_CLIENT_SECRET) {
+    if (!process.env.ONEID_CLIENT_ID || !process.env.ONEID_CLIENT_SECRET) missing.push("ONEID_CLIENT_ID and ONEID_CLIENT_SECRET (both, or neither)");
+    if (!/^https:\/\//.test(process.env.NEXT_PUBLIC_APP_URL ?? "")) missing.push("NEXT_PUBLIC_APP_URL as https:// (the OneID callback)");
+  }
+
   if ((process.env.PAYMENT_PROVIDER ?? "manual") !== "manual") {
     missing.push(
       "PAYMENT_PROVIDER (only 'manual' is implemented; Click/Payme require merchant credentials and a verified adapter — failing at startup instead of during a patient's payment attempt)",

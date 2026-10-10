@@ -16193,3 +16193,515 @@ revoke all on function public.verify_card_link_otp(uuid, bigint, uuid, text, tex
 grant execute on function public.claim_due_sms_jobs(integer, uuid[]) to service_role;
 grant execute on function public.issue_card_link_otp(uuid, bigint, uuid, text) to service_role;
 grant execute on function public.verify_card_link_otp(uuid, bigint, uuid, text, text, text, text) to service_role;
+
+-- =====================================================================
+-- FILE: 20261010000002_saas_onboarding.sql
+-- =====================================================================
+-- Clinics sign up on the website, pay by invoice, and run their staff from one web app (owner decision 2026-10-10).
+--
+--   * profiles.login — every employee signs in with a login + password (no email needed). Auth still keys accounts
+--     by email, so a login maps to the internal address <login>@staff.health-ai.invalid (src/lib/auth/login.ts).
+--     Logins are unique across the platform: one web app, one login page.
+--   * profiles.must_change_password — set when an account is created or its password is reset by the owner;
+--     every panel sends the employee to /account/password until they set their own.
+--   * departments — the clinic's own units (Terapiya, Laboratoriya, Qabulxona, Kassa…). They organise staff;
+--     access stays by role (staff_roles.department_id).
+--   * subscription_plans / clinic_subscriptions / subscription_invoices — a 14-day trial, then a monthly invoice
+--     paid by bank transfer. Only a platform admin confirms a payment (confirm_subscription_invoice); the browser
+--     never marks anything paid. Card payment comes later, with a signed merchant contract.
+--   * platform_billing — the payee details printed on invoices; edited by platform admins.
+--   * provision_clinic() — creates the clinic, its owner, its default departments, the trial and the first invoice
+--     in one transaction, after the server has created the owner's login.
+--
+-- Clinic and profile rows are now written by the server only (service role). Owners keep editing their clinic's
+-- display details; activation, identity/SMS switches and slugs are no longer writable from a browser session.
+
+-- ---------- Logins ----------
+alter table public.profiles
+  add column login text,
+  add column must_change_password boolean not null default false;
+alter table public.profiles
+  add constraint profiles_login_format check (login is null or login ~ '^[a-z0-9][a-z0-9._-]{2,31}$');
+create unique index profiles_login_key on public.profiles (login) where login is not null;
+comment on column public.profiles.login is 'Sign-in login (lowercase). Maps to the auth email <login>@staff.health-ai.invalid.';
+
+-- Profiles are written by the server only (account creation, password change). Staff keep reading them.
+revoke insert, update, delete on table public.profiles from authenticated;
+
+-- Clinics: display details stay editable by the owner (policy "clinic update for owner"); everything that
+-- controls access, billing or patient-facing switches is server-only.
+revoke insert, update, delete on table public.clinics from authenticated;
+grant update (name, address, phone, email, opening_hours, privacy_notice, timezone, currency, updated_at)
+  on table public.clinics to authenticated;
+
+alter table public.clinics add column city text;
+alter table public.clinics add constraint clinics_city_length check (city is null or char_length(city) <= 80);
+
+-- ---------- Departments ----------
+create table public.departments (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  name text not null constraint departments_name_check check (char_length(btrim(name)) between 2 and 80),
+  kind text not null default 'clinical'
+    constraint departments_kind_check check (kind in ('clinical', 'laboratory', 'reception', 'cashier', 'management', 'other')),
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  constraint departments_id_clinic_id_key unique (id, clinic_id)
+);
+create unique index departments_clinic_name_key on public.departments (clinic_id, lower(btrim(name)));
+alter table public.departments enable row level security;
+revoke all on table public.departments from public, anon, authenticated;
+grant select on table public.departments to authenticated;
+grant select, insert, update, delete on table public.departments to service_role;
+create policy "departments read for clinic staff"
+  on public.departments for select
+  to authenticated
+  using (public.is_clinic_staff(clinic_id));
+
+alter table public.staff_roles add column department_id uuid;
+alter table public.staff_roles add constraint staff_roles_department_fkey
+  foreign key (department_id, clinic_id) references public.departments (id, clinic_id) on delete set null (department_id);
+create index staff_roles_department_idx on public.staff_roles (department_id) where department_id is not null;
+
+-- ---------- Plans ----------
+create table public.subscription_plans (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique constraint subscription_plans_code_check check (code ~ '^[a-z0-9_-]{2,32}$'),
+  name text not null constraint subscription_plans_name_check check (char_length(btrim(name)) between 2 and 60),
+  tagline text not null default '' constraint subscription_plans_tagline_check check (char_length(tagline) <= 160),
+  monthly_price_uzs bigint not null constraint subscription_plans_price_check check (monthly_price_uzs >= 0),
+  max_staff integer constraint subscription_plans_max_staff_check check (max_staff is null or max_staff > 0),
+  max_doctors integer constraint subscription_plans_max_doctors_check check (max_doctors is null or max_doctors > 0),
+  features text[] not null default '{}',
+  is_public boolean not null default true,
+  -- A price the platform owner has not confirmed yet: shown on the landing page as "taxminiy".
+  price_is_draft boolean not null default true,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- ---------- Subscriptions ----------
+create table public.clinic_subscriptions (
+  clinic_id uuid primary key references public.clinics(id) on delete cascade,
+  plan_id uuid not null references public.subscription_plans(id),
+  status text not null constraint clinic_subscriptions_status_check check (status in ('trialing', 'active', 'past_due', 'cancelled')),
+  trial_ends_at timestamptz,
+  current_period_end timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create sequence public.subscription_invoice_number_seq;
+
+create table public.subscription_invoices (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  plan_id uuid not null references public.subscription_plans(id),
+  number text not null unique,
+  amount_uzs bigint not null constraint subscription_invoices_amount_check check (amount_uzs >= 0),
+  months integer not null default 1 constraint subscription_invoices_months_check check (months between 1 and 12),
+  status text not null default 'issued' constraint subscription_invoices_status_check check (status in ('issued', 'paid', 'void')),
+  issued_at timestamptz not null default now(),
+  due_at timestamptz not null,
+  paid_at timestamptz,
+  confirmed_by uuid references public.profiles(id),
+  payment_reference text constraint subscription_invoices_reference_check check (payment_reference is null or char_length(payment_reference) <= 120),
+  created_at timestamptz not null default now()
+);
+create index subscription_invoices_clinic_idx on public.subscription_invoices (clinic_id, issued_at desc);
+-- One open invoice per clinic at a time.
+create unique index subscription_invoices_one_open on public.subscription_invoices (clinic_id) where status = 'issued';
+
+create table public.platform_billing (
+  id boolean primary key default true constraint platform_billing_singleton check (id),
+  legal_name text not null default '',
+  tin text not null default '',
+  bank_name text not null default '',
+  bank_account text not null default '',
+  mfo text not null default '',
+  contact_phone text not null default '',
+  updated_at timestamptz not null default now()
+);
+insert into public.platform_billing (id) values (true);
+
+alter table public.subscription_plans enable row level security;
+alter table public.clinic_subscriptions enable row level security;
+alter table public.subscription_invoices enable row level security;
+alter table public.platform_billing enable row level security;
+revoke all on table public.subscription_plans, public.clinic_subscriptions, public.subscription_invoices, public.platform_billing
+  from public, anon, authenticated;
+grant select, insert, update, delete on table public.subscription_plans, public.clinic_subscriptions,
+  public.subscription_invoices, public.platform_billing to service_role;
+revoke all on sequence public.subscription_invoice_number_seq from public, anon, authenticated;
+grant usage on sequence public.subscription_invoice_number_seq to service_role;
+
+-- Draft plans: the platform owner sets the real prices in /platform (price_is_draft turns false when saved).
+insert into public.subscription_plans (code, name, tagline, monthly_price_uzs, max_staff, max_doctors, features, sort_order) values
+  ('start', 'Start', 'Kichik klinika yoki xususiy kabinet uchun', 990000, 8, 3,
+   array['Telegram orqali onlayn qabul', 'Pasport/ID bilan bemorni aniqlash', 'Qabulxona, navbat va kassa', 'Shifokor ish joyi', 'Eslatmalar'], 1),
+  ('klinika', 'Klinika', 'Ko‘p tarmoqli klinika uchun', 2490000, 30, 12,
+   array['Start rejasidagi hammasi', 'Laboratoriya: buyurtma, natija, PDF', 'Yo‘llanmalar va bo‘limlar', 'Moliya va tahlillar', 'SMS (Eskiz shartnomasi bilan)'], 2),
+  ('tarmoq', 'Tarmoq', 'Bir nechta filial va katta jamoa uchun', 5900000, null, null,
+   array['Klinika rejasidagi hammasi', 'Cheksiz xodim va shifokor', 'Ustuvor yordam', 'Ma’lumotlarni ko‘chirishda yordam'], 3),
+  ('pilot', 'Pilot', 'Pilot klinikalar uchun', 0, null, null, array[]::text[], 99);
+update public.subscription_plans set is_public = false, price_is_draft = false where code = 'pilot';
+
+-- Clinics that exist before sign-up opened are pilot clinics: active, no end date.
+insert into public.clinic_subscriptions (clinic_id, plan_id, status)
+select c.id, p.id, 'active' from public.clinics c cross join public.subscription_plans p where p.code = 'pilot'
+on conflict (clinic_id) do nothing;
+
+-- ---------- provision_clinic ----------
+-- Called by the server after it has created the owner's auth account (the auth API is not reachable from SQL).
+-- Everything else is one transaction: if it fails, the server deletes that account again.
+create or replace function public.provision_clinic(
+  p_owner_id uuid,
+  p_owner_name text,
+  p_owner_login text,
+  p_owner_phone text,
+  p_clinic_name text,
+  p_slug text,
+  p_clinic_phone text,
+  p_city text,
+  p_address text,
+  p_plan_code text
+) returns table (clinic_id uuid, invoice_id uuid, invoice_number text)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_plan public.subscription_plans;
+  v_clinic uuid;
+  v_invoice uuid;
+  v_number text;
+  v_trial_end timestamptz := now() + interval '14 days';
+begin
+  select * into v_plan from public.subscription_plans where code = p_plan_code and is_public;
+  if not found then
+    raise exception 'unknown plan' using errcode = 'P0001', detail = 'plan_not_found';
+  end if;
+
+  insert into public.clinics (name, slug, phone, city, address, is_active)
+  values (btrim(p_clinic_name), p_slug, nullif(btrim(p_clinic_phone), ''), nullif(btrim(p_city), ''), nullif(btrim(p_address), ''), true)
+  returning id into v_clinic;
+
+  insert into public.profiles (id, full_name, phone, login, must_change_password)
+  values (p_owner_id, btrim(p_owner_name), nullif(btrim(p_owner_phone), ''), p_owner_login, false)
+  on conflict (id) do update set full_name = excluded.full_name, phone = excluded.phone, login = excluded.login;
+
+  insert into public.staff_roles (clinic_id, profile_id, role) values (v_clinic, p_owner_id, 'owner');
+
+  insert into public.departments (clinic_id, name, kind, sort_order) values
+    (v_clinic, 'Rahbariyat', 'management', 1),
+    (v_clinic, 'Qabulxona', 'reception', 2),
+    (v_clinic, 'Kassa', 'cashier', 3),
+    (v_clinic, 'Terapiya', 'clinical', 4),
+    (v_clinic, 'Laboratoriya', 'laboratory', 5);
+
+  update public.staff_roles set department_id = (select d.id from public.departments d where d.clinic_id = v_clinic and d.kind = 'management')
+  where staff_roles.clinic_id = v_clinic and profile_id = p_owner_id;
+
+  insert into public.clinic_subscriptions (clinic_id, plan_id, status, trial_ends_at)
+  values (v_clinic, v_plan.id, 'trialing', v_trial_end);
+
+  v_number := 'HA-' || to_char(now() at time zone 'Asia/Tashkent', 'YYYY') || '-' || lpad(nextval('public.subscription_invoice_number_seq')::text, 5, '0');
+  insert into public.subscription_invoices (clinic_id, plan_id, number, amount_uzs, months, due_at)
+  values (v_clinic, v_plan.id, v_number, v_plan.monthly_price_uzs, 1, v_trial_end)
+  returning id into v_invoice;
+
+  insert into public.audit_events (clinic_id, actor_type, actor_id, action, entity_type, entity_id, new_values, metadata)
+  values (v_clinic, 'staff', p_owner_id, 'clinic_signed_up', 'clinics', v_clinic::text,
+          jsonb_build_object('plan', v_plan.code, 'status', 'trialing'), jsonb_build_object('source', 'website'));
+
+  return query select v_clinic, v_invoice, v_number;
+end;
+$$;
+
+-- ---------- confirm_subscription_invoice ----------
+-- A platform admin confirms that the bank transfer arrived. Extends the subscription by the invoice's months from
+-- the later of now and the current period end. Idempotent: a paid invoice is not paid twice.
+create or replace function public.confirm_subscription_invoice(p_invoice_id uuid, p_admin_id uuid, p_reference text)
+returns table (clinic_id uuid, period_end timestamptz)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_inv public.subscription_invoices;
+  v_sub public.clinic_subscriptions;
+  v_end timestamptz;
+begin
+  if not exists (select 1 from public.platform_admins where profile_id = p_admin_id) then
+    raise exception 'not a platform admin' using errcode = '42501';
+  end if;
+
+  select * into v_inv from public.subscription_invoices where id = p_invoice_id for update;
+  if not found then
+    raise exception 'invoice not found' using errcode = 'P0001', detail = 'invoice_not_found';
+  end if;
+  if v_inv.status <> 'issued' then
+    raise exception 'invoice is not open' using errcode = 'P0001', detail = 'invoice_not_open';
+  end if;
+
+  select * into v_sub from public.clinic_subscriptions where clinic_subscriptions.clinic_id = v_inv.clinic_id for update;
+  v_end := greatest(now(), coalesce(v_sub.current_period_end, now()), coalesce(v_sub.trial_ends_at, now()))
+           + make_interval(months => v_inv.months);
+
+  update public.subscription_invoices
+     set status = 'paid', paid_at = now(), confirmed_by = p_admin_id, payment_reference = nullif(btrim(p_reference), '')
+   where id = v_inv.id;
+
+  insert into public.clinic_subscriptions (clinic_id, plan_id, status, current_period_end)
+  values (v_inv.clinic_id, v_inv.plan_id, 'active', v_end)
+  on conflict on constraint clinic_subscriptions_pkey do update
+    set plan_id = excluded.plan_id, status = 'active', current_period_end = excluded.current_period_end, updated_at = now();
+
+  update public.clinics set is_active = true where id = v_inv.clinic_id and not is_active;
+
+  insert into public.audit_events (clinic_id, actor_type, actor_id, action, entity_type, entity_id, new_values, metadata)
+  values (v_inv.clinic_id, 'system', p_admin_id, 'subscription_invoice_paid', 'subscription_invoices', v_inv.id::text,
+          jsonb_build_object('status', 'paid', 'months', v_inv.months), jsonb_build_object('by', 'platform_admin'));
+
+  return query select v_inv.clinic_id, v_end;
+end;
+$$;
+
+-- ---------- issue_subscription_invoice ----------
+-- The next month's invoice (the clinic's current plan) when none is open. Called by the owner's billing page and by
+-- the platform admin.
+create or replace function public.issue_subscription_invoice(p_clinic_id uuid, p_months integer)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_sub public.clinic_subscriptions;
+  v_plan public.subscription_plans;
+  v_id uuid;
+begin
+  select id into v_id from public.subscription_invoices where clinic_id = p_clinic_id and status = 'issued';
+  if found then
+    return v_id;
+  end if;
+  select * into v_sub from public.clinic_subscriptions where clinic_id = p_clinic_id;
+  if not found then
+    raise exception 'no subscription' using errcode = 'P0001', detail = 'subscription_not_found';
+  end if;
+  select * into v_plan from public.subscription_plans where id = v_sub.plan_id;
+  insert into public.subscription_invoices (clinic_id, plan_id, number, amount_uzs, months, due_at)
+  values (p_clinic_id, v_plan.id,
+          'HA-' || to_char(now() at time zone 'Asia/Tashkent', 'YYYY') || '-' || lpad(nextval('public.subscription_invoice_number_seq')::text, 5, '0'),
+          v_plan.monthly_price_uzs * greatest(1, least(12, p_months)), greatest(1, least(12, p_months)),
+          greatest(now(), coalesce(v_sub.current_period_end, v_sub.trial_ends_at, now())) + interval '3 days')
+  returning id into v_id;
+  return v_id;
+end;
+$$;
+
+revoke all on function public.provision_clinic(uuid, text, text, text, text, text, text, text, text, text) from public, anon, authenticated;
+revoke all on function public.confirm_subscription_invoice(uuid, uuid, text) from public, anon, authenticated;
+revoke all on function public.issue_subscription_invoice(uuid, integer) from public, anon, authenticated;
+grant execute on function public.provision_clinic(uuid, text, text, text, text, text, text, text, text, text) to service_role;
+grant execute on function public.confirm_subscription_invoice(uuid, uuid, text) to service_role;
+grant execute on function public.issue_subscription_invoice(uuid, integer) to service_role;
+
+-- =====================================================================
+-- FILE: 20261010000003_oneid_identity.sql
+-- =====================================================================
+-- OneID (id.egov.uz) identity verification for the Mini App (owner question 2026-10-10: "check whether the
+-- passport details are true").
+--
+-- A typed passport/JSHSHIR + date of birth is only a lookup key: anyone who knows them could type them. OneID is the
+-- state identification system: the patient signs in there (login + password, e-signature or phone — no face check
+-- needed) and the state returns their verified JSHSHIR, passport, full name, date of birth, sex and address. Those
+-- values, not typed ones, then go onto the card.
+--
+--   * patients.identity_verified_at / identity_verified_by — when and how the card's identity was confirmed by the
+--     state. Not granted to signed-in roles (column grants of 20261008000005 list what staff may read).
+--   * oneid_requests — one sign-in attempt, bound to the Telegram user who started it; the browser gets only the
+--     random state, whose SHA-256 is stored. 15 minutes, single use.
+--   * apply_oneid_identity() — the matched card (by JSHSHIR, else passport with the same date of birth) is linked to
+--     the patient's Telegram (link_card_to_telegram, method 'oneid'); with no card, the patient's own record gets the
+--     verified details. Returns 'verified' | 'linked' | 'reception'.
+-- Off until the clinic's operator signs the OneID agreement and sets ONEID_CLIENT_ID / ONEID_CLIENT_SECRET.
+
+alter table public.patients
+  add column identity_verified_at timestamptz,
+  add column identity_verified_by text
+    constraint patients_identity_verified_by_check check (identity_verified_by in ('oneid'));
+comment on column public.patients.identity_verified_at is
+  'When the state identification system (OneID) confirmed this card''s identity. Not granted to signed-in roles.';
+
+alter table public.patients drop constraint patients_telegram_link_method_check;
+alter table public.patients add constraint patients_telegram_link_method_check
+  check (telegram_link_method in ('contact_phone', 'sms_code', 'reception', 'oneid'));
+
+create table public.oneid_requests (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinics(id) on delete cascade,
+  telegram_user_id bigint not null,
+  state_hash text not null unique constraint oneid_requests_state_hash_check check (state_hash ~ '^[0-9a-f]{64}$'),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '15 minutes',
+  completed_at timestamptz,
+  outcome text constraint oneid_requests_outcome_check check (outcome in ('verified', 'linked', 'reception', 'invalid', 'failed'))
+);
+create index oneid_requests_user_idx on public.oneid_requests (clinic_id, telegram_user_id, created_at desc);
+alter table public.oneid_requests enable row level security;
+revoke all on table public.oneid_requests from public, anon, authenticated;
+grant select, insert, update, delete on table public.oneid_requests to service_role;
+
+-- link_card_to_telegram now also accepts OneID as the proof (body otherwise unchanged from 20261008000010).
+create or replace function public.link_card_to_telegram(
+  p_clinic uuid, p_patient uuid, p_telegram_user_id bigint, p_method text,
+  p_username text default null, p_first_name text default null, p_last_name text default null)
+returns text
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  d public.patients%rowtype;
+  t public.patients%rowtype;
+begin
+  if p_method not in ('contact_phone', 'sms_code', 'oneid') then
+    raise exception using message = 'online identity: unknown proof', errcode = '22023', hint = 'invalid_identity';
+  end if;
+
+  select * into d from public.patients where id = p_patient and clinic_id = p_clinic for update;
+  if not found or d.merged_into_patient_id is not null then
+    return 'needs_reception';
+  end if;
+  if d.telegram_user_id = p_telegram_user_id then
+    return 'already_linked';
+  end if;
+  if d.telegram_user_id is not null then
+    return 'card_has_telegram';
+  end if;
+
+  select * into t from public.patients where clinic_id = p_clinic and telegram_user_id = p_telegram_user_id for update;
+  if found then
+    -- The Telegram-only record gives up its identity only while nothing is recorded on it. Its conversations and
+    -- analytics stay with it; anything else (a booking, a visit, a payment, a lab order, an online identity of its
+    -- own) means the two records are joined by reception with merge_patients(), never silently here.
+    if t.merged_into_patient_id is not null
+       or t.document_number is not null or t.pinfl is not null
+       or exists (select 1 from public.appointments where patient_id = t.id)
+       or exists (select 1 from public.visits where patient_id = t.id)
+       or exists (select 1 from public.payments where patient_id = t.id)
+       or exists (select 1 from public.lab_orders where patient_id = t.id)
+       or exists (select 1 from public.referrals where patient_id = t.id)
+       or exists (select 1 from public.clinical_records where patient_id = t.id)
+       or exists (select 1 from public.lab_import_rows where patient_id = t.id)
+       or exists (select 1 from public.patient_merges where canonical_patient_id = t.id or duplicate_patient_id = t.id) then
+      return 'needs_reception';
+    end if;
+    update public.patients
+       set telegram_user_id = null, telegram_username = null, telegram_first_name = null, telegram_last_name = null
+     where id = t.id;
+  end if;
+
+  update public.patients
+     set telegram_user_id = p_telegram_user_id,
+         telegram_username = p_username,
+         telegram_first_name = p_first_name,
+         telegram_last_name = p_last_name,
+         telegram_linked_at = now(),
+         telegram_link_method = p_method,
+         last_seen_at = now()
+   where id = d.id;
+
+  insert into public.audit_events (clinic_id, actor_id, actor_type, action, entity_type, entity_id, patient_id, metadata)
+  values (p_clinic, null, 'patient', 'patient_telegram_linked', 'patients', d.id::text, d.id,
+          jsonb_build_object('method', p_method, 'detached_patient_id', t.id));
+  return 'linked';
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- apply_oneid_identity: the state-verified details land on the right card.
+-- ---------------------------------------------------------------------------
+create or replace function public.apply_oneid_identity(
+  p_clinic uuid, p_request uuid, p_pinfl text, p_document text, p_dob date, p_sex public.patient_sex,
+  p_full_name text, p_address text,
+  p_username text default null, p_first_name text default null, p_last_name text default null)
+returns text
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  r public.oneid_requests%rowtype;
+  t public.patients%rowtype;
+  card public.patients%rowtype;
+  v_outcome text;
+  v_target uuid;
+  v_name text := nullif(btrim(p_full_name), '');
+  v_address text := nullif(left(btrim(coalesce(p_address, '')), 300), '');
+begin
+  if p_pinfl !~ '^\d{14}$' or p_dob is null or v_name is null then
+    raise exception using message = 'oneid: incomplete identity', errcode = '22023', hint = 'invalid_identity';
+  end if;
+
+  select * into r from public.oneid_requests where id = p_request and clinic_id = p_clinic for update;
+  if not found or r.completed_at is not null or r.expires_at < now() then
+    raise exception using message = 'oneid: request expired', errcode = '22023', hint = 'lookup_expired';
+  end if;
+
+  select * into t from public.patients where clinic_id = p_clinic and telegram_user_id = r.telegram_user_id;
+
+  -- The card this person already has: by JSHSHIR; else by passport/ID with the same date of birth.
+  select * into card from public.patients
+   where clinic_id = p_clinic and merged_into_patient_id is null and pinfl = p_pinfl;
+  if not found and p_document is not null then
+    select * into card from public.patients
+     where clinic_id = p_clinic and merged_into_patient_id is null and document_number = p_document and date_of_birth = p_dob;
+  end if;
+
+  if card.id is not null and (t.id is null or card.id <> t.id) then
+    v_outcome := public.link_card_to_telegram(p_clinic, card.id, r.telegram_user_id, 'oneid', p_username, p_first_name, p_last_name);
+    if v_outcome in ('linked', 'already_linked') then
+      v_target := card.id;
+      v_outcome := 'linked';
+    else
+      v_outcome := 'reception';
+    end if;
+  elsif t.id is not null and t.merged_into_patient_id is null then
+    v_target := t.id;
+    v_outcome := 'verified';
+  else
+    v_outcome := 'reception';
+  end if;
+
+  if v_target is not null then
+    -- The state's values replace typed ones. A passport number already on another card is left off this one.
+    update public.patients
+       set pinfl = p_pinfl,
+           document_number = case
+             when p_document is null then document_number
+             when exists (select 1 from public.patients o where o.clinic_id = p_clinic and o.id <> v_target and o.document_number = p_document) then document_number
+             else p_document end,
+           date_of_birth = p_dob,
+           sex = coalesce(p_sex, sex),
+           full_name = v_name,
+           home_address = coalesce(v_address, home_address),
+           identity_verified_at = now(),
+           identity_verified_by = 'oneid'
+     where id = v_target;
+    insert into public.audit_events (clinic_id, actor_id, actor_type, action, entity_type, entity_id, patient_id, metadata)
+    values (p_clinic, null, 'patient', 'patient_identity_verified', 'patients', v_target::text, v_target,
+            jsonb_build_object('method', 'oneid', 'outcome', v_outcome));
+  end if;
+
+  update public.oneid_requests set completed_at = now(), outcome = v_outcome where id = r.id;
+  return v_outcome;
+end;
+$$;
+
+revoke all on function public.link_card_to_telegram(uuid, uuid, bigint, text, text, text, text) from public, anon, authenticated;
+grant execute on function public.link_card_to_telegram(uuid, uuid, bigint, text, text, text, text) to service_role;
+revoke all on function public.apply_oneid_identity(uuid, uuid, text, text, date, public.patient_sex, text, text, text, text, text) from public, anon, authenticated;
+grant execute on function public.apply_oneid_identity(uuid, uuid, text, text, date, public.patient_sex, text, text, text, text, text) to service_role;

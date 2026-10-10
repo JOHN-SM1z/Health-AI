@@ -2486,6 +2486,8 @@ export type Database = {
       }
       patients: {
         Row: {
+          identity_verified_at: string | null
+          identity_verified_by: string | null
           patient_number: number
           clinic_id: string
           consent_given: boolean
@@ -2514,6 +2516,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          identity_verified_at?: string | null
+          identity_verified_by?: string | null
           patient_number?: number
           clinic_id: string
           consent_given?: boolean
@@ -2542,6 +2546,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          identity_verified_at?: string | null
+          identity_verified_by?: string | null
           patient_number?: number
           clinic_id?: string
           consent_given?: boolean
@@ -3667,6 +3673,39 @@ export type Database = {
         }
         Relationships: []
       }
+      oneid_requests: {
+        Row: {
+          clinic_id: string
+          completed_at: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          outcome: string | null
+          state_hash: string
+          telegram_user_id: number
+        }
+        Insert: {
+          clinic_id: string
+          completed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          outcome?: string | null
+          state_hash: string
+          telegram_user_id: number
+        }
+        Update: {
+          clinic_id?: string
+          completed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          outcome?: string | null
+          state_hash?: string
+          telegram_user_id?: number
+        }
+        Relationships: []
+      }
       refund_grants: {
         Row: {
           clinic_id: string
@@ -4099,6 +4138,22 @@ export type Database = {
         Returns: { clinic_id: string; period_end: string }[]
       }
       issue_subscription_invoice: { Args: { p_clinic_id: string; p_months: number }; Returns: string }
+      apply_oneid_identity: {
+        Args: {
+          p_address: string
+          p_clinic: string
+          p_dob: string
+          p_document: string | null
+          p_first_name?: string | null
+          p_full_name: string
+          p_last_name?: string | null
+          p_pinfl: string
+          p_request: string
+          p_sex: Database["public"]["Enums"]["patient_sex"] | null
+          p_username?: string | null
+        }
+        Returns: string
+      }
       issue_card_link_otp: { Args: { p_clinic: string; p_code_hmac: string; p_lookup: string; p_telegram_user_id: number }; Returns: string | null }
       verify_card_link_otp: {
         Args: {

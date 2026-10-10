@@ -241,6 +241,18 @@ describeDb("online identity — passport first, proven by the patient's own Tele
     expect((await post(lookup, a, { consent: true, document: doc(9), dateOfBirth: "1999-02-30" })).body.code).toBe("invalid_identity");
   });
 
+  it("a JSHSHIR is accepted only with the date of birth it carries (digits 2–7), and a malformed one is named as such", async () => {
+    const tg = newTg();
+    // 3 = male, 1900s; 14.03.87 — an illustrative number built from the published structure.
+    const pinfl = `3140387${String(seed).padStart(7, "0").slice(-7)}`;
+    const wrongDate = await post(lookup, tg, { consent: true, document: pinfl, dateOfBirth: "1987-04-14" });
+    expect(wrongDate).toMatchObject({ status: 400, body: { code: "pinfl_birth_date_mismatch" } });
+    const impossible = await post(lookup, tg, { consent: true, document: `9${pinfl.slice(1)}`, dateOfBirth: "1987-03-14" });
+    expect(impossible.body.code).toBe("pinfl_invalid");
+    const right = await post(lookup, tg, { consent: true, document: pinfl, dateOfBirth: "1987-03-14" });
+    expect(right.body.data).toMatchObject({ next: "phone" });
+  });
+
   it("when the clinic requires it, a Mini App booking without a completed identity is refused on the server", async () => {
     await admin.from("clinics").update({ online_identity_required: true }).eq("id", clinic);
     const tg = newTg();
