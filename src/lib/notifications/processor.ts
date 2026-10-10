@@ -200,17 +200,17 @@ export async function processDueNotificationJobs(
           .maybeSingle();
 
         const text = MESSAGE_TEMPLATES[job.type](ctx, clinic?.timezone ?? "Asia/Tashkent");
-        const bookUrl = miniAppUrl(job.clinic_id);
+        // A web_app button, so the app opens inside Telegram with initData (identity first);
+        // a plain link would open a browser without it. HTTPS only — Telegram rejects anything else.
+        const bookUrl = resolveHttpsAppUrl(`/book?clinic=${encodeURIComponent(job.clinic_id)}`);
         const messageId = await sendTelegramMessage(
           {
             chatId: job.patient_telegram_user_id,
             text,
             replyMarkup: {
+              // Each row is an array of buttons.
               inline_keyboard: [
-                // Only attach the booking button when the URL is absolute —
-                // Telegram rejects relative button URLs and would drop the
-                // whole reminder.
-                ...(bookUrl ? [{ text: "📅 Qabulga yozilish", url: bookUrl }] : []),
+                ...(bookUrl ? [[{ text: "📅 Qabulga yozilish", web_app: { url: bookUrl } }]] : []),
                 [{ text: "👤 Operator bilan bog‘lanish", callback_data: "contact_operator" }],
               ],
             },
@@ -552,20 +552,6 @@ export function labResultUrl(clinicId: string, itemId: string): { href: string; 
     return { href: url.toString(), webApp: false };
   }
   return null;
-}
-
-/** Absolute booking URL for a clinic, or null when NEXT_PUBLIC_APP_URL is unset/invalid. */
-function miniAppUrl(clinicId: string): string | null {
-  const base = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
-  if (!base) return null;
-  // Telegram deep link form when the app is hosted on t.me.
-  if (base === "https://t.me" || base.startsWith("https://t.me/")) return base;
-  try {
-    const url = new URL(`${base}/book?clinic=${encodeURIComponent(clinicId)}`);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
-  } catch {
-    return null;
-  }
 }
 
 async function markJob(
