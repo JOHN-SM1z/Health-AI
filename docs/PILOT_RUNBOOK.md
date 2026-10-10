@@ -8,7 +8,27 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
 > Decisions: `docs/decisions/2026-10-08-identity-online-booking-payments-sms.md`. All switches are off by default;
 > the same apply-by-name rule below holds for these files.
 
-## 1. What production has today (read-only check, 2026-10-07)
+## 0. Release 2026-10-10 (owner-approved) — production database is current
+
+- **Backup first:** full `pg_dump` (roles, schema, data incl. auth and storage) at 2026-10-10 ~06:20 UTC, kept by the
+  owner locally (`~/HealthAI-backups/2026-10-10-before-pilot`). The Supabase plan is free: no dashboard backups.
+- **Rehearsal:** the backup was restored into a separate local Supabase stack; all release files applied cleanly; data
+  unchanged; `retention_override` empty.
+- **Applied to production by name, one transaction each, recorded in `supabase_migrations.schema_migrations`:**
+  - the remainder of `20261005000012_lab_documents` (`discard_lab_result_draft`; its first function had been applied
+    as `lab_documents_validation`);
+  - `20261005000013`–`021`, `20261007000001`–`003`, `20261008000001`–`005`, `20261008000010`–`013`.
+- **Verified after applying:**
+  - clinics 2, patients 13, appointments 11, payments 11 (unchanged);
+  - every patient has a `patient_number`; `operating_mode = mixed`;
+  - `internal.retention_override` = 0;
+  - no table-wide patient SELECT for signed-in roles.
+- **App:** release PR #19 (`claude/pilot-audit-pack` → `main`) deploys `health-ai-w1vc`.
+- **Not applied (not in the repository):** staging's `db_audit_*` changes made directly on staging on 2026-10-09.
+- **Vercel previews** now use the staging database and their own secrets. Old preview builds that carried production
+  keys were deleted (154).
+
+## 1. What production had before the release (read-only check, 2026-10-07)
 
 - **Supabase project `cpoiachyfozjnlguaykz`.** It has 24 migrations, ending with `20260930000005_unified_booking_engine`.
   - The migration history was applied **by name, with different version stamps** than the files.
