@@ -26,7 +26,7 @@ export function NavStrip({ label, children }: { label: string; children: ReactNo
     <nav
       ref={ref}
       aria-label={label}
-      className="flex gap-1 overflow-x-auto border-b border-hairline bg-surface px-2 py-1.5 md:hidden [&>a]:shrink-0 [&>a]:whitespace-nowrap"
+      className="flex gap-1 overflow-x-auto border-b border-hairline bg-surface px-2 py-1.5 md:hidden print:hidden [&>a]:shrink-0 [&>a]:whitespace-nowrap"
     >
       {children}
     </nav>

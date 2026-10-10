@@ -4,6 +4,18 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 
 /**
+ * The session for an API call. An account still on its temporary password reaches nothing but the password change
+ * (/api/account/password, which reads the session itself): the change cannot be skipped by calling the API directly.
+ */
+async function apiContext(): Promise<StaffContext | null> {
+  const ctx = await getStaffContext();
+  if (ctx?.mustChangePassword) {
+    throw new ApiError(403, "Avval vaqtinchalik parolni o‘zgartiring", "password_change_required");
+  }
+  return ctx;
+}
+
+/**
  * Resolves the staff session and enforces the minimum management role
  * (owner > admin == manager). UI hiding is never the only line of defense.
  * Platform admins have no clinic and are rejected here — they must use
@@ -11,7 +23,7 @@ import { ApiError } from "@/lib/api/errors";
  * returned context is narrowed to a non-null clinicId.
  */
 export async function requireStaff(minRole: StaffRole = "admin"): Promise<StaffContext & { clinicId: string }> {
-  const ctx = await getStaffContext();
+  const ctx = await apiContext();
   if (!ctx || ctx.platformAdmin || !ctx.clinicId) {
     throw new ApiError(401, "Avtorizatsiya talab qilinadi", "unauthorized");
   }
@@ -23,7 +35,7 @@ export async function requireStaff(minRole: StaffRole = "admin"): Promise<StaffC
 
 /** Any clinic-staff member with one of the allowed roles (owner/admin/manager/receptionist). */
 export async function requireRoles(...roles: StaffRole[]): Promise<StaffContext & { clinicId: string }> {
-  const ctx = await getStaffContext();
+  const ctx = await apiContext();
   if (!ctx || ctx.platformAdmin || !ctx.clinicId) {
     throw new ApiError(401, "Avtorizatsiya talab qilinadi", "unauthorized");
   }
@@ -56,7 +68,7 @@ export async function requireLinkedDoctor(): Promise<LinkedDoctor> {
 
 /** Platform staff only (Health AI platform administration). */
 export async function requirePlatformAdmin(): Promise<StaffContext> {
-  const ctx = await getStaffContext();
+  const ctx = await apiContext();
   if (!ctx || !ctx.platformAdmin) {
     throw new ApiError(403, "Platforma boshqaruvi uchun ruxsat yo‘q", "forbidden");
   }

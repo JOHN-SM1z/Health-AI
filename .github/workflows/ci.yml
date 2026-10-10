@@ -55,9 +55,19 @@ jobs:
       - run: npm ci
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # A fixed version: "latest" asks the GitHub API on every run and fails when it is rate-limited.
+          version: 2.120.0
       - name: Start Supabase (migrations + seed)
-        run: supabase start -x studio,imgproxy,edge-runtime,logflare,vector,realtime,postgres-meta
+        # The runner's Docker occasionally fails to start a container ("failed to start containers"); try again on a
+        # clean stack rather than failing the whole run. A migration error fails all three attempts and the job.
+        run: |
+          for attempt in 1 2 3; do
+            supabase start -x studio,imgproxy,edge-runtime,logflare,vector,realtime,postgres-meta && exit 0
+            echo "supabase start failed (attempt $attempt); retrying on a clean stack"
+            supabase stop --no-backup || true
+            sleep 10
+          done
+          exit 1
       - name: Write .env for the local stack
         run: |
           supabase status -o env > "$RUNNER_TEMP/supabase.env"

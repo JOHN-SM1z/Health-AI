@@ -1,18 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@/lib/supabase/browser";
 import { AButton, AError, AInput, Card } from "@/components/admin/ui";
 
 const MIN_LENGTH = 12;
 
 /**
  * A signed-in staff member changes their own password — first of all the
- * temporary one the clinic owner handed over. The current password is
- * checked again before the change, so an unattended open session cannot
- * be used to take the account over.
+ * temporary one the clinic owner handed over. The server checks the current
+ * password again before the change (so an unattended open session cannot be
+ * used to take the account over) and clears the "temporary password" mark.
  */
-export function ChangePasswordForm() {
+export function ChangePasswordForm({ onChanged }: { onChanged?: () => void }) {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [repeat, setRepeat] = useState("");
@@ -29,19 +28,21 @@ export function ChangePasswordForm() {
 
     setBusy(true);
     setError(null);
-    const supabase = createClient();
     try {
-      const { data } = await supabase.auth.getUser();
-      const email = data.user?.email;
-      if (!email) return setError("Sessiya tugagan. Qaytadan kiring.");
-      const { error: checkError } = await supabase.auth.signInWithPassword({ email, password: current });
-      if (checkError) return setError("Joriy parol noto‘g‘ri");
-      const { error: updateError } = await supabase.auth.updateUser({ password: next });
-      if (updateError) return setError("Parolni o‘zgartirib bo‘lmadi. Birozdan keyin qayta urinib ko‘ring.");
+      const res = await fetch("/api/account/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current, next }),
+      });
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !json?.ok) return setError(json?.error ?? "Parolni o‘zgartirib bo‘lmadi. Birozdan keyin qayta urinib ko‘ring.");
       setCurrent("");
       setNext("");
       setRepeat("");
       setDone(true);
+      onChanged?.();
+    } catch {
+      setError("Tarmoq xatosi. Qayta urinib ko‘ring.");
     } finally {
       setBusy(false);
     }
@@ -55,9 +56,9 @@ export function ChangePasswordForm() {
           Parol o‘zgartirildi. Keyingi safar yangi parol bilan kiring.
         </p>
       )}
-      <AInput type="password" value={current} onChange={setCurrent} placeholder="Joriy parol" aria-label="Joriy parol" />
-      <AInput type="password" value={next} onChange={setNext} placeholder={`Yangi parol (kamida ${MIN_LENGTH} belgi)`} aria-label="Yangi parol" />
-      <AInput type="password" value={repeat} onChange={setRepeat} placeholder="Yangi parolni takrorlang" aria-label="Yangi parol takrori" />
+      <AInput type="password" value={current} onChange={setCurrent} placeholder="Joriy parol" aria-label="Joriy parol" autoComplete="current-password" />
+      <AInput type="password" value={next} onChange={setNext} placeholder={`Yangi parol (kamida ${MIN_LENGTH} belgi)`} aria-label="Yangi parol" autoComplete="new-password" />
+      <AInput type="password" value={repeat} onChange={setRepeat} placeholder="Yangi parolni takrorlang" aria-label="Yangi parol takrori" autoComplete="new-password" />
       <AButton onClick={() => void submit()} loading={busy}>
         Parolni o‘zgartirish
       </AButton>

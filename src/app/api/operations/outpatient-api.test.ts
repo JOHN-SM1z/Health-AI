@@ -176,7 +176,7 @@ describeDb("outpatient pilot — routes", () => {
     const matches = found.body.data!.patients as Array<{ id: string; phone: string; patientNumber: number; dobMatches: boolean }>;
     expect(matches).toHaveLength(1);
     expect(matches[0]).toMatchObject({ phone: "+998 90 111 22 33", dobMatches: true });
-    expect(Object.keys(matches[0]).sort()).toEqual(["dobMatches", "fullName", "id", "patientNumber", "phone"]);
+    expect(Object.keys(matches[0]).sort()).toEqual(["dobMatches", "fullName", "id", "identityVerified", "patientNumber", "phone"]);
     expect(JSON.stringify(found.body)).not.toMatch(/1234567|1990-05-06|female|male/i);
     const dup = await registerNew(`Boshqa ism ${suffix}`, { documentNumber: "AC1234567" });
     expect(dup).toMatchObject({ status: 409, body: { code: "patient_exists", details: { patientId: matches[0].id } } });

@@ -121,7 +121,9 @@ describeDb("online identity — passport first, proven by the patient's own Tele
     // Audited with ids and the method only.
     const { data: audit } = await admin.from("audit_events").select("action, actor_type, old_values, new_values, metadata").eq("patient_id", deskCard);
     expect(audit).toEqual([expect.objectContaining({ action: "patient_telegram_linked", actor_type: "patient", old_values: null, new_values: null })]);
-    expect(JSON.stringify(audit)).not.toMatch(new RegExp(`${doc(1)}|1988|Karimova|\\d{9}`));
+    // Record ids (UUIDs) are random and may happen to contain digit runs or "1988": they are taken out first.
+    const auditText = JSON.stringify(audit).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<id>");
+    expect(auditText).not.toMatch(new RegExp(`${doc(1)}|1988|Karimova|\\d{9}`));
   });
 
   it("the answer never tells whether a document exists, or whose it is: no card, a wrong date and a right one look the same", async () => {
@@ -239,6 +241,18 @@ describeDb("online identity — passport first, proven by the patient's own Tele
     expect((await post(lookup, a, { consent: true, document: "12345", dateOfBirth: "1999-09-09" })).body.code).toBe("invalid_identity");
     expect((await post(lookup, a, { consent: true, document: doc(9), dateOfBirth: "2999-01-01" })).body.code).toBe("invalid_identity");
     expect((await post(lookup, a, { consent: true, document: doc(9), dateOfBirth: "1999-02-30" })).body.code).toBe("invalid_identity");
+  });
+
+  it("a JSHSHIR is accepted only with the date of birth it carries (digits 2–7), and a malformed one is named as such", async () => {
+    const tg = newTg();
+    // 3 = male, 1900s; 14.03.87 — an illustrative number built from the published structure.
+    const pinfl = `3140387${String(seed).padStart(7, "0").slice(-7)}`;
+    const wrongDate = await post(lookup, tg, { consent: true, document: pinfl, dateOfBirth: "1987-04-14" });
+    expect(wrongDate).toMatchObject({ status: 400, body: { code: "pinfl_birth_date_mismatch" } });
+    const impossible = await post(lookup, tg, { consent: true, document: `9${pinfl.slice(1)}`, dateOfBirth: "1987-03-14" });
+    expect(impossible.body.code).toBe("pinfl_invalid");
+    const right = await post(lookup, tg, { consent: true, document: pinfl, dateOfBirth: "1987-03-14" });
+    expect(right.body.data).toMatchObject({ next: "phone" });
   });
 
   it("when the clinic requires it, a Mini App booking without a completed identity is refused on the server", async () => {

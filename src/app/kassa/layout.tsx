@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { getStaffContext, hasAnyRole, KASSA_ROLES } from "@/lib/auth/staff";
+import { requirePanelContext, hasAnyRole, KASSA_ROLES } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
 import { KeyRound, LayoutDashboard, Wallet } from "lucide-react";
@@ -14,8 +14,7 @@ export const metadata = { title: "Kassa" };
  * database checks it again.
  */
 export default async function KassaLayout({ children }: { children: React.ReactNode }) {
-  const ctx = await getStaffContext();
-  if (!ctx) redirect("/login");
+  const ctx = await requirePanelContext();
   if (ctx.platformAdmin || !hasAnyRole(ctx.roles, KASSA_ROLES)) redirect("/admin");
   const adminToo = hasAnyRole(ctx.roles, ["owner", "manager", "admin", "receptionist"]);
 

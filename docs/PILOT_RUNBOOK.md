@@ -42,8 +42,13 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
   - the Telegram queue follow-up `20261008000002_queue_called_enum` and `20261008000003_visit_follow`;
   - the retention guard `20261008000004_retention_guard`.
 - **The live app is `health-ai-w1vc.vercel.app`, which runs `main`.** This branch (PR #14) is not deployed.
-- **The scheduler secret is not aligned.** The Vault `health_ai_cron_secret` must equal `CRON_SECRET` on
-  health-ai-w1vc. Reminders fail with 401 until it does.
+- **The scheduler secret was missing** (Vault had no `health_ai_cron_secret`), so every pg_cron call got 401 and no
+  reminder was sent. On 2026-10-10 a new `CRON_SECRET` was generated and stored, never displayed, both on
+  health-ai-w1vc (Production) and in Vault, using `~/HealthAI-backups/rotate_cron_secret.py`.
+  - A deploy applies it.
+  - The same release skips any backlog message past its sending window (`src/lib/notifications/staleness.ts`), so
+    old reminders are not sent late.
+  - Check: `select status_code, created from net._http_response order by id desc limit 5` should show 200.
 
 ## 2. Before the pilot — clinic inputs (owner / acceptance contact)
 

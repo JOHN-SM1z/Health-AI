@@ -44,5 +44,7 @@ export const config = {
     "/doctor/:path*",
     "/lab/:path*",
     "/kassa/:path*",
+    "/platform/:path*",
+    "/account/:path*",
   ],
 };

@@ -1,12 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { IdCard, Phone } from "lucide-react";
+import { IdCard, Phone, ShieldCheck } from "lucide-react";
 import { Button, Card, Input, Spinner, ErrorBanner, NoticeBanner, SectionTitle } from "@/components/mini-app/ui";
 import { apiPost } from "@/lib/client/api";
 
 /** The patient's own details, shown once they are proven (never a document number). */
-export type OnlineProfile = { fullName: string | null; phone: string | null; dateOfBirth: string | null; homeAddress: string | null; complete: boolean };
+export type OnlineProfile = {
+  fullName: string | null;
+  phone: string | null;
+  dateOfBirth: string | null;
+  homeAddress: string | null;
+  complete: boolean;
+  identityVerified?: boolean;
+};
 
 type Step =
   | { next: "phone"; lookupId: string }
@@ -62,14 +69,19 @@ export function IdentityStep({ identity, clinicPhone, onDone }: { identity: stri
   const [address, setAddress] = useState("");
   const polling = useRef(0);
   const [smsAvailable, setSmsAvailable] = useState(false);
+  const [oneIdAvailable, setOneIdAvailable] = useState(false);
+  const [oneIdWaiting, setOneIdWaiting] = useState(false);
   const [codeSent, setCodeSent] = useState<string | null>(null);
   const [code, setCode] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    void apiPost<{ profile: OnlineProfile | null; smsAvailable?: boolean }>("/api/mini-app/identity/status", {}, identity).then((res) => {
+    void apiPost<{ profile: OnlineProfile | null; smsAvailable?: boolean; oneIdAvailable?: boolean }>("/api/mini-app/identity/status", {}, identity).then((res) => {
       if (cancelled) return;
-      if (res.ok) setSmsAvailable(res.data.smsAvailable === true);
+      if (res.ok) {
+        setSmsAvailable(res.data.smsAvailable === true);
+        setOneIdAvailable(res.data.oneIdAvailable === true);
+      }
       if (res.ok && res.data.profile) setView({ name: "confirm", profile: res.data.profile });
       setLoading(false);
     });
@@ -84,6 +96,38 @@ export function IdentityStep({ identity, clinicPhone, onDone }: { identity: stri
     else if (step.next === "reception") setView({ name: "reception" });
     else setView({ name: "phone", lookupId: step.lookupId, waiting: false });
   }, []);
+
+  /**
+   * OneID: the patient signs in at the state identification system in the phone's browser; the details come from the
+   * state, not from what was typed. This screen then follows the attempt until it ends.
+   */
+  const startOneId = async () => {
+    setError(null);
+    setBusy(true);
+    const res = await apiPost<{ url: string }>("/api/mini-app/identity/oneid", { action: "start" }, identity);
+    setBusy(false);
+    if (!res.ok) return setError(res.error);
+    try {
+      const sdk = await import("@tma.js/sdk");
+      const open = sdk.openLink as unknown as { (u: string): void; isAvailable?: () => boolean };
+      if (open.isAvailable && !open.isAvailable()) throw new Error("unavailable");
+      open(res.data.url);
+    } catch {
+      window.open(res.data.url, "_blank", "noopener");
+    }
+    const run = ++polling.current;
+    setOneIdWaiting(true);
+    for (let i = 0; i < 90 && run === polling.current; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const poll = await apiPost<{ pending: boolean; outcome: string | null; profile: OnlineProfile | null }>("/api/mini-app/identity/oneid", { action: "poll" }, identity);
+      if (!poll.ok || poll.data.pending) continue;
+      setOneIdWaiting(false);
+      if (poll.data.profile) return setView({ name: "confirm", profile: poll.data.profile });
+      if (poll.data.outcome === "reception") return setView({ name: "reception" });
+      return setError("OneID orqali tasdiqlab bo‘lmadi. Pasport/ID va telefon orqali davom eting.");
+    }
+    if (run === polling.current) setOneIdWaiting(false);
+  };
 
   const submitLookup = async () => {
     const iso = parseDob(dob);
@@ -168,6 +212,25 @@ export function IdentityStep({ identity, clinicPhone, onDone }: { identity: stri
     <div className="flex flex-col gap-3">
       {error && <ErrorBanner message={error} />}
       {notice && <NoticeBanner message={notice} />}
+
+      {view.name === "lookup" && oneIdAvailable && (
+        <Card className="flex flex-col gap-2 border-[var(--tg-button,var(--pine))]">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <ShieldCheck className="h-4 w-4 text-[var(--tg-button,var(--pine))]" aria-hidden /> OneID orqali tasdiqlash (tavsiya etiladi)
+          </div>
+          <p className="text-xs text-[var(--tg-hint)]">
+            id.egov.uz’ga login, ERI yoki telefon bilan kirasiz — ism, tug‘ilgan sana va hujjatingiz davlat tizimidan olinadi. Yuz tekshiruvi yo‘q.
+          </p>
+          {oneIdWaiting ? (
+            <Spinner label="OneID’dan javob kutilmoqda… Tasdiqlagach shu yerga qayting." />
+          ) : (
+            <Button size="full" loading={busy} disabled={!consent} onClick={startOneId}>
+              OneID bilan kirish
+            </Button>
+          )}
+          {!consent && <p className="text-xs text-[var(--tg-hint)]">Avval quyida shaxsiy ma’lumotlarga rozilik bering.</p>}
+        </Card>
+      )}
 
       {view.name === "lookup" && (
         <>
@@ -281,6 +344,15 @@ export function IdentityStep({ identity, clinicPhone, onDone }: { identity: stri
         <>
           <SectionTitle>Ma’lumotlaringiz</SectionTitle>
           <Card className="flex flex-col gap-2 text-sm">
+            {view.profile.identityVerified ? (
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-[var(--tg-button,var(--pine))]">
+                <ShieldCheck className="h-3.5 w-3.5" aria-hidden /> Shaxsingiz tasdiqlangan
+              </p>
+            ) : (
+              <p className="rounded-lg bg-[var(--clay-tint,#fbeae2)] px-2.5 py-1.5 text-xs text-[var(--clay-deep,#a35532)]">
+                Birinchi kelganingizda qabulxonada pasport yoki ID kartangizni ko‘rsating — shaxsingiz tasdiqlanadi.
+              </p>
+            )}
             <div>
               <span className="text-[var(--tg-hint)]">F.I.Sh.: </span>
               {view.profile.fullName ?? "—"}

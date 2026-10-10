@@ -9,7 +9,7 @@ export default function MiniAppLayout({ children }: { children: React.ReactNode 
     <div className="mx-auto flex w-full max-w-md flex-col gap-4 px-4 pb-10 pt-5">
       <header className="flex items-center gap-3">
         <Link
-          href="/"
+          href="/home"
           aria-label="Bosh sahifa"
           className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--tg-secondary-bg,var(--hairline))] bg-[var(--tg-secondary-bg,#f1f5f9)] text-[var(--tg-text,var(--foreground))] transition-colors hover:bg-[var(--tg-bg,#ffffff)]"
         >

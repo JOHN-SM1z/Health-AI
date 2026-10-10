@@ -56,6 +56,13 @@ const envSchema = z.object({
   RAHMAT_SECRET_KEY: z.string().optional(),
   RAHMAT_API_BASE_URL: optionalUrl(),
 
+  // OneID (id.egov.uz): state identity verification in the Mini App (20261010000003). Off until the operator signs
+  // the OneID agreement and receives these; the callback is NEXT_PUBLIC_APP_URL/api/oneid/callback.
+  ONEID_CLIENT_ID: z.string().optional(),
+  ONEID_CLIENT_SECRET: z.string().optional(),
+  ONEID_SCOPE: z.string().optional(),
+  ONEID_BASE_URL: optionalUrl(),
+
   CLICK_MERCHANT_ID: z.string().optional(),
   CLICK_SERVICE_ID: z.string().optional(),
   CLICK_SECRET_KEY: z.string().optional(),

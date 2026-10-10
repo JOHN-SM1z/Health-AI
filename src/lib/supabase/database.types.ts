@@ -429,59 +429,62 @@ export type Database = {
       }
       clinics: {
         Row: {
-          queue_after_payment: boolean
-          online_identity_required: boolean
-          sms_enabled: boolean
-          operating_mode: string
           address: string | null
+          city: string | null
           created_at: string
           currency: string
           email: string | null
           id: string
           is_active: boolean
           name: string
+          online_identity_required: boolean
           opening_hours: Json
+          operating_mode: string
           phone: string | null
           privacy_notice: string | null
+          queue_after_payment: boolean
           slug: string
+          sms_enabled: boolean
           timezone: string
           updated_at: string
         }
         Insert: {
-          queue_after_payment?: boolean
-          online_identity_required?: boolean
-          sms_enabled?: boolean
-          operating_mode?: string
           address?: string | null
+          city?: string | null
           created_at?: string
           currency?: string
           email?: string | null
           id?: string
           is_active?: boolean
           name: string
+          online_identity_required?: boolean
           opening_hours?: Json
+          operating_mode?: string
           phone?: string | null
           privacy_notice?: string | null
+          queue_after_payment?: boolean
           slug: string
+          sms_enabled?: boolean
           timezone?: string
           updated_at?: string
         }
         Update: {
-          queue_after_payment?: boolean
-          online_identity_required?: boolean
-          sms_enabled?: boolean
-          operating_mode?: string
           address?: string | null
+          city?: string | null
           created_at?: string
           currency?: string
           email?: string | null
           id?: string
           is_active?: boolean
           name?: string
+          online_identity_required?: boolean
           opening_hours?: Json
+          operating_mode?: string
           phone?: string | null
           privacy_notice?: string | null
+          queue_after_payment?: boolean
           slug?: string
+          sms_enabled?: boolean
           timezone?: string
           updated_at?: string
         }
@@ -2483,6 +2486,8 @@ export type Database = {
       }
       patients: {
         Row: {
+          identity_verified_at: string | null
+          identity_verified_by: string | null
           patient_number: number
           clinic_id: string
           consent_given: boolean
@@ -2511,6 +2516,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          identity_verified_at?: string | null
+          identity_verified_by?: string | null
           patient_number?: number
           clinic_id: string
           consent_given?: boolean
@@ -2539,6 +2546,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          identity_verified_at?: string | null
+          identity_verified_by?: string | null
           patient_number?: number
           clinic_id?: string
           consent_given?: boolean
@@ -2729,6 +2738,8 @@ export type Database = {
           created_at: string
           full_name: string | null
           id: string
+          login: string | null
+          must_change_password: boolean
           phone: string | null
           updated_at: string
         }
@@ -2737,6 +2748,8 @@ export type Database = {
           created_at?: string
           full_name?: string | null
           id: string
+          login?: string | null
+          must_change_password?: boolean
           phone?: string | null
           updated_at?: string
         }
@@ -2745,6 +2758,8 @@ export type Database = {
           created_at?: string
           full_name?: string | null
           id?: string
+          login?: string | null
+          must_change_password?: boolean
           phone?: string | null
           updated_at?: string
         }
@@ -3364,6 +3379,7 @@ export type Database = {
         Row: {
           clinic_id: string
           created_at: string
+          department_id: string | null
           id: string
           profile_id: string
           role: Database["public"]["Enums"]["staff_role"]
@@ -3371,6 +3387,7 @@ export type Database = {
         Insert: {
           clinic_id: string
           created_at?: string
+          department_id?: string | null
           id?: string
           profile_id: string
           role: Database["public"]["Enums"]["staff_role"]
@@ -3378,6 +3395,7 @@ export type Database = {
         Update: {
           clinic_id?: string
           created_at?: string
+          department_id?: string | null
           id?: string
           profile_id?: string
           role?: Database["public"]["Enums"]["staff_role"]
@@ -3389,6 +3407,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "clinics"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "staff_roles_department_fkey"
+            columns: ["department_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "departments"
+            referencedColumns: ["id", "clinic_id"]
           },
           {
             foreignKeyName: "staff_roles_profile_id_fkey"
@@ -3414,6 +3439,270 @@ export type Database = {
           clinic_id?: string
           name?: string
           value?: number
+        }
+        Relationships: []
+      }
+      departments: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          id: string
+          kind: string
+          name: string
+          sort_order: number
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          id?: string
+          kind?: string
+          name: string
+          sort_order?: number
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          name?: string
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "departments_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subscription_plans: {
+        Row: {
+          code: string
+          created_at: string
+          features: string[]
+          id: string
+          is_public: boolean
+          max_doctors: number | null
+          max_staff: number | null
+          monthly_price_uzs: number
+          name: string
+          price_is_draft: boolean
+          sort_order: number
+          tagline: string
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          features?: string[]
+          id?: string
+          is_public?: boolean
+          max_doctors?: number | null
+          max_staff?: number | null
+          monthly_price_uzs: number
+          name: string
+          price_is_draft?: boolean
+          sort_order?: number
+          tagline?: string
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          features?: string[]
+          id?: string
+          is_public?: boolean
+          max_doctors?: number | null
+          max_staff?: number | null
+          monthly_price_uzs?: number
+          name?: string
+          price_is_draft?: boolean
+          sort_order?: number
+          tagline?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      clinic_subscriptions: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          current_period_end: string | null
+          plan_id: string
+          status: string
+          trial_ends_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          current_period_end?: string | null
+          plan_id: string
+          status: string
+          trial_ends_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          current_period_end?: string | null
+          plan_id?: string
+          status?: string
+          trial_ends_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clinic_subscriptions_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: true
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clinic_subscriptions_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "subscription_plans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subscription_invoices: {
+        Row: {
+          amount_uzs: number
+          clinic_id: string
+          confirmed_by: string | null
+          created_at: string
+          due_at: string
+          id: string
+          issued_at: string
+          months: number
+          number: string
+          paid_at: string | null
+          payment_reference: string | null
+          plan_id: string
+          status: string
+        }
+        Insert: {
+          amount_uzs: number
+          clinic_id: string
+          confirmed_by?: string | null
+          created_at?: string
+          due_at: string
+          id?: string
+          issued_at?: string
+          months?: number
+          number: string
+          paid_at?: string | null
+          payment_reference?: string | null
+          plan_id: string
+          status?: string
+        }
+        Update: {
+          amount_uzs?: number
+          clinic_id?: string
+          confirmed_by?: string | null
+          created_at?: string
+          due_at?: string
+          id?: string
+          issued_at?: string
+          months?: number
+          number?: string
+          paid_at?: string | null
+          payment_reference?: string | null
+          plan_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subscription_invoices_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscription_invoices_confirmed_by_fkey"
+            columns: ["confirmed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscription_invoices_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "subscription_plans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      platform_billing: {
+        Row: {
+          bank_account: string
+          bank_name: string
+          contact_phone: string
+          id: boolean
+          legal_name: string
+          mfo: string
+          tin: string
+          updated_at: string
+        }
+        Insert: {
+          bank_account?: string
+          bank_name?: string
+          contact_phone?: string
+          id?: boolean
+          legal_name?: string
+          mfo?: string
+          tin?: string
+          updated_at?: string
+        }
+        Update: {
+          bank_account?: string
+          bank_name?: string
+          contact_phone?: string
+          id?: boolean
+          legal_name?: string
+          mfo?: string
+          tin?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      oneid_requests: {
+        Row: {
+          clinic_id: string
+          completed_at: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          outcome: string | null
+          state_hash: string
+          telegram_user_id: number
+        }
+        Insert: {
+          clinic_id: string
+          completed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          outcome?: string | null
+          state_hash: string
+          telegram_user_id: number
+        }
+        Update: {
+          clinic_id?: string
+          completed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          outcome?: string | null
+          state_hash?: string
+          telegram_user_id?: number
         }
         Relationships: []
       }
@@ -3828,6 +4117,46 @@ export type Database = {
       claim_due_sms_jobs: {
         Args: { p_clinic_ids?: string[]; p_limit: number }
         Returns: Database["public"]["Tables"]["notification_jobs"]["Row"][]
+      }
+      provision_clinic: {
+        Args: {
+          p_address: string
+          p_city: string
+          p_clinic_name: string
+          p_clinic_phone: string
+          p_owner_id: string
+          p_owner_login: string
+          p_owner_name: string
+          p_owner_phone: string
+          p_plan_code: string
+          p_slug: string
+        }
+        Returns: { clinic_id: string; invoice_id: string; invoice_number: string }[]
+      }
+      confirm_subscription_invoice: {
+        Args: { p_admin_id: string; p_invoice_id: string; p_reference: string }
+        Returns: { clinic_id: string; period_end: string }[]
+      }
+      issue_subscription_invoice: { Args: { p_clinic_id: string; p_months: number }; Returns: string }
+      verify_identity_at_desk: {
+        Args: { p_actor: string; p_clinic: string; p_dob: string; p_document: string | null; p_patient: string; p_pinfl: string | null }
+        Returns: string
+      }
+      apply_oneid_identity: {
+        Args: {
+          p_address: string
+          p_clinic: string
+          p_dob: string
+          p_document: string | null
+          p_first_name?: string | null
+          p_full_name: string
+          p_last_name?: string | null
+          p_pinfl: string
+          p_request: string
+          p_sex: Database["public"]["Enums"]["patient_sex"] | null
+          p_username?: string | null
+        }
+        Returns: string
       }
       issue_card_link_otp: { Args: { p_clinic: string; p_code_hmac: string; p_lookup: string; p_telegram_user_id: number }; Returns: string | null }
       verify_card_link_otp: {

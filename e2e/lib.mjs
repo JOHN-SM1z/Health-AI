@@ -117,7 +117,7 @@ export async function signIn(browser, report, email, viewport = "desktop", { exp
   page.on("pageerror", (e) => report.problems.push(`[${email}] pageerror: ${e.message}`));
   page.on("response", (r) => r.status() >= 500 && report.problems.push(`[${email}] HTTP ${r.status()} ${r.url()}`));
   await page.goto(`${BASE}/login`);
-  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Login").fill(email);
   await page.getByLabel("Parol").fill(PASSWORD);
   await page.getByRole("button", { name: "Kirish" }).click();
   await page.waitForURL(/\/(admin|doctor|lab|kassa)/, { timeout: 15_000 });

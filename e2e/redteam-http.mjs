@@ -30,7 +30,7 @@ async function session(browser, email) {
   if (email) {
     const page = await context.newPage();
     await page.goto(`${BASE}/login`);
-    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Login").fill(email);
     await page.getByLabel("Parol").fill(PASSWORD);
     await page.getByRole("button", { name: "Kirish" }).click();
     await page.waitForURL(/\/(admin|doctor)/, { timeout: 15_000 });

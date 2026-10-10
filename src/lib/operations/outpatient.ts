@@ -10,6 +10,9 @@ import { ORDER_ERRORS } from "@/lib/labs/ordering";
 import { classifyQuery, isIdentityDocument } from "@/lib/operations/identity-query";
 import { deliverClinicNotificationsSoon } from "@/lib/notifications/deliver-soon";
 import { recordAudit } from "@/lib/audit";
+import { parseIdentityDocument, plausibleDateOfBirth } from "@/lib/patients/online-identity";
+import { checkPinflAgainstBirthDate } from "@/lib/identity/pinfl";
+import { sharedRateLimit } from "@/lib/rate-limit-shared";
 
 /**
  * Outpatient pilot — the server side of 20261007000002. Every write is one
@@ -122,7 +125,12 @@ export type PatientMatch = {
   phone: string | null;
   /** True when the date of birth the desk typed was checked on the server and matches; null when none was typed. */
   dobMatches: boolean | null;
+  /** How the card's identity was confirmed (state OneID or a document in hand at the desk); null when not yet. */
+  identityVerified: IdentityVerifiedBy;
 };
+
+export type IdentityVerifiedBy = "oneid" | "reception" | null;
+const verifiedBy = (v: string | null | undefined): IdentityVerifiedBy => (v === "oneid" || v === "reception" ? v : null);
 
 export type PatientSearch = {
   patients: PatientMatch[];
@@ -152,7 +160,7 @@ export async function searchPatients(staff: Staff, q: string, dateOfBirth?: stri
   const supabase = createAdminClient();
   let query = supabase
     .from("patients")
-    .select("id, patient_number, full_name, date_of_birth, phone")
+    .select("id, patient_number, full_name, date_of_birth, phone, identity_verified_by")
     .eq("clinic_id", staff.clinicId)
     .is("merged_into_patient_id", null)
     .limit(10);
@@ -178,6 +186,7 @@ export async function searchPatients(staff: Staff, q: string, dateOfBirth?: stri
       phone: p.phone,
       // Every row kept was filtered on the typed date of birth.
       dobMatches: dateOfBirth ? true : null,
+      identityVerified: verifiedBy(p.identity_verified_by),
     })),
     exact: byDocument && kept.length === 1,
     dobMismatch: byDocument && rows.length > 0 && kept.length === 0,
@@ -243,7 +252,7 @@ export type VisitSummary = {
   source: "desk" | "online";
   /** The booked time of an online visit; null for a walk-in. */
   slotAt: string | null;
-  patient: { id: string; patientNumber: number; fullName: string | null };
+  patient: { id: string; patientNumber: number; fullName: string | null; identityVerified: IdentityVerifiedBy };
   /** null for a laboratory visit. */
   doctor: { id: string; name: string } | null;
   balance: Balance;
@@ -254,7 +263,7 @@ export type VisitSummary = {
 export const queueLabel = (v: { kind: string; doctor: { name: string } | null }) => (v.kind === "lab" ? "Laboratoriya" : (v.doctor?.name ?? "Shifokor"));
 
 const VISIT_SELECT =
-  "id, kind, lab_order_id, status, source, queue_date, queue_number, arrived_at, queued_at, called_at, patient_id, doctor_id, appointments(start_at), patients!inner(id, patient_number, full_name), doctors(id, name), visit_charges(id, service_name, amount, status, void_reason, created_at, lab_order_item_id)";
+  "id, kind, lab_order_id, status, source, queue_date, queue_number, arrived_at, queued_at, called_at, patient_id, doctor_id, appointments(start_at), patients!inner(id, patient_number, full_name, identity_verified_by), doctors(id, name), visit_charges(id, service_name, amount, status, void_reason, created_at, lab_order_item_id)";
 
 type VisitRow = {
   id: string;
@@ -268,7 +277,7 @@ type VisitRow = {
   queued_at: string | null;
   called_at: string | null;
   appointments: { start_at: string } | null;
-  patients: { id: string; patient_number: number; full_name: string | null } | null;
+  patients: { id: string; patient_number: number; full_name: string | null; identity_verified_by: string | null } | null;
   doctors: { id: string; name: string } | null;
   visit_charges: Array<{ id: string; service_name: string; amount: number; status: "active" | "voided"; void_reason: string | null; created_at: string; lab_order_item_id: string | null }> | null;
 };
@@ -324,7 +333,12 @@ async function toSummaries(rows: VisitRow[]): Promise<VisitSummary[]> {
       calledAt: r.called_at,
       source: r.source ?? "desk",
       slotAt: r.appointments?.start_at ?? null,
-      patient: { id: r.patients!.id, patientNumber: Number(r.patients!.patient_number), fullName: r.patients!.full_name },
+      patient: {
+        id: r.patients!.id,
+        patientNumber: Number(r.patients!.patient_number),
+        fullName: r.patients!.full_name,
+        identityVerified: verifiedBy(r.patients!.identity_verified_by),
+      },
       doctor: r.doctors ? { id: r.doctors.id, name: r.doctors.name } : null,
       balance: b,
       charges,
@@ -433,6 +447,47 @@ export async function setSmsConsent(staff: Staff, patientId: string, consent: bo
 async function smsConsentForVisit(staff: Staff, visitId: string) {
   const { data } = await createAdminClient().from("visits").select("patient_id").eq("clinic_id", staff.clinicId).eq("id", visitId).maybeSingle();
   if (data) await setSmsConsent(staff, data.patient_id, true);
+}
+
+/**
+ * The passport in hand (20261010000004): the receptionist types the series/number or JSHSHIR and the date of birth
+ * from the patient's document; the server compares them with the card and says only whether they match. A card with
+ * no document yet takes it from here. Staff never see the stored values. Wrong attempts are limited per card and per
+ * staff member, so the desk cannot be used to guess someone's document.
+ */
+export type DeskIdentityOutcome = "verified" | "mismatch" | "other_document" | "document_in_use";
+
+export async function verifyIdentityAtDesk(
+  staff: Staff,
+  patientId: string,
+  input: { document: string; dateOfBirth: string },
+): Promise<{ outcome: DeskIdentityOutcome }> {
+  const doc = parseIdentityDocument(input.document);
+  if (!doc || !plausibleDateOfBirth(input.dateOfBirth)) {
+    throw new ApiError(400, "Hujjat raqami va tug‘ilgan sanani hujjatdan aniq ko‘chiring", "invalid_identity");
+  }
+  if (doc.kind === "pinfl" && checkPinflAgainstBirthDate(doc.value, input.dateOfBirth) !== "ok") {
+    throw new ApiError(400, "JSHSHIR va tug‘ilgan sana mos kelmaydi — hujjatdan qayta ko‘chiring", "pinfl_birth_date_mismatch");
+  }
+  for (const [key, max] of [
+    [`desk-identity:staff:${staff.clinicId}:${staff.profileId}`, 30],
+    [`desk-identity:patient:${staff.clinicId}:${patientId}`, 5],
+  ] as const) {
+    const r = await sharedRateLimit({ key, limit: max, windowMs: 3_600_000 });
+    if (!r.ok) throw new ApiError(429, "Juda ko‘p urinish. Birozdan keyin qayta urinib ko‘ring.", "rate_limited");
+  }
+  const { data, error } = await createAdminClient().rpc("verify_identity_at_desk", {
+    p_clinic: staff.clinicId,
+    p_patient: patientId,
+    p_actor: staff.profileId,
+    p_document: doc.kind === "document" ? doc.value : null,
+    p_pinfl: doc.kind === "pinfl" ? doc.value : null,
+    p_dob: input.dateOfBirth,
+  });
+  if (error?.hint === "patient_not_found") throw new ApiError(404, REFUSALS.patient_not_found[1], "patient_not_found");
+  if (error?.code === "42501") throw new ApiError(403, "Bu amal uchun ruxsat yo‘q", "forbidden");
+  if (error) throw new ApiError(500, "Tekshirib bo‘lmadi");
+  return { outcome: data as DeskIdentityOutcome };
 }
 
 /** Patients who paid online for a clinic day and have not arrived yet (reception's "Keldi" list), by booked time. */

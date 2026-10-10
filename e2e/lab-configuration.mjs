@@ -77,12 +77,12 @@ async function run() {
     // ---------- owner adds a lab staff member ----------
     const { context: ownerContext, page: o } = await signIn(browser, report, DEMO.owner);
     await o.goto(`${BASE}/admin/staff`);
-    labEmail = `lab-${suffix}@e2e.local`;
+    labEmail = `lab.${suffix}`.toLowerCase();
     await o.getByLabel("Xodimning to‘liq ismi").fill("Laborant E2E");
-    await o.getByLabel("Xodimning emaili").fill(labEmail);
+    await o.getByLabel("Xodimning logini").fill(labEmail);
     await o.getByLabel("Yangi xodim roli").selectOption("lab");
     await o.getByRole("button", { name: /qo‘shish/i }).click();
-    const password = (await o.locator("code, .font-numeric").filter({ hasText: /^[A-Za-z0-9!@#$%^&*_\-]{12,}$/ }).first().textContent())?.trim();
+    const password = (await o.getByTestId("temporary-password").textContent())?.trim();
     check(Boolean(password), "owner: a lab staff member is added with a one-time password");
     await ownerContext.close();
 
@@ -91,9 +91,16 @@ async function run() {
     const l = await labContext.newPage();
     l.on("pageerror", (e) => report.problems.push(`[lab] pageerror: ${e.message}`));
     await l.goto(`${BASE}/login`);
-    await l.getByLabel("Email").fill(labEmail);
+    await l.getByLabel("Login").fill(labEmail);
     await l.getByLabel("Parol").fill(password ?? "");
     await l.getByRole("button", { name: "Kirish" }).click();
+    // First sign-in: the temporary password is replaced before any panel opens.
+    await l.waitForURL(/\/account\/password/, { timeout: 15_000 });
+    const ownPassword = `Lab-own-${suffix}-password`;
+    await l.getByLabel("Joriy parol").fill(password ?? "");
+    await l.getByLabel("Yangi parol", { exact: true }).fill(ownPassword);
+    await l.getByLabel("Yangi parol takrori").fill(ownPassword);
+    await l.getByRole("button", { name: "Parolni o‘zgartirish" }).click();
     await l.waitForURL(/\/lab/, { timeout: 15_000 });
     check(new URL(l.url()).pathname === "/lab", "lab staff land on the lab workspace");
     await l.goto(`${BASE}/admin/patients`);
@@ -119,7 +126,7 @@ try {
   code = report.abort(e);
 } finally {
   if (labEmail) {
-    await db`delete from public.staff_roles where profile_id in (select id from auth.users where email = ${labEmail})`.catch(() => {});
+    await db`delete from public.staff_roles where profile_id in (select id from public.profiles where login = ${labEmail})`.catch(() => {});
   }
   await db.end({ timeout: 5 });
 }
