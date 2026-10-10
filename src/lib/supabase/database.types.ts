@@ -429,62 +429,62 @@ export type Database = {
       }
       clinics: {
         Row: {
-          city: string | null
-          queue_after_payment: boolean
-          online_identity_required: boolean
-          sms_enabled: boolean
-          operating_mode: string
           address: string | null
+          city: string | null
           created_at: string
           currency: string
           email: string | null
           id: string
           is_active: boolean
           name: string
+          online_identity_required: boolean
           opening_hours: Json
+          operating_mode: string
           phone: string | null
           privacy_notice: string | null
+          queue_after_payment: boolean
           slug: string
+          sms_enabled: boolean
           timezone: string
           updated_at: string
         }
         Insert: {
-          city?: string | null
-          queue_after_payment?: boolean
-          online_identity_required?: boolean
-          sms_enabled?: boolean
-          operating_mode?: string
           address?: string | null
+          city?: string | null
           created_at?: string
           currency?: string
           email?: string | null
           id?: string
           is_active?: boolean
           name: string
+          online_identity_required?: boolean
           opening_hours?: Json
+          operating_mode?: string
           phone?: string | null
           privacy_notice?: string | null
+          queue_after_payment?: boolean
           slug: string
+          sms_enabled?: boolean
           timezone?: string
           updated_at?: string
         }
         Update: {
-          city?: string | null
-          queue_after_payment?: boolean
-          online_identity_required?: boolean
-          sms_enabled?: boolean
-          operating_mode?: string
           address?: string | null
+          city?: string | null
           created_at?: string
           currency?: string
           email?: string | null
           id?: string
           is_active?: boolean
           name?: string
+          online_identity_required?: boolean
           opening_hours?: Json
+          operating_mode?: string
           phone?: string | null
           privacy_notice?: string | null
+          queue_after_payment?: boolean
           slug?: string
+          sms_enabled?: boolean
           timezone?: string
           updated_at?: string
         }
@@ -2728,32 +2728,32 @@ export type Database = {
       }
       profiles: {
         Row: {
-          login: string | null
-          must_change_password: boolean
           avatar_url: string | null
           created_at: string
           full_name: string | null
           id: string
+          login: string | null
+          must_change_password: boolean
           phone: string | null
           updated_at: string
         }
         Insert: {
-          login?: string | null
-          must_change_password?: boolean
           avatar_url?: string | null
           created_at?: string
           full_name?: string | null
           id: string
+          login?: string | null
+          must_change_password?: boolean
           phone?: string | null
           updated_at?: string
         }
         Update: {
-          login?: string | null
-          must_change_password?: boolean
           avatar_url?: string | null
           created_at?: string
           full_name?: string | null
           id?: string
+          login?: string | null
+          must_change_password?: boolean
           phone?: string | null
           updated_at?: string
         }
@@ -3371,25 +3371,25 @@ export type Database = {
       }
       staff_roles: {
         Row: {
-          department_id: string | null
           clinic_id: string
           created_at: string
+          department_id: string | null
           id: string
           profile_id: string
           role: Database["public"]["Enums"]["staff_role"]
         }
         Insert: {
-          department_id?: string | null
           clinic_id: string
           created_at?: string
+          department_id?: string | null
           id?: string
           profile_id: string
           role: Database["public"]["Enums"]["staff_role"]
         }
         Update: {
-          department_id?: string | null
           clinic_id?: string
           created_at?: string
+          department_id?: string | null
           id?: string
           profile_id?: string
           role?: Database["public"]["Enums"]["staff_role"]
@@ -3401,6 +3401,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "clinics"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "staff_roles_department_fkey"
+            columns: ["department_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "departments"
+            referencedColumns: ["id", "clinic_id"]
           },
           {
             foreignKeyName: "staff_roles_profile_id_fkey"
@@ -3454,7 +3461,15 @@ export type Database = {
           name?: string
           sort_order?: number
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "departments_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       subscription_plans: {
         Row: {
@@ -3532,7 +3547,22 @@ export type Database = {
           trial_ends_at?: string | null
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "clinic_subscriptions_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: true
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clinic_subscriptions_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "subscription_plans"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       subscription_invoices: {
         Row: {
@@ -3580,7 +3610,29 @@ export type Database = {
           plan_id?: string
           status?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "subscription_invoices_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscription_invoices_confirmed_by_fkey"
+            columns: ["confirmed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscription_invoices_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "subscription_plans"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       platform_billing: {
         Row: {
