@@ -8,6 +8,40 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
 > Decisions: `docs/decisions/2026-10-08-identity-online-booking-payments-sms.md`. All switches are off by default;
 > the same apply-by-name rule below holds for these files.
 
+## 0b. Second release 2026-10-10 (owner: "release") — clinic website, sign-up, billing, logins, identity checks
+
+- **Backup first:** `~/HealthAI-backups/2026-10-10-before-saas` (roles, schema, data; files are mode 600).
+- **Rehearsal:** the backup was restored into the local `prodrehearsal` stack (`restore_rehearsal.sh`).
+  - Only `auth.users` is restored from the auth data; the local auth version lacks newer production MFA, SCIM and
+    token tables. Storage data is skipped too.
+  - The four release files then applied cleanly (`rehearse_2.sh`); data unchanged.
+- **Applied to production by name, one transaction each** (`apply_production_2.sh`): `20261010000001`–`004`.
+  - `001`: `set_updated_at` gets a fixed `search_path`.
+  - `002`: logins and forced password change, departments, plans/subscriptions/invoices, `provision_clinic`,
+    `confirm_subscription_invoice`. Clinic switches and profiles are server-only.
+  - `003`: OneID requests and the verified-identity mark.
+  - `004`: `verify_identity_at_desk` (passport in hand).
+- **Verified after applying:**
+  - clinics 2, patients 13, appointments 12, payments 12 — unchanged since the backup;
+  - both clinics on the active, open-ended Pilot plan;
+  - no browser-writable profile or clinic switch column.
+- **Platform admin:** `healthai.platform` was created (must change its password at first sign-in). Its temporary
+  password is in `~/HealthAI-backups/platform-admin-login.txt` (mode 600), for the owner; delete the file after the
+  first sign-in. Sign-in checked against production auth.
+- **App:** PR #21 (includes PR #20's scheduler fixes) → `main` deploys `health-ai-w1vc`.
+  - That deploy also applies the new `CRON_SECRET`, so reminders resume.
+  - Old backlog messages are skipped, not sent late.
+- **Checked live after the deploy (16:15 UTC):**
+  - `/`, `/signup`, `/login`, `/home`, `/book` answer 200; `/api/health` is ok;
+  - the new APIs refuse callers without a session;
+  - the scheduler's call returns 200 again;
+  - the 9 queued old messages were skipped with a reason, none sent late;
+  - the reminders for 19 and 20 October are still pending.
+- **Still with the owner:**
+  - real prices and payee details in `/platform`;
+  - the OneID agreement (`docs/oneid-ariza.md`); OneID stays off until `ONEID_CLIENT_ID`/`SECRET` are set;
+  - leaked-password protection in Supabase Auth.
+
 ## 0. Release 2026-10-10 (owner-approved) — production database is current
 
 - **Backup first:** full `pg_dump` (roles, schema, data incl. auth and storage) at 2026-10-10 ~06:20 UTC, kept by the
