@@ -135,7 +135,8 @@ describeDb("patient date of birth and sex (real database)", () => {
       { action: "patient_demographics_updated", actor_id: people.manager, actor_type: "staff", entity_id: patient, patient_id: patient, old_values: null, new_values: null, metadata: { fields: ["date_of_birth"] } },
       { action: "patient_demographics_updated", actor_id: people.manager, actor_type: "staff", entity_id: patient, patient_id: patient, old_values: null, new_values: null, metadata: { fields: ["sex"] } },
     ]);
-    expect(JSON.stringify(audit)).not.toMatch(/1990|male/);
+    // Record ids (UUIDs) are random and may happen to contain "1990": they are taken out first.
+    expect(JSON.stringify(audit).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<id>")).not.toMatch(/1990|male/);
 
     // Sex can go back to unknown; it is never guessed.
     expect((await set(patient, "1990-07-15", null)).status).toBe(200);

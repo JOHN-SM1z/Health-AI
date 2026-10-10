@@ -121,7 +121,9 @@ describeDb("online identity — passport first, proven by the patient's own Tele
     // Audited with ids and the method only.
     const { data: audit } = await admin.from("audit_events").select("action, actor_type, old_values, new_values, metadata").eq("patient_id", deskCard);
     expect(audit).toEqual([expect.objectContaining({ action: "patient_telegram_linked", actor_type: "patient", old_values: null, new_values: null })]);
-    expect(JSON.stringify(audit)).not.toMatch(new RegExp(`${doc(1)}|1988|Karimova|\\d{9}`));
+    // Record ids (UUIDs) are random and may happen to contain digit runs or "1988": they are taken out first.
+    const auditText = JSON.stringify(audit).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<id>");
+    expect(auditText).not.toMatch(new RegExp(`${doc(1)}|1988|Karimova|\\d{9}`));
   });
 
   it("the answer never tells whether a document exists, or whose it is: no card, a wrong date and a right one look the same", async () => {
