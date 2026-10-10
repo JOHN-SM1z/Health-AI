@@ -1,30 +1,41 @@
-import { notFound } from "next/navigation";
-import { HeartPulse } from "lucide-react";
-import { getStaffContext, hasAnyRole } from "@/lib/auth/staff";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { getPayee } from "@/lib/billing/invoices";
-import { formatUzs } from "@/lib/billing/status";
-import { PrintButton } from "./print-button";
+"use client";
 
-export const metadata = { title: "Hisob-faktura" };
+import { use, useEffect, useState } from "react";
+import { HeartPulse, Printer } from "lucide-react";
+import { AButton, AError, LoadingRow } from "@/components/admin/ui";
+import { adminApi, AdminApiError } from "@/lib/admin/client";
+import { formatUzs } from "@/lib/billing/status";
+
+type PrintInvoice = {
+  number: string;
+  amountUzs: number;
+  months: number;
+  status: "issued" | "paid" | "void";
+  issuedAt: string;
+  dueAt: string;
+  paidAt: string | null;
+  planName: string;
+  clinic: { name: string; address: string; phone: string };
+  payee: { legalName: string; tin: string; bankName: string; bankAccount: string; mfo: string };
+};
 
 const date = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("uz-UZ", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—");
 
-/** A printable invoice (browser “Save as PDF”) for the clinic's own subscription invoice; owner only. */
-export default async function InvoicePage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const ctx = await getStaffContext();
-  if (!ctx?.clinicId || !hasAnyRole(ctx.roles, ["owner"])) notFound();
+/** A printable invoice (browser “Save as PDF”) for the clinic's own subscription invoice; the API admits the owner only. */
+export default function InvoicePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  const [inv, setInv] = useState<PrintInvoice | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const db = createAdminClient();
-  const { data: inv } = await db
-    .from("subscription_invoices")
-    .select("number, amount_uzs, months, status, issued_at, due_at, paid_at, subscription_plans(name), clinics(name, address, city, phone)")
-    .eq("id", id)
-    .eq("clinic_id", ctx.clinicId)
-    .maybeSingle();
-  if (!inv) notFound();
-  const payee = await getPayee();
+  useEffect(() => {
+    adminApi
+      .get<PrintInvoice>(`/api/admin/billing/invoice?id=${encodeURIComponent(id)}`)
+      .then(setInv)
+      .catch((e) => setError(e instanceof AdminApiError ? e.message : "Hisob-fakturani yuklab bo‘lmadi"));
+  }, [id]);
+
+  if (error) return <AError message={error} />;
+  if (!inv) return <LoadingRow />;
 
   return (
     <div className="mx-auto max-w-2xl bg-white p-8 text-[#10282e] print:p-0">
@@ -41,24 +52,24 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
         <div className="text-right">
           <p className="font-display text-xl font-bold">Hisob-faktura</p>
           <p className="font-numeric text-sm">{inv.number}</p>
-          <p className="text-xs text-ink-muted">{date(inv.issued_at)}</p>
+          <p className="text-xs text-ink-muted">{date(inv.issuedAt)}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-6 py-6 text-sm">
         <div>
           <p className="font-numeric text-[10px] uppercase tracking-[0.16em] text-ink-muted">To‘lovchi</p>
-          <p className="mt-1 font-semibold">{inv.clinics?.name}</p>
-          <p className="text-ink-muted">{[inv.clinics?.city, inv.clinics?.address].filter(Boolean).join(", ")}</p>
-          <p className="text-ink-muted">{inv.clinics?.phone}</p>
+          <p className="mt-1 font-semibold">{inv.clinic.name}</p>
+          <p className="text-ink-muted">{inv.clinic.address}</p>
+          <p className="text-ink-muted">{inv.clinic.phone}</p>
         </div>
         <div>
           <p className="font-numeric text-[10px] uppercase tracking-[0.16em] text-ink-muted">Oluvchi</p>
-          <p className="mt-1 font-semibold">{payee.legalName || "—"}</p>
-          <p>STIR: {payee.tin || "—"}</p>
-          <p>Bank: {payee.bankName || "—"}</p>
-          <p>H/r: {payee.bankAccount || "—"}</p>
-          <p>MFO: {payee.mfo || "—"}</p>
+          <p className="mt-1 font-semibold">{inv.payee.legalName || "—"}</p>
+          <p>STIR: {inv.payee.tin || "—"}</p>
+          <p>Bank: {inv.payee.bankName || "—"}</p>
+          <p>H/r: {inv.payee.bankAccount || "—"}</p>
+          <p>MFO: {inv.payee.mfo || "—"}</p>
         </div>
       </div>
 
@@ -72,9 +83,9 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
         </thead>
         <tbody>
           <tr className="border-b border-hairline">
-            <td className="py-3">Health AI obunasi — “{inv.subscription_plans?.name}” tarifi</td>
+            <td className="py-3">Health AI obunasi — “{inv.planName}” tarifi</td>
             <td className="py-3">{inv.months} oy</td>
-            <td className="font-numeric py-3 text-right">{formatUzs(inv.amount_uzs)}</td>
+            <td className="font-numeric py-3 text-right">{formatUzs(inv.amountUzs)}</td>
           </tr>
         </tbody>
         <tfoot>
@@ -82,7 +93,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
             <td className="pt-3 font-semibold" colSpan={2}>
               Jami to‘lov
             </td>
-            <td className="font-numeric pt-3 text-right text-lg font-bold">{formatUzs(inv.amount_uzs)}</td>
+            <td className="font-numeric pt-3 text-right text-lg font-bold">{formatUzs(inv.amountUzs)}</td>
           </tr>
         </tfoot>
       </table>
@@ -92,14 +103,16 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           <span className="font-semibold">To‘lov maqsadi:</span> Health AI obunasi, hisob-faktura {inv.number}
         </p>
         <p>
-          <span className="font-semibold">To‘lov muddati:</span> {date(inv.due_at)}
+          <span className="font-semibold">To‘lov muddati:</span> {date(inv.dueAt)}
         </p>
         <p className="mt-1">
-          <span className="font-semibold">Holat:</span> {inv.status === "paid" ? `To‘langan (${date(inv.paid_at)})` : inv.status === "void" ? "Bekor qilingan" : "To‘lanmagan"}
+          <span className="font-semibold">Holat:</span> {inv.status === "paid" ? `To‘langan (${date(inv.paidAt)})` : inv.status === "void" ? "Bekor qilingan" : "To‘lanmagan"}
         </p>
       </div>
       <div className="mt-6 print:hidden">
-        <PrintButton />
+        <AButton onClick={() => window.print()}>
+          <Printer className="h-4 w-4" /> Chop etish yoki PDF saqlash
+        </AButton>
       </div>
     </div>
   );

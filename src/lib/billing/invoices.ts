@@ -117,3 +117,30 @@ export async function changePlan(clinicId: string, actorId: string, planCode: st
     newValues: { plan: planCode },
   });
 }
+
+/** One of the clinic's own invoices, with what a printed invoice shows; null when it is not this clinic's. */
+export async function invoiceForPrint(clinicId: string, invoiceId: string) {
+  const { data } = await createAdminClient()
+    .from("subscription_invoices")
+    .select("number, amount_uzs, months, status, issued_at, due_at, paid_at, subscription_plans(name), clinics(name, address, city, phone)")
+    .eq("id", invoiceId)
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    number: data.number,
+    amountUzs: data.amount_uzs,
+    months: data.months,
+    status: data.status as Invoice["status"],
+    issuedAt: data.issued_at,
+    dueAt: data.due_at,
+    paidAt: data.paid_at,
+    planName: data.subscription_plans?.name ?? "",
+    clinic: {
+      name: data.clinics?.name ?? "",
+      address: [data.clinics?.city, data.clinics?.address].filter(Boolean).join(", "),
+      phone: data.clinics?.phone ?? "",
+    },
+    payee: await getPayee(),
+  };
+}
