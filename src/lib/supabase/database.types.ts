@@ -429,6 +429,7 @@ export type Database = {
       }
       clinics: {
         Row: {
+          city: string | null
           queue_after_payment: boolean
           online_identity_required: boolean
           sms_enabled: boolean
@@ -448,6 +449,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          city?: string | null
           queue_after_payment?: boolean
           online_identity_required?: boolean
           sms_enabled?: boolean
@@ -467,6 +469,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          city?: string | null
           queue_after_payment?: boolean
           online_identity_required?: boolean
           sms_enabled?: boolean
@@ -2725,6 +2728,8 @@ export type Database = {
       }
       profiles: {
         Row: {
+          login: string | null
+          must_change_password: boolean
           avatar_url: string | null
           created_at: string
           full_name: string | null
@@ -2733,6 +2738,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          login?: string | null
+          must_change_password?: boolean
           avatar_url?: string | null
           created_at?: string
           full_name?: string | null
@@ -2741,6 +2748,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          login?: string | null
+          must_change_password?: boolean
           avatar_url?: string | null
           created_at?: string
           full_name?: string | null
@@ -3362,6 +3371,7 @@ export type Database = {
       }
       staff_roles: {
         Row: {
+          department_id: string | null
           clinic_id: string
           created_at: string
           id: string
@@ -3369,6 +3379,7 @@ export type Database = {
           role: Database["public"]["Enums"]["staff_role"]
         }
         Insert: {
+          department_id?: string | null
           clinic_id: string
           created_at?: string
           id?: string
@@ -3376,6 +3387,7 @@ export type Database = {
           role: Database["public"]["Enums"]["staff_role"]
         }
         Update: {
+          department_id?: string | null
           clinic_id?: string
           created_at?: string
           id?: string
@@ -3414,6 +3426,192 @@ export type Database = {
           clinic_id?: string
           name?: string
           value?: number
+        }
+        Relationships: []
+      }
+      departments: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          id: string
+          kind: string
+          name: string
+          sort_order: number
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          id?: string
+          kind?: string
+          name: string
+          sort_order?: number
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          name?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
+      subscription_plans: {
+        Row: {
+          code: string
+          created_at: string
+          features: string[]
+          id: string
+          is_public: boolean
+          max_doctors: number | null
+          max_staff: number | null
+          monthly_price_uzs: number
+          name: string
+          price_is_draft: boolean
+          sort_order: number
+          tagline: string
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          features?: string[]
+          id?: string
+          is_public?: boolean
+          max_doctors?: number | null
+          max_staff?: number | null
+          monthly_price_uzs: number
+          name: string
+          price_is_draft?: boolean
+          sort_order?: number
+          tagline?: string
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          features?: string[]
+          id?: string
+          is_public?: boolean
+          max_doctors?: number | null
+          max_staff?: number | null
+          monthly_price_uzs?: number
+          name?: string
+          price_is_draft?: boolean
+          sort_order?: number
+          tagline?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      clinic_subscriptions: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          current_period_end: string | null
+          plan_id: string
+          status: string
+          trial_ends_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          current_period_end?: string | null
+          plan_id: string
+          status: string
+          trial_ends_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          current_period_end?: string | null
+          plan_id?: string
+          status?: string
+          trial_ends_at?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      subscription_invoices: {
+        Row: {
+          amount_uzs: number
+          clinic_id: string
+          confirmed_by: string | null
+          created_at: string
+          due_at: string
+          id: string
+          issued_at: string
+          months: number
+          number: string
+          paid_at: string | null
+          payment_reference: string | null
+          plan_id: string
+          status: string
+        }
+        Insert: {
+          amount_uzs: number
+          clinic_id: string
+          confirmed_by?: string | null
+          created_at?: string
+          due_at: string
+          id?: string
+          issued_at?: string
+          months?: number
+          number: string
+          paid_at?: string | null
+          payment_reference?: string | null
+          plan_id: string
+          status?: string
+        }
+        Update: {
+          amount_uzs?: number
+          clinic_id?: string
+          confirmed_by?: string | null
+          created_at?: string
+          due_at?: string
+          id?: string
+          issued_at?: string
+          months?: number
+          number?: string
+          paid_at?: string | null
+          payment_reference?: string | null
+          plan_id?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      platform_billing: {
+        Row: {
+          bank_account: string
+          bank_name: string
+          contact_phone: string
+          id: boolean
+          legal_name: string
+          mfo: string
+          tin: string
+          updated_at: string
+        }
+        Insert: {
+          bank_account?: string
+          bank_name?: string
+          contact_phone?: string
+          id?: boolean
+          legal_name?: string
+          mfo?: string
+          tin?: string
+          updated_at?: string
+        }
+        Update: {
+          bank_account?: string
+          bank_name?: string
+          contact_phone?: string
+          id?: boolean
+          legal_name?: string
+          mfo?: string
+          tin?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -3829,6 +4027,26 @@ export type Database = {
         Args: { p_clinic_ids?: string[]; p_limit: number }
         Returns: Database["public"]["Tables"]["notification_jobs"]["Row"][]
       }
+      provision_clinic: {
+        Args: {
+          p_address: string
+          p_city: string
+          p_clinic_name: string
+          p_clinic_phone: string
+          p_owner_id: string
+          p_owner_login: string
+          p_owner_name: string
+          p_owner_phone: string
+          p_plan_code: string
+          p_slug: string
+        }
+        Returns: { clinic_id: string; invoice_id: string; invoice_number: string }[]
+      }
+      confirm_subscription_invoice: {
+        Args: { p_admin_id: string; p_invoice_id: string; p_reference: string }
+        Returns: { clinic_id: string; period_end: string }[]
+      }
+      issue_subscription_invoice: { Args: { p_clinic_id: string; p_months: number }; Returns: string }
       issue_card_link_otp: { Args: { p_clinic: string; p_code_hmac: string; p_lookup: string; p_telegram_user_id: number }; Returns: string | null }
       verify_card_link_otp: {
         Args: {

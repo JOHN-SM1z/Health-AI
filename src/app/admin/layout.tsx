@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { adminWorkspaceRedirect, getStaffContext, hasAnyRole, hasRole, isCallCenterStaff, canViewPaymentDynamics, KASSA_ROLES, RECEPTION_ROLES } from "@/lib/auth/staff";
+import { adminWorkspaceRedirect, requirePanelContext, hasAnyRole, hasRole, isCallCenterStaff, canViewPaymentDynamics, KASSA_ROLES, RECEPTION_ROLES } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
 import { CalendarDays, DoorOpen, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge, Activity } from "lucide-react";
@@ -10,8 +10,7 @@ import { NotificationBell } from "@/components/staff/notification-bell";
 export const metadata = { title: "Boshqaruv paneli" };
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const ctx = await getStaffContext();
-  if (!ctx) redirect("/login");
+  const ctx = await requirePanelContext();
   const workspaceRedirect = adminWorkspaceRedirect(ctx);
   if (workspaceRedirect) redirect(workspaceRedirect);
 

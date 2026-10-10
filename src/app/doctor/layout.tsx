@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { getStaffContext, hasRole } from "@/lib/auth/staff";
+import { requirePanelContext, hasRole } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
 import { HeartPulse, ListOrdered, CalendarRange, Send, Users, KeyRound, FlaskConical } from "lucide-react";
@@ -10,8 +10,7 @@ import { NotificationBell } from "@/components/staff/notification-bell";
 export const metadata = { title: "Shifokor paneli" };
 
 export default async function DoctorLayout({ children }: { children: React.ReactNode }) {
-  const ctx = await getStaffContext();
-  if (!ctx) redirect("/login");
+  const ctx = await requirePanelContext();
   if (!hasRole(ctx, "doctor")) redirect("/admin");
 
   return (

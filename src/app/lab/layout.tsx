@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { getStaffContext, hasAnyRole } from "@/lib/auth/staff";
+import { requirePanelContext, hasAnyRole } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
 import { BarChart3, FileUp, FlaskConical, KeyRound, ListChecks } from "lucide-react";
@@ -15,8 +15,7 @@ export const metadata = { title: "Laboratoriya" };
  * on the server (requireLabCapability).
  */
 export default async function LabLayout({ children }: { children: React.ReactNode }) {
-  const ctx = await getStaffContext();
-  if (!ctx) redirect("/login");
+  const ctx = await requirePanelContext();
   if (ctx.platformAdmin || !hasAnyRole(ctx.roles, ["lab"])) redirect("/admin");
 
   return (
