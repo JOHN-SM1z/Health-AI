@@ -62,8 +62,8 @@ async function run() {
     // A temporary password opens no panel: first stop is setting their own password, and the API refuses meanwhile.
     await newcomer.waitForURL(/\/account\/password/, { timeout: 15_000 });
     check(true, "the one-time password signs in, straight to the password change");
-    const pending = await newcomer.evaluate(async () => (await fetch("/api/admin/appointments")).json().then((j) => j.code));
-    check(pending === "password_change_required", "the API refuses an account still on its temporary password");
+    const pendingCode = await newcomer.evaluate(async () => (await fetch("/api/admin/appointments")).json().then((j) => j.code));
+    check(pendingCode === "password_change_required", "the API refuses an account still on its temporary password");
     await newcomer.goto(`${BASE}/admin`);
     await newcomer.waitForURL(/\/account\/password/, { timeout: 15_000 });
     check(true, "the panel sends a temporary-password account back to the password change");
