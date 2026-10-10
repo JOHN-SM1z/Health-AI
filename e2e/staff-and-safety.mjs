@@ -30,7 +30,7 @@ async function login(browser, email, password, viewport = "desktop") {
   page.on("pageerror", (e) => report.problems.push(`[${email}] pageerror: ${e.message}`));
   page.on("response", (r) => r.status() >= 500 && report.problems.push(`[${email}] HTTP ${r.status()} ${r.url()}`));
   await page.goto(`${BASE}/login`);
-  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Login").fill(email);
   await page.getByLabel("Parol").fill(password);
   await page.getByRole("button", { name: "Kirish" }).click();
   return { context, page };
@@ -44,9 +44,10 @@ async function run() {
     check(await owner.getByRole("link", { name: "Xodimlar" }).first().isVisible(), "the owner has a Xodimlar section");
     await owner.getByRole("link", { name: "Xodimlar" }).first().click();
     await owner.getByLabel("Xodimning to‘liq ismi").waitFor();
-    const email = `reception-${suffix}@e2e.local`;
+    // Employees sign in with a login, not an email (owner decision 2026-10-10).
+    const email = `qabul.${suffix}`.toLowerCase();
     await owner.getByLabel("Xodimning to‘liq ismi").fill(`Yangi Qabulxona ${suffix}`);
-    await owner.getByLabel("Xodimning emaili").fill(email);
+    await owner.getByLabel("Xodimning logini").fill(email);
     await owner.getByLabel("Yangi xodim roli").selectOption("receptionist");
     await owner.getByRole("button", { name: "Xodim qo‘shish" }).click();
     const temporary = (await owner.getByTestId("temporary-password").textContent())?.trim() ?? "";
@@ -54,23 +55,28 @@ async function run() {
     await owner.screenshot({ path: `${SHOTS}/staff-added.png`, fullPage: true });
     // The list reloads after the add: wait for the row instead of sampling the page once.
     const listed = await owner.getByText(email, { exact: true }).waitFor({ timeout: 15_000 }).then(() => true, () => false);
-    check(listed, "the new receptionist is listed with their sign-in email");
+    check(listed, "the new receptionist is listed with their login");
 
     // ---------- The receptionist signs in and changes the password (phone) ----------
     const { context: newContext, page: newcomer } = await login(browser, email, temporary, "phone");
-    await newcomer.waitForURL(/\/admin/, { timeout: 15_000 });
-    check(true, "the one-time password signs in");
-    check((await newcomer.getByRole("link", { name: "Xodimlar" }).count()) === 0, "a receptionist has no staff management");
-    const denied = await newcomer.evaluate(async () => (await fetch("/api/admin/staff/members")).status);
-    check(denied === 403, "the staff API refuses a receptionist (403)");
-    await newcomer.goto(`${BASE}/admin/password`);
+    // A temporary password opens no panel: first stop is setting their own password, and the API refuses meanwhile.
+    await newcomer.waitForURL(/\/account\/password/, { timeout: 15_000 });
+    check(true, "the one-time password signs in, straight to the password change");
+    const pending = await newcomer.evaluate(async () => (await fetch("/api/admin/appointments")).json().then((j) => j.code));
+    check(pending === "password_change_required", "the API refuses an account still on its temporary password");
+    await newcomer.goto(`${BASE}/admin`);
+    await newcomer.waitForURL(/\/account\/password/, { timeout: 15_000 });
+    check(true, "the panel sends a temporary-password account back to the password change");
     const newPassword = `Qabul-${randomUUID()}`;
     await newcomer.getByLabel("Joriy parol").fill(temporary);
     await newcomer.getByLabel("Yangi parol", { exact: true }).fill(newPassword);
     await newcomer.getByLabel("Yangi parol takrori").fill(newPassword);
     await newcomer.getByRole("button", { name: "Parolni o‘zgartirish" }).click();
-    await newcomer.getByText("Parol o‘zgartirildi").waitFor();
-    check(true, "the receptionist replaces the one-time password");
+    await newcomer.waitForURL(/\/admin/, { timeout: 15_000 });
+    check(true, "the receptionist replaces the one-time password and lands on their panel");
+    check((await newcomer.getByRole("link", { name: "Xodimlar" }).count()) === 0, "a receptionist has no staff management");
+    const denied = await newcomer.evaluate(async () => (await fetch("/api/admin/staff/members")).status);
+    check(denied === 403, "the staff API refuses a receptionist (403)");
     await newcomer.screenshot({ path: `${SHOTS}/password-changed-phone.png`, fullPage: true });
 
     const { context: againContext, page: again } = await login(browser, email, newPassword);

@@ -3,7 +3,9 @@ import Link from "next/link";
 import { adminWorkspaceRedirect, requirePanelContext, hasAnyRole, hasRole, isCallCenterStaff, canViewPaymentDynamics, KASSA_ROLES, RECEPTION_ROLES } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
-import { CalendarDays, DoorOpen, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge, Activity } from "lucide-react";
+import { CalendarDays, DoorOpen, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge, Activity, Building2, CreditCard } from "lucide-react";
+import { getClinicSubscription } from "@/lib/billing/subscription";
+import { SubscriptionBanner } from "@/components/admin/subscription-banner";
 import { labCan } from "@/lib/labs/permissions";
 import { NotificationBell } from "@/components/staff/notification-bell";
 
@@ -42,13 +44,18 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin/finance", label: "Moliya", icon: <Wallet className="h-4 w-4" />, show: financeVisible },
     { href: "/admin/lab-kassa", label: "Laboratoriya kassasi", icon: <Receipt className="h-4 w-4" />, show: financeVisible },
     { href: "/admin/staff", label: "Xodimlar", icon: <UserCog className="h-4 w-4" />, show: hasRole(ctx, "owner") },
+    { href: "/admin/departments", label: "Bo‘limlar", icon: <Building2 className="h-4 w-4" />, show: hasAnyRole(ctx.roles, ["owner", "admin", "manager"]) },
+    { href: "/admin/billing", label: "Obuna", icon: <CreditCard className="h-4 w-4" />, show: hasRole(ctx, "owner") },
     { href: "/admin/settings", label: "Sozlamalar", icon: <Settings className="h-4 w-4" />, show: isManagement },
     { href: "/admin/password", label: "Parolim", icon: <KeyRound className="h-4 w-4" />, show: true },
   ].filter((n) => n.show !== false);
 
+  // Owners and administrators see the trial / payment state; nothing is blocked here (the platform decides that).
+  const subscription = hasAnyRole(ctx.roles, ["owner", "admin"]) && ctx.clinicId ? await getClinicSubscription(ctx.clinicId).catch(() => null) : null;
+
   return (
     <div className="flex min-h-dvh bg-sand">
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-hairline bg-surface md:flex">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-hairline bg-surface md:flex print:hidden">
         <div className="flex items-center gap-3 px-5 pb-5 pt-6">
           <span className="brand-tile flex h-9 w-9 items-center justify-center rounded-xl text-white">
             <HeartPulse className="h-5 w-5" />
@@ -78,7 +85,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-hairline bg-surface px-4 py-3 md:hidden">
+        <header className="flex items-center justify-between border-b border-hairline bg-surface px-4 py-3 md:hidden print:hidden">
           <Link href="/admin" className="flex items-center gap-2.5">
             <span className="brand-tile flex h-8 w-8 items-center justify-center rounded-lg text-white">
               <HeartPulse className="h-4 w-4" />
@@ -98,7 +105,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             </NavLink>
           ))}
         </NavStrip>
-        <div className="flex-1 overflow-x-hidden p-4 md:p-8">{children}</div>
+        <div className="flex-1 overflow-x-hidden p-4 md:p-8 print:p-0">
+          {subscription && <SubscriptionBanner subscription={subscription} isOwner={hasRole(ctx, "owner")} />}
+          {children}
+        </div>
       </div>
     </div>
   );
