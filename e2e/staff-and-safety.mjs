@@ -54,7 +54,7 @@ async function run() {
     check(temporary.length >= 12, "the one-time password is shown to the owner once");
     await owner.screenshot({ path: `${SHOTS}/staff-added.png`, fullPage: true });
     // The list reloads after the add: wait for the row instead of sampling the page once.
-    const listed = await owner.getByText(email, { exact: true }).waitFor({ timeout: 15_000 }).then(() => true, () => false);
+    const listed = await owner.locator("tbody").getByText(email, { exact: true }).waitFor({ timeout: 15_000 }).then(() => true, () => false);
     check(listed, "the new receptionist is listed with their login");
 
     // ---------- The receptionist signs in and changes the password (phone) ----------
@@ -62,7 +62,7 @@ async function run() {
     // A temporary password opens no panel: first stop is setting their own password, and the API refuses meanwhile.
     await newcomer.waitForURL(/\/account\/password/, { timeout: 15_000 });
     check(true, "the one-time password signs in, straight to the password change");
-    const pendingCode = await newcomer.evaluate(async () => (await fetch("/api/admin/appointments")).json().then((j) => j.code));
+    const pendingCode = await newcomer.evaluate(async () => (await fetch("/api/admin/staff/members")).json().then((j) => j.code));
     check(pendingCode === "password_change_required", "the API refuses an account still on its temporary password");
     await newcomer.goto(`${BASE}/admin`);
     await newcomer.waitForURL(/\/account\/password/, { timeout: 15_000 });
