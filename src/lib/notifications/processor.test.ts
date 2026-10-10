@@ -31,16 +31,19 @@ describeDb("notification processor — atomic claims", () => {
   let patientId: string;
   const createdJobKeys: string[] = [];
 
-  async function insertJob(key: string, opts: { maxAttempts?: number; status?: string } = {}) {
+  async function insertJob(
+    key: string,
+    opts: { maxAttempts?: number; status?: string; type?: "booking_confirmation" | "reminder_24h"; scheduledFor?: string } = {},
+  ) {
     createdJobKeys.push(key);
     const { data, error } = await admin.from("notification_jobs").insert({
       clinic_id: CLINIC_ID,
       appointment_id: appointmentId,
-      type: "booking_confirmation",
+      type: opts.type ?? "booking_confirmation",
       channel: "telegram",
       recipient_type: "patient",
       patient_telegram_user_id: 777000,
-      scheduled_for: new Date(Date.now() - 1000).toISOString(),
+      scheduled_for: opts.scheduledFor ?? new Date(Date.now() - 1000).toISOString(),
       status: opts.status ?? "pending",
       max_attempts: opts.maxAttempts ?? 3,
       idempotency_key: key,
@@ -162,6 +165,27 @@ describeDb("notification processor — atomic claims", () => {
     expect(afterFirst!.status).toBe("failed");
     expect(afterFirst!.attempts).toBe(1);
     sendMock.mockResolvedValue(12345);
+  });
+
+  it("a backlog job past its sending window is skipped, never sent late", async () => {
+    // The production scheduler once ran for days without its secret: the queued
+    // reminders and confirmations must not all reach the patient when it recovers.
+    const sendMock = vi.mocked(sendTelegramMessage);
+    sendMock.mockClear();
+    const reminderId = await insertJob(`stale-reminder-${Date.now()}`, {
+      type: "reminder_24h",
+      scheduledFor: new Date(Date.now() - 3 * 3600000).toISOString(),
+    });
+    const confirmationId = await insertJob(`stale-confirmation-${Date.now()}`, {
+      scheduledFor: new Date(Date.now() - 3 * 86400000).toISOString(),
+    });
+
+    const result = await processDueNotificationJobs(50, [CLINIC_ID]);
+    expect(result.sent).toBe(0);
+    expect(sendMock).not.toHaveBeenCalled();
+    const { data: jobs } = await admin.from("notification_jobs").select("id, status, error").in("id", [reminderId, confirmationId]);
+    expect(jobs).toHaveLength(2);
+    for (const job of jobs!) expect(job).toMatchObject({ status: "skipped", error: "too late to send" });
   });
 
   it("an in_progress job is not claimed by another worker", async () => {

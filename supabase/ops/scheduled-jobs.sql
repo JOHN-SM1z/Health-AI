@@ -45,7 +45,7 @@ create extension if not exists pg_cron with schema pg_catalog;
 do $$
 declare
   -- The production URL of the app, without a trailing slash.
-  v_app_url constant text := 'https://health-ai-handly.vercel.app';
+  v_app_url constant text := 'https://health-ai-w1vc.vercel.app';
   v_call constant text := $call$
     select net.http_post(
       url := %L,

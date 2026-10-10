@@ -16193,3 +16193,11 @@ revoke all on function public.verify_card_link_otp(uuid, bigint, uuid, text, tex
 grant execute on function public.claim_due_sms_jobs(integer, uuid[]) to service_role;
 grant execute on function public.issue_card_link_otp(uuid, bigint, uuid, text) to service_role;
 grant execute on function public.verify_card_link_otp(uuid, bigint, uuid, text, text, text, text) to service_role;
+
+-- =====================================================================
+-- FILE: 20261010000001_set_updated_at_search_path.sql
+-- =====================================================================
+-- The updated_at trigger function was the one function without a fixed search_path
+-- (Supabase security advisor: function_search_path_mutable). It only assigns
+-- now() to NEW.updated_at, so pinning the path changes nothing it does.
+alter function public.set_updated_at() set search_path = public, pg_temp;

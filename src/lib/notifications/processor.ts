@@ -8,6 +8,7 @@ import { resolveHttpsAppUrl } from "@/lib/telegram/bots";
 // The one approved gateway from patient-facing code to lab results (Phase 12).
 import { loadLabOrderNotice, loadLabResultNotice } from "@/lib/labs/patient-results";
 import { bookedTicketText, queueCalledText, queueStatusButton, queueTicketText } from "@/lib/operations/queue-messages";
+import { staleAppointmentMessage } from "@/lib/notifications/staleness";
 
 
 const MESSAGE_TEMPLATES: Record<
@@ -184,6 +185,12 @@ export async function processDueNotificationJobs(
           ["cancelled", "no_show", "completed"].includes(ctx.status)
         ) {
           await markJob(jobId, "skipped", nextAttempts, `appointment is ${ctx.status}`, supabase);
+          continue;
+        }
+        // A backlog (scheduler down, bot not connected) never reaches the patient late.
+        const stale = staleAppointmentMessage(job.type, job.scheduled_for, ctx.startAt);
+        if (stale) {
+          await markJob(jobId, "skipped", nextAttempts, stale, supabase);
           continue;
         }
         const { data: clinic } = await supabase

@@ -9,7 +9,8 @@ const supabaseMock = {
 };
 
 const APPOINTMENT_CTX = {
-  start_at: "2026-08-20T05:00:00Z",
+  // Always ahead: the processor skips messages for an appointment whose time has passed.
+  start_at: new Date(Date.now() + 7 * 86400000).toISOString(),
   status: "confirmed",
   doctors: { name: "Karimov Alisher" },
   services: { name: "Terapevt qabuli" },
