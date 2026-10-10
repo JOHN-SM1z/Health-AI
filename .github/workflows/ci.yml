@@ -82,6 +82,13 @@ jobs:
             echo "ENABLE_TELEGRAM_DEV_MODE=false"
             # The mock external laboratory for the e2e run (local database only; see providers/registry.ts).
             echo "ALLOW_MOCK_LAB_PROVIDER=true"
+            # The signed test payment provider and the local SMS outbox for the e2e run (local database only;
+            # production refuses both — src/instrumentation.ts).
+            echo "ONLINE_PAYMENT_PROVIDER=test_online"
+            echo "ALLOW_TEST_ONLINE_PAYMENT=true"
+            echo "TEST_ONLINE_PAYMENT_SECRET=$(openssl rand -hex 32)"
+            echo "SMS_PROVIDER=test"
+            echo "ALLOW_TEST_SMS=true"
           } > .env
       - name: Clinic owner account (used by the session tests)
         run: npm run create-owner

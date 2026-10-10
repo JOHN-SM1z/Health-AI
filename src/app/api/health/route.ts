@@ -23,16 +23,17 @@ export async function GET() {
 }
 
 async function checkDatabase(): Promise<boolean> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
+  // Server-side only: the anon key can no longer read the REST root (Supabase answers 401 "Only the service_role
+  // API key can be used for this endpoint"), and signed-out roles hold no table privileges by design — so the probe
+  // asks the database one trivial question with the server's own key. The response carries only the status.
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return true; // not configured yet — report ok, not degraded
 
   try {
-    const res = await fetch(`${url}/rest/v1/`, {
-      // New Supabase publishable keys (`sb_publishable_…`) are API keys, not
-      // JWTs. Sending one as a Bearer token makes the gateway reject an
-      // otherwise valid key as an invalid JWT. The apikey header works for
-      // both legacy anon and new publishable key formats.
+    const res = await fetch(`${url}/rest/v1/clinics?select=id&limit=1`, {
+      // The apikey header works for both legacy JWT keys and the new `sb_secret_…` keys (which are not JWTs and are
+      // rejected as a Bearer token).
       headers: { apikey: key },
       signal: AbortSignal.timeout(4000),
     });
