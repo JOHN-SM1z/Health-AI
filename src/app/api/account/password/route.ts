@@ -47,9 +47,10 @@ export async function POST(request: NextRequest) {
     if (checkError) throw new ApiError(400, "Joriy parol noto‘g‘ri", "wrong_password");
     await probe.auth.signOut({ scope: "local" });
 
-    const admin = createAdminClient();
-    const { error: updateError } = await admin.auth.admin.updateUserById(user.id, { password: body.next });
+    // Through the employee's own session, so it stays signed in (an admin-side change would end every session).
+    const { error: updateError } = await session.auth.updateUser({ password: body.next });
     if (updateError) throw new ApiError(400, "Parolni o‘zgartirib bo‘lmadi. Boshqa parol tanlang.", "password_rejected");
+    const admin = createAdminClient();
     const { error: flagError } = await admin.from("profiles").update({ must_change_password: false }).eq("id", user.id);
     if (flagError) throw new ApiError(500, "Parol o‘zgardi, lekin holatni saqlab bo‘lmadi. Qayta kiring.", "flag_save_failed");
 
