@@ -205,7 +205,10 @@ diagnoses, prescriptions, laboratory orders and results, medical history and fol
   access once a referral is declined, revoked or expired, and a completed one at its
   `expires_at` (see [Referral lifecycle and access termination](#referral-lifecycle-and-access-termination)).
 - The receiving doctor sees the patient's appointment history with the referring doctor
-  (date, service, status — no clinical text) only after accepting.
+  (date, service, status — no clinical text) as soon as the referral exists — pending
+  included, no accept step to read (owner decision 2026-10-07, `20261007000002`). Starting a
+  consultation from a referral still requires accepting it; a walk-in visit registered with
+  that doctor needs no acceptance.
 - Lifecycle (`20260928000002_clinical_handoff.sql`): `pending → accepted → in_progress →
   completed`, `pending → declined`, `revoked`/`expired` while open. `in_progress` is set by the
   database only — when the receiving doctor's own consultation linked as the follow-up has
@@ -337,6 +340,50 @@ regression test (unit, route, database or E2E):
 | F19 | SECURITY DEFINER functions without `pg_temp` pinned last; `anon` could execute them | search_path and grants normalised (catalog test) |
 | F20 | Deleting a clinic failed (audit rows written for the clinic being erased) | the erasure is marked for the transaction; its audit trail goes with it |
 | F21 | A second click on reception's walk-in booking could fail with 500 (~1 in 40): the upsert on `id` raced the `(id, clinic_id)` key | plain insert; a duplicate means the attempt's patient already exists |
+
+## Following a visit's queue in Telegram (2026-10-08)
+
+The kassa shows a QR code: a one-time link `t.me/<clinic bot>?start=v_<token>`. It lets a walk-in patient
+follow the queue without linking their Telegram to their card (owner decision).
+- **The token.**
+  - It is 192 random bits.
+  - Only its SHA-256 is stored (`visit_follow_tokens`).
+  - It is valid 24 hours, claimed once by one Telegram user, and refused once the visit is finished.
+  - A new link replaces an unused one.
+  - Only reception, the kassa and management can issue one, for their own clinic's visits.
+- **A claim** (`claim_visit_follow_token`) is resolved only for the bot the webhook already authenticated. It
+  is race-safe: of 8 concurrent claims, exactly 1 wins.
+  - Every failure gives the same neutral answer.
+  - It creates no patient row and links or merges no identity.
+- **What a follower gets** (`visit_followers`): status messages for that one visit — the number, the doctor
+  name or "Laboratoriya", how many are ahead, and "you are called".
+  - No patient name, record, result or other visit is reachable through it.
+  - The worker re-checks that each recipient is still the linked patient or a follower before sending.
+- **Access and audit.**
+  - Both tables have RLS on, no policies, and no grants to `anon` or `authenticated`.
+  - The functions are service-role only and re-check the caller's role.
+  - Audit rows carry token and follower ids, never the token, its hash or the Telegram id.
+
+## Retention: the database keeps clinical history (2026-10-08)
+
+Owner decision 2026-10-07 §1: clinical and lab records are kept indefinitely, terminating a clinic keeps its
+data, and there is no patient-deletion workflow. `20261008000004_retention_guard` makes the database enforce
+it.
+- **What is refused:** `DELETE` and `TRUNCATE` on `clinics`, `patients`, `clinical_records` and `referrals`,
+  with errcode `42501` and hint `retention`.
+  - This applies to every role, including `service_role`.
+  - Deleting a clinic or patient was the only way to cascade into appointments, payments and conversations,
+    so those are covered too.
+- **Already protected:** lab results, values and documents (deletable only during a whole-clinic erase,
+  which is now impossible outside tests), visits (`RESTRICT`), the kassa ledger and charges (append-only),
+  and the audit trail (no update or delete for the service role).
+- **The test-database marker.** A row in `internal.retention_override` lifts the guard so test suites can
+  erase what they create. Only `supabase/seed.sql` (local and CI) inserts it.
+  - No API role can use the `internal` schema.
+  - A test asserts that no migration and not the production setup file insert it.
+  - Staging and production must have **0 rows** (runbook pre-flight and monitoring).
+- **Limit:** the database owner can disable triggers. The guard stops the application, a leaked service key
+  and accidental SQL; it is not a defence against the database owner.
 
 ## Medical safety (non-security but critical)
 

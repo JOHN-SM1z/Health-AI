@@ -4,6 +4,10 @@ import { logger } from "@/lib/logger";
 import { sendTelegramMessage } from "@/lib/telegram/bot";
 import { formatInClinicTz } from "@/lib/timezone";
 import type { Database } from "@/lib/supabase/database.types";
+import { resolveHttpsAppUrl } from "@/lib/telegram/bots";
+// The one approved gateway from patient-facing code to lab results (Phase 12).
+import { loadLabOrderNotice, loadLabResultNotice } from "@/lib/labs/patient-results";
+import { bookedTicketText, queueCalledText, queueStatusButton, queueTicketText } from "@/lib/operations/queue-messages";
 
 
 const MESSAGE_TEMPLATES: Record<
@@ -38,6 +42,20 @@ const MESSAGE_TEMPLATES: Record<
     `📅 Yangi vaqt: ${formatInClinicTz(a.startAt, tz, "dd.MM.yyyy, HH:mm")}`,
   human_takeover: () =>
     `Operatorlarimiz siz bilan bog‘lanadi. Biroz kuting.`,
+  // Lab jobs carry no appointment: lab_result_ready and lab_order_cancelled
+  // are built by their own functions below; the other lab events are in-app
+  // staff notifications (channel in_app) the Telegram worker never claims.
+  lab_result_ready: () => "",
+  lab_order_cancelled: () => "",
+  lab_order_created: () => "",
+  lab_sample_collected: () => "",
+  lab_result_entered: () => "",
+  lab_result_verified: () => "",
+  lab_result_corrected: () => "",
+  // Built by processQueueTicketJob from the visit, not an appointment.
+  queue_ticket: () => "",
+  // Built by processQueueCalledJob from the visit.
+  queue_called: () => "",
 };
 
 type AppointmentContext = {
@@ -81,7 +99,11 @@ async function loadAppointmentContext(supabase: ReturnType<typeof createAdminCli
  * - Automated messages pause while the conversation is taken over by an
  *   admin (conversation.status = 'assigned').
  */
-export async function processDueNotificationJobs(limit = 50): Promise<{ processed: number; sent: number; failed: number }> {
+export async function processDueNotificationJobs(
+  limit = 50,
+  /** Only these clinics' jobs (default: every clinic — the scheduler's run). */
+  clinicIds?: string[],
+): Promise<{ processed: number; sent: number; failed: number }> {
   const supabase = createAdminClient();
   // No global gate here: bots are per-clinic (clinic_telegram_integrations),
   // not a single shared credential, so "Telegram" can never be globally
@@ -96,6 +118,7 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
 
   const { data: jobs, error: claimError } = await supabase.rpc("claim_due_notification_jobs", {
     p_limit: limit,
+    ...(clinicIds ? { p_clinic_ids: clinicIds } : {}),
   });
   if (claimError) {
     logger.error("notification processor: claim failed", { error: claimError.message });
@@ -131,6 +154,20 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
       if (!job.patient_telegram_user_id) {
         await markJob(jobId, "failed", nextAttempts, "no telegram recipient", supabase);
         failed += 1;
+        continue;
+      }
+
+      if (job.type === "queue_ticket" || job.type === "queue_called") {
+        const outcome = job.type === "queue_ticket" ? await processQueueTicketJob(supabase, job) : await processQueueCalledJob(supabase, job);
+        if (outcome === "sent") sent += 1;
+        else if (outcome === "failed") failed += 1;
+        continue;
+      }
+
+      if (job.type === "lab_result_ready" || job.type === "lab_order_cancelled") {
+        const outcome = job.type === "lab_result_ready" ? await processLabResultJob(supabase, job) : await processLabOrderCancelledJob(supabase, job);
+        if (outcome === "sent") sent += 1;
+        else if (outcome === "failed") failed += 1;
         continue;
       }
 
@@ -219,6 +256,295 @@ export async function processDueNotificationJobs(limit = 50): Promise<{ processe
 
   logger.info("notification jobs processed", { processed: jobs.length, sent, failed });
   return { processed: jobs.length, sent, failed };
+}
+
+type ClaimedJob = Database["public"]["Tables"]["notification_jobs"]["Row"];
+
+/**
+ * "Your laboratory result is ready" (Phase 12). Sent only while the result is
+ * still the current verified version, the clinic still releases results to
+ * patients and the recipient is still the patient's Telegram identity. The
+ * message names the test and the date — never values; the button opens the
+ * result in the Mini App, where the patient's identity is verified again.
+ */
+async function processLabResultJob(
+  supabase: ReturnType<typeof createAdminClient>,
+  job: ClaimedJob,
+): Promise<"sent" | "failed" | "skipped" | "retry"> {
+  const nextAttempts = job.attempts + 1;
+  const notice = await loadLabResultNotice(job.clinic_id, job.lab_result_id ?? "");
+  if (!notice || !notice.current) {
+    await markJob(job.id, "skipped", nextAttempts, "result no longer current", supabase);
+    return "skipped";
+  }
+  if (!notice.released) {
+    await markJob(job.id, "skipped", nextAttempts, "results not released to patients", supabase);
+    return "skipped";
+  }
+  if (!job.patient_telegram_user_id || notice.telegramUserId === null || Number(notice.telegramUserId) !== Number(job.patient_telegram_user_id)) {
+    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    return "skipped";
+  }
+  const { data: clinic } = await supabase.from("clinics").select("timezone").eq("id", job.clinic_id).maybeSingle();
+  const date = formatInClinicTz(notice.date, clinic?.timezone ?? "Asia/Tashkent", "dd.MM.yyyy");
+  // A notification preview can be read on a locked screen: no test name, no
+  // values (Phase 16) — the app shows the result after verifying the patient.
+  const text =
+    (notice.corrected ? `🧪 Laboratoriya natijangiz yangilandi (tuzatilgan).\n\n` : `🧪 Laboratoriya natijangiz tayyor.\n\n`) +
+    `Sana: ${date}\n\n` +
+    `Natijani ilovada ko‘rishingiz mumkin — Telegram hisobingiz tasdiqlangandan keyin.`;
+  const url = labResultUrl(job.clinic_id, notice.itemId);
+  const messageId = await sendTelegramMessage(
+    {
+      chatId: job.patient_telegram_user_id,
+      text,
+      replyMarkup: url ? { inline_keyboard: [[url.webApp ? { text: "📄 Natijani ko‘rish", web_app: { url: url.href } } : { text: "📄 Natijani ko‘rish", url: url.href }]] } : undefined,
+    },
+    job.clinic_id,
+  );
+  if (messageId !== null) {
+    try {
+      await supabase
+        .from("notification_jobs")
+        .update({ status: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, attempts: nextAttempts })
+        .eq("id", job.id);
+    } catch (e) {
+      logger.error("notification sent but not recorded", { jobId: job.id, error: e instanceof Error ? e.message : String(e) });
+      await markJob(job.id, "failed", nextAttempts, "sent but not recorded", supabase);
+      return "failed";
+    }
+    return "sent";
+  }
+  if (nextAttempts >= (job.max_attempts ?? 3)) {
+    await markJob(job.id, "failed", nextAttempts, "send failed after retries", supabase);
+    return "failed";
+  }
+  await markJob(job.id, "pending", nextAttempts, "send failed, retrying", supabase);
+  return "retry";
+}
+
+/**
+ * "Your laboratory order was cancelled" (Phase 16) — only when the clinic
+ * enables it. Sent only while the order is still cancelled and the recipient
+ * is still the patient's Telegram identity; no test names.
+ */
+async function processLabOrderCancelledJob(
+  supabase: ReturnType<typeof createAdminClient>,
+  job: ClaimedJob,
+): Promise<"sent" | "failed" | "skipped" | "retry"> {
+  const nextAttempts = job.attempts + 1;
+  const notice = await loadLabOrderNotice(job.clinic_id, job.lab_order_id ?? "");
+  if (!notice || notice.status !== "cancelled") {
+    await markJob(job.id, "skipped", nextAttempts, "order not cancelled", supabase);
+    return "skipped";
+  }
+  if (!job.patient_telegram_user_id || notice.telegramUserId === null || Number(notice.telegramUserId) !== Number(job.patient_telegram_user_id)) {
+    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    return "skipped";
+  }
+  const messageId = await sendTelegramMessage(
+    {
+      chatId: job.patient_telegram_user_id,
+      text: `Laboratoriya buyurtmangiz bekor qilindi.\n\nSavollaringiz bo‘lsa, klinikaga murojaat qiling.`,
+      replyMarkup: { inline_keyboard: [[{ text: "👤 Operator bilan bog‘lanish", callback_data: "contact_operator" }]] },
+    },
+    job.clinic_id,
+  );
+  if (messageId !== null) {
+    try {
+      await supabase
+        .from("notification_jobs")
+        .update({ status: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, attempts: nextAttempts })
+        .eq("id", job.id);
+    } catch (e) {
+      logger.error("notification sent but not recorded", { jobId: job.id, error: e instanceof Error ? e.message : String(e) });
+      await markJob(job.id, "failed", nextAttempts, "sent but not recorded", supabase);
+      return "failed";
+    }
+    return "sent";
+  }
+  if (nextAttempts >= (job.max_attempts ?? 3)) {
+    await markJob(job.id, "failed", nextAttempts, "send failed after retries", supabase);
+    return "failed";
+  }
+  await markJob(job.id, "pending", nextAttempts, "send failed, retrying", supabase);
+  return "retry";
+}
+
+type QueueVisit = {
+  id: string;
+  clinic_id: string;
+  kind: string;
+  status: string;
+  queue_date: string | null;
+  queue_number: number | null;
+  doctor_id: string | null;
+  patients: { telegram_user_id: number | null } | null;
+  doctors: { name: string } | null;
+  appointments: { start_at: string } | null;
+  clinics: { timezone: string } | null;
+};
+
+async function loadQueueVisit(supabase: ReturnType<typeof createAdminClient>, job: ClaimedJob): Promise<QueueVisit | null> {
+  const { data } = await supabase
+    .from("visits")
+    .select("id, clinic_id, kind, status, queue_date, queue_number, doctor_id, patients!inner(telegram_user_id), doctors(name), appointments(start_at), clinics(timezone)")
+    .eq("id", job.visit_id ?? "")
+    .eq("clinic_id", job.clinic_id)
+    .maybeSingle();
+  return (data as QueueVisit | null) ?? null;
+}
+
+/**
+ * A queue message goes only to the visit's own patient's linked Telegram, or
+ * to a Telegram user who follows this visit (scanned its QR at the kassa,
+ * 20261008000003). Anyone else — a card re-linked, a follower gone — is skipped.
+ */
+async function isQueueRecipient(supabase: ReturnType<typeof createAdminClient>, visit: QueueVisit, chat: number | null): Promise<"patient" | "follower" | null> {
+  if (!chat) return null;
+  const own = visit.patients?.telegram_user_id ?? null;
+  if (own !== null && Number(own) === Number(chat)) return "patient";
+  const { count } = await supabase
+    .from("visit_followers")
+    .select("id", { count: "exact", head: true })
+    .eq("visit_id", visit.id)
+    .eq("clinic_id", visit.clinic_id)
+    .eq("telegram_user_id", chat);
+  return (count ?? 0) > 0 ? "follower" : null;
+}
+
+/** Records a send, or schedules the retry; the job stays claimed by this worker until then. */
+async function finishQueueSend(
+  supabase: ReturnType<typeof createAdminClient>,
+  job: ClaimedJob,
+  messageId: number | null,
+  nextAttempts: number,
+): Promise<"sent" | "failed" | "retry"> {
+  if (messageId !== null) {
+    try {
+      await supabase
+        .from("notification_jobs")
+        .update({ status: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, attempts: nextAttempts })
+        .eq("id", job.id);
+    } catch (e) {
+      logger.error("notification sent but not recorded", { jobId: job.id, error: e instanceof Error ? e.message : String(e) });
+      await markJob(job.id, "failed", nextAttempts, "sent but not recorded", supabase);
+      return "failed";
+    }
+    return "sent";
+  }
+  if (nextAttempts >= (job.max_attempts ?? 3)) {
+    await markJob(job.id, "failed", nextAttempts, "send failed after retries", supabase);
+    return "failed";
+  }
+  await markJob(job.id, "pending", nextAttempts, "send failed, retrying", supabase);
+  return "retry";
+}
+
+/**
+ * The patient's digital queue ticket (no paper talon). Sent only while the
+ * visit is still waiting or called, and only to the visit's own patient's
+ * verified Telegram chat. States arrival order, never a time. (A follower
+ * gets the ticket from the bot the moment they scan the QR.)
+ */
+async function processQueueTicketJob(
+  supabase: ReturnType<typeof createAdminClient>,
+  job: ClaimedJob,
+): Promise<"sent" | "failed" | "skipped" | "retry"> {
+  const nextAttempts = job.attempts + 1;
+  const visit = await loadQueueVisit(supabase, job);
+  if (!visit || visit.queue_number === null || !["booked", "waiting", "called"].includes(visit.status)) {
+    await markJob(job.id, "skipped", nextAttempts, "visit no longer waiting", supabase);
+    return "skipped";
+  }
+  if ((await isQueueRecipient(supabase, visit, job.patient_telegram_user_id)) !== "patient") {
+    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    return "skipped";
+  }
+  // Paid online, not yet arrived: the number, the booked time, and what to do at the clinic.
+  if (visit.status === "booked") {
+    const appUrl = resolveHttpsAppUrl(`/my-appointments?clinic=${encodeURIComponent(job.clinic_id)}`);
+    const messageId = await sendTelegramMessage(
+      {
+        chatId: job.patient_telegram_user_id!,
+        text: bookedTicketText({
+          queueNumber: visit.queue_number,
+          doctorName: visit.doctors?.name ?? null,
+          startAt: visit.appointments?.start_at ?? null,
+          timezone: visit.clinics?.timezone ?? "Asia/Tashkent",
+        }),
+        ...(appUrl ? { replyMarkup: { inline_keyboard: [[{ text: "📋 Yozuvlarim", web_app: { url: appUrl } }]] } } : {}),
+      },
+      job.clinic_id,
+    );
+    return finishQueueSend(supabase, job, messageId, nextAttempts);
+  }
+  // The same queue: this doctor's, or the laboratory's.
+  let aheadQuery = supabase
+    .from("visits")
+    .select("id", { count: "exact", head: true })
+    .eq("clinic_id", visit.clinic_id)
+    .in("status", ["waiting", "called"]);
+  aheadQuery = visit.doctor_id ? aheadQuery.eq("doctor_id", visit.doctor_id) : aheadQuery.eq("kind", "lab");
+  const { count: ahead } = await aheadQuery
+    .or(`queue_date.lt.${visit.queue_date},and(queue_date.eq.${visit.queue_date},queue_number.lt.${visit.queue_number})`);
+  const appUrl = resolveHttpsAppUrl(`/my-appointments?clinic=${encodeURIComponent(job.clinic_id)}`);
+  const messageId = await sendTelegramMessage(
+    {
+      chatId: job.patient_telegram_user_id!,
+      text: queueTicketText({ queueNumber: visit.queue_number, lab: visit.kind === "lab", doctorName: visit.doctors?.name ?? null, ahead: ahead ?? 0 }),
+      ...(appUrl ? { replyMarkup: { inline_keyboard: [[{ text: "📋 Navbatni kuzatish", web_app: { url: appUrl } }]] } } : {}),
+    },
+    job.clinic_id,
+  );
+  return finishQueueSend(supabase, job, messageId, nextAttempts);
+}
+
+/**
+ * "You are called" (20261008000003): to the patient's linked Telegram and to
+ * the visit's followers. Sent only while the number is still being called —
+ * once the patient is in, or was sent back to the queue, it is stale.
+ */
+async function processQueueCalledJob(
+  supabase: ReturnType<typeof createAdminClient>,
+  job: ClaimedJob,
+): Promise<"sent" | "failed" | "skipped" | "retry"> {
+  const nextAttempts = job.attempts + 1;
+  const visit = await loadQueueVisit(supabase, job);
+  if (!visit || visit.queue_number === null || visit.status !== "called") {
+    await markJob(job.id, "skipped", nextAttempts, "visit no longer called", supabase);
+    return "skipped";
+  }
+  if (!(await isQueueRecipient(supabase, visit, job.patient_telegram_user_id))) {
+    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    return "skipped";
+  }
+  const messageId = await sendTelegramMessage(
+    {
+      chatId: job.patient_telegram_user_id!,
+      text: queueCalledText({ queueNumber: visit.queue_number, lab: visit.kind === "lab", doctorName: visit.doctors?.name ?? null }),
+      replyMarkup: { inline_keyboard: [[queueStatusButton]] },
+    },
+    job.clinic_id,
+  );
+  return finishQueueSend(supabase, job, messageId, nextAttempts);
+}
+
+/**
+ * The Mini App page of one result: a web_app button to an HTTPS app URL
+ * (opens inside Telegram with verified initData), or — when the app is only
+ * reachable as a t.me Mini App link — that link with startapp=lab_<item id>.
+ */
+export function labResultUrl(clinicId: string, itemId: string): { href: string; webApp: boolean } | null {
+  const https = resolveHttpsAppUrl(`/lab-results/${itemId}?clinic=${encodeURIComponent(clinicId)}`);
+  if (https) return { href: https, webApp: true };
+  const base = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
+  if (base.startsWith("https://t.me/")) {
+    const url = new URL(base);
+    url.searchParams.set("startapp", `lab_${itemId}`);
+    return { href: url.toString(), webApp: false };
+  }
+  return null;
 }
 
 /** Absolute booking URL for a clinic, or null when NEXT_PUBLIC_APP_URL is unset/invalid. */

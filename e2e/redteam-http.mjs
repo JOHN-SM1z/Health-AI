@@ -235,6 +235,89 @@ async function run() {
       await Promise.all([reception, manager, doctor].map((c) => c.auth.signOut()));
     }
 
+    // 22. Patient identity (owner decision 2026-10-08, 20261008000005): passport/ID, JSHSHIR, date of birth, sex and
+    //     address stay in the database for the server. No account reads them with its own token — over REST, by
+    //     filtering on them, or over GraphQL — and the desk's own lookup answers without them.
+    {
+      const ID = { document: `RT${String(Date.now()).slice(-7)}`, pinfl: `5${String(Date.now()).slice(-13).padStart(13, "1")}`, dob: "1959-08-14", address: `RT manzil ${SECRET}` };
+      await db`update public.patients set document_number = ${ID.document}, pinfl = ${ID.pinfl}, date_of_birth = ${ID.dob}, sex = 'male', home_address = ${ID.address} where id = ${X}`;
+      const leaks = (text) => [ID.document, ID.pinfl, ID.dob, ID.address].some((v) => text.includes(v));
+      const accounts = [
+        [DEMO.reception, "receptionist"], [DEMO.manager, "manager"], [DEMO.owner, "owner"], [DEMO.cashier, "cashier"],
+        [DEMO.lab, "lab"], [DEMO.receiver, "doctor (referral)"], [DEMO.referrer, "doctor (own patient)"],
+      ];
+      for (const [email, label] of accounts) {
+        const client = await restAs(email);
+        for (const column of ["document_number", "pinfl", "date_of_birth", "sex", "home_address"]) {
+          const r = await client.from("patients").select(column).eq("id", X);
+          check(r.error !== null && !leaks(JSON.stringify(r)), `${label}: patients.${column} over REST → refused (${r.error?.code ?? "READABLE"})`);
+        }
+        const probe = await client.from("patients").select("id").eq("pinfl", ID.pinfl);
+        check(probe.error !== null, `${label}: finding a card by JSHSHIR over REST → refused (${probe.error?.code ?? "ALLOWED"})`);
+        // Online identity (20261008000010): typed documents, verified phones and identity claims are the server's.
+        for (const table of ["online_identity_lookups", "telegram_verified_phones", "patient_identity_claims"]) {
+          const r = await client.from(table).select("*").limit(1);
+          check(r.error !== null || (r.data ?? []).length === 0, `${label}: ${table} over REST → nothing (${r.error?.code ?? "empty"})`);
+        }
+        const named = await client.from("patients").select("full_name, phone").eq("id", X);
+        check(named.error === null && !leaks(JSON.stringify(named.data)), `${label}: name and phone stay readable where the row policy allows (${named.data?.length ?? 0} row)`);
+        // GraphQL runs with the same column privileges; checked whenever the endpoint is enabled (hosted Supabase).
+        const { data: s } = await client.auth.getSession();
+        const gql = await fetch(`${SUPABASE_URL}/graphql/v1`, {
+          method: "POST",
+          headers: { apikey: ANON_KEY, authorization: `Bearer ${s.session?.access_token}`, "content-type": "application/json" },
+          body: JSON.stringify({ query: `{ patientsCollection(filter: { id: { eq: "${X}" } }) { edges { node { documentNumber pinfl dateOfBirth homeAddress } } } }` }),
+        });
+        const gqlText = await gql.text();
+        if (gql.status !== 404) check(!leaks(gqlText), `${label}: identity over GraphQL → not returned (HTTP ${gql.status})`);
+        await client.auth.signOut();
+      }
+      // The desk's own lookup (passport + date of birth) finds the card and answers without the identity values.
+      const desk = await session(browser, DEMO.reception);
+      const found = await desk.api("GET", `/api/operations/patients?q=${ID.document}&dob=${ID.dob}`);
+      check(found.status === 200 && JSON.parse(found.text).data.exact === true && !leaks(found.text), "reception: passport + date of birth finds the card, no identity in the answer");
+      const alone = await desk.api("GET", `/api/operations/patients?q=${ID.document}`);
+      check(alone.status === 400, `reception: a passport without a date of birth is refused (${alone.status})`);
+      const card = await desk.api("GET", `/api/admin/patients?id=${X}`);
+      check(card.status === 200 && !leaks(card.text), "reception: the patient card says whether a date of birth is recorded, never what it is");
+      await desk.context.close();
+      const [kept] = await db`select document_number, pinfl, date_of_birth::text as dob, home_address from public.patients where id = ${X}`;
+      check(kept.document_number === ID.document && kept.pinfl === ID.pinfl && kept.dob === ID.dob && kept.home_address === ID.address, "the identity values are still stored in our database");
+    }
+
+    // 23. Online payment (20261008000012): a webhook without the provider's signature changes nothing, whatever it
+    //     claims; payment tables are the server's; a checkout needs the patient's own verified Telegram identity.
+    {
+      const [someInvoice] = await db`select id, amount, currency from public.payment_invoices order by created_at desc limit 1`;
+      const forgedBody = JSON.stringify({ eventId: `rt-${SECRET}`, invoiceId: someInvoice?.id ?? "00000000-0000-0000-0000-000000000000", amount: Number(someInvoice?.amount ?? 1), currency: someInvoice?.currency ?? "UZS" });
+      for (const provider of ["test_online", "rahmat", "click"]) {
+        for (const signature of [undefined, "0".repeat(64)]) {
+          const r = await fetch(`${BASE}/api/payments/${provider}/webhook`, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...(signature ? { "x-test-signature": signature } : {}) },
+            body: forgedBody,
+          });
+          check(r.status === 401, `${provider} webhook ${signature ? "with a wrong signature" : "unsigned"} → 401 (${r.status})`);
+        }
+      }
+      const [{ events }] = await db`select count(*)::int as events from public.payment_provider_events where event_id = ${`rt-${SECRET}`}`;
+      check(events === 0, "forged webhooks left no trace in the payment ledger");
+      const owner = await restAs(DEMO.owner);
+      for (const table of ["payment_invoices", "payment_provider_events", "payment_refunds"]) {
+        const r = await owner.from(table).select("*").limit(1);
+        check(r.error !== null || (r.data ?? []).length === 0, `owner: ${table} over REST → nothing (${r.error?.code ?? "empty"})`);
+      }
+      const settled = await owner.rpc("settle_online_payment", { p_provider: "test_online", p_event_id: "x", p_invoice: someInvoice?.id ?? null, p_amount: 1, p_currency: "UZS" });
+      check(settled.error !== null, `owner: settle_online_payment over REST → refused (${settled.error?.code ?? "ALLOWED"})`);
+      await owner.auth.signOut();
+      const checkout = await fetch(`${BASE}/api/me/payments/invoice`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ initData: "user=%7B%22id%22%3A1%7D&hash=deadbeef", appointmentId: "00000000-0000-0000-0000-000000000000" }),
+      });
+      check(checkout.status === 401, `a checkout with a forged Telegram identity → 401 (${checkout.status})`);
+    }
+
     // 5. Revocation by the referring doctor ends the receiver's access on the next request.
     {
       const a = await session(browser, DEMO.referrer);

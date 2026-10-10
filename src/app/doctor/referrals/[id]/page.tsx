@@ -274,9 +274,7 @@ export default function DoctorReferralPage() {
             </p>
             {referral.history === null ? (
               <p className="text-sm text-ink-muted">
-                {referral.status === "pending"
-                  ? "Tarix yo‘llanmani qabul qilganingizdan keyin ko‘rinadi."
-                  : "Yo‘llanma faol emas — qabullar tarixi endi ko‘rinmaydi."}
+                {"Yo‘llanma faol emas — qabullar tarixi endi ko‘rinmaydi."}
               </p>
             ) : referral.history.length === 0 ? (
               <p className="text-sm text-ink-muted">Qabullar yo‘q</p>

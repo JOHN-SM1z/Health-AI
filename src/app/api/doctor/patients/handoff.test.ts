@@ -263,10 +263,13 @@ describeDb("clinical handoff workflow", () => {
     const diagnosisBefore = (await admin.from("clinical_records").select("*").eq("id", x.diagnosis).single()).data;
     const referral = await refer(x);
 
-    // 1. Pending: Dr B reviews what the referral authorizes — the consultation it came from.
+    // 1. Pending: Dr B already reads Dr A's history (no accept step to read —
+    // owner decision 2026-10-07); starting a consultation from the referral
+    // still needs it accepted.
     const pending = await ws("b", x.id);
     expect(pending).toMatchObject({ relationship: "referred", consultation: { current: null, canStartWalkIn: false, blockedReason: "referral_pending" } });
-    expect(pending.records.map((r) => r.id).sort()).toEqual([x.diagnosis, x.prescription].sort());
+    expect(pending.records.map((r) => r.id).sort()).toEqual([x.history, x.diagnosis, x.prescription].sort());
+    expect(pending.records.map((r) => r.id)).not.toContain(x.eRecord);
     expect(pending.records.find((r) => r.id === x.diagnosis)).toMatchObject({
       author: { id: doctors.a },
       mine: false,

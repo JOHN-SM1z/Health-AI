@@ -84,11 +84,13 @@ export async function POST(request: NextRequest) {
     if (patientId) {
       const { data: patient } = await supabase
         .from("patients")
-        .select("id")
+        .select("id, merged_into_patient_id")
         .eq("id", patientId)
         .eq("clinic_id", ctx.clinicId)
         .maybeSingle();
       if (!patient) throw bookingError("patient_not_found");
+      // A merged record takes no new visits (Phase 14): book the person's canonical record.
+      patientId = patient.merged_into_patient_id ?? patient.id;
     } else if (body.idempotencyKey) {
       // A retry or a second click of the same attempt finds its patient
       // already created: the unique violation means exactly that (an upsert

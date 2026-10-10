@@ -102,8 +102,8 @@ describeDb("notification processor — atomic claims", () => {
     for (const key of keys) await insertJob(key);
 
     const [a, b] = await Promise.all([
-      admin.rpc("claim_due_notification_jobs", { p_limit: 5 }),
-      admin.rpc("claim_due_notification_jobs", { p_limit: 5 }),
+      admin.rpc("claim_due_notification_jobs", { p_limit: 5, p_clinic_ids: [CLINIC_ID] }),
+      admin.rpc("claim_due_notification_jobs", { p_limit: 5, p_clinic_ids: [CLINIC_ID] }),
     ]);
     expect(a.error).toBeNull();
     expect(b.error).toBeNull();
@@ -129,8 +129,8 @@ describeDb("notification processor — atomic claims", () => {
     const jobId = await insertJob(key);
 
     const [r1, r2] = await Promise.all([
-      processDueNotificationJobs(50),
-      processDueNotificationJobs(50),
+      processDueNotificationJobs(50, [CLINIC_ID]),
+      processDueNotificationJobs(50, [CLINIC_ID]),
     ]);
 
     expect(r1.processed + r2.processed).toBe(1);
@@ -151,7 +151,7 @@ describeDb("notification processor — atomic claims", () => {
     const jobId = await insertJob(key, { maxAttempts: 1 });
 
     sendMock.mockResolvedValueOnce(null);
-    const first = await processDueNotificationJobs(50);
+    const first = await processDueNotificationJobs(50, [CLINIC_ID]);
     expect(first.processed).toBe(1);
     expect(first.sent).toBe(0);
     const { data: afterFirst } = await admin
@@ -169,7 +169,7 @@ describeDb("notification processor — atomic claims", () => {
     const jobId = await insertJob(key);
     await admin.from("notification_jobs").update({ status: "in_progress" }).eq("id", jobId);
 
-    const { data } = await admin.rpc("claim_due_notification_jobs", { p_limit: 50 });
+    const { data } = await admin.rpc("claim_due_notification_jobs", { p_limit: 50, p_clinic_ids: [CLINIC_ID] });
     const claimedIds = (data ?? []).map((j: { id: string }) => j.id);
     expect(claimedIds).not.toContain(jobId);
   });
@@ -191,7 +191,7 @@ describeDb("notification processor — atomic claims", () => {
     const jobId = await insertJob(key);
 
     try {
-      const result = await processDueNotificationJobs(50);
+      const result = await processDueNotificationJobs(50, [CLINIC_ID]);
       expect(result.processed).toBe(1);
       expect(result.sent).toBe(1);
       expect(sendMock).toHaveBeenCalledTimes(1);

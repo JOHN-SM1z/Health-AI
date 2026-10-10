@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getClinicContact } from "@/lib/clinics/contact";
 
 export type ClinicKnowledge = {
   clinicName: string;
@@ -46,10 +47,12 @@ export async function loadClinicKnowledge(clinicId: string): Promise<ClinicKnowl
         .eq("active", true),
     ]);
 
+  // The phone and address the owner set under Sozlamalar win over the clinic record.
+  const contact = clinic ? await getClinicContact(clinic) : null;
   const knowledge: ClinicKnowledge = {
     clinicName: clinic?.name ?? "Klinika",
-    address: clinic?.address ?? null,
-    phone: clinic?.phone ?? null,
+    address: contact?.address ?? clinic?.address ?? null,
+    phone: contact?.phone ?? clinic?.phone ?? null,
     email: clinic?.email ?? null,
     openingHours: (clinic?.opening_hours as Record<string, string | null>) ?? {},
     currency: clinic?.currency ?? "UZS",

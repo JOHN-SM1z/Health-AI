@@ -270,13 +270,14 @@ describeDb("referral-based clinical access — server and API layers", () => {
     const x = await patientX();
     const referral = await refer(x);
 
-    // Pending: the patient record and the consultation it came from — no history yet.
+    // Pending: Dr A's visits with X already (no accept step to read — owner
+    // decision 2026-10-07) — not Dr E's.
     const pending = await record("b", x.id);
     expect(pending.status).toBe(200);
     expect(recordOf(pending)).toMatchObject({ relationship: "referred", activeReferralIds: [referral] });
-    expect(ids(recordOf(pending).appointments)).toEqual([x.consultation]);
+    expect(ids(recordOf(pending).appointments)).toEqual(x.withA);
 
-    // Accepted: Dr A's visits with X — not Dr E's.
+    // Accepted: unchanged.
     await act("b", referral, { action: "accept" });
     const accepted = await record("b", x.id);
     expect(ids(recordOf(accepted).appointments)).toEqual(x.withA);

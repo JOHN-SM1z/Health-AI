@@ -6,6 +6,7 @@ import { anyColumnContains } from "@/lib/api/postgrest";
 import { handleApiError, ApiError, ok } from "@/lib/api/errors";
 import { parseBody, uuidSchema } from "@/lib/api/validate";
 import { listPatientReferrals } from "@/lib/referrals/service";
+import { patientRecordIds } from "@/lib/patients/record-group";
 
 export const dynamic = "force-dynamic";
 
@@ -39,13 +40,26 @@ export async function GET(request: NextRequest) {
       const { data: patient, error: patientError } = await supabase
         .from("patients")
         .select(
-          "id, full_name, phone, telegram_username, telegram_first_name, telegram_last_name, consent_given, consent_given_at, last_seen_at, created_at, operational_notes",
+          "id, full_name, phone, telegram_username, telegram_first_name, telegram_last_name, consent_given, consent_given_at, last_seen_at, created_at, operational_notes, merged_into_patient_id, merged_at, date_of_birth, sex, sms_consent_at, telegram_user_id",
         )
         .eq("id", detailId)
         .eq("clinic_id", staff.clinicId)
         .maybeSingle();
       if (patientError) throw patientError;
       if (!patient) return ok({ patient: null, appointments: [], conversations: [], referrals: [] });
+      // Date of birth and sex are read here only to say whether they are recorded: staff never see the values
+      // (owner decision 2026-10-08, migration 20261008000005).
+      const { date_of_birth: dob, sex, sms_consent_at: smsConsentAt, telegram_user_id: telegramUserId, ...visible } = patient;
+      const card = {
+        ...visible,
+        has_date_of_birth: dob !== null,
+        has_sex: sex !== null,
+        // Queue SMS (20261008000013): only for a patient without Telegram who agreed at the desk.
+        has_telegram: telegramUserId !== null,
+        sms_consent: smsConsentAt !== null,
+      };
+      // The person's visits and conversations across merged records (Phase 14).
+      const ids = await patientRecordIds(staff.clinicId, detailId);
 
       const [{ data: appointments, error: appointmentsError }, { data: conversations, error: conversationsError }, referrals] =
         await Promise.all([
@@ -54,14 +68,14 @@ export async function GET(request: NextRequest) {
             .select(
               "id, start_at, status, source, services(name), doctors(name)",
             )
-            .eq("patient_id", detailId)
+            .in("patient_id", ids)
             .eq("clinic_id", staff.clinicId)
             .order("start_at", { ascending: false })
             .limit(20),
           supabase
             .from("conversations")
             .select("id, status, channel, updated_at")
-            .eq("patient_id", detailId)
+            .in("patient_id", ids)
             .eq("clinic_id", staff.clinicId)
             .order("updated_at", { ascending: false })
             .limit(10),
@@ -70,7 +84,7 @@ export async function GET(request: NextRequest) {
         ]);
       if (appointmentsError) throw appointmentsError;
       if (conversationsError) throw conversationsError;
-      return ok({ patient, appointments: appointments ?? [], conversations: conversations ?? [], referrals });
+      return ok({ patient: card, appointments: appointments ?? [], conversations: conversations ?? [], referrals });
     }
 
     let query = supabase
@@ -80,6 +94,8 @@ export async function GET(request: NextRequest) {
         { count: "exact" },
       )
       .eq("clinic_id", staff.clinicId)
+      // Records merged into another (Phase 14) are reached through that record.
+      .is("merged_into_patient_id", null)
       .order("last_seen_at", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false })
       .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);

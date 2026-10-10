@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { adminWorkspaceRedirect, getStaffContext, hasRole, isCallCenterStaff, canViewPaymentDynamics } from "@/lib/auth/staff";
+import { adminWorkspaceRedirect, getStaffContext, hasAnyRole, hasRole, isCallCenterStaff, canViewPaymentDynamics, KASSA_ROLES, RECEPTION_ROLES } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
-import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound } from "lucide-react";
+import { CalendarDays, DoorOpen, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge, Activity } from "lucide-react";
+import { labCan } from "@/lib/labs/permissions";
+import { NotificationBell } from "@/components/staff/notification-bell";
 
 export const metadata = { title: "Boshqaruv paneli" };
 
@@ -23,16 +25,23 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const nav = [
     { href: "/admin", label: "Bugun", icon: <LayoutDashboard className="h-4 w-4" />, show: true, exact: true },
+    { href: "/admin/reception", label: "Qabulxona", icon: <DoorOpen className="h-4 w-4" />, show: hasAnyRole(ctx.roles, RECEPTION_ROLES) },
+    { href: "/kassa", label: "Kassa", icon: <Wallet className="h-4 w-4" />, show: hasAnyRole(ctx.roles, KASSA_ROLES) },
     { href: "/admin/appointments", label: "Qabullar", icon: <ClipboardList className="h-4 w-4" />, show: true },
     { href: "/admin/calendar", label: "Kalendar", icon: <CalendarDays className="h-4 w-4" />, show: true },
     { href: "/admin/conversations", label: "Suhbatlar", icon: <MessagesSquare className="h-4 w-4" />, show: true },
-    { href: "/admin/patients", label: "Bemorlar", icon: <Users className="h-4 w-4" />, show: true },
+    { href: "/admin/patients", label: "Bemorlar", icon: <Users className="h-4 w-4" />, show: true, exact: true },
+    { href: "/admin/patients/merge", label: "Kartalarni birlashtirish", icon: <Merge className="h-4 w-4" />, show: hasAnyRole(ctx.roles, ["owner", "admin"]) },
+    { href: "/admin/lab-queue", label: "Namunalar", icon: <TestTube className="h-4 w-4" />, show: labCan(ctx.roles, "queue.read") },
     { href: "/admin/doctors", label: "Shifokorlar", icon: <Stethoscope className="h-4 w-4" />, show: isManagement },
     { href: "/admin/services", label: "Xizmatlar", icon: <Scissors className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/lab", label: "Laboratoriya", icon: <FlaskConical className="h-4 w-4" />, show: isManagement },
     { href: "/admin/specialties", label: "Yo‘nalishlar", icon: <Sparkles className="h-4 w-4" />, show: isManagement },
     { href: "/admin/faqs", label: "Savol-javoblar", icon: <MessagesSquare className="h-4 w-4" />, show: isManagement },
     { href: "/admin/analytics", label: "Tahlillar", icon: <BarChart3 className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/lab-analytics", label: "Laboratoriya tahlili", icon: <Activity className="h-4 w-4" />, show: isManagement },
     { href: "/admin/finance", label: "Moliya", icon: <Wallet className="h-4 w-4" />, show: financeVisible },
+    { href: "/admin/lab-kassa", label: "Laboratoriya kassasi", icon: <Receipt className="h-4 w-4" />, show: financeVisible },
     { href: "/admin/staff", label: "Xodimlar", icon: <UserCog className="h-4 w-4" />, show: hasRole(ctx, "owner") },
     { href: "/admin/settings", label: "Sozlamalar", icon: <Settings className="h-4 w-4" />, show: isManagement },
     { href: "/admin/password", label: "Parolim", icon: <KeyRound className="h-4 w-4" />, show: true },
@@ -48,6 +57,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <div>
             <p className="font-display text-sm font-bold tracking-tight text-foreground">Health AI</p>
             <p className="max-w-[10rem] truncate text-xs text-ink-muted">{ctx.clinicName}</p>
+          </div>
+          <div className="ml-auto">
+            <NotificationBell />
           </div>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 text-sm">
@@ -75,6 +87,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <span className="font-display text-sm font-bold tracking-tight">Health AI</span>
           </Link>
           <span className="pulse-dot" title="Jonli" />
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </header>
         {/* Phones and small tablets: the sidebar is hidden, so its sections sit in a scrollable strip. */}
         <NavStrip label="Boshqaruv bo‘limlari">

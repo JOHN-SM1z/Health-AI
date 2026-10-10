@@ -127,8 +127,10 @@ Doctor A refers a patient to Doctor B in the same clinic:
 2. **Review and respond** — Doctor B sees it on the `/doctor` dashboard (*Sizga kelgan
    yo‘llanmalar*), under `/doctor/referrals` and on the patient's workspace, reviews the
    consultation it came from, and accepts or declines (`PATCH /api/doctor/referrals/[id]`, also
-   from the workspace). After accepting, Doctor B sees Doctor A's history of the patient —
-   visits and clinical records, each attributed to Doctor A.
+   from the workspace). From the moment the referral exists (pending included — no accept step
+   to read, owner decision 2026-10-07), Doctor B sees Doctor A's history of the patient —
+   visits and clinical records, each attributed to Doctor A. Starting a consultation from the
+   referral still needs it accepted.
 3. **Book** (optional) — reception opens the patient in `/admin/patients`, sees the referral
    (metadata only) and books the follow-up with Doctor B (`POST /api/admin/appointments` with
    `referralId`), which goes through `book_appointment` and is then linked to the referral.

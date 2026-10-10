@@ -2,7 +2,9 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { adminChatIds, env } from "@/lib/env";
 import { getClinicById } from "@/lib/clinics/context";
+import { getClinicContact } from "@/lib/clinics/contact";
 import { getOrCreatePatient } from "@/lib/patients/identity";
+import { recordSharedContact } from "@/lib/patients/online-identity";
 import { getOrCreateConversation, appendMessage, conversationIsHeld, updateConversationState } from "@/lib/telegram/store";
 import { sendTelegramMessage, getTelegramFileUrl } from "@/lib/telegram/bot";
 import { appUrlCandidates, resolveHttpsAppUrl } from "@/lib/telegram/bots";
@@ -13,6 +15,7 @@ import { recordAudit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { getTranscriptionProvider } from "@/lib/transcription/provider";
 import { detectUrgency, urgentMessage } from "@/lib/safety/policy";
+import { listUpcomingAppointments, upcomingAppointmentsText } from "@/lib/appointments/patient-upcoming";
 
 /**
  * Booking link for a clinic, or null when no usable app address is
@@ -72,6 +75,7 @@ export function buildMainKeyboard(clinicId: string) {
   return {
     keyboard: [
       [bookingButton],
+      [{ text: "📋 Mening qabullarim" }],
       [{ text: "🤖 Shifokor tanlashda yordam" }],
       [{ text: "💰 Narxlar" }],
       [{ text: "📍 Manzil" }],
@@ -290,6 +294,26 @@ export async function handleTelegramCommand(opts: {
   }
 }
 
+/**
+ * A contact arrived in the chat (the Mini App's "share my phone" sends it here). Kept as the sender's verified phone
+ * only when it is their own; the number itself is never echoed back, logged or audited.
+ */
+export async function handleContactShared(opts: {
+  clinicId: string;
+  chatId: number;
+  from: { id: number };
+  contact: { phone_number?: string; user_id?: number };
+}) {
+  const outcome = await recordSharedContact(opts.clinicId, opts.from, opts.contact);
+  const text =
+    outcome === "verified"
+      ? "✅ Telefon raqamingiz tasdiqlandi. Ilovaga qayting — yozilishni davom ettiramiz."
+      : outcome === "not_own"
+        ? "Faqat o‘zingizning Telegram raqamingizni yuboring (“Raqamni ulashish” tugmasi orqali)."
+        : "Onlayn tasdiqlash faqat O‘zbekiston raqamlari (+998) uchun ishlaydi. Iltimos, qabulxonaga murojaat qiling.";
+  await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: { remove_keyboard: true } }, opts.clinicId);
+}
+
 /** Menu button handler — the shared text-based commands. */
 export async function handleMenuButton(opts: {
   clinicId: string;
@@ -361,6 +385,28 @@ export async function handleMenuButton(opts: {
     return;
   }
 
+  if (opts.button.includes("Mening qabullarim")) {
+    // Answered in the chat itself: the patient is the verified sender of this
+    // update, so this works however the Mini App was (or wasn't) opened. The
+    // inline web_app button opens the full page with valid initData.
+    let text: string;
+    try {
+      text = upcomingAppointmentsText(await listUpcomingAppointments(clinic.id, patient.id), clinic.timezone);
+    } catch {
+      text = "Qabullaringizni hozir yuklab bo‘lmadi. Birozdan keyin qayta urinib ko‘ring.";
+    }
+    const url = resolveHttpsAppUrl(`/my-appointments?clinic=${encodeURIComponent(clinic.id)}`);
+    await sendTelegramMessage(
+      {
+        chatId: opts.chatId,
+        text,
+        replyMarkup: url ? { inline_keyboard: [[{ text: "📋 Qabullarimni ochish", web_app: { url } }]] } : buildMainKeyboard(clinic.id),
+      },
+      clinic.id,
+    );
+    return;
+  }
+
   if (opts.button.includes("Shifokor tanlashda yordam")) {
     await updateConversationState(conversation.id, {
       ...(typeof conversation.state === "object" && conversation.state ? conversation.state as Record<string, unknown> : {}),
@@ -397,8 +443,14 @@ export async function handleMenuButton(opts: {
   }
 
   if (opts.button.includes("Manzil")) {
-    const text = clinic.address
-      ? `📍 Manzil: ${clinic.address}\n\n☎️ Telefon: ${clinic.phone ?? "ko‘rsatilmagan"}\n\nIsh vaqti haqida ma‘lumot uchun operatorlarga murojaat qiling.`
+    const contact = await getClinicContact(clinic);
+    const lines = [
+      contact.address ? `📍 Manzil: ${contact.address}` : "📍 Manzil hozircha kiritilmagan.",
+      contact.phone ? `☎️ Telefon: ${contact.phone}` : null,
+      contact.openingHours ? `🕘 Ish vaqti: ${contact.openingHours}` : null,
+    ].filter(Boolean);
+    const text = contact.address || contact.phone
+      ? lines.join("\n")
       : "Manzil hozircha kiritilmagan. Operatorlarimizga murojaat qiling.";
     await sendTelegramMessage({ chatId: opts.chatId, text, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
     return;
@@ -475,6 +527,24 @@ async function escalateUrgent(opts: {
   await notifyAdmins(`⚠️ Shoshilinch holat ehtimoli: bemor ${opts.patientLabel}`);
 }
 
+/**
+ * Urgent wording typed (or spoken) in the Mini App's concern step: the same escalation as in the chat. The patient's
+ * conversation with the clinic's bot is flagged urgent for staff, automation stops, and the approved urgent-care
+ * message goes to their Telegram chat as well as the Mini App. No booking is offered.
+ */
+export async function escalateUrgentFromMiniApp(opts: { clinicId: string; patientId: string; telegramUserId: number; text: string; patientLabel: string }) {
+  const conversation = await getOrCreateConversation({ clinicId: opts.clinicId, patientId: opts.patientId, channel: "telegram" });
+  await appendMessage({ conversationId: conversation.id, clinicId: opts.clinicId, role: "patient", type: "text", content: opts.text, metadata: { via: "mini_app_concern" } });
+  await escalateUrgent({
+    clinicId: opts.clinicId,
+    patientId: opts.patientId,
+    conversationId: conversation.id,
+    chatId: opts.telegramUserId,
+    text: opts.text,
+    patientLabel: opts.patientLabel,
+  });
+}
+
 export async function requestHumanHandoff(opts: {
   clinicId: string;
   patientId: string;
@@ -496,10 +566,14 @@ export async function requestHumanHandoff(opts: {
     actor: { actorType: "telegram" },
   });
 
+  const clinic = await getClinicById(opts.clinicId).catch(() => null);
+  const contact = clinic ? await getClinicContact(clinic) : null;
   await sendTelegramMessage(
     {
       chatId: opts.chatId,
-      text: "Operatorlarimiz siz bilan bog‘lanadi. Biroz kuting. ⏳\n\nOperator javob berguncha avtomatik xabarlar to‘xtatiladi.",
+      text:
+        "Operatorlarimiz siz bilan shu yerda bog‘lanadi. Biroz kuting. ⏳\n\nOperator javob berguncha avtomatik xabarlar to‘xtatiladi." +
+        (contact?.phone ? `\n\n☎️ Tezroq bog‘lanish uchun qo‘ng‘iroq qiling: ${contact.phone}` : ""),
       replyMarkup: buildHeldKeyboard(),
     },
     opts.clinicId,

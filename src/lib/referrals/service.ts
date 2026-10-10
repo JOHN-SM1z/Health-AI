@@ -1,4 +1,5 @@
 import "server-only";
+import { patientRecordIds } from "@/lib/patients/record-group";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { recordAudit, recordAudits } from "@/lib/audit";
@@ -469,13 +470,15 @@ export type PatientReferral = {
  * the receiving doctor: open or completed ones, until expires_at).
  */
 export async function listPatientReferralsForDoctor(doctor: LinkedDoctor, patientId: string): Promise<PatientReferral[]> {
+  // The person's merged record group (Phase 14).
+  const ids = await patientRecordIds(doctor.clinicId, patientId);
   const { data, error } = await createAdminClient()
     .from("referrals")
     .select(
       `id, status, priority, reason, handoff_note, created_at, expires_at, accepted_at, started_at, completed_at, follow_up_appointment_id, referring_doctor_id, referred_to_doctor_id, ${REFERRING}(id, name), ${REFERRED_TO}(id, name)`,
     )
     .eq("clinic_id", doctor.clinicId)
-    .eq("patient_id", patientId)
+    .in("patient_id", ids)
     .or(`referring_doctor_id.eq.${doctor.doctorId},referred_to_doctor_id.eq.${doctor.doctorId}`)
     .order("created_at", { ascending: false })
     .limit(50);
@@ -812,13 +815,14 @@ type PatientReferralRow = {
 
 /** A patient's referrals for front-desk scheduling: who, when, status, booking. */
 export async function listPatientReferrals(clinicId: string, patientId: string): Promise<PatientReferralSummary[]> {
+  const ids = await patientRecordIds(clinicId, patientId);
   const { data, error } = await createAdminClient()
     .from("referrals")
     .select(
       `id, status, priority, created_at, expires_at, follow_up_appointment_id, ${REFERRING}(name), ${REFERRED_TO}(id, name), follow_up:appointments!referrals_follow_up_appointment_fkey(start_at, status)`,
     )
     .eq("clinic_id", clinicId)
-    .eq("patient_id", patientId)
+    .in("patient_id", ids)
     .order("created_at", { ascending: false })
     .limit(20);
   if (error) throw error;

@@ -164,6 +164,13 @@ describe("buildMainKeyboard", () => {
   });
 });
 
+describe("main keyboard: Mening qabullarim", () => {
+  it("offers a plain “📋 Mening qabullarim” button (answered in the chat, so it works however the app was opened)", () => {
+    const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
+    expect(buttons).toContainEqual({ text: "📋 Mening qabullarim" });
+  });
+});
+
 describe("handleMenuButton booking reply (source attribution)", () => {
   it("marks the chat deep-link with startapp=booking (telegram_chat attribution)", async () => {
     envMock.NEXT_PUBLIC_APP_URL = "https://health.example.com";

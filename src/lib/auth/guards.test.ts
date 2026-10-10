@@ -133,3 +133,20 @@ describe("requireLinkedDoctor — a doctor acting through their own active docto
     });
   });
 });
+
+describe("lab staff on existing routes (Phase 3)", () => {
+  it("are refused by every management, operational and doctor guard", async () => {
+    staffContextMock.value = ctx({ roles: ["lab"] });
+    for (const min of ["owner", "admin", "manager", "doctor", "receptionist"] as const) {
+      await expect(requireStaff(min)).rejects.toMatchObject({ status: 403 });
+    }
+    // The operational desk routes (patients, appointments, conversations, dashboard).
+    await expect(requireRoles("owner", "admin", "manager", "receptionist")).rejects.toMatchObject({ status: 403 });
+    await expect(requireLinkedDoctor()).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("pass a guard that names the lab role", async () => {
+    staffContextMock.value = ctx({ roles: ["lab"] });
+    await expect(requireRoles("lab")).resolves.toMatchObject({ clinicId: "clinic-a" });
+  });
+});

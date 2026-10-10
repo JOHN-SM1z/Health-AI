@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, AModal, ATextArea, LoadingRow } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, AModal, ASelect, ATextArea, LoadingRow } from "@/components/admin/ui";
 import { QuickBookingModal, type FollowUpPreset } from "@/components/admin/quick-booking-modal";
 import { Users } from "lucide-react";
 import {
@@ -43,6 +43,13 @@ type PatientDetail = {
   last_seen_at: string | null;
   created_at: string;
   operational_notes: string | null;
+  merged_into_patient_id: string | null;
+  /** Recorded or not — the values themselves stay on the server (owner decision 2026-10-08). */
+  has_date_of_birth: boolean;
+  has_sex: boolean;
+  /** Queue SMS (20261008000013): only for a patient without Telegram who agreed. */
+  has_telegram: boolean;
+  sms_consent: boolean;
 };
 
 type AppointmentLite = {
@@ -105,6 +112,10 @@ export default function PatientsPage() {
   const [notesDraft, setNotesDraft] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
+  const [dobDraft, setDobDraft] = useState("");
+  const [sexDraft, setSexDraft] = useState("");
+  const [demoSaving, setDemoSaving] = useState(false);
+  const [demoSaved, setDemoSaved] = useState(false);
   const [isManagement, setIsManagement] = useState(false);
   const [bookingFor, setBookingFor] = useState<FollowUpPreset | null>(null);
   const [revokeFor, setRevokeFor] = useState<PatientReferral | null>(null);
@@ -151,10 +162,14 @@ export default function PatientsPage() {
     setDetail(null);
     setBusy(true);
     setNotesSaved(false);
+    setDemoSaved(false);
     try {
       const res = await adminApi.get<DetailResponse>(`/api/admin/patients?id=${id}`);
       setDetail(res);
       setNotesDraft(res.patient?.operational_notes ?? "");
+      // Write-only fields: the form starts empty; staff type a value only to set or correct it.
+      setDobDraft("");
+      setSexDraft("");
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Bemor ma'lumotlarini yuklab bo‘lmadi");
     } finally {
@@ -174,6 +189,38 @@ export default function PatientsPage() {
       setError(e instanceof AdminApiError ? e.message : "Izohni saqlab bo‘lmadi");
     } finally {
       setNotesSaving(false);
+    }
+  };
+
+  const saveSmsConsent = async (consent: boolean) => {
+    if (!detailId) return;
+    try {
+      const res = await adminApi.post<{ smsConsent: boolean }>(`/api/operations/patients/${detailId}/sms-consent`, { consent });
+      setDetail((prev) => (prev?.patient ? { ...prev, patient: { ...prev.patient, sms_consent: res.smsConsent } } : prev));
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "SMS roziligini saqlab bo‘lmadi");
+    }
+  };
+
+  const saveDemographics = async () => {
+    if (!detailId || (!dobDraft && !sexDraft)) return;
+    setDemoSaving(true);
+    setDemoSaved(false);
+    try {
+      const body: { patientId: string; dateOfBirth?: string; sex?: "female" | "male" } = { patientId: detailId };
+      if (dobDraft) body.dateOfBirth = dobDraft;
+      if (sexDraft === "female" || sexDraft === "male") body.sex = sexDraft;
+      const res = await adminApi.patch<{ hasDateOfBirth: boolean; hasSex: boolean }>(`/api/admin/patients/demographics`, body);
+      setDetail((prev) =>
+        prev?.patient ? { ...prev, patient: { ...prev.patient, has_date_of_birth: res.hasDateOfBirth, has_sex: res.hasSex } } : prev,
+      );
+      setDobDraft("");
+      setSexDraft("");
+      setDemoSaved(true);
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Saqlab bo‘lmadi");
+    } finally {
+      setDemoSaving(false);
     }
   };
 
@@ -207,6 +254,7 @@ export default function PatientsPage() {
   const pageCount = Math.max(1, Math.ceil(total / 25));
   const selected = detail?.patient ?? null;
   const notesDirty = notesDraft.trim() !== (selected?.operational_notes ?? "").trim();
+  const demoDirty = dobDraft !== "" || sexDraft !== "";
 
   const visitStats = useMemo(() => {
     const completed = (detail?.appointments ?? []).filter((a) => a.status === "completed");
@@ -337,6 +385,65 @@ export default function PatientsPage() {
                   Yakunlangan tashriflar: {visitStats.count}
                 </p>
               </div>
+
+              <section aria-label="Shaxsiy ma’lumotlar">
+                <p className="mb-2 font-display text-sm font-bold text-foreground">Shaxsiy ma’lumotlar</p>
+                {selected.merged_into_patient_id ? (
+                  <p className="text-sm text-ink-muted">Bu karta boshqa kartaga birlashtirilgan — ma’lumotlarni asosiy kartada o‘zgartiring.</p>
+                ) : (
+                  <>
+                    <p className="mb-2 text-xs text-ink-muted">
+                      Laboratoriya tahlili buyurtmasi uchun tug‘ilgan sana kerak. Jins va yosh klinika belgilagan me’yor oralig‘ini tanlash uchun ishlatiladi.
+                      Bu ma’lumotlar xodimlarga ko‘rsatilmaydi — faqat kiritilgan yoki kiritilmaganligi.
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="text-sm text-foreground">
+                        <span className="mb-1 block text-xs text-ink-muted">
+                          Tug‘ilgan sana — {selected.has_date_of_birth ? "kiritilgan (o‘zgartirish uchun yangisini kiriting)" : "kiritilmagan"}
+                        </span>
+                        <AInput type="date" value={dobDraft} onChange={(v) => { setDobDraft(v); setDemoSaved(false); }} aria-label="Tug‘ilgan sana" />
+                      </label>
+                      <label className="text-sm text-foreground">
+                        <span className="mb-1 block text-xs text-ink-muted">Jins — {selected.has_sex ? "kiritilgan" : "kiritilmagan"}</span>
+                        <ASelect
+                          value={sexDraft}
+                          onChange={(v) => { setSexDraft(v); setDemoSaved(false); }}
+                          options={[
+                            { value: "", label: "O‘zgartirmaslik" },
+                            { value: "female", label: "Ayol" },
+                            { value: "male", label: "Erkak" },
+                          ]}
+                          aria-label="Jins"
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <AButton size="sm" loading={demoSaving} disabled={!demoDirty} onClick={() => void saveDemographics()}>
+                        Ma’lumotlarni saqlash
+                      </AButton>
+                      {demoSaved && !demoDirty && <span className="text-xs text-pine-deep">Saqlandi ✓</span>}
+                      {!selected.has_date_of_birth && !demoSaved && <ABadge tone="amber">Tug‘ilgan sana kiritilmagan</ABadge>}
+                    </div>
+                  </>
+                )}
+              </section>
+
+              {!selected.has_telegram && !selected.merged_into_patient_id && (
+                <section aria-label="SMS xabarnomalar" className="rounded-xl border border-hairline p-3 text-sm">
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selected.sms_consent}
+                      onChange={(e) => void saveSmsConsent(e.target.checked)}
+                      aria-label="SMS orqali navbat xabarlari"
+                    />
+                    <span>
+                      Bemor navbat raqami va chaqiruv SMS orqali kelishiga rozi
+                      <span className="block text-xs text-ink-muted">Telegrami yo‘q bemorlar uchun. Klinikada SMS yoqilgan bo‘lishi kerak.</span>
+                    </span>
+                  </label>
+                </section>
+              )}
 
               <div>
                 <p className="mb-2 font-display text-sm font-bold text-foreground">Operatsion izoh</p>

@@ -3,8 +3,9 @@ import Link from "next/link";
 import { getStaffContext, hasRole } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
-import { HeartPulse, ListOrdered, CalendarRange, Send, Users, KeyRound } from "lucide-react";
+import { HeartPulse, ListOrdered, CalendarRange, Send, Users, KeyRound, FlaskConical } from "lucide-react";
 import { PendingReferralsBadge } from "@/components/doctor/pending-referrals-badge";
+import { NotificationBell } from "@/components/staff/notification-bell";
 
 export const metadata = { title: "Shifokor paneli" };
 
@@ -24,6 +25,9 @@ export default async function DoctorLayout({ children }: { children: React.React
             <p className="font-display text-sm font-bold tracking-tight text-foreground">Shifokor</p>
             <p className="max-w-[10rem] truncate text-xs text-ink-muted">{ctx.clinicName}</p>
           </div>
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 text-sm">
           <p className="font-numeric px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.16em] text-ink-muted/80">
@@ -31,6 +35,7 @@ export default async function DoctorLayout({ children }: { children: React.React
           </p>
           <NavLink href="/doctor" exact icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
           <NavLink href="/doctor/patients" icon={<Users className="h-4 w-4" />}>Bemorlarim</NavLink>
+          <NavLink href="/doctor/lab" icon={<FlaskConical className="h-4 w-4" />}>Laboratoriya</NavLink>
           <NavLink href="/doctor/referrals" icon={<Send className="h-4 w-4" />}>Yo‘llanmalar<PendingReferralsBadge /></NavLink>
           <NavLink href="/doctor/schedule" icon={<CalendarRange className="h-4 w-4" />}>Jadvalim</NavLink>
           <NavLink href="/doctor/password" icon={<KeyRound className="h-4 w-4" />}>Parolim</NavLink>
@@ -57,11 +62,15 @@ export default async function DoctorLayout({ children }: { children: React.React
             </span>
             <span className="font-display text-sm font-bold tracking-tight">Shifokor paneli</span>
           </Link>
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </header>
         {/* Phones and small tablets: the sidebar is hidden, so its sections sit in a scrollable strip. */}
         <NavStrip label="Shifokor bo‘limlari">
           <NavLink href="/doctor" exact icon={<ListOrdered className="h-4 w-4" />}>Bugungi navbat</NavLink>
           <NavLink href="/doctor/patients" icon={<Users className="h-4 w-4" />}>Bemorlarim</NavLink>
+          <NavLink href="/doctor/lab" icon={<FlaskConical className="h-4 w-4" />}>Laboratoriya</NavLink>
           <NavLink href="/doctor/referrals" icon={<Send className="h-4 w-4" />}>Yo‘llanmalar<PendingReferralsBadge /></NavLink>
           <NavLink href="/doctor/schedule" icon={<CalendarRange className="h-4 w-4" />}>Jadvalim</NavLink>
           <NavLink href="/doctor/password" icon={<KeyRound className="h-4 w-4" />}>Parolim</NavLink>

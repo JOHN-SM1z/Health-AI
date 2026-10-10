@@ -1,4 +1,5 @@
 import "server-only";
+import { patientRecordGroup } from "@/lib/patients/record-group";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { recordAudit } from "@/lib/audit";
@@ -87,9 +88,30 @@ function referralAccessUntil(referrals: PatientReferral[]): string | null {
   return open.length > 0 ? open.map((r) => r.expiresAt).sort().at(-1)! : null;
 }
 
-/** Whether `access` lets the doctor start a consultation (own patient or an accepted referral). */
-export function canStartConsultation(access: ClinicalAccess): boolean {
-  return access.allowed && (access.scope.ownAppointments || access.scope.sharedHistoryDoctorIds.length > 0);
+/**
+ * Whether `access` lets the doctor start a consultation: their own patient
+ * (an appointment or a walk-in visit with them), or an accepted referral.
+ * Reading the referring doctor's history does not need acceptance (owner
+ * decision 2026-10-07: a pending referral shares it at once), so acceptance
+ * is checked on the referral itself, not inferred from the shared history.
+ */
+export function canStartConsultation(access: ClinicalAccess, hasAcceptedReferral: boolean): boolean {
+  return access.allowed && (access.scope.ownAppointments || hasAcceptedReferral);
+}
+
+/** An open referral of `access` to this doctor that they accepted (or are already seeing the patient for). */
+export async function hasAcceptedReferral(doctor: LinkedDoctor, access: ClinicalAccess): Promise<boolean> {
+  if (access.activeReferralIds.length === 0) return false;
+  const { data, error } = await createAdminClient()
+    .from("referrals")
+    .select("id")
+    .eq("clinic_id", doctor.clinicId)
+    .eq("referred_to_doctor_id", doctor.doctorId)
+    .in("id", access.activeReferralIds)
+    .in("status", ["accepted", "in_progress"])
+    .limit(1);
+  if (error) throw new ApiError(500, "Yo‘llanmani tekshirib bo‘lmadi");
+  return (data ?? []).length > 0;
 }
 
 async function doctorServices(doctor: LinkedDoctor): Promise<Array<{ id: string; name: string }>> {
@@ -118,12 +140,15 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
     access.scope.referralAppointmentIds.length > 0 ? `id.in.(${access.scope.referralAppointmentIds.join(",")})` : null,
   ].filter(Boolean);
 
+  // The person's record across merged records (Phase 14): the canonical
+  // record's details, every member's visits under the same coverage.
+  const group = (await patientRecordGroup(doctor.clinicId, patientId)) ?? { canonicalId: patientId, ids: [patientId] };
   const supabase = createAdminClient();
   const [patientRes, appointmentsRes, records, referrals, services] = await Promise.all([
     supabase
       .from("patients")
       .select("id, full_name, phone, preferred_language")
-      .eq("id", patientId)
+      .eq("id", group.canonicalId)
       .eq("clinic_id", doctor.clinicId)
       .maybeSingle(),
     coverage.length > 0
@@ -131,7 +156,7 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
           .from("appointments")
           .select("id, start_at, end_at, status, doctor_id, services(name), doctors(name)")
           .eq("clinic_id", doctor.clinicId)
-          .eq("patient_id", patientId)
+          .in("patient_id", group.ids)
           .or(coverage.join(","))
           .order("start_at", { ascending: false })
           .limit(100)
@@ -153,7 +178,7 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
       .from("appointments")
       .select("id, start_at, end_at, status, doctor_id, services(name), doctors(name)")
       .eq("clinic_id", doctor.clinicId)
-      .eq("patient_id", patientId)
+      .in("patient_id", group.ids)
       .in("id", missing.slice(i, i + 150));
     if (error) throw new ApiError(500, "Bemor ma‘lumotlarini yuklab bo‘lmadi");
     for (const a of (older ?? []) as unknown as AppointmentRow[]) {
@@ -184,7 +209,10 @@ export async function getPatientWorkspace(doctor: LinkedDoctor, patientId: strin
           a.startAt >= today.start &&
           a.startAt < today.end,
       ) ?? null;
-  const canStart = canStartConsultation(access);
+  const canStart = canStartConsultation(
+    access,
+    referrals.some((r) => r.role === "receiver" && ["accepted", "in_progress"].includes(r.status)),
+  );
 
   // The access log names the patient, the referral the access rests on (when
   // exactly one does), and every record of another doctor released — ids

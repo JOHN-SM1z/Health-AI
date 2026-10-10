@@ -668,7 +668,7 @@ describeDb("referral API (doctor portal + reception)", () => {
     expect(await refer({ reason: " " })).toMatchObject({ status: 400, body: { code: "validation" } });
   });
 
-  it("shows a referral only to its doctors, shares history after acceptance, and logs every view", async () => {
+  it("shows a referral only to its doctors, shares history at once (no accept step), and logs every view", async () => {
     const id = await freshReferral();
 
     expect(await detail("bystander", id)).toMatchObject({ status: 404, body: { code: "referral_not_found" } });
@@ -681,10 +681,12 @@ describeDb("referral API (doctor portal + reception)", () => {
       status: "pending",
       priority: "urgent",
       reason: `Suspected arrhythmia, please assess (${suffix})`,
-      history: null,
       allowedActions: ["accept", "decline"],
       patient: { fullName: `Referral API patient ${suffix}` },
     });
+
+    // The referring doctor's visit with the patient is readable while pending.
+    expect((pending.body.data!.referral as { history: unknown[] }).history).toHaveLength(1);
 
     const asReferrer = await detail("referrer", id);
     expect(asReferrer.body.data!.referral).toMatchObject({ role: "referrer", allowedActions: ["revoke"] });
@@ -702,7 +704,7 @@ describeDb("referral API (doctor portal + reception)", () => {
       .eq("action", "referral_viewed")
       .order("created_at");
     expect((views ?? []).map((v) => v.actor_id)).toEqual([users.receiver, users.referrer, users.receiver]);
-    expect((views ?? []).map((v) => (v.metadata as { history_shared: boolean }).history_shared)).toEqual([false, true, true]);
+    expect((views ?? []).map((v) => (v.metadata as { history_shared: boolean }).history_shared)).toEqual([true, true, true]);
   });
 
   it("lets only the right doctor act, and only in a valid order", async () => {

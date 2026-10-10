@@ -15,6 +15,9 @@ export const DEMO = {
   reception: "reception@e2e.local",
   manager: "manager@e2e.local",
   owner: "owner@e2e.local",
+  lab: "lab@e2e.local",
+  lab2: "lab2@e2e.local",
+  cashier: "cashier@e2e.local",
 };
 export const DEMO_NAMES = {
   referrer: "Aliyev Jasur",
@@ -101,12 +104,15 @@ export const VIEWPORTS = {
 };
 
 /** Signs in through the real login page; page errors and 5xx responses are reported as problems. */
-export async function signIn(browser, report, email, viewport = "desktop", { expectDenials = false } = {}) {
+export async function signIn(browser, report, email, viewport = "desktop", { expectDenials = false, expectForbidden = false } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORTS[viewport], hasTouch: viewport !== "desktop", isMobile: viewport === "phone" });
   const page = await context.newPage();
-  // Where a step deliberately opens forbidden pages or books a taken time, the
-  // browser's own "Failed to load resource: 404/409/410" lines are expected.
-  const expected = (text) => expectDenials && /Failed to load resource: .* (404|409|410)/.test(text);
+  // Where a step deliberately opens forbidden pages, books a taken time or
+  // uploads a forged file, the browser's own "Failed to load resource:
+  // 404/409/410/415" lines are expected; a page opened by a role it refuses
+  // shows its permission state after a 403 (expectForbidden).
+  const expected = (text) =>
+    (expectDenials && /Failed to load resource: .* (404|409|410|415)/.test(text)) || (expectForbidden && /Failed to load resource: .* 403/.test(text));
   page.on("console", (m) => m.type() === "error" && !expected(m.text()) && report.problems.push(`[${email}] console: ${m.text()}`));
   page.on("pageerror", (e) => report.problems.push(`[${email}] pageerror: ${e.message}`));
   page.on("response", (r) => r.status() >= 500 && report.problems.push(`[${email}] HTTP ${r.status()} ${r.url()}`));
@@ -114,7 +120,21 @@ export async function signIn(browser, report, email, viewport = "desktop", { exp
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Parol").fill(PASSWORD);
   await page.getByRole("button", { name: "Kirish" }).click();
-  await page.waitForURL(/\/(admin|doctor)/, { timeout: 15_000 });
+  await page.waitForURL(/\/(admin|doctor|lab|kassa)/, { timeout: 15_000 });
   await page.waitForLoadState("networkidle");
   return { context, page };
+}
+
+/**
+ * Picks a slot in the Mini App's one-day view: steps to the slot's day with the day arrows (days with free time, in
+ * order), then clicks its time. `slots` is the /api/availability answer the page rendered.
+ */
+export async function pickSlot(page, slots, slot) {
+  const days = [...new Set(slots.map((s) => s.dayLocal))];
+  const day = page.getByTestId("slot-day");
+  await day.waitFor();
+  const previous = page.getByRole("button", { name: "Oldingi kun" });
+  while (await previous.isEnabled()) await previous.click();
+  for (let i = 0; i < days.indexOf(slot.dayLocal); i++) await page.getByRole("button", { name: "Keyingi kun" }).click();
+  await day.getByRole("button", { name: slot.startLocal, exact: true }).click();
 }

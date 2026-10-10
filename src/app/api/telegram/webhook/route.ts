@@ -12,8 +12,11 @@ import {
   handleVoiceCorrect,
   handleVoiceWrong,
   requestHumanHandoff,
+  handleContactShared,
 } from "@/lib/telegram/handlers";
 import { answerCallbackQuery } from "@/lib/telegram/bot";
+import { handleQueueFollowStart, handleQueueStatus } from "@/lib/telegram/queue-follow";
+import { QUEUE_STATUS_CALLBACK } from "@/lib/operations/queue-messages";
 
 export const dynamic = "force-dynamic";
 // 120s, not the 60s default: the voice-message pipeline (handleVoiceConsent)
@@ -32,6 +35,7 @@ type TelegramUpdate = {
     chat?: { id?: number };
     from?: { id?: number; first_name?: string; last_name?: string; username?: string };
     voice?: { file_id: string; file_unique_id?: string; duration?: number; mime_type?: string; file_size?: number };
+    contact?: { phone_number?: string; user_id?: number; first_name?: string };
   };
   callback_query?: {
     id?: string;
@@ -159,7 +163,22 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
       username: rawFrom.username,
     };
 
+    // A shared contact (the Mini App's "share my phone", or the bot's contact button) proves the sender's own phone
+    // for online identity — kept only when the contact is theirs.
+    if (message.contact) {
+      await handleContactShared({ clinicId, chatId, from, contact: message.contact });
+      return;
+    }
+
     const text = message.text?.trim() ?? "";
+
+    // The kassa's QR: "/start v_<token>" follows that visit's queue only —
+    // no patient card is created or linked for it.
+    const follow = /^\/start\s+v_(\S+)$/.exec(text);
+    if (follow) {
+      await handleQueueFollowStart({ clinicId, chatId, telegramUserId: from.id, token: follow[1] });
+      return;
+    }
 
     if (text.startsWith("/")) {
       const command = text.split(" ")[0];
@@ -208,6 +227,10 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
       await handleVoiceWrong({ clinicId, chatId, telegramUserId: from.id, voiceMessageId: data.split(":")[1] });
       return;
     }
+    if (data === QUEUE_STATUS_CALLBACK) {
+      await handleQueueStatus({ clinicId, chatId, telegramUserId: from.id });
+      return;
+    }
     if (data === "contact_operator") {
       await requestHumanHandoffFromCallback(clinicId, chatId, from);
       return;
@@ -217,6 +240,7 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
 
 const MENU_BUTTONS = [
   "Qabulga yozilish",
+  "Mening qabullarim",
   "Shifokor tanlashda yordam",
   "Narxlar",
   "Manzil",

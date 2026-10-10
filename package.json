@@ -13,7 +13,7 @@
     "db:full-setup": "node scripts/build-full-db-setup.mjs",
     "create-owner": "node --env-file=.env scripts/create-owner.ts",
     "e2e:seed": "node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/seed-demo.mjs",
-    "test:e2e": "node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/referral-workflow.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/booking-channels.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/staff-and-safety.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/redteam-http.mjs"
+    "test:e2e": "node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/referral-workflow.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/booking-channels.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/my-appointments.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/online-identity.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/online-payment.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/sms-fallback.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/staff-and-safety.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-configuration.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-ordering.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-collection.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-results.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-verification.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-history.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-documents.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-patient-results.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-import.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/patient-merge.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-external.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-notifications.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-dashboards.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-ai-summary.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/outpatient-journey.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-walk-in.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/redteam-http.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
@@ -26,6 +26,7 @@
     "grammy": "^1.45.1",
     "lucide-react": "^1.31.0",
     "next": "16.3.0",
+    "qrcode": "^1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tailwind-merge": "^3.6.0",
@@ -34,6 +35,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20.19.43",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

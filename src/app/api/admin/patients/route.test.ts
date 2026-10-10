@@ -25,6 +25,9 @@ vi.mock("@/lib/auth/guards", () => ({
   })),
 }));
 
+// The merged-record group (Phase 14) is covered by the database tests; here a patient is its own group.
+vi.mock("@/lib/patients/record-group", () => ({ patientRecordIds: vi.fn(async (_clinicId: string, id: string) => [id]) }));
+
 vi.mock("@/lib/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { GET, PATCH } from "./route";
@@ -53,10 +56,10 @@ type Recorded = {
 function chainBuilder(result: unknown, count?: number): Recorded & Record<string, unknown> {
   const recorded: Recorded = { conditions: [], rangeWindow: null, updatePayload: undefined };
   const builder = {} as Record<string, unknown>;
-  const methods = ["select", "eq", "not", "or", "order", "range", "limit", "update"] as const;
+  const methods = ["select", "eq", "not", "or", "is", "in", "order", "range", "limit", "update"] as const;
   for (const m of methods) {
     builder[m] = (...args: unknown[]) => {
-      if (m === "eq" || m === "not" || m === "or") recorded.conditions.push({ type: m, args });
+      if (m === "eq" || m === "not" || m === "or" || m === "is" || m === "in") recorded.conditions.push({ type: m, args });
       if (m === "range") recorded.rangeWindow = [args[0] as number, args[1] as number];
       if (m === "update") recorded.updatePayload = args[0];
       return builder;
@@ -151,10 +154,10 @@ describe("admin patient detail", () => {
       expect.objectContaining({ type: "eq", args: ["clinic_id", "clinic-a"] }),
     );
     expect(appointments.conditions).toContainEqual(
-      expect.objectContaining({ type: "eq", args: ["patient_id", "p-1"] }),
+      expect.objectContaining({ type: "in", args: ["patient_id", ["p-1"]] }),
     );
     expect(conversations.conditions).toContainEqual(
-      expect.objectContaining({ type: "eq", args: ["patient_id", "p-1"] }),
+      expect.objectContaining({ type: "in", args: ["patient_id", ["p-1"]] }),
     );
     // Related rows are scoped to the staff clinic too, not only via the patient.
     for (const related of [appointments, conversations]) {
@@ -199,7 +202,7 @@ describe("admin patient detail", () => {
     expect(referrals.conditions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: "eq", args: ["clinic_id", "clinic-a"] }),
-        expect.objectContaining({ type: "eq", args: ["patient_id", "p-1"] }),
+        expect.objectContaining({ type: "in", args: ["patient_id", ["p-1"]] }),
       ]),
     );
     expect(String(selects.referrals?.[0])).not.toMatch(/reason|handoff_note/);

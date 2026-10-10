@@ -20,6 +20,10 @@ export type StaffContext = {
  * "doctor" and "receptionist" are below management: they cannot manage the
  * catalog, analytics or bot configuration. requireStaff("doctor") therefore
  * only passes for literal doctors (receptionist weight 0 < doctor weight 1).
+ * Lab staff weigh -1: no weight-based check ever admits them, not even
+ * requireStaff("receptionist"); lab routes name their roles exactly
+ * (requireLabCapability / requireRoles). Cashiers likewise weigh -1: they
+ * reach only the kassa routes, which name the role explicitly.
  */
 const ROLE_WEIGHT: Record<StaffRole, number> = {
   owner: 4,
@@ -27,6 +31,8 @@ const ROLE_WEIGHT: Record<StaffRole, number> = {
   manager: 3,
   doctor: 1,
   receptionist: 0,
+  cashier: -1,
+  lab: -1,
 };
 
 export function roleAtLeast(roles: StaffRole[], min: StaffRole): boolean {
@@ -65,11 +71,19 @@ const ADMIN_WORKSPACE_ROLES: StaffRole[] = ["owner", "admin", "manager", "recept
  * them to their own working portal instead, mirroring the equivalent
  * doctor-only guard in doctor/layout.tsx.
  */
-export function adminWorkspaceRedirect(ctx: StaffContext): "/platform" | "/doctor" | null {
+export function adminWorkspaceRedirect(ctx: StaffContext): "/platform" | "/doctor" | "/lab" | "/kassa" | null {
   if (ctx.platformAdmin) return "/platform";
-  if (!hasAnyRole(ctx.roles, ADMIN_WORKSPACE_ROLES)) return "/doctor";
+  if (!hasAnyRole(ctx.roles, ADMIN_WORKSPACE_ROLES)) {
+    if (hasAnyRole(ctx.roles, ["cashier"])) return "/kassa";
+    return hasAnyRole(ctx.roles, ["lab"]) ? "/lab" : "/doctor";
+  }
   return null;
 }
+
+/** Roles that work the kassa (collect and, under the refund rules, refund). Reception is not one. */
+export const KASSA_ROLES: StaffRole[] = ["owner", "manager", "admin", "cashier"];
+/** Roles that register arrivals and run the live queue at the desk. */
+export const RECEPTION_ROLES: StaffRole[] = ["owner", "manager", "admin", "receptionist"];
 
 /**
  * Resolves the staff member's clinic context from the session.
