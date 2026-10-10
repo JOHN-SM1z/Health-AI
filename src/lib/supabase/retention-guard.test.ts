@@ -123,10 +123,29 @@ describeDb("retention — the database keeps clinical history", () => {
   });
 
   it("refuses to truncate them", async () => {
-    for (const table of ["clinics", "patients", "clinical_records", "referrals"]) {
-      const refusal = await asProduction((tx) => tx.unsafe(`truncate table public.${table} cascade`));
-      expect(refusal?.hint, table).toBe("retention");
-    }
+    // Truncating the real tables would take exclusive locks on clinics and every table referencing them and deadlock
+    // with the suites running beside this one (it did, in CI). So: (1) the catalog shows each protected table carries
+    // the statement-level BEFORE TRUNCATE guard, enabled; (2) that same guard refuses a real TRUNCATE, shown on a
+    // scratch table inside the rolled-back transaction.
+    const guarded = await sql<{ table: string; enabled: string }[]>`
+      select c.relname as table, t.tgenabled as enabled
+        from pg_trigger t
+        join pg_class c on c.oid = t.tgrelid
+        join pg_namespace n on n.oid = c.relnamespace
+        join pg_proc p on p.oid = t.tgfoid
+       where n.nspname = 'public' and p.proname = 'retention_guard' and not t.tgisinternal
+         and (t.tgtype & 32) <> 0  -- TRUNCATE
+         and (t.tgtype & 2) <> 0   -- BEFORE
+         and (t.tgtype & 1) = 0    -- FOR EACH STATEMENT
+       order by c.relname`;
+    expect(guarded).toEqual(["clinical_records", "clinics", "patients", "referrals"].map((table) => ({ table, enabled: "O" })));
+
+    const refusal = await asProduction(async (tx) => {
+      await tx.unsafe("create temp table retention_probe (id int)");
+      await tx.unsafe("create trigger retention_probe_guard before truncate on retention_probe for each statement execute function public.retention_guard()");
+      await tx.unsafe("truncate table retention_probe");
+    });
+    expect(refusal?.hint).toBe("retention");
   });
 
   it("refuses for the API's own roles too — the service role cannot lift it", async () => {
