@@ -62,14 +62,13 @@ async function run() {
       page.on("pageerror", (e) => report.problems.push(`[${label}] pageerror: ${e.message}`));
       page.on("response", (r) => r.status() >= 500 && report.problems.push(`[${label}] HTTP ${r.status()} ${r.url()}`));
       await page.goto(`${BASE}/book?clinic=${clinic}${launch(signInitData(bot.telegram_bot_token, telegramUserId))}`);
-      await page.getByRole("checkbox").check();
-      await page.getByRole("button", { name: "Davom etish" }).click();
       await page.getByRole("heading", { name: "Shaxsingizni kiriting" }).or(page.getByText("Shaxsingizni kiriting")).first().waitFor();
       return { ctx, page };
     };
     const identify = async (page, document, dob) => {
       await page.getByLabel("Pasport / ID karta yoki JSHSHIR").fill(document);
       await page.getByLabel("Tug‘ilgan sana").fill(dob);
+      await page.getByLabel("Shaxsiy ma’lumotlarga rozilik").check();
       await page.getByRole("button", { name: "Davom etish" }).click();
     };
 
@@ -77,7 +76,7 @@ async function run() {
     {
       await verified(tg.returning, deskPhoneKey);
       const { ctx, page } = await open(tg.returning, "returning");
-      check(true, "after consent, the Mini App asks for passport/ID or JSHSHIR and date of birth first");
+      check(true, "the very first screen asks for passport/ID or JSHSHIR and date of birth (with consent)");
       await identify(page, deskDoc.toLowerCase(), "17.05.1984");
       await page.getByText(deskName).waitFor();
       check(await page.getByText("17.05.1984").isVisible() && await page.getByText(`Mirobod ${suffix}`).isVisible(), "the card's details appear for its proven owner");

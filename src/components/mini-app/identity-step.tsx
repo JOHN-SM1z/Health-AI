@@ -55,6 +55,8 @@ export function IdentityStep({ identity, clinicPhone, onDone }: { identity: stri
   const [notice, setNotice] = useState<string | null>(null);
   const [document, setDocument] = useState("");
   const [dob, setDob] = useState("");
+  // Consent is given on this first screen: nothing personal is processed before it.
+  const [consent, setConsent] = useState(false);
   const [fullName, setFullName] = useState("");
   const [sex, setSex] = useState<"" | "female" | "male">("");
   const [address, setAddress] = useState("");
@@ -88,7 +90,7 @@ export function IdentityStep({ identity, clinicPhone, onDone }: { identity: stri
     if (!iso) return setError("Tug‘ilgan sanani kk.oo.yyyy ko‘rinishida kiriting (masalan: 12.04.1988)");
     setBusy(true);
     setError(null);
-    const res = await apiPost<Step>("/api/mini-app/identity/lookup", { document, dateOfBirth: iso }, identity);
+    const res = await apiPost<Step>("/api/mini-app/identity/lookup", { document, dateOfBirth: iso, consent: true }, identity);
     setBusy(false);
     if (!res.ok) return setError(res.error);
     // A phone shared earlier may already be on record: check before asking again.
@@ -177,9 +179,23 @@ export function IdentityStep({ identity, clinicPhone, onDone }: { identity: stri
             <LabeledInput label="Pasport / ID karta yoki JSHSHIR" value={document} onChange={setDocument} placeholder="AB1234567 yoki 14 raqam" />
             <LabeledInput label="Tug‘ilgan sana" value={dob} onChange={setDob} placeholder="kk.oo.yyyy" inputMode="numeric" />
             <p className="text-xs text-[var(--tg-hint)]">
-              Ma’lumotlaringiz faqat klinika tizimida saqlanadi. Xodimlar faqat ismingiz va telefon raqamingizni ko‘radi.
+              Ma’lumotlaringiz faqat klinika tizimida saqlanadi. Xodimlar faqat ismingiz va telefon raqamingizni ko‘radi. Ilova tibbiy
+              tashxis qo‘ymaydi.{" "}
+              <a className="underline" href="/privacy">
+                Maxfiylik siyosati
+              </a>
             </p>
-            <Button size="full" loading={busy} disabled={!document.trim() || !dob.trim()} onClick={submitLookup}>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={consent}
+                onChange={(e) => setConsent(e.target.checked)}
+                aria-label="Shaxsiy ma’lumotlarga rozilik"
+                className="mt-0.5 h-4 w-4 accent-[var(--tg-button,var(--pine))]"
+              />
+              <span>Shaxsiy ma’lumotlarimni qabulga yozilish uchun ishlatishga roziman</span>
+            </label>
+            <Button size="full" loading={busy} disabled={!document.trim() || !dob.trim() || !consent} onClick={submitLookup}>
               Davom etish
             </Button>
           </Card>

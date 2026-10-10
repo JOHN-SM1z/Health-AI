@@ -61,3 +61,4 @@ Health-AI/
 
 # env backups
 .env.local.bak
+.env*

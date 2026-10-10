@@ -290,9 +290,9 @@ export function BookingFlow() {
 
   return (
     <div className="flex flex-col gap-4">
-      <StepHeader step={step.name} />
+      <StepHeader step={identityFirst && step.name === "consent" ? "identity" : step.name} />
 
-      {step.name === "consent" && (
+      {step.name === "consent" && !identityFirst && (
         <div className="flex flex-col gap-4">
           <Card>
             <SectionTitle>Xizmatimiz haqida</SectionTitle>
@@ -329,7 +329,7 @@ export function BookingFlow() {
         </div>
       )}
 
-      {step.name === "identity" && (
+      {(step.name === "identity" || (step.name === "consent" && identityFirst)) && (
         <IdentityStep
           identity={identity}
           clinicPhone={catalog?.clinic.phone ?? null}

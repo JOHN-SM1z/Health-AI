@@ -578,6 +578,8 @@ export type KassaTotals = {
   /** "online": paid in the Mini App — never in the drawer or the terminal. */
   byMethod: Record<"cash" | "terminal" | "online", { collected: number; refunded: number; net: number }>;
   byStaff: Array<{ profileId: string; name: string | null; collected: number; refunded: number }>;
+  /** Clinic-wide only: how queue numbers reached patients (Telegram / SMS / neither). */
+  tickets?: TicketChannels;
 };
 
 /**
@@ -631,7 +633,42 @@ export async function kassaTotals(staff: Staff, fromIso: string, toIso: string, 
     scope: clinicWide ? "clinic" : "mine",
     byMethod,
     byStaff: ids.map((id) => ({ profileId: id, name: names.get(id) ?? null, ...staffTotals.get(id)!, collected: round2(staffTotals.get(id)!.collected), refunded: round2(staffTotals.get(id)!.refunded) })),
+    ...(clinicWide ? { tickets: await ticketChannels(staff.clinicId, fromIso, toIso) } : {}),
   };
+}
+
+export type TicketChannels = { numbered: number; telegram: number; sms: number; none: number };
+
+/**
+ * How queue numbers reached patients in [from, to) — the pilot's measure of how many patients have no smartphone
+ * (owner question 2026-10-08): Telegram (own chat or a QR follower), SMS, or neither (told aloud / on the screen only).
+ * Counts only; no patient is named.
+ */
+export async function ticketChannels(clinicId: string, fromIso: string, toIso: string): Promise<TicketChannels> {
+  const db = createAdminClient();
+  const { data: visits, error } = await db
+    .from("visits")
+    .select("id")
+    .eq("clinic_id", clinicId)
+    .gte("queued_at", fromIso)
+    .lt("queued_at", toIso)
+    .limit(20000);
+  if (error) throw new ApiError(500, "Hisobotni yuklab bo‘lmadi");
+  const ids = (visits ?? []).map((v) => v.id);
+  if (ids.length === 0) return { numbered: 0, telegram: 0, sms: 0, none: 0 };
+  const telegram = new Set<string>();
+  const sms = new Set<string>();
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    const [{ data: jobs }, { data: followers }] = await Promise.all([
+      db.from("notification_jobs").select("visit_id, channel").eq("clinic_id", clinicId).eq("type", "queue_ticket").in("visit_id", chunk),
+      db.from("visit_followers").select("visit_id").eq("clinic_id", clinicId).in("visit_id", chunk),
+    ]);
+    for (const j of jobs ?? []) (j.channel === "sms" ? sms : telegram).add(j.visit_id!);
+    for (const f of followers ?? []) telegram.add(f.visit_id);
+  }
+  const reached = new Set([...telegram, ...sms]);
+  return { numbered: ids.length, telegram: telegram.size, sms: [...sms].filter((v) => !telegram.has(v)).length, none: ids.length - reached.size };
 }
 
 // ---------------------------------------------------------------------------

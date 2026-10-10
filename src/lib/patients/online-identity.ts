@@ -137,6 +137,13 @@ export async function lookupOnlineIdentity(
     p_dob: input.dateOfBirth,
   });
   if (error) throw refusal(error, "online_identity_lookup");
+  // The patient agreed on the same screen (the route requires it): recorded on their own record.
+  await createAdminClient()
+    .from("patients")
+    .update({ consent_given: true, consent_given_at: new Date().toISOString() })
+    .eq("clinic_id", clinicId)
+    .eq("id", (patient as OnlinePatient & { id: string }).id)
+    .eq("consent_given", false);
   return { next: "phone", lookupId: data as string };
 }
 

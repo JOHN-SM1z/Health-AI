@@ -35,6 +35,7 @@ type Totals = {
   scope: "mine" | "clinic";
   byMethod: Record<"cash" | "terminal", { collected: number; refunded: number; net: number }> & { online?: { collected: number; refunded: number; net: number } };
   byStaff: Array<{ profileId: string; name: string | null; collected: number; refunded: number }>;
+  tickets?: { numbered: number; telegram: number; sms: number; none: number };
 };
 type Grants = { cashiers: Array<{ profileId: string; name: string | null; grant: { grantedAt: string } | null }> };
 
@@ -313,6 +314,17 @@ export default function KassaPage() {
             </div>
           ) : (
             <p className="text-sm text-ink-muted">{totals.error ?? "Yuklanmoqda…"}</p>
+          )}
+          {totals.data?.tickets && totals.data.tickets.numbered > 0 && (
+            <div className="mt-3 rounded-xl border border-hairline p-3 text-sm" aria-label="Navbat raqami qanday yetkazildi">
+              <p className="font-semibold">Navbat raqami qanday yetkazildi ({totals.data.tickets.numbered} ta)</p>
+              <p>
+                Telegram: {totals.data.tickets.telegram} · SMS: {totals.data.tickets.sms} · Faqat og‘zaki/ekran: {totals.data.tickets.none}
+                <span className="ml-1 text-xs text-ink-muted">
+                  (smartfonsiz ulush ≈ {Math.round(((totals.data.tickets.sms + totals.data.tickets.none) / totals.data.tickets.numbered) * 100)}%)
+                </span>
+              </p>
+            </div>
           )}
           {totals.data?.scope === "clinic" && totals.data.byStaff.length > 0 && (
             <ul className="mt-3 text-sm">

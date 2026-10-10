@@ -20,6 +20,7 @@ vi.mock("@/lib/telegram/bot", () => ({
 }));
 
 import { processDueSmsJobs } from "@/lib/sms/processor";
+import { ticketChannels } from "@/lib/operations/outpatient";
 import { testOutbox } from "@/lib/sms/test-provider";
 import { POST as eskizCallback } from "./eskiz/callback/route";
 import { POST as lookup } from "@/app/api/mini-app/identity/lookup/route";
@@ -161,7 +162,7 @@ describeDb("queue SMS and the SMS-code card link (test outbox, real database)", 
     const [card] = await sql<{ id: string }[]>`insert into public.patients ${sql({ clinic_id: clinic, full_name: `Karta Egasi ${suffix}`, document_number: doc, date_of_birth: "1979-09-19", phone: `+998 ${phoneKey(5)}` })} returning id`;
     const user = tg++;
     await sql`insert into public.telegram_verified_phones ${sql({ clinic_id: clinic, telegram_user_id: user, phone_key: phoneKey(6) })}`;
-    const l = await mini(lookup, user, { document: doc, dateOfBirth: "1979-09-19" });
+    const l = await mini(lookup, user, { consent: true, document: doc, dateOfBirth: "1979-09-19" });
     const lookupId = l.body.data!.lookupId as string;
     expect((await mini(phoneStep, user, { lookupId })).body.data).toMatchObject({ next: "details" });
 
@@ -174,7 +175,7 @@ describeDb("queue SMS and the SMS-code card link (test outbox, real database)", 
 
     // A stranger with an unknown document gets the same answer, and nothing is sent.
     const other = tg++;
-    const ol = await mini(lookup, other, { document: `ZZ${String(seed).padStart(7, "1").slice(-7)}`, dateOfBirth: "1979-09-19" });
+    const ol = await mini(lookup, other, { consent: true, document: `ZZ${String(seed).padStart(7, "1").slice(-7)}`, dateOfBirth: "1979-09-19" });
     const otherBefore = testOutbox.length;
     expect((await mini(smsSend, other, { lookupId: ol.body.data!.lookupId })).body.data).toEqual({ sent: "if_card" });
     expect(testOutbox.length).toBe(otherBefore);
@@ -189,12 +190,24 @@ describeDb("queue SMS and the SMS-code card link (test outbox, real database)", 
     expect((await mini(smsVerify, user, { lookupId, code })).body.code).toBe("code_expired");
   });
 
+  it("the pilot's smartphone measure: how each queue number reached its patient (counts only)", async () => {
+    const from = new Date(Date.now() - 3_600_000).toISOString();
+    const to = new Date(Date.now() + 3_600_000).toISOString();
+    const viaTelegram = await visit(pts.telegram, 41);
+    await sql`insert into public.notification_jobs ${sql({ clinic_id: clinic, visit_id: viaTelegram, type: "queue_ticket", patient_telegram_user_id: 1, scheduled_for: new Date(), idempotency_key: `queue_ticket:${viaTelegram}` })}`;
+    const t = await ticketChannels(clinic, from, to);
+    expect(t.telegram).toBeGreaterThanOrEqual(1);
+    expect(t.sms).toBeGreaterThanOrEqual(1);
+    expect(t.none).toBeGreaterThanOrEqual(1); // e.g. the patient who did not agree to SMS
+    expect(t.telegram + t.sms + t.none).toBe(t.numbered);
+  });
+
   it("five wrong codes end the code; it cannot be guessed", async () => {
     const doc = `SG${String(seed).padStart(7, "0").slice(-7)}`;
     await sql`insert into public.patients ${sql({ clinic_id: clinic, full_name: `Himoya ${suffix}`, document_number: doc, date_of_birth: "1981-01-11", phone: `+998 ${phoneKey(7)}` })}`;
     const user = tg++;
     await sql`insert into public.telegram_verified_phones ${sql({ clinic_id: clinic, telegram_user_id: user, phone_key: phoneKey(8) })}`;
-    const lookupId = (await mini(lookup, user, { document: doc, dateOfBirth: "1981-01-11" })).body.data!.lookupId as string;
+    const lookupId = (await mini(lookup, user, { consent: true, document: doc, dateOfBirth: "1981-01-11" })).body.data!.lookupId as string;
     const before = testOutbox.length;
     await mini(smsSend, user, { lookupId });
     const code = /(\d{6})/.exec(testOutbox.slice(before)[0].text)![1];
