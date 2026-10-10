@@ -55,7 +55,8 @@ jobs:
       - run: npm ci
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # A fixed version: "latest" asks the GitHub API on every run and fails when it is rate-limited.
+          version: 2.120.0
       - name: Start Supabase (migrations + seed)
         # The runner's Docker occasionally fails to start a container ("failed to start containers"); try again on a
         # clean stack rather than failing the whole run. A migration error fails all three attempts and the job.
