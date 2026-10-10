@@ -47,7 +47,7 @@ const QUEUE = [
 
 export function QueueBoardMock() {
   return (
-    <div className="w-full max-w-[440px] rounded-2xl border border-[#e9e6df] bg-white p-4 shadow-[0_24px_60px_-24px_rgba(16,40,46,0.35)]">
+    <div className="w-full max-w-[440px] rounded-2xl border border-[#e9e6df] bg-white p-3.5 shadow-[0_24px_60px_-24px_rgba(16,40,46,0.35)]">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="brand-tile flex h-7 w-7 items-center justify-center rounded-lg text-white">

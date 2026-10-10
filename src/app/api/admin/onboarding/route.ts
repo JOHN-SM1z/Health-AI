@@ -8,7 +8,9 @@ export const dynamic = "force-dynamic";
 /** The owner's setup checklist after sign-up: what is done, read from the clinic's own data. */
 export async function GET() {
   try {
-    const owner = await requireRoles("owner");
+    // Everyone on the dashboard asks; only the owner has a checklist (others get none, not an error).
+    const owner = await requireRoles("owner", "admin", "manager", "receptionist");
+    if (!owner.roles.includes("owner")) return ok({ steps: [], done: 0 });
     const db = createAdminClient();
     const count = async (table: "departments" | "staff_roles" | "services" | "doctors") =>
       (await db.from(table).select("id", { count: "exact", head: true }).eq("clinic_id", owner.clinicId)).count ?? 0;

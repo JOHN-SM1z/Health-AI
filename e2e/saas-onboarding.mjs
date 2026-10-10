@@ -59,11 +59,14 @@ async function run() {
     const overflow = await v.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     check(overflow <= 1, "no sideways scrolling on a phone");
     await v.screenshot({ path: `${SHOTS}/landing-phone.png`, fullPage: true });
-    // A Telegram Mini App that opens the bare domain belongs on the patient menu.
-    await v.goto(`${BASE}/#tgWebAppData=query_id%3Dx&tgWebAppVersion=8.0&tgWebAppPlatform=ios`);
-    await v.waitForURL(/\/home/, { timeout: 15_000 });
-    check(true, "a Telegram launch at / is forwarded to the patient menu");
     await visitor.close();
+    // A Telegram Mini App that opens the bare domain belongs on the patient menu (a fresh load, as Telegram does).
+    const launch = await browser.newContext({ viewport: VIEWPORTS.phone, isMobile: true, hasTouch: true });
+    const t = await launch.newPage();
+    await t.goto(`${BASE}/#tgWebAppData=query_id%3Dx&tgWebAppVersion=8.0&tgWebAppPlatform=ios`);
+    await t.waitForURL(/\/home/, { timeout: 15_000 });
+    check(true, "a Telegram launch at / is forwarded to the patient menu");
+    await launch.close();
 
     // ---------- Sign-up ----------
     const signupContext = await browser.newContext({ viewport: VIEWPORTS.desktop });

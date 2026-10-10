@@ -154,17 +154,19 @@ export default async function LandingPage() {
             </ul>
           </div>
 
-          <div className="relative mx-auto flex w-full max-w-[520px] justify-center lg:justify-end">
+          {/* The patient's phone and the clinic's desk side by side: what each side of the system sees. */}
+          <div className="relative mx-auto flex w-full max-w-[580px] items-center justify-center gap-4 lg:justify-end">
             <div className="absolute -right-10 top-6 hidden h-72 w-72 rounded-full bg-mint/40 blur-3xl md:block" aria-hidden />
-            <div className="relative w-full">
-              <div className="hidden pl-16 pt-4 sm:block">
-                <QueueBoardMock />
+            <div className="relative z-10">
+              <PhoneMock />
+            </div>
+            <div className="relative z-10 hidden w-[300px] shrink-0 flex-col gap-3 sm:flex">
+              <FloatingChip icon="shield" title="Shaxs tasdiqlandi" sub="Telefon Telegram orqali" className="self-start" />
+              <QueueBoardMock />
+              <div className="flex flex-col gap-3">
+                <FloatingChip icon="pay" title="Kassa: 180 000 so‘m" sub="A-015 · to‘landi" className="self-end" />
+                <FloatingChip icon="lab" title="Natija tayyor" sub="Bemorga Telegram’da yuborildi" className="self-start" />
               </div>
-              <div className="relative z-10 mx-auto w-fit sm:absolute sm:-bottom-10 sm:left-0 sm:mx-0">
-                <PhoneMock />
-              </div>
-              <FloatingChip icon="lab" title="Natija tayyor" sub="Bemorga Telegram’da yuborildi" className="absolute -top-2 right-2 z-20 hidden sm:flex" />
-              <FloatingChip icon="pay" title="Kassa: 180 000 so‘m" sub="A-015 · to‘landi" className="absolute -bottom-14 right-4 z-20 hidden sm:flex" />
             </div>
           </div>
         </div>

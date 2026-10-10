@@ -27,7 +27,7 @@ export function OnboardingChecklist() {
     };
   }, []);
 
-  if (!steps || steps.every((s) => s.done)) return null;
+  if (!steps || steps.length === 0 || steps.every((s) => s.done)) return null;
   const done = steps.filter((s) => s.done).length;
 
   return (
