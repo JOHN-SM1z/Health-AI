@@ -344,9 +344,13 @@ export function IdentityStep({ identity, clinicPhone, onDone }: { identity: stri
         <>
           <SectionTitle>Ma’lumotlaringiz</SectionTitle>
           <Card className="flex flex-col gap-2 text-sm">
-            {view.profile.identityVerified && (
+            {view.profile.identityVerified ? (
               <p className="flex items-center gap-1.5 text-xs font-semibold text-[var(--tg-button,var(--pine))]">
-                <ShieldCheck className="h-3.5 w-3.5" aria-hidden /> Davlat tizimi (OneID) orqali tasdiqlangan
+                <ShieldCheck className="h-3.5 w-3.5" aria-hidden /> Shaxsingiz tasdiqlangan
+              </p>
+            ) : (
+              <p className="rounded-lg bg-[var(--clay-tint,#fbeae2)] px-2.5 py-1.5 text-xs text-[var(--clay-deep,#a35532)]">
+                Birinchi kelganingizda qabulxonada pasport yoki ID kartangizni ko‘rsating — shaxsingiz tasdiqlanadi.
               </p>
             )}
             <div>

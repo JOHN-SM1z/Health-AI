@@ -104,6 +104,19 @@ async function run() {
         (await page.getByText("Hujjat va tug‘ilgan sana bo‘yicha topildi").isVisible()) && (await page.getByRole("dialog").count()) === 0,
         "a returning patient's card opens straight from passport + date of birth",
       );
+      // The passport in hand confirms the card (owner request 2026-10-10): a wrong number is a mismatch, the right one
+      // marks it confirmed — and the stored values are never shown.
+      await page.getByRole("button", { name: "Hujjatni tekshirish" }).first().click();
+      await page.getByLabel("Hujjat raqami (qo‘ldagi hujjatdan)").fill(`AZ${DOC.slice(2)}`);
+      await page.getByLabel("Tug‘ilgan sana (qo‘ldagi hujjatdan)").fill("12.04.1991");
+      await page.getByRole("button", { name: "Tekshirish", exact: true }).click();
+      await page.getByText("Hujjat kartadagi ma’lumotga mos kelmadi").waitFor();
+      check(true, "reception: a passport that is not the card's is refused as a mismatch");
+      await page.getByLabel("Hujjat raqami (qo‘ldagi hujjatdan)").fill(DOC);
+      await page.getByRole("button", { name: "Tekshirish", exact: true }).click();
+      await page.getByTestId("identity-verified").first().waitFor();
+      const [confirmed] = await db`select identity_verified_by from public.patients where clinic_id = ${clinic} and document_number = ${DOC}`;
+      check(confirmed?.identity_verified_by === "reception", "reception: the passport in hand confirms the card");
       await page.getByLabel("Shifokor").selectOption({ label: `${DEMO_NAMES.referrer} — Terapevt` });
       await page.getByRole("group", { name: "Xizmatlar" }).getByText(DEMO_NAMES.generalService).click();
       await page.getByRole("button", { name: "Ro‘yxatga olish" }).click();

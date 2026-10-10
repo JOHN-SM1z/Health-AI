@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AModal, AInput, ASelect } from "@/components/admin/ui";
 import { adminApi, AdminApiError, formatTime } from "@/lib/admin/client";
+import { IdentityCheck, type IdentityVerifiedBy } from "@/components/admin/identity-check";
 import { freshnessLabel, money, useLive, VISIT_STATUS } from "@/components/operations/use-live";
 import { FollowQr } from "@/components/operations/follow-qr";
 import { classifyQuery, isIdentityDocument, parseDob } from "@/lib/operations/identity-query";
@@ -29,6 +30,8 @@ type Match = {
   phone: string | null;
   /** The date of birth typed at the desk was checked on the server and matches. */
   dobMatches: boolean | null;
+  /** How the card's identity was confirmed (OneID online, or a document in hand at the desk); null when not yet. */
+  identityVerified: IdentityVerifiedBy;
 };
 type SearchResult = { patients: Match[]; exact: boolean; dobMismatch: boolean };
 type Catalog = {
@@ -44,7 +47,7 @@ type Visit = {
   queueNumber: number | null;
   queueDate: string | null;
   arrivedAt: string;
-  patient: { id: string; patientNumber: number; fullName: string | null };
+  patient: { id: string; patientNumber: number; fullName: string | null; identityVerified: IdentityVerifiedBy };
   kind: "doctor" | "lab";
   doctor: { id: string; name: string } | null;
   balance: { charged: number; outstanding: number };
@@ -62,7 +65,7 @@ export default function ReceptionPage() {
   const catalog = useLive<Catalog>("/api/operations/catalog", 120_000);
   const queue = useLive<{ visits: Visit[] }>("/api/operations/arrivals", 10_000);
   // Paid online for today, not here yet (20261008000012): "Keldi" puts them in their doctor's queue.
-  const booked = useLive<{ visits: Array<{ id: string; queueNumber: number; slotAt: string | null; patient: { fullName: string | null; patientNumber: number }; doctor: { name: string } | null }> }>(
+  const booked = useLive<{ visits: Array<{ id: string; queueNumber: number; slotAt: string | null; patient: { id: string; fullName: string | null; patientNumber: number; identityVerified: IdentityVerifiedBy }; doctor: { name: string } | null }> }>(
     "/api/operations/booked",
     30_000,
   );
@@ -286,6 +289,12 @@ export default function ReceptionPage() {
                 <p className="mt-1 text-[11px] text-pine-deep">
                   {foundBy === "document" ? "Hujjat va tug‘ilgan sana bo‘yicha topildi" : "Hujjatsiz tanlandi"}
                 </p>
+                <IdentityCheck
+                  key={patient.id}
+                  patientId={patient.id}
+                  verifiedBy={patient.identityVerified}
+                  onVerified={() => setPatient({ ...patient, identityVerified: "reception" })}
+                />
               </div>
               <AButton variant="outline" size="sm" onClick={() => setPatient(null)}>
                 O‘zgartirish
@@ -456,6 +465,8 @@ export default function ReceptionPage() {
                 <td className="px-4 py-3">
                   <p className="font-medium">{v.patient.fullName}</p>
                   <p className="text-xs text-ink-muted">Karta № {v.patient.patientNumber}</p>
+                  {/* Booked online: the first visit is when the passport is seen, unless OneID already confirmed it. */}
+                  <IdentityCheck key={v.patient.id} patientId={v.patient.id} verifiedBy={v.patient.identityVerified} onVerified={() => void booked.reload()} />
                 </td>
                 <td className="px-4 py-3">{v.doctor?.name}</td>
                 <td className="px-4 py-3 font-numeric">{v.slotAt ? formatTime(v.slotAt) : "—"}</td>

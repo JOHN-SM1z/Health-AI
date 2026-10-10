@@ -21,6 +21,27 @@ accurate."*
 
 The JSHSHIR check digit (digit 14) uses an unpublished formula, so it is not checked.
 
+## 1b. The passport in hand, at the desk (20261010000004)
+
+Every card carries whether its identity is confirmed, and how. The status, never the values, is shown:
+- at reception, on the found card and on each patient in "Bugun onlayn to‘laganlar";
+- in the Mini App, on the patient's own details.
+
+How the desk confirms a card:
+- The receptionist presses **"Hujjatni tekshirish"** and copies the series/number (or JSHSHIR) and the date of birth
+  from the patient's passport or ID card.
+- `verify_identity_at_desk()` compares them with the card and answers only:
+  - `verified` — the card is confirmed by reception;
+  - `mismatch`;
+  - `other_document` — the card holds the other kind of number;
+  - `document_in_use` — another card already has it; reception merges the two.
+- A card with no document yet (for example a Telegram-only patient) takes the document from the desk.
+- **Limits:** desk roles only; 5 attempts per card and 30 per staff member an hour; every attempt is audited with ids
+  and the outcome only.
+
+**Result:** every patient is confirmed once — online by OneID (once connected), or at their first visit by the
+passport in hand. The Mini App tells unconfirmed patients to bring their passport or ID card.
+
 ## 2. What OneID adds, and why it is the right choice
 
 OneID (id.egov.uz) is the state identification system. The patient signs in there with a login and password, an

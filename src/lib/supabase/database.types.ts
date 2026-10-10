@@ -4138,6 +4138,10 @@ export type Database = {
         Returns: { clinic_id: string; period_end: string }[]
       }
       issue_subscription_invoice: { Args: { p_clinic_id: string; p_months: number }; Returns: string }
+      verify_identity_at_desk: {
+        Args: { p_actor: string; p_clinic: string; p_dob: string; p_document: string | null; p_patient: string; p_pinfl: string | null }
+        Returns: string
+      }
       apply_oneid_identity: {
         Args: {
           p_address: string
