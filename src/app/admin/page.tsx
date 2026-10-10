@@ -8,6 +8,7 @@ import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, StatCard, Lo
 import { CalendarDays, UserPlus } from "lucide-react";
 import { STATUS_LABELS, STATUS_TONES, SOURCE_LABELS, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
 import { QuickBookingModal } from "@/components/admin/quick-booking-modal";
+import { OnboardingChecklist } from "@/components/admin/onboarding-checklist";
 
 type Row = {
   id: string;
@@ -138,6 +139,8 @@ export default function TodayPage() {
       />
 
       {error && <AError message={error} />}
+
+      <OnboardingChecklist />
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatCard label="Yangi bemorlar" value={(dashboard?.new_patients_today ?? 0).toLocaleString("uz-UZ")} tone="info" />

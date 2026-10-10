@@ -277,7 +277,7 @@ export function BookingFlow() {
     return (
       <div className="mt-8">
         <ErrorBanner message={error} />
-        <Button variant="outline" size="full" onClick={() => router.push("/")}>
+        <Button variant="outline" size="full" onClick={() => router.push("/home")}>
           Orqaga
         </Button>
       </div>
@@ -353,7 +353,7 @@ export function BookingFlow() {
             setNotes(concern.slice(0, 300));
             setStep({ name: "choose" });
           }}
-          onUrgentExit={() => router.push("/")}
+          onUrgentExit={() => router.push("/home")}
         />
       )}
 
@@ -652,7 +652,7 @@ export function BookingFlow() {
             if (bookingResult?.appointmentId) {
               router.push(`/booking/confirmation?id=${bookingResult.appointmentId}`);
             } else {
-              router.push("/");
+              router.push("/home");
             }
           }}
         />
