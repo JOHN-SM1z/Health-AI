@@ -28,6 +28,18 @@ export default function LoginPage() {
     return () => data.subscription.unsubscribe();
   }, []);
 
+  // Sent back from a panel: say why, and end the session so the next sign-in starts clean.
+  useEffect(() => {
+    const reason = new URLSearchParams(window.location.search).get("reason");
+    if (reason !== "clinic_inactive" && reason !== "no_access") return;
+    setError(
+      reason === "clinic_inactive"
+        ? "Klinikangiz hisobi vaqtincha o‘chirilgan (masalan, obuna to‘lanmagan). Klinika rahbari Health AI bilan bog‘lansin."
+        : "Bu hisob hech qaysi klinikaga biriktirilmagan. Klinika rahbaringizga murojaat qiling.",
+    );
+    void createClient().auth.signOut();
+  }, []);
+
   const submit = async () => {
     if (!password || (!passwordRecovery && !identifier.trim())) {
       setError(passwordRecovery ? "Yangi parolni kiriting" : "Login va parolni kiriting");

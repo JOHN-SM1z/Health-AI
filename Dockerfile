@@ -46,6 +46,8 @@ RUN groupadd --system --gid 1001 nodejs \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Operations script run inside this image after a domain move: re-points every clinic bot (deploy/uz/README.md).
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/sync-telegram-bots.mjs ./scripts/sync-telegram-bots.mjs
 
 USER nextjs
 EXPOSE 8080

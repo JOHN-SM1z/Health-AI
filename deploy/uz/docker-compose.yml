@@ -1,0 +1,51 @@
+# Health AI on a server in Uzbekistan — the app and the HTTPS front door.
+#
+# The database, auth, REST API and file storage run as the official self-hosted Supabase stack (its own compose
+# project in /opt/healthai/supabase, see README.md). This file adds:
+#   app    — the Next.js server built from the repository's Dockerfile
+#   caddy  — HTTPS for healthai.uz (website + app) and api.healthai.uz (Supabase gateway), certificates automatic
+# Both join the Supabase stack's network, so Caddy reaches the gateway as http://kong:8000 inside the server.
+#
+#   docker compose --env-file app.env up -d --build
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+    env_file: app.env
+    restart: unless-stopped
+    networks: [supabase]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [supabase]
+    depends_on: [app]
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  supabase:
+    # The network the official Supabase compose project creates (project directory "supabase" → "supabase_default").
+    external: true
+    name: supabase_default
