@@ -154,7 +154,16 @@ async function run() {
                              where s.clinic_id = ${clinicId} and i.id = ${invoice.id}`;
     check(after?.status === "active" && after?.extended && after?.invoice === "paid", "the confirmed transfer activates the subscription");
     await p.screenshot({ path: `${SHOTS}/platform-invoices.png`, fullPage: true });
+
+    // The platform switches the clinic off: its owner is told why at sign-in, not silently sent back.
+    await p.getByRole("button", { name: /Klinikalar/ }).click();
+    await p.locator("tr", { hasText: `E2E Klinika ${suffix}` }).getByRole("button", { name: "O‘chirish" }).click();
+    await p.locator("tr", { hasText: `E2E Klinika ${suffix}` }).getByRole("button", { name: "Yoqish" }).waitFor({ timeout: 15_000 });
     await pContext.close();
+    const { context: offContext, page: off } = await signInAs(browser, ownerLogin, ownerPassword);
+    await off.getByText("Klinikangiz hisobi vaqtincha o‘chirilgan").waitFor({ timeout: 15_000 });
+    check(new URL(off.url()).pathname === "/login", "staff of a switched-off clinic are told why on the login page");
+    await offContext.close();
   } finally {
     await browser.close();
   }

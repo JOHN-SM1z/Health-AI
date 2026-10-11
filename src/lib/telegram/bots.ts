@@ -183,6 +183,21 @@ export function botWebhookUrl(username: string, requestOrigin?: string | null): 
   return resolveHttpsAppUrl(`/api/telegram/webhook?bot=${encodeURIComponent(username)}`, requestOrigin);
 }
 
+/**
+ * Points the bot's chat menu button ("Qabulga yozilish") at this clinic's Mini App on the current app address.
+ * Set by the server, not by hand in BotFather, so a move to a new domain moves every clinic's button too. Idempotent.
+ */
+export async function registerBotMenuButton(bot: Bot, clinicId: string, requestOrigin?: string | null): Promise<{ ok: boolean; error?: string }> {
+  const url = resolveHttpsAppUrl(`/book?clinic=${encodeURIComponent(clinicId)}`, requestOrigin);
+  if (!url) return { ok: false, error: "Mini App manzilini aniqlab bo‘lmadi: NEXT_PUBLIC_APP_URL HTTPS manzil emas" };
+  try {
+    await bot.api.setChatMenuButton({ menu_button: { type: "web_app", text: "Qabulga yozilish", web_app: { url } } });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** Registers/refreshes the webhook for a bot. Idempotent. */
 export async function registerBotWebhook(
   bot: Bot,

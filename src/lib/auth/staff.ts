@@ -154,9 +154,24 @@ export async function getStaffContext(): Promise<StaffContext | null> {
  */
 export async function requirePanelContext(): Promise<StaffContext> {
   const ctx = await getStaffContext();
-  if (!ctx) redirect("/login");
+  if (!ctx) redirect(`/login${await noAccessReason()}`);
   if (ctx.mustChangePassword) redirect("/account/password");
   return ctx;
+}
+
+/**
+ * Why a signed-in account reaches no panel, for the login page to say (it then signs the session out):
+ * "?reason=clinic_inactive" when every clinic it works at is switched off, "?reason=no_access" when it works nowhere.
+ * Nothing for a visitor who is not signed in.
+ */
+async function noAccessReason(): Promise<string> {
+  const supabase = await createStaffClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return "";
+  const { data } = await supabase.from("staff_roles").select("clinics!inner(is_active)").eq("profile_id", user.id).limit(1);
+  return (data ?? []).length > 0 ? "?reason=clinic_inactive" : "?reason=no_access";
 }
 
 function errorOrEmpty(roles: Array<{ clinic_id: string; role: StaffRole }> | null): boolean {

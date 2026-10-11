@@ -22,6 +22,7 @@ import {
   botWebhookUrl,
   timingSafeCheck,
   registerBotWebhook,
+  registerBotMenuButton,
 } from "@/lib/telegram/bots";
 
 const INTEGRATION_ROW = {
@@ -125,6 +126,37 @@ describe("botWebhookUrl / registerBotWebhook", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error).toContain("wrong url");
+  });
+});
+
+describe("registerBotMenuButton", () => {
+  it("points the chat menu button at this clinic's Mini App on the current address", async () => {
+    const setChatMenuButton = vi.fn(async () => true);
+    const result = await registerBotMenuButton({ api: { setChatMenuButton } } as never, "clinic-a");
+    expect(result.ok).toBe(true);
+    expect(setChatMenuButton).toHaveBeenCalledWith({
+      menu_button: { type: "web_app", text: "Qabulga yozilish", web_app: { url: "https://health.example.com/book?clinic=clinic-a" } },
+    });
+  });
+
+  it("does nothing without an https app address, and reports Telegram's refusal", async () => {
+    const setChatMenuButton = vi.fn(async () => {
+      throw new Error("Bad Request: invalid url");
+    });
+    envMock.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
+    const prev = { prod: process.env.VERCEL_PROJECT_PRODUCTION_URL, url: process.env.VERCEL_URL };
+    delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+    delete process.env.VERCEL_URL;
+    try {
+      expect((await registerBotMenuButton({ api: { setChatMenuButton } } as never, "clinic-a")).ok).toBe(false);
+      expect(setChatMenuButton).not.toHaveBeenCalled();
+    } finally {
+      envMock.NEXT_PUBLIC_APP_URL = "https://health.example.com";
+      if (prev.prod !== undefined) process.env.VERCEL_PROJECT_PRODUCTION_URL = prev.prod;
+      if (prev.url !== undefined) process.env.VERCEL_URL = prev.url;
+    }
+    const refused = await registerBotMenuButton({ api: { setChatMenuButton } } as never, "clinic-a");
+    expect(refused).toMatchObject({ ok: false, error: expect.stringContaining("invalid url") });
   });
 });
 
