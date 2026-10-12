@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clinicDateKey, localDayWindow, localDayWindowForDate, tzOffsetMinutes } from "@/lib/time/local";
+import { clinicDateKey, localDayWindow, localDayWindowForDate, tzOffsetMinutes, uzDayLabel } from "@/lib/time/local";
 
 describe("tzOffsetMinutes", () => {
   it("returns +300 for Asia/Tashkent (UTC+5, no DST)", () => {
@@ -63,5 +63,12 @@ describe("localDayWindowForDate", () => {
     const { start, end } = localDayWindowForDate("Asia/Tashkent", "2026-08-01");
     expect(start).toBe("2026-07-31T19:00:00.000Z");
     expect(end).toBe("2026-08-01T19:00:00.000Z");
+  });
+});
+
+describe("uzDayLabel", () => {
+  it("names the day and month in Uzbek without relying on the browser's locale data", () => {
+    expect(uzDayLabel(new Date(2026, 9, 12))).toBe("dushanba, 12-oktabr");
+    expect(uzDayLabel(new Date(2027, 0, 3))).toBe("yakshanba, 3-yanvar");
   });
 });

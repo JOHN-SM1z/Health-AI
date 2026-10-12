@@ -134,7 +134,7 @@ Gaps that the product prompts assume exist but **do not**:
 - **No "Kassa" / cashier screen.** The manual payment route `POST /api/admin/appointments/[id]/payment` (owner/admin) exists but **no UI calls it**; admin pages only render status badges.
 - **No receipt / digital-receipt system.** Nothing generates receipts. Prompt 6's "reuse the existing digital-receipt architecture" has nothing to reuse.
 - **Refund is a status only** (`paid → refunded`); no refund amount, no partial refunds.
-- Analytics revenue (`src/lib/analytics/aggregate.ts`) counts completed appointments with a paid payment. Separately, `src/app/api/admin/dashboard/route.ts:54` computes today's revenue from `services.price`, not `payments.amount` — an existing inconsistency to resolve before any lab revenue dashboard (Prompt 17 requires authoritative payment records).
+- Analytics revenue (`src/lib/analytics/aggregate.ts`) counts completed appointments with a paid payment. Separately, `src/app/api/admin/dashboard/route.ts:54` computes today's revenue from `services.price`, not `payments.amount` — an existing inconsistency to resolve before any lab revenue dashboard (Prompt 17 requires authoritative payment records). **Resolved 2026-10-12:** the dashboard now shows money actually received (the kassa ledger, laboratory-kassa payments and appointments paid outside the kassa, each counted once) — `src/lib/dashboard/`.
 
 Smallest safe extension (proposal, to be designed in Phase 1/6): generalise
 the payment *subject* rather than adding a second engine — make

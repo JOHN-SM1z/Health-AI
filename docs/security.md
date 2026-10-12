@@ -405,6 +405,20 @@ A read-only audit found production, staging and this repository had drifted.
 - **Drift check:** `PILOT_RUNBOOK.md` §6 has a hash query to run on staging and production. Any difference
   means a hand-made change.
 
+## Staff dashboards: what each role sees (2026-10-12)
+
+The "Bugun" home (`/admin`) and the doctor's home (`/doctor`) each load in one server request. The page shows
+whatever the server returns; it does not decide who sees what.
+- **`/api/admin/dashboard`** (owner, admin, manager, receptionist; one clinic):
+  - **Everyone:** the live walk-in queue (counts, names of doctors' queues, waiting time) and today's appointments.
+  - **Laboratory work:** status counts only, for roles with `queue.read`.
+  - **Money received today and still owed:** owner and admin only (`canViewPaymentDynamics`); other roles get
+    `money: null`.
+  - **No clinical text and no lab values.**
+- **`/api/doctor/today`:** only the linked doctor's own appointments of the clinic day, in their own clinic. It
+  replaces the page's direct browser reads.
+- **Tests:** `src/lib/dashboard/today.test.ts` and `src/app/api/doctor/today/route.test.ts`.
+
 ## Medical safety (non-security but critical)
 
 `src/lib/safety/policy.ts`:

@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
 import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AModal, LoadingRow } from "@/components/admin/ui";
 import { ListOrdered } from "lucide-react";
@@ -16,13 +15,12 @@ import {
   adminApi,
   AdminApiError,
 } from "@/lib/admin/client";
-import { localDayWindow } from "@/lib/time/local";
+import { freshnessLabel, useLive } from "@/components/operations/use-live";
+import { uzDayLabel } from "@/lib/time/local";
 import { ReferralDialog } from "@/components/doctor/referral-dialog";
 import { DoctorLiveQueue } from "@/components/operations/doctor-live-queue";
 import { LabSummaryPanel } from "@/components/doctor/lab-summary";
 
-const WEEKDAYS = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
-const MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
 
 type Row = {
   id: string;
@@ -42,11 +40,15 @@ type PendingReferral = {
   referringDoctor: { id: string; name: string } | null;
 };
 
+type DoctorToday = { linked: boolean; doctorName: string | null; appointments: Row[] };
+
 export default function DoctorQueuePage() {
-  const [rows, setRows] = useState<Row[] | null>(null);
+  // One request for the doctor's own appointments of the clinic day, refreshed while the tab is visible.
+  const today = useLive<DoctorToday>("/api/doctor/today", 30_000);
+  const rows = today.data ? today.data.appointments : null;
+  const doctorName = today.data?.doctorName ?? null;
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [doctorName, setDoctorName] = useState<string | null>(null);
   const [referFor, setReferFor] = useState<Row | null>(null);
   const [labFor, setLabFor] = useState<Row | null>(null);
   const [sentReferralId, setSentReferralId] = useState<string | null>(null);
@@ -55,59 +57,7 @@ export default function DoctorQueuePage() {
   // Client-only: rendered from fixed arrays (NOT Intl) so server and client
   // produce identical strings regardless of ICU/locale data — avoids React
   // #418 hydration mismatch (Node and Chromium differ on uz-UZ).
-  const [todayLabel] = useState(() => {
-    const now = new Date();
-    return `${WEEKDAYS[now.getDay()]}, ${now.getDate()}-${MONTHS[now.getMonth()]}`;
-  });
-
-  const load = async () => {
-    const supabase = createClient();
-    const authData = await supabase.auth.getUser();
-    const uid = authData.data.user?.id;
-
-    const { data: doctor } = await supabase
-      .from("doctors")
-      .select("name")
-      .eq("profile_id", uid ?? "")
-      .maybeSingle();
-
-    if (!doctor) {
-      setRows([]);
-      setDoctorName(null);
-      return;
-    }
-    setDoctorName(doctor.name);
-
-    // "Today" must use the clinic's own timezone, never the browser's (see
-    // src/lib/time/local.ts) — a doctor's device may not be set to the
-    // clinic's local time.
-    let day = { start: new Date(new Date().setHours(0, 0, 0, 0)).toISOString(), end: new Date(new Date().setHours(24, 0, 0, 0)).toISOString() };
-    try {
-      const me = await adminApi.get<{ clinicTimezone: string }>("/api/admin/me");
-      day = localDayWindow(me.clinicTimezone);
-    } catch {
-      // Fall back to browser-local "today" rather than blocking the queue
-      // entirely — best-effort only when the identity call itself fails.
-    }
-
-    const { data, error: err } = await supabase
-      .from("appointments")
-      .select("id, patient_id, start_at, status, doctors!inner(profile_id), patients(full_name, phone), services(name, price)")
-      .eq("doctors.profile_id", uid ?? "")
-      .gte("start_at", day.start)
-      .lt("start_at", day.end)
-      .not("status", "in", '("cancelled","no_show")')
-      .order("start_at", { ascending: true });
-    if (err) {
-      setError("Navbatni yuklab bo‘lmadi");
-      return;
-    }
-    setRows(data ?? []);
-  };
-
-  useEffect(() => {
-    void load();
-  }, []);
+  const [todayLabel] = useState(() => uzDayLabel());
 
   // Referrals colleagues sent to this doctor that still wait for a response.
   useEffect(() => {
@@ -144,7 +94,8 @@ export default function DoctorQueuePage() {
     setBusyId(r.id);
     try {
       await adminApi.patch(`/api/doctor/appointments/${r.id}`, { status: next });
-      await load();
+      setError(null);
+      await today.reload();
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Xatolik yuz berdi");
     } finally {
@@ -156,9 +107,10 @@ export default function DoctorQueuePage() {
     <div>
       <PageHeader
         title="Bugungi navbat"
-        subtitle={doctorName ? `Shifokor: ${doctorName}` : todayLabel}
+        subtitle={[doctorName ? `Shifokor: ${doctorName}` : todayLabel, freshnessLabel(today.updatedAt, today.stale)].join(" · ")}
       />
 
+      {today.error && !today.data && <AError message={today.error} />}
       {error && <AError message={error} />}
 
       <DoctorLiveQueue />
@@ -226,7 +178,7 @@ export default function DoctorQueuePage() {
 
       {rows === null ? (
         <Card><LoadingRow /></Card>
-      ) : doctorName === null ? (
+      ) : today.data?.linked === false ? (
         <Card>
           <AEmpty
             title="Shifokor hisobi ulanmagan"

@@ -258,3 +258,32 @@ recorded in `PILOT_RUNBOOK.md` §0c. Its fix is `20261012000001_db_audit_alignme
 - drop the three stray production tables;
 - enable `pg_cron` on staging;
 - turn on leaked-password protection.
+
+## Run 7 — 2026-10-12 (staff dashboards)
+
+The owner asked to optimise the owner's and staff's dashboards.
+
+**What changed:**
+- **"Bugun" (`/admin`):** one request (`/api/admin/dashboard`), refreshed every 30 seconds while the tab is open.
+  Before, it made three requests one after another and never refreshed itself.
+  - **New sections:** the live walk-in queue (by doctor, with the longest wait) and laboratory work by stage.
+  - **Money for owner and admin:** the money actually received today.
+- **Doctor's home (`/doctor`):** one request (`/api/doctor/today`) instead of four in a row, refreshed every
+  30 seconds.
+
+**A wrong figure fixed.** "Tushum (bugun)" was the catalogue price of booked appointments that were completed and
+marked paid. It missed every walk-in, kassa and laboratory payment.
+- On the E2E demo clinic it would have shown **0 so‘m**; **602 345 so‘m** had actually been received.
+- The new total was checked by hand against the database: 495 000 kassa net + 107 345 laboratory kassa.
+- The 150 000 online booking is counted once (its payment row and its visit's online collection are the same money).
+
+| Gate | Result |
+|---|---|
+| Lint / types | 0 errors / 0 errors |
+| `npm test` | **1246 passed, 0 skipped** (142 files). Adds 6 summary tests, 4 dashboard database tests, 4 doctor-today tests and 1 date-label test. |
+| Build | `next build` passed |
+| Browser E2E | **25 scripts, 522 checks, all passed**; no page errors, console errors or 5xx |
+| Load time (local) | `/api/admin/dashboard` 400–530 ms, `/api/doctor/today` ~390 ms (cold start after sign-in) |
+
+**Not changed:** `/admin/finance` and `/admin/analytics` still count appointment payments only, not the kassa ledger.
+They need the same correction as a separate change.
