@@ -8,6 +8,33 @@ authorized by this document.** Each of those needs the owner's explicit go-ahead
 > Decisions: `docs/decisions/2026-10-08-identity-online-booking-payments-sms.md`. All switches are off by default;
 > the same apply-by-name rule below holds for these files.
 
+## 0c. Database audit 2026-10-12 — drift between production, staging and the repository
+
+A read-only audit of production, with staging and `main` compared (details: `PILOT_VALIDATION.md` Run 6).
+- **Healthy:**
+  - no Postgres or auth errors;
+  - 121 cron runs in 24 hours, none failed, every scheduler call returned 200;
+  - no stuck notifications or webhooks;
+  - every cross-clinic, overlap, payment-patient and merge check returns 0;
+  - 0 deadlocks; `internal.retention_override` has 0 rows.
+- **Drift found:**
+  - Production carries two hand-applied migrations from 2026-08-22 that are not in this repository:
+    `apply_final_db_fixes` and `fix_multiclinic_and_audit_ip`. Their audit function recorded an actor and IP
+    taken from session settings anyone could set.
+  - Staging carries three `db_audit_*` migrations (2026-10-09) that are in neither.
+- **Fix:** `20261012000001_db_audit_alignment`. It is idempotent: a no-op wherever a change is already in place.
+  - **Status:** applied locally and in CI.
+  - **Staging and production:** pending, each with the owner's go.
+  - After staging: re-apply the repository bodies of `claim_due_notification_jobs`, `claim_webhook_update`,
+    `finish_webhook_update` and `release_webhook_update` there, so staging matches the repository again.
+- **Not from this app — on production only:** `public.todos`, `public.todo_deps` and `public.inbox_entries`, all
+  with 0 rows. Drop them only after the owner confirms that no tool of theirs uses them.
+- **Staging has no `pg_cron`:** scheduled reminders, referral expiry and cron cleanup never run there. Enable the
+  extension and create the three jobs as on production, using staging's own URL and cron secret.
+- **Owner, dashboard:**
+  - leaked-password protection is **off** on production (on on staging);
+  - 7 test appointments are still `pending` after their time.
+
 ## 0b. Second release 2026-10-10 (owner: "release") — clinic website, sign-up, billing, logins, identity checks
 
 - **Backup first:** `~/HealthAI-backups/2026-10-10-before-saas` (roles, schema, data; files are mode 600).
@@ -228,6 +255,16 @@ select count(*) from internal.retention_override;
 select i.id from public.lab_order_items i join public.lab_orders o on o.id = i.order_id
  where o.visit_id is not null and i.status = 'ordered'
    and (select outstanding from public.visit_balance(o.visit_id)) <= 0;
+-- Schema drift (weekly, and after any change): run on staging and on production; the hashes must match.
+-- A difference means someone changed one database by hand — find it before the next release.
+select 'functions', md5(string_agg(p.oid::regprocedure::text || md5(p.prosrc) || coalesce(array_to_string(p.proconfig, ','), ''), ',' order by p.oid::regprocedure::text))
+  from pg_proc p where p.pronamespace = 'public'::regnamespace and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
+union all
+select 'policies', md5(string_agg(tablename || policyname || cmd || coalesce(qual, '') || coalesce(with_check, ''), ',' order by tablename, policyname))
+  from pg_policies where schemaname = 'public'
+union all
+select 'constraints', md5(string_agg(conrelid::regclass::text || conname || pg_get_constraintdef(oid), ',' order by conrelid::regclass::text, conname))
+  from pg_constraint where connamespace = 'public'::regnamespace;
 ```
 
 ## 7. Rollback

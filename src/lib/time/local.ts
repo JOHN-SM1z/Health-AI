@@ -50,3 +50,14 @@ export function localDayWindowForDate(tz: string, ymd: string): { start: string;
 export function localDayWindow(tz: string, now = new Date()): { start: string; end: string } {
   return localDayWindowForDate(tz, clinicDateKey(tz, now));
 }
+const UZ_WEEKDAYS = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
+const UZ_MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
+
+/**
+ * "dushanba, 12-oktabr" — built from fixed names, not Intl: browsers without
+ * Uzbek locale data print "M10 12, Mon", and Node and Chromium disagree on
+ * uz-UZ (a hydration mismatch). Uses the device's local date.
+ */
+export function uzDayLabel(at = new Date()): string {
+  return `${UZ_WEEKDAYS[at.getDay()]}, ${at.getDate()}-${UZ_MONTHS[at.getMonth()]}`;
+}
