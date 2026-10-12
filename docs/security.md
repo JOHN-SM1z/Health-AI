@@ -385,6 +385,26 @@ it.
 - **Limit:** the database owner can disable triggers. The guard stops the application, a leaked service key
   and accidental SQL; it is not a defence against the database owner.
 
+## Database audit: one schema everywhere (2026-10-12)
+
+A read-only audit found production, staging and this repository had drifted.
+`20261012000001_db_audit_alignment` brings all three to one schema.
+- **Audit actor and IP are not forgeable.**
+  - Production's `audit_track_changes()` read them from the session settings `app.current_user_id` and
+    `app.current_ip`, which any SQL session can set. A local probe showed a forged actor recorded as written.
+  - The actor is now `auth.uid()` (`system` for the server), and the IP is the request's.
+  - Test: `db-audit-alignment.test.ts`.
+- **Conversation history can't be deleted.**
+  - A production-only DELETE policy on `messages` was removed.
+  - It was inert (no DELETE privilege), but contradicted retention.
+- **Catalogue rows stay in their clinic.** `doctors.clinic_id` and `services.clinic_id` are immutable, even for a
+  manager of two clinics or the server.
+- **A payment names its appointment's patient.** The payment → appointment key includes `patient_id`.
+- **Profile policies evaluate `auth.uid()` once per statement** (Supabase advisor `auth_rls_initplan`). Staff in
+  two clinics stay visible to colleagues of both.
+- **Drift check:** `PILOT_RUNBOOK.md` §6 has a hash query to run on staging and production. Any difference
+  means a hand-made change.
+
 ## Medical safety (non-security but critical)
 
 `src/lib/safety/policy.ts`:

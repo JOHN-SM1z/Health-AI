@@ -217,6 +217,38 @@ describeDb("tenant integrity — every reference stays inside its clinic; the se
     }
   });
 
+  it("a doctor or a service never moves to another clinic — not by a manager of both, not by the server (20261012000001)", async () => {
+    for (const [table, id] of [["doctors", doctorA], ["services", serviceA]] as const) {
+      const byManager = await pgError(() =>
+        sql.begin(async (tx) => {
+          // Rolled back with the refusal: the manager runs clinic B as well.
+          await tx`insert into public.staff_roles (clinic_id, profile_id, role) values (${clinicB}, ${profiles.manager}, 'manager')`;
+          await tx.unsafe("set local role authenticated");
+          await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: profiles.manager, role: "authenticated" })}, true)`;
+          await tx`update ${tx(table)} set clinic_id = ${clinicB} where id = ${id}`;
+        }),
+      );
+      expect(byManager.code, table).toBe("23514");
+      const byServer = await pgError(() => asServer((tx) => tx`update ${tx(table)} set clinic_id = ${clinicB} where id = ${id}`));
+      expect(byServer.code, table).toBe("23514");
+    }
+    const [{ n }] = await sql<{ n: number }[]>`
+      select (select count(*) from public.doctors where id = ${doctorA} and clinic_id = ${clinicA})
+           + (select count(*) from public.services where id = ${serviceA} and clinic_id = ${clinicA}) as n`;
+    expect(Number(n)).toBe(2);
+  });
+
+  it("a payment always names its appointment's patient (20261012000001)", async () => {
+    const otherPatientB = randomUUID();
+    await sql`insert into public.patients ${sql({ id: otherPatientB, clinic_id: clinicB, full_name: `Patient B2 ${suffix}` })}`;
+    const moved = await pgError(() =>
+      asServer((tx) => tx`update public.payments set patient_id = ${otherPatientB} where appointment_id = ${appointmentB}`),
+    );
+    expect(moved.code).toBe("23503");
+    const [payment] = await sql<{ patient_id: string }[]>`select patient_id from public.payments where appointment_id = ${appointmentB}`;
+    expect(payment.patient_id).toBe(patientB);
+  });
+
   it("staff cannot forge operator replies, take over conversations or redirect reminders over REST — the server does that", async () => {
     const reply = await pgError(() =>
       asUser(profiles.receptionist, (tx) =>

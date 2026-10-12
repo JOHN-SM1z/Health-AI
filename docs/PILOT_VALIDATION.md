@@ -217,3 +217,44 @@ staging and production):
 **Staging rehearsal (owner-approved, staging only).** Started; production untouched. Status and the
 connector limits are in `PILOT_RUNBOOK.md` §3.2.
 
+
+## Run 6 — 2026-10-12 (database audit and alignment)
+
+The owner asked for a full database check. A read-only audit of production, with staging and `main` compared, is
+recorded in `PILOT_RUNBOOK.md` §0c. Its fix is `20261012000001_db_audit_alignment`.
+
+| Gate | Result |
+|---|---|
+| Database | rebuilt with `supabase db reset` (86 migrations). The migration also re-ran cleanly a second time in a rolled-back transaction (idempotent). |
+| Lint / types | 0 errors / 0 errors |
+| `npm test` | **1231 passed, 0 skipped** (139 files). Adds 4 alignment tests and 2 tenant-integrity tests. |
+| `full-db-setup.sql` | regenerated from 86 migrations |
+| Build | `next build` passed |
+| Browser E2E | **25 scripts, 522 checks, all passed** (HTTP red team 148/148) |
+
+**What was found.**
+- **Production — no runtime errors and no inconsistent data.**
+- **Drift:**
+  - production carries two hand-applied 2026-08-22 migrations;
+  - staging carries three `db_audit_*` migrations;
+  - neither set is in the repository.
+- **Proven locally:** production's audit function records a forged actor and IP from session settings. A probe
+  with production's function body, in a rolled-back transaction, recorded the planted values.
+
+**What the new tests prove.**
+- **Audit actor:** the trail records the signed-in user (or `system` for the server), whatever
+  `app.current_user_id` / `app.current_ip` say.
+- **Messages:** no DELETE policy and no DELETE privilege for signed-in staff.
+- **Two-clinic staff:** a staff member of two clinics is visible to colleagues of both and to no one else.
+  - The repository's earlier `limit 1` policy already behaved this way, because the `staff_roles` policy hides other
+    clinics' rows. This was checked with a probe. The aligned policy states it directly.
+- **Profile policies:** profile and platform-admin policies wrap every `auth.uid()` in a scalar subquery.
+- **Catalogue:** a doctor or service never moves to another clinic — refused for a manager of both and for the
+  server.
+- **Payments:** a payment cannot name a different patient than its appointment.
+
+**Not yet done (each needs the owner's go):**
+- apply to staging, then production;
+- drop the three stray production tables;
+- enable `pg_cron` on staging;
+- turn on leaked-password protection.
