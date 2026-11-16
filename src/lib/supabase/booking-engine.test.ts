@@ -424,11 +424,23 @@ describeDb("booking engine — one authoritative booking, at most one active app
     expect((await book({ doctor: doctorNight, service: service30, start: at(day, "13:30") })).error_code).toBeNull();
   });
 
-  it("applies the clinic's own timezone rules, DST included (Europe/Berlin, 25 October 2026)", async () => {
+  it("applies the clinic's own timezone rules, DST included (Europe/Berlin, the next end of summer time)", async () => {
+    // Summer time in the EU ends on the last Sunday of October. Use the next one whose Saturday is still ahead, so
+    // the test never books a past slot (a fixed date stopped working once it had passed).
+    const lastSundayOfOctober = (year: number) => {
+      const d = new Date(Date.UTC(year, 9, 31));
+      d.setUTCDate(31 - d.getUTCDay());
+      return d;
+    };
+    const thisYear = new Date().getUTCFullYear();
+    let sunday = lastSundayOfOctober(thisYear);
+    if (sunday.getTime() - 86_400_000 <= Date.now() + 86_400_000) sunday = lastSundayOfOctober(thisYear + 1);
+    const sun = sunday.toISOString().slice(0, 10);
+    const sat = new Date(sunday.getTime() - 86_400_000).toISOString().slice(0, 10);
     // Before the change (CEST, UTC+2) 09:00 local = 07:00Z; after it (CET, UTC+1) 09:00 = 08:00Z.
     const base = { clinic: clinicBerlin, doctor: doctorBerlin, service: serviceBerlin, patient: patientBerlin };
-    expect((await book({ ...base, start: "2026-10-24T07:00:00.000Z" })).error_code).toBeNull(); // Sat 09:00 CEST
-    expect((await book({ ...base, start: "2026-10-25T07:00:00.000Z" })).error_code).toBe("outside_working_hours"); // Sun 08:00 CET
-    expect((await book({ ...base, start: "2026-10-25T08:00:00.000Z" })).error_code).toBeNull(); // Sun 09:00 CET
+    expect((await book({ ...base, start: `${sat}T07:00:00.000Z` })).error_code).toBeNull(); // Sat 09:00 CEST
+    expect((await book({ ...base, start: `${sun}T07:00:00.000Z` })).error_code).toBe("outside_working_hours"); // Sun 08:00 CET
+    expect((await book({ ...base, start: `${sun}T08:00:00.000Z` })).error_code).toBeNull(); // Sun 09:00 CET
   });
 });
