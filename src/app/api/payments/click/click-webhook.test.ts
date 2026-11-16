@@ -38,7 +38,7 @@ beforeEach(async () => {
   vi.stubEnv("CRON_SECRET", "0123456789abcdef0123456789abcdef");
   vi.stubEnv("PAYMENT_PROVIDER", "manual");
   vi.clearAllMocks();
-  claimMock.mockResolvedValue(true);
+  claimMock.mockResolvedValue("claim-token-1");
   finishMock.mockResolvedValue(undefined);
   releaseMock.mockResolvedValue(undefined);
   transitionMock.mockResolvedValue({ ok: true });
@@ -162,7 +162,7 @@ describe("click webhook: prepare", () => {
         actorType: "system",
       }),
     );
-    expect(finishMock).toHaveBeenCalledWith("click", clickTransId);
+    expect(finishMock).toHaveBeenCalledWith("click", clickTransId, "claim-token-1");
   });
 
   it("does not transition an already-pending payment twice", async () => {
@@ -188,7 +188,7 @@ describe("click webhook: prepare", () => {
     const res = await handler(form, false);
     expect((await res.json()).error_code).toBe("0");
     expect(transitionMock).not.toHaveBeenCalled();
-    expect(finishMock).toHaveBeenCalledWith("click", clickTransId);
+    expect(finishMock).toHaveBeenCalledWith("click", clickTransId, "claim-token-1");
   });
 
   it("rejects an amount mismatch", async () => {
@@ -215,7 +215,7 @@ describe("click webhook: prepare", () => {
 
 describe("click webhook: idempotency", () => {
   it("acks duplicates without side effects", async () => {
-    claimMock.mockResolvedValue(false);
+    claimMock.mockResolvedValue(null);
     const { form } = signedBody();
     const res = await handler(form, false);
     const body = (await res.json()) as Record<string, string>;
@@ -229,7 +229,7 @@ describe("click webhook: idempotency", () => {
     const { form, clickTransId } = signedBody();
     const res = await handler(form, false);
     expect((await res.json()).error_code).toBe("-9");
-    expect(releaseMock).toHaveBeenCalledWith("click", clickTransId);
+    expect(releaseMock).toHaveBeenCalledWith("click", clickTransId, "claim-token-1");
   });
 });
 

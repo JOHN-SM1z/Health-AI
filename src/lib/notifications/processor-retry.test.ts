@@ -6,7 +6,11 @@ const supabaseMock = {
   from: vi.fn(),
   appointmentLookupThrows: false,
   notificationJobUpdateThrows: false,
+  claimLost: false,
 };
+
+/** Filters applied to each notification_jobs update, in call order. */
+let updateFilters: Array<Array<[string, string, unknown]>> = [];
 
 const APPOINTMENT_CTX = {
   // Always ahead: the processor skips messages for an appointment whose time has passed.
@@ -58,6 +62,8 @@ beforeEach(() => {
 
   supabaseMock.appointmentLookupThrows = false;
   supabaseMock.notificationJobUpdateThrows = false;
+  supabaseMock.claimLost = false;
+  updateFilters = [];
 
   supabaseMock.rpc.mockImplementation(async () => ({ data: [], error: null }));
 
@@ -85,12 +91,22 @@ beforeEach(() => {
     }
     if (table === "notification_jobs") {
       return {
-        update: vi.fn((data: unknown) => ({
-          eq: vi.fn(async () => {
+        update: vi.fn((data: unknown) => {
+          // Chainable and awaitable: records every filter so tests can check the claim-ownership guard.
+          const filters: Array<[string, string, unknown]> = [];
+          updateFilters.push(filters);
+          const settle = async () => {
             if (supabaseMock.notificationJobUpdateThrows) throw new Error("db write failed");
-            return { error: null, data };
-          }),
-        })),
+            return { error: null, data: supabaseMock.claimLost ? [] : [{ id: "job" }], payload: data };
+          };
+          const builder: Record<string, unknown> = {
+            eq: vi.fn((col: string, val: unknown) => (filters.push(["eq", col, val]), builder)),
+            is: vi.fn((col: string, val: unknown) => (filters.push(["is", col, val]), builder)),
+            select: vi.fn(() => settle()),
+            then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) => settle().then(resolve, reject),
+          };
+          return builder;
+        }),
       };
     }
     return {};
@@ -175,5 +191,32 @@ describe("notification processor — release claimed jobs on processing failure"
     const updates = notificationJobUpdates();
     expect(updates).toContainEqual(expect.objectContaining({ status: "failed" }));
     expect(updates).toContainEqual(expect.objectContaining({ status: "pending" }));
+  });
+});
+
+describe("notification processor — only the claim owner records an outcome (20261116000001)", () => {
+  it("guards a retry write by status in_progress and the job's claim token", async () => {
+    supabaseMock.appointmentLookupThrows = true;
+    supabaseMock.rpc.mockImplementation(async () => ({ data: [makeJob({ claim_token: "token-a" })], error: null }));
+
+    await processDueNotificationJobs(50);
+
+    expect(notificationJobUpdates()).toContainEqual(expect.objectContaining({ status: "pending", claim_token: null, lease_until: null }));
+    expect(updateFilters).toContainEqual([
+      ["eq", "id", "job-1"],
+      ["eq", "status", "in_progress"],
+      ["eq", "claim_token", "token-a"],
+    ]);
+  });
+
+  it("does not throw when the claim was quarantined meanwhile (no row matched)", async () => {
+    supabaseMock.appointmentLookupThrows = true;
+    supabaseMock.claimLost = true;
+    supabaseMock.rpc.mockImplementation(async () => ({ data: [makeJob({ claim_token: "token-a" })], error: null }));
+
+    const result = await processDueNotificationJobs(50);
+
+    expect(result.processed).toBe(1);
+    expect(updateFilters[0]).toContainEqual(["eq", "claim_token", "token-a"]);
   });
 });

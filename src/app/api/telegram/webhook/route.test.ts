@@ -113,7 +113,7 @@ const voiceUpdate = (updateId: number) => ({
 
 beforeEach(() => {
   resolveMock.mockReset().mockResolvedValue({ clinicId: "clinic-1", integration: integrationFixture });
-  claimMock.mockReset().mockResolvedValue(true);
+  claimMock.mockReset().mockResolvedValue("claim-token-1");
   finishMock.mockClear();
   releaseMock.mockClear();
   handleMessageMock.mockClear();
@@ -150,7 +150,7 @@ describe("telegram webhook route (per-clinic bots)", () => {
     );
     expect(call.text).toBe("");
     expect(claimMock).toHaveBeenCalledWith(CLAIM_SOURCE, "10");
-    expect(finishMock).toHaveBeenCalledWith(CLAIM_SOURCE, "10");
+    expect(finishMock).toHaveBeenCalledWith(CLAIM_SOURCE, "10", "claim-token-1");
   });
 
   it("forwards a text update without a voice payload to the right clinic", async () => {
@@ -224,7 +224,7 @@ describe("telegram webhook route (per-clinic bots)", () => {
   });
 
   it("drops duplicates without dispatching any work", async () => {
-    claimMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    claimMock.mockResolvedValueOnce("claim-token-1").mockResolvedValueOnce(null);
     const first = await post(textUpdate(20));
     expect(first.status).toBe(200);
     expect(handleMessageMock).toHaveBeenCalledTimes(1);
@@ -244,7 +244,7 @@ describe("telegram webhook route (per-clinic bots)", () => {
     handleMessageMock.mockRejectedValueOnce(new Error("boom"));
     const res = await post(textUpdate(30));
     expect(res.status).toBe(500);
-    expect(releaseMock).toHaveBeenCalledWith(CLAIM_SOURCE, "30");
+    expect(releaseMock).toHaveBeenCalledWith(CLAIM_SOURCE, "30", "claim-token-1");
     expect(finishMock).not.toHaveBeenCalled();
   });
 
@@ -270,7 +270,7 @@ describe("telegram webhook route (per-clinic bots)", () => {
   });
 
   it("routes voice callbacks with the webhook's resolved clinicId (tenant-bound)", async () => {
-    claimMock.mockResolvedValueOnce(true);
+    claimMock.mockResolvedValueOnce("claim-token-1");
     const { handleVoiceConsent, handleVoiceCorrect, handleVoiceWrong } = await import("@/lib/telegram/handlers");
     const consentMock = vi.mocked(handleVoiceConsent);
     const correctMock = vi.mocked(handleVoiceCorrect);

@@ -2278,6 +2278,7 @@ export type Database = {
           visit_id: string | null
           appointment_id: string | null
           attempts: number
+          claim_token: string | null
           channel: string
           clinic_id: string
           conversation_id: string | null
@@ -2287,6 +2288,7 @@ export type Database = {
           idempotency_key: string
           lab_order_id: string | null
           lab_result_id: string | null
+          lease_until: string | null
           max_attempts: number
           patient_telegram_user_id: number | null
           read_at: string | null
@@ -2304,6 +2306,7 @@ export type Database = {
           visit_id?: string | null
           appointment_id?: string | null
           attempts?: number
+          claim_token?: string | null
           channel?: string
           clinic_id: string
           conversation_id?: string | null
@@ -2313,6 +2316,7 @@ export type Database = {
           idempotency_key: string
           lab_order_id?: string | null
           lab_result_id?: string | null
+          lease_until?: string | null
           max_attempts?: number
           patient_telegram_user_id?: number | null
           read_at?: string | null
@@ -2330,6 +2334,7 @@ export type Database = {
           visit_id?: string | null
           appointment_id?: string | null
           attempts?: number
+          claim_token?: string | null
           channel?: string
           clinic_id?: string
           conversation_id?: string | null
@@ -2339,6 +2344,7 @@ export type Database = {
           idempotency_key?: string
           lab_order_id?: string | null
           lab_result_id?: string | null
+          lease_until?: string | null
           max_attempts?: number
           patient_telegram_user_id?: number | null
           read_at?: string | null
@@ -4247,6 +4253,7 @@ export type Database = {
         Returns: {
           appointment_id: string | null
           attempts: number
+          claim_token: string | null
           channel: string
           clinic_id: string
           conversation_id: string | null
@@ -4256,6 +4263,7 @@ export type Database = {
           idempotency_key: string
           lab_order_id: string | null
           lab_result_id: string | null
+          lease_until: string | null
           max_attempts: number
           patient_telegram_user_id: number | null
           read_at: string | null
@@ -4280,6 +4288,10 @@ export type Database = {
       claim_webhook_update: {
         Args: { p_external_id: string; p_source: string }
         Returns: boolean
+      }
+      claim_webhook_update_token: {
+        Args: { p_external_id: string; p_source: string }
+        Returns: string | null
       }
       collect_lab_sample: {
         Args: {
@@ -4350,8 +4362,8 @@ export type Database = {
         Returns: number
       }
       finish_webhook_update: {
-        Args: { p_external_id: string; p_source: string }
-        Returns: undefined
+        Args: { p_claim_token?: string | null; p_external_id: string; p_source: string }
+        Returns: boolean
       }
       is_clinic_staff: {
         Args: {
@@ -4436,8 +4448,8 @@ export type Database = {
         Returns: boolean
       }
       release_webhook_update: {
-        Args: { p_external_id: string; p_source: string }
-        Returns: undefined
+        Args: { p_claim_token?: string | null; p_external_id: string; p_source: string }
+        Returns: boolean
       }
       return_lab_result: {
         Args: { p_by: string; p_clinic_id: string; p_result_id: string }

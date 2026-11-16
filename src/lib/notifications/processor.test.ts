@@ -220,6 +220,32 @@ describeDb("notification processor — atomic claims", () => {
     expect(claimedIds).not.toContain(jobId);
   });
 
+  it("stamps each claim with a token and a lease (20261116000001)", async () => {
+    const jobId = await insertJob(`token-lease-${Date.now()}`);
+    const { data } = await admin.rpc("claim_due_notification_jobs", { p_limit: 50, p_clinic_ids: [CLINIC_ID] });
+    const claimed = (data ?? []).find((j: { id: string }) => j.id === jobId) as { claim_token: string | null; lease_until: string | null } | undefined;
+    expect(claimed?.claim_token).toMatch(/^[0-9a-f-]{36}$/);
+    expect(new Date(claimed!.lease_until!).getTime()).toBeGreaterThan(Date.now() + 10 * 60_000);
+    await admin.from("notification_jobs").update({ status: "skipped" }).eq("id", jobId);
+  });
+
+  it("quarantines an expired claim for review and never resends it (20261116000001)", async () => {
+    const jobId = await insertJob(`expired-lease-${Date.now()}`);
+    await admin
+      .from("notification_jobs")
+      .update({ status: "in_progress", claim_token: crypto.randomUUID(), lease_until: new Date(Date.now() - 60_000).toISOString() })
+      .eq("id", jobId);
+
+    const { data } = await admin.rpc("claim_due_notification_jobs", { p_limit: 50, p_clinic_ids: [CLINIC_ID] });
+    expect((data ?? []).map((j: { id: string }) => j.id)).not.toContain(jobId);
+    const { data: row } = await admin.from("notification_jobs").select("status, error, claim_token, lease_until").eq("id", jobId).single();
+    expect(row).toMatchObject({ status: "failed", error: "stale_claim_needs_review", claim_token: null, lease_until: null });
+
+    // A second sweep must not pick it up again.
+    const again = await admin.rpc("claim_due_notification_jobs", { p_limit: 50, p_clinic_ids: [CLINIC_ID] });
+    expect((again.data ?? []).map((j: { id: string }) => j.id)).not.toContain(jobId);
+  });
+
   it("processes and sends a job even when the legacy global bot is unconfigured", async () => {
     // Regression test: processDueNotificationJobs() used to gate its entire
     // run behind telegramConfigured() — the legacy global TELEGRAM_BOT_TOKEN
