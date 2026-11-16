@@ -419,6 +419,54 @@ describeDb("outpatient operations — database layer", () => {
     expect(after.status).toBe("completed");
   });
 
+  it("a queued walk-in starts despite a time block and an overlapping booking — not through the future-slot engine (Q-06)", async () => {
+    if (minutesToClinicMidnight() < 8) return;
+    const booked = await newPatient();
+    const patient = await newPatient();
+    const blockId = randomUUID();
+    // Setup only: a real booking for Dr A covering now, then a time block over it.
+    await sql.begin(async (tx) => {
+      await tx.unsafe("set local session_replication_role = replica");
+      await tx`insert into public.appointments ${tx({
+        clinic_id: clinicA, patient_id: booked, doctor_id: doctors.a, service_id: services.consult,
+        start_at: new Date(Date.now() - 10 * 60_000), end_at: new Date(Date.now() + 50 * 60_000), status: "confirmed", source: "admin",
+      })}`;
+    });
+    await sql`insert into public.doctor_time_blocks ${sql({
+      id: blockId, clinic_id: clinicA, doctor_id: doctors.a,
+      starts_at: new Date(Date.now() - 60 * 60_000), ends_at: new Date(Date.now() + 60 * 60_000),
+    })}`;
+    try {
+      const r = await register({ patient });
+      await pay(r.visit_id, [{ method: "cash", amount: 150000 }], 150000);
+      const [{ r: started }] = await asServer((tx) =>
+        tx<{ r: { appointment_id: string } }[]>`select public.start_visit_consultation(${clinicA}, ${profiles.drA}, ${r.visit_id}, 'waiting') as r`);
+      const [enc] = await sql<{ queue_encounter: boolean; status: string; source: string; payments: number }[]>`
+        select a.queue_encounter, a.status, a.source,
+               (select count(*)::int from public.payments p where p.appointment_id = a.id) as payments
+          from public.appointments a where a.id = ${started.appointment_id}`;
+      expect(enc).toEqual({ queue_encounter: true, status: "in_progress", source: "walk_in", payments: 0 });
+
+      // Real bookings keep their overlap protection: the engine still refuses the taken time.
+      const [{ error_code }] = await asServer((tx) => tx<{ error_code: string | null }[]>`
+        select error_code from public.book_appointment(${clinicA}, ${booked}, ${doctors.a}, ${services.consult},
+          now() + interval '5 minutes', 'pending', 'admin', null, ${profiles.reception})`);
+      expect(error_code).not.toBeNull();
+    } finally {
+      await sql`delete from public.doctor_time_blocks where id = ${blockId}`;
+    }
+  });
+
+  it("a queue encounter cannot be created by an ordinary insert, nor the flag toggled later", async () => {
+    const patient = await newPatient();
+    const err = await pgError(() => sql`insert into public.appointments ${sql({
+      clinic_id: clinicA, patient_id: patient, doctor_id: doctors.c, service_id: services.consult,
+      start_at: new Date(Date.now() + 3 * 86_400_000), end_at: new Date(Date.now() + 3 * 86_400_000 + 600_000),
+      status: "in_progress", source: "walk_in", queue_encounter: true,
+    })}`);
+    expect(err.code).toBe("42501");
+  });
+
   it("after completing one walk-in the doctor can start the next queued patient at once (the slot ends when the visit does)", async () => {
     if (minutesToClinicMidnight() < 8) return;
     const first = await register({ patient: await newPatient(), doctor: doctors.c });

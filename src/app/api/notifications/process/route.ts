@@ -6,6 +6,7 @@ import { processDueSmsJobs } from "@/lib/sms/processor";
 import { purgeExpiredVoiceMessages } from "@/lib/voice/retention";
 import { logger } from "@/lib/logger";
 import { handleApiError } from "@/lib/api/errors";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { rateLimit, keyFromIp } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "too many requests" }, { status: 429 });
     }
 
+    // Jobs left in_progress by a crashed worker are quarantined for review, never resent (NT-03).
+    let quarantined = 0;
+    try {
+      const { data, error } = await createAdminClient().rpc("quarantine_expired_job_claims");
+      if (error) logger.error("job quarantine failed", { code: error.code });
+      else quarantined = typeof data === "number" ? data : 0;
+      if (quarantined > 0) logger.warn("notification jobs quarantined after an expired claim", { count: quarantined });
+    } catch (e) {
+      logger.error("job quarantine threw", { error: e instanceof Error ? e.message : String(e) });
+    }
+
     const result = await processDueNotificationJobs();
     // Queue SMS for patients without Telegram (20261008000013); a failure never holds back the Telegram messages.
     let sms = { processed: 0, sent: 0, failed: 0, skipped: 0 };
@@ -46,7 +58,7 @@ export async function POST(request: NextRequest) {
     } catch (e) {
       logger.error("voice retention run threw", { error: e instanceof Error ? e.message : String(e) });
     }
-    return NextResponse.json({ ok: true, ...result, sms, voicePurged: voice.purged, voicePurgeFailed: voice.failed });
+    return NextResponse.json({ ok: true, ...result, sms, voicePurged: voice.purged, voicePurgeFailed: voice.failed, quarantined });
   } catch (e) {
     return handleApiError(e);
   }

@@ -4277,6 +4277,23 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      claim_webhook: {
+        Args: { p_external_id: string; p_lease_seconds?: number; p_source: string }
+        Returns: string
+      }
+      finish_webhook: {
+        Args: { p_claim_token: string; p_external_id: string; p_source: string }
+        Returns: boolean
+      }
+      release_webhook: {
+        Args: { p_claim_token: string; p_external_id: string; p_source: string }
+        Returns: boolean
+      }
+      quarantine_expired_job_claims: { Args: never; Returns: number }
+      open_queue_encounter: {
+        Args: { p_actor: string; p_clinic_id: string; p_doctor_id: string; p_patient_id: string; p_service_id: string }
+        Returns: Json
+      }
       claim_webhook_update: {
         Args: { p_external_id: string; p_source: string }
         Returns: boolean
@@ -4759,6 +4776,7 @@ export type Database = {
         | "failed"
         | "skipped"
         | "cancelled"
+        | "quarantined"
       notification_job_type:
         | "booking_confirmation"
         | "reminder_24h"
@@ -5025,6 +5043,7 @@ export const Constants = {
         "failed",
         "skipped",
         "cancelled",
+        "quarantined",
       ],
       notification_job_type: [
         "booking_confirmation",
