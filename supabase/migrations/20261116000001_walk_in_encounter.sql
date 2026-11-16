@@ -19,7 +19,7 @@ alter table public.appointments
   add column if not exists queue_encounter boolean not null default false;
 
 comment on column public.appointments.queue_encounter is
-  'True only for the encounter row a doctor opens for a walk-in queue visit (start_walk_in_consultation). Not a reservation: ignored by overlap checks. Server-set only.';
+  'True only for the encounter row a doctor opens for a walk-in queue visit (open_queue_encounter). Not a reservation: ignored by overlap checks. Server-set only.';
 
 -- Exclusion constraint: real bookings only.
 alter table public.appointments drop constraint if exists no_overlapping_active_appointments;
