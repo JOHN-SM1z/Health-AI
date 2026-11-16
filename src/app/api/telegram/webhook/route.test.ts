@@ -78,6 +78,7 @@ const handleCommandMock = vi.mocked(handleTelegramCommand);
 
 const BOT = "clinic_a_bot";
 const CLAIM_SOURCE = `${BOT}:clinic-1`;
+const CLAIM_TOKEN = "00000000-0000-4000-8000-000000000001";
 
 function post(body: unknown, secretToken: string | null = "derived-secret"): Promise<Response> {
   const headers = new Headers({ "content-type": "application/json" });
@@ -113,7 +114,7 @@ const voiceUpdate = (updateId: number) => ({
 
 beforeEach(() => {
   resolveMock.mockReset().mockResolvedValue({ clinicId: "clinic-1", integration: integrationFixture });
-  claimMock.mockReset().mockResolvedValue(true);
+  claimMock.mockReset().mockResolvedValue(CLAIM_TOKEN);
   finishMock.mockClear();
   releaseMock.mockClear();
   handleMessageMock.mockClear();
@@ -150,7 +151,7 @@ describe("telegram webhook route (per-clinic bots)", () => {
     );
     expect(call.text).toBe("");
     expect(claimMock).toHaveBeenCalledWith(CLAIM_SOURCE, "10");
-    expect(finishMock).toHaveBeenCalledWith(CLAIM_SOURCE, "10");
+    expect(finishMock).toHaveBeenCalledWith(CLAIM_SOURCE, "10", CLAIM_TOKEN);
   });
 
   it("forwards a text update without a voice payload to the right clinic", async () => {
@@ -224,7 +225,7 @@ describe("telegram webhook route (per-clinic bots)", () => {
   });
 
   it("drops duplicates without dispatching any work", async () => {
-    claimMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    claimMock.mockResolvedValueOnce(CLAIM_TOKEN).mockResolvedValueOnce(null);
     const first = await post(textUpdate(20));
     expect(first.status).toBe(200);
     expect(handleMessageMock).toHaveBeenCalledTimes(1);
@@ -237,14 +238,14 @@ describe("telegram webhook route (per-clinic bots)", () => {
     expect(body.ok).toBe(true);
     expect(body.duplicate).toBe(true);
     expect(handleMessageMock).not.toHaveBeenCalled();
-    expect(finishMock).not.toHaveBeenCalledWith(CLAIM_SOURCE, "20");
+    expect(finishMock).not.toHaveBeenCalledWith(CLAIM_SOURCE, "20", expect.anything());
   });
 
   it("releases the claim and returns 500 when the handler fails (Telegram retries safely)", async () => {
     handleMessageMock.mockRejectedValueOnce(new Error("boom"));
     const res = await post(textUpdate(30));
     expect(res.status).toBe(500);
-    expect(releaseMock).toHaveBeenCalledWith(CLAIM_SOURCE, "30");
+    expect(releaseMock).toHaveBeenCalledWith(CLAIM_SOURCE, "30", CLAIM_TOKEN);
     expect(finishMock).not.toHaveBeenCalled();
   });
 
@@ -270,7 +271,7 @@ describe("telegram webhook route (per-clinic bots)", () => {
   });
 
   it("routes voice callbacks with the webhook's resolved clinicId (tenant-bound)", async () => {
-    claimMock.mockResolvedValueOnce(true);
+    claimMock.mockResolvedValueOnce(CLAIM_TOKEN);
     const { handleVoiceConsent, handleVoiceCorrect, handleVoiceWrong } = await import("@/lib/telegram/handlers");
     const consentMock = vi.mocked(handleVoiceConsent);
     const correctMock = vi.mocked(handleVoiceCorrect);

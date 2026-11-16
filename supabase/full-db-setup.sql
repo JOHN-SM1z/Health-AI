@@ -16804,3 +16804,523 @@ $$;
 
 revoke all on function public.verify_identity_at_desk(uuid, uuid, uuid, text, text, date) from public, anon, authenticated;
 grant execute on function public.verify_identity_at_desk(uuid, uuid, uuid, text, text, date) to service_role;
+
+-- =====================================================================
+-- FILE: 20261013000001_rls_auth_uid_initplan.sql
+-- =====================================================================
+-- RLS performance: evaluate auth.uid() once per statement instead of once per row.
+-- Wrapping it in a scalar subquery lets Postgres run it as an InitPlan (Supabase advisor
+-- 0003 auth_rls_initplan). The predicates are otherwise unchanged, so access is identical.
+
+alter policy "profile read own" on public.profiles
+  using (id = (select auth.uid()));
+
+alter policy "profile insert own" on public.profiles
+  with check (id = (select auth.uid()));
+
+alter policy "profile update own" on public.profiles
+  using (id = (select auth.uid()))
+  with check (id = (select auth.uid()));
+
+alter policy "profile read for clinic staff" on public.profiles
+  using (exists (
+    select 1
+    from public.staff_roles reader_roles
+    where reader_roles.profile_id = (select auth.uid())
+      and reader_roles.clinic_id in (
+        select target_roles.clinic_id
+        from public.staff_roles target_roles
+        where target_roles.profile_id = profiles.id
+      )
+  ));
+
+alter policy "platform_admins read own" on public.platform_admins
+  using (profile_id = (select auth.uid()));
+
+-- Guarded: a database where 20261116000004 already removed this dead policy
+-- (or that never had it) skips the change.
+do $$
+begin
+  if exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'messages'
+              and policyname = 'Clinic admins can delete messages') then
+    execute $policy$
+alter policy "Clinic admins can delete messages" on public.messages
+  using (exists (
+    select 1
+    from public.conversations c
+    join public.staff_roles sr on sr.clinic_id = c.clinic_id
+    where c.id = messages.conversation_id
+      and sr.profile_id = (select auth.uid())
+      and sr.role = any (array['owner'::public.staff_role, 'admin'::public.staff_role])
+  ));
+    $policy$;
+  end if;
+end;
+$$;
+
+-- =====================================================================
+-- FILE: 20261116000001_walk_in_encounter.sql
+-- =====================================================================
+-- Q-06 / audit 2026-11-14 P1-2: starting a walk-in consultation must not go
+-- through the future-slot booking engine.
+--
+-- Before: start_visit_consultation -> start_walk_in_consultation ->
+-- book_appointment(now() + 1 minute). A patient already waiting in the live
+-- queue could be refused care because of working hours, a time block or an
+-- overlapping booking, and the function then deleted the generated unpaid
+-- payment row.
+--
+-- After: the walk-in encounter is an appointments row flagged
+-- queue_encounter = true (clinical records, referrals and lab orders keep
+-- referencing appointments as before). It is created directly, starting now,
+-- with no working-hours, time-block or overlap check and no payment row (the
+-- visit's own charges and kassa transactions carry the money). Overlap
+-- protection between real bookings is unchanged: the exclusion constraint and
+-- every belt check still apply to all rows that are not queue encounters.
+
+alter table public.appointments
+  add column if not exists queue_encounter boolean not null default false;
+
+comment on column public.appointments.queue_encounter is
+  'True only for the encounter row a doctor opens for a walk-in queue visit (start_walk_in_consultation). Not a reservation: ignored by overlap checks. Server-set only.';
+
+-- Exclusion constraint: real bookings only.
+alter table public.appointments drop constraint if exists no_overlapping_active_appointments;
+alter table public.appointments
+  add constraint no_overlapping_active_appointments
+  exclude using gist (
+    clinic_id with =,
+    doctor_id with =,
+    tstzrange(start_at, end_at, '[)') with &&
+  ) where (status <> all (array['cancelled'::public.appointment_status, 'no_show'::public.appointment_status]) and not queue_encounter);
+
+-- Belt checks in book_appointment, reschedule_appointment and the validation
+-- trigger: ignore queue encounters. Patched in place so the bodies stay exactly
+-- the deployed ones; each replacement is asserted.
+do $$
+declare
+  f record;
+  v_def text;
+  v_new text;
+begin
+  for f in
+    select p.oid, p.proname
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public'
+       and p.proname in ('book_appointment', 'reschedule_appointment', 'appointments_validate_slot')
+  loop
+    v_def := pg_get_functiondef(f.oid);
+    v_new := replace(v_def,
+      'a.status not in (''cancelled'', ''no_show'')',
+      'a.status not in (''cancelled'', ''no_show'') and not a.queue_encounter');
+    if v_new = v_def then
+      raise exception 'walk-in encounter migration: overlap check not found in %', f.proname;
+    end if;
+    execute v_new;
+  end loop;
+end;
+$$;
+
+-- The validation trigger: a queue encounter skips slot rules (it is not a
+-- slot) but keeps every tenant and entity check, and the flag can never be
+-- set from an ordinary write or toggled later.
+do $$
+declare
+  v_def text;
+  v_new text;
+begin
+  v_def := pg_get_functiondef('public.appointments_validate_slot()'::regprocedure);
+  v_new := replace(v_def,
+    '  -- Whole slot within one working-hour window of its own local day.',
+    '  if tg_op = ''UPDATE'' and new.queue_encounter is distinct from old.queue_encounter then
+    raise exception using message = ''appointment validation: queue_encounter is fixed at creation'', errcode = ''42501'', hint = ''forbidden'';
+  end if;
+  if new.queue_encounter then
+    if tg_op = ''INSERT'' and coalesce(current_setting(''health_ai.queue_encounter'', true), '''') <> ''on'' then
+      raise exception using message = ''appointment validation: queue encounters are opened by open_queue_encounter only'', errcode = ''42501'', hint = ''forbidden'';
+    end if;
+    return new;
+  end if;
+
+  -- Whole slot within one working-hour window of its own local day.');
+  if v_new = v_def then
+    raise exception 'walk-in encounter migration: validation trigger anchor not found';
+  end if;
+  execute v_new;
+end;
+$$;
+
+-- The queue encounter. start_walk_in_consultation (the doctor-workspace walk-in
+-- without a desk visit, which still books through the engine and creates its
+-- payment row) is left unchanged.
+create or replace function public.open_queue_encounter(
+  p_clinic_id uuid,
+  p_patient_id uuid,
+  p_doctor_id uuid,
+  p_service_id uuid,
+  p_actor uuid
+)
+returns jsonb
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_duration int;
+  v_appointment uuid;
+begin
+  if not exists (
+    select 1 from public.doctors d
+     where d.id = p_doctor_id and d.clinic_id = p_clinic_id and d.profile_id = p_actor and d.active
+  ) then
+    raise exception 'consultation: a walk-in is started by the doctor themselves';
+  end if;
+
+  select coalesce(ds.duration_override_minutes, s.duration_minutes)
+    into v_duration
+    from public.services s
+    left join public.doctor_services ds on ds.service_id = s.id and ds.doctor_id = p_doctor_id
+   where s.id = p_service_id and s.clinic_id = p_clinic_id and s.active;
+  if v_duration is null then
+    return jsonb_build_object('appointment_id', null, 'error_code', 'service_not_found', 'referral_id', null);
+  end if;
+
+  perform set_config('health_ai.queue_encounter', 'on', true);
+  insert into public.appointments (
+    clinic_id, patient_id, doctor_id, service_id, start_at, end_at,
+    status, source, created_by, queue_encounter
+  ) values (
+    p_clinic_id, p_patient_id, p_doctor_id, p_service_id, now(), now() + make_interval(mins => greatest(v_duration, 1)),
+    'in_progress', 'walk_in', p_actor, true
+  )
+  returning id into v_appointment;
+  perform set_config('health_ai.queue_encounter', '', true);
+
+  return jsonb_build_object(
+    'appointment_id', v_appointment,
+    'error_code', null,
+    'referral_id', public.consultation_started_effects(v_appointment, p_actor, 'doctor_workspace', true, true)
+  );
+end;
+$$;
+
+revoke execute on function public.open_queue_encounter(uuid, uuid, uuid, uuid, uuid) from public, anon, authenticated;
+grant execute on function public.open_queue_encounter(uuid, uuid, uuid, uuid, uuid) to service_role;
+comment on function public.open_queue_encounter(uuid, uuid, uuid, uuid, uuid) is
+  'Opens the encounter row for a walk-in queue visit, starting now. Not a reservation: no working-hours, time-block or overlap check and no payment row. Called by start_visit_consultation.';
+
+-- start_visit_consultation: opens a queue encounter instead of a future slot, and no payment delete (the
+-- encounter creates no payment row).
+do $$
+declare
+  v_def text;
+  v_new text;
+begin
+  v_def := pg_get_functiondef('public.start_visit_consultation(uuid, uuid, uuid, text)'::regprocedure);
+  v_new := replace(v_def,
+    'public.start_walk_in_consultation(
+      p_clinic, v.patient_id, v.doctor_id, v_service, date_trunc(''minute'', now()) + interval ''1 minute'', p_actor
+    )',
+    'public.open_queue_encounter(p_clinic, v.patient_id, v.doctor_id, v_service, p_actor)');
+  v_new := replace(v_new, '    delete from public.payments where appointment_id = v_appointment and status = ''unpaid'';
+', '');
+  if v_new = v_def or position('start_walk_in_consultation' in v_new) > 0 or position('delete from public.payments' in v_new) > 0 then
+    raise exception 'walk-in encounter migration: start_visit_consultation did not match the expected definition';
+  end if;
+  execute v_new;
+end;
+$$;
+
+-- =====================================================================
+-- FILE: 20261116000002_job_status_quarantined.sql
+-- =====================================================================
+-- NT-03: a job whose claim lease expired is quarantined for human review,
+-- never resent automatically. Separate migration: a new enum value must be
+-- committed before it is used.
+alter type public.notification_job_status add value if not exists 'quarantined';
+
+-- New enum values must be committed before any later statement uses them.
+commit;
+
+-- =====================================================================
+-- FILE: 20261116000003_claim_ownership.sql
+-- =====================================================================
+-- Audit 2026-11-14 P1-3 and P2-1 / spec NT-03.
+--
+-- 1. Webhook claims get an ownership token and a lease. finish/release act only
+--    with the token of the current claim, so a slow worker can no longer finish
+--    or release a newer worker's claim. The legacy token-less functions keep
+--    working for the app version that is deployed now, but only on token-less
+--    claims, so old and new workers never touch each other's rows.
+-- 2. Notification and SMS claims reject a NULL limit (LIMIT NULL is unbounded),
+--    and stamp claim_token + lease_until on every claimed job.
+-- 3. quarantine_expired_job_claims() moves in_progress jobs whose lease expired
+--    (a crashed worker) to 'quarantined' for review. Nothing is resent.
+
+-- ---------- 1. Webhooks ----------
+alter table public.processed_webhooks
+  add column if not exists claim_token uuid,
+  add column if not exists lease_until timestamptz;
+
+create or replace function public.claim_webhook(p_source text, p_external_id text, p_lease_seconds integer default 300)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_token uuid := gen_random_uuid();
+begin
+  if p_source is null or p_external_id is null or p_lease_seconds is null
+     or p_lease_seconds < 30 or p_lease_seconds > 3600 then
+    raise exception 'invalid webhook claim';
+  end if;
+  insert into public.processed_webhooks (source, external_id, status, claim_token, lease_until)
+  values (p_source, p_external_id, 'processing', v_token, now() + make_interval(secs => p_lease_seconds))
+  on conflict (source, external_id) do update
+    set status = 'processing', processed_at = now(), claim_token = excluded.claim_token, lease_until = excluded.lease_until
+  where public.processed_webhooks.status = 'processing'
+    and coalesce(public.processed_webhooks.lease_until, public.processed_webhooks.processed_at + interval '5 minutes') < now();
+  if found then
+    return v_token;
+  end if;
+  return null;
+end;
+$$;
+
+create or replace function public.finish_webhook(p_source text, p_external_id text, p_claim_token uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if p_claim_token is null then
+    raise exception 'claim token required';
+  end if;
+  update public.processed_webhooks
+     set status = 'processed', processed_at = now(), lease_until = null
+   where source = p_source and external_id = p_external_id
+     and status = 'processing' and claim_token = p_claim_token;
+  return found;
+end;
+$$;
+
+create or replace function public.release_webhook(p_source text, p_external_id text, p_claim_token uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if p_claim_token is null then
+    raise exception 'claim token required';
+  end if;
+  delete from public.processed_webhooks
+   where source = p_source and external_id = p_external_id
+     and status = 'processing' and claim_token = p_claim_token;
+  return found;
+end;
+$$;
+
+-- Legacy (token-less) functions: only ever act on token-less claims.
+create or replace function public.claim_webhook_update(p_source text, p_external_id text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  insert into public.processed_webhooks (source, external_id, status)
+  values (p_source, p_external_id, 'processing')
+  on conflict (source, external_id) do update
+    set status = 'processing', processed_at = now(), claim_token = null, lease_until = null
+  where public.processed_webhooks.status = 'processing'
+    and coalesce(public.processed_webhooks.lease_until, public.processed_webhooks.processed_at + interval '5 minutes') < now();
+  return found;
+end;
+$$;
+
+create or replace function public.finish_webhook_update(p_source text, p_external_id text)
+returns void
+language sql
+security definer
+set search_path = public, pg_temp
+as $$
+  update public.processed_webhooks
+     set status = 'processed', processed_at = now()
+   where source = p_source and external_id = p_external_id
+     and status = 'processing' and claim_token is null;
+$$;
+
+create or replace function public.release_webhook_update(p_source text, p_external_id text)
+returns void
+language sql
+security definer
+set search_path = public, pg_temp
+as $$
+  delete from public.processed_webhooks
+   where source = p_source and external_id = p_external_id
+     and status = 'processing' and claim_token is null;
+$$;
+
+revoke execute on function public.claim_webhook(text, text, integer) from public, anon, authenticated;
+revoke execute on function public.finish_webhook(text, text, uuid) from public, anon, authenticated;
+revoke execute on function public.release_webhook(text, text, uuid) from public, anon, authenticated;
+grant execute on function public.claim_webhook(text, text, integer) to service_role;
+grant execute on function public.finish_webhook(text, text, uuid) to service_role;
+grant execute on function public.release_webhook(text, text, uuid) to service_role;
+
+-- ---------- 2. Notification and SMS claims ----------
+alter table public.notification_jobs
+  add column if not exists claim_token uuid,
+  add column if not exists lease_until timestamptz;
+
+create index if not exists notification_jobs_expired_lease_idx
+  on public.notification_jobs (lease_until) where status = 'in_progress';
+
+create or replace function public.claim_due_notification_jobs(p_limit integer, p_clinic_ids uuid[] default null)
+returns setof public.notification_jobs
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_token uuid := gen_random_uuid();
+begin
+  if p_limit is null or p_limit < 1 or p_limit > 200 then
+    raise exception 'invalid claim limit';
+  end if;
+
+  return query
+  update public.notification_jobs nj
+     set status = 'in_progress'::public.notification_job_status,
+         claim_token = v_token,
+         lease_until = now() + interval '10 minutes',
+         updated_at = now()
+   where nj.id in (
+     select id from public.notification_jobs
+      where status = 'pending'::public.notification_job_status
+        and channel = 'telegram'
+        and scheduled_for <= now()
+        and (p_clinic_ids is null or clinic_id = any (p_clinic_ids))
+      order by scheduled_for asc
+      limit p_limit
+      for update skip locked)
+  returning nj.*;
+end;
+$$;
+
+create or replace function public.claim_due_sms_jobs(p_limit integer, p_clinic_ids uuid[] default null)
+returns setof public.notification_jobs
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_token uuid := gen_random_uuid();
+begin
+  if p_limit is null or p_limit < 1 or p_limit > 200 then
+    raise exception 'invalid claim limit';
+  end if;
+
+  return query
+  update public.notification_jobs nj
+     set status = 'in_progress'::public.notification_job_status,
+         claim_token = v_token,
+         lease_until = now() + interval '10 minutes',
+         updated_at = now()
+   where nj.id in (
+     select id from public.notification_jobs
+      where status = 'pending'::public.notification_job_status
+        and channel = 'sms'
+        and scheduled_for <= now()
+        and (p_clinic_ids is null or clinic_id = any (p_clinic_ids))
+      order by scheduled_for
+      limit p_limit
+      for update skip locked)
+  returning nj.*;
+end;
+$$;
+
+-- ---------- 3. Quarantine of expired claims ----------
+create or replace function public.quarantine_expired_job_claims()
+returns integer
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_count integer;
+begin
+  update public.notification_jobs
+     set status = 'quarantined'::public.notification_job_status,
+         error = 'claim lease expired; review before resending',
+         claim_token = null,
+         updated_at = now()
+   where status = 'in_progress'::public.notification_job_status
+     and coalesce(lease_until, updated_at + interval '10 minutes') < now();
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+revoke execute on function public.quarantine_expired_job_claims() from public, anon, authenticated;
+grant execute on function public.quarantine_expired_job_claims() to service_role;
+comment on function public.quarantine_expired_job_claims() is
+  'Moves in_progress notification/SMS jobs whose claim lease expired (crashed worker) to quarantined for human review. Never resends. Server-only.';
+
+-- ---------- 4. Guard on job finalization ----------
+-- Leaving in_progress clears the claim. A quarantined job is never put back in
+-- the send queue by a late worker: only a reviewed action (which sets
+-- health_ai.job_review = 'on' for its transaction) may move it to pending.
+-- A late worker recording that it did send ('sent') is kept, because it is true.
+create or replace function public.notification_jobs_claim_guard()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if old.status = 'quarantined'::public.notification_job_status
+     and new.status = 'pending'::public.notification_job_status
+     and coalesce(current_setting('health_ai.job_review', true), '') <> 'on' then
+    new.status := old.status;
+    new.scheduled_for := old.scheduled_for;
+  end if;
+  if new.status <> 'in_progress'::public.notification_job_status then
+    new.claim_token := null;
+    new.lease_until := null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists notification_jobs_claim_guard on public.notification_jobs;
+create trigger notification_jobs_claim_guard
+  before update on public.notification_jobs
+  for each row execute function public.notification_jobs_claim_guard();
+
+-- =====================================================================
+-- FILE: 20261116000004_audit_hygiene.sql
+-- =====================================================================
+-- Audit 2026-11-14 P2-4 and P3 hygiene. Non-destructive: no rows or tables are
+-- removed here (dropping the stray tables needs the owner's confirmation).
+
+-- P3: align expire_due_referrals with every other function's search_path.
+alter function public.expire_due_referrals(uuid) set search_path = public, pg_temp;
+
+-- P3: the messages DELETE policy is dead (authenticated has no DELETE grant).
+drop policy if exists "Clinic admins can delete messages" on public.messages;
+
+-- P2-4: todos / todo_deps / inbox_entries are not part of the app. Take away
+-- the browser-role grants so a future policy cannot expose them.
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['todos', 'todo_deps', 'inbox_entries'] loop
+    if to_regclass('public.' || t) is not null then
+      execute format('revoke all on table public.%I from anon, authenticated', t);
+    end if;
+  end loop;
+end;
+$$;
