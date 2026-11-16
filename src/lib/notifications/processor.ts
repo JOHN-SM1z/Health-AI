@@ -147,13 +147,13 @@ export async function processDueNotificationJobs(
           .maybeSingle();
         if (conv && conv.status === "assigned") {
           // Defer: mark skipped so an admin can retry after release.
-          await markJob(jobId, "skipped", nextAttempts, "conversation held by admin", supabase);
+          await markJob(job, "skipped", nextAttempts, "conversation held by admin", supabase);
           continue;
         }
       }
 
       if (!job.patient_telegram_user_id) {
-        await markJob(jobId, "failed", nextAttempts, "no telegram recipient", supabase);
+        await markJob(job, "failed", nextAttempts, "no telegram recipient", supabase);
         failed += 1;
         continue;
       }
@@ -175,7 +175,7 @@ export async function processDueNotificationJobs(
       if (job.appointment_id) {
         const ctx = await loadAppointmentContext(supabase, job.appointment_id);
         if (!ctx) {
-          await markJob(jobId, "skipped", nextAttempts, "appointment gone", supabase);
+          await markJob(job, "skipped", nextAttempts, "appointment gone", supabase);
           continue;
         }
 
@@ -184,13 +184,13 @@ export async function processDueNotificationJobs(
           (job.type === "reminder_24h" || job.type === "reminder_2h") &&
           ["cancelled", "no_show", "completed"].includes(ctx.status)
         ) {
-          await markJob(jobId, "skipped", nextAttempts, `appointment is ${ctx.status}`, supabase);
+          await markJob(job, "skipped", nextAttempts, `appointment is ${ctx.status}`, supabase);
           continue;
         }
         // A backlog (scheduler down, bot not connected) never reaches the patient late.
         const stale = staleAppointmentMessage(job.type, job.scheduled_for, ctx.startAt);
         if (stale) {
-          await markJob(jobId, "skipped", nextAttempts, stale, supabase);
+          await markJob(job, "skipped", nextAttempts, stale, supabase);
           continue;
         }
         const { data: clinic } = await supabase
@@ -233,17 +233,17 @@ export async function processDueNotificationJobs(
               jobId,
               error: e instanceof Error ? e.message : String(e),
             });
-            await markJob(jobId, "failed", nextAttempts, "sent but not recorded", supabase);
+            await markJob(job, "failed", nextAttempts, "sent but not recorded", supabase);
             failed += 1;
           }
         } else if (nextAttempts >= (job.max_attempts ?? 3)) {
-          await markJob(jobId, "failed", nextAttempts, "send failed after retries", supabase);
+          await markJob(job, "failed", nextAttempts, "send failed after retries", supabase);
           failed += 1;
         } else {
-          await markJob(jobId, "pending", nextAttempts, "send failed, retrying", supabase);
+          await markJob(job, "pending", nextAttempts, "send failed, retrying", supabase);
         }
       } else {
-        await markJob(jobId, "skipped", nextAttempts, "job has no appointment", supabase);
+        await markJob(job, "skipped", nextAttempts, "job has no appointment", supabase);
       }
     } catch (e) {
       // Release the claim so the next run retries. After max attempts the
@@ -253,10 +253,10 @@ export async function processDueNotificationJobs(
         error: e instanceof Error ? e.message : String(e),
       });
       if (nextAttempts >= (job.max_attempts ?? 3)) {
-        await markJob(jobId, "failed", nextAttempts, "processing error after retries", supabase);
+        await markJob(job, "failed", nextAttempts, "processing error after retries", supabase);
         failed += 1;
       } else {
-        await markJob(jobId, "pending", nextAttempts, "processing error, retrying", supabase);
+        await markJob(job, "pending", nextAttempts, "processing error, retrying", supabase);
       }
     }
   }
@@ -281,15 +281,15 @@ async function processLabResultJob(
   const nextAttempts = job.attempts + 1;
   const notice = await loadLabResultNotice(job.clinic_id, job.lab_result_id ?? "");
   if (!notice || !notice.current) {
-    await markJob(job.id, "skipped", nextAttempts, "result no longer current", supabase);
+    await markJob(job, "skipped", nextAttempts, "result no longer current", supabase);
     return "skipped";
   }
   if (!notice.released) {
-    await markJob(job.id, "skipped", nextAttempts, "results not released to patients", supabase);
+    await markJob(job, "skipped", nextAttempts, "results not released to patients", supabase);
     return "skipped";
   }
   if (!job.patient_telegram_user_id || notice.telegramUserId === null || Number(notice.telegramUserId) !== Number(job.patient_telegram_user_id)) {
-    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    await markJob(job, "skipped", nextAttempts, "recipient changed", supabase);
     return "skipped";
   }
   const { data: clinic } = await supabase.from("clinics").select("timezone").eq("id", job.clinic_id).maybeSingle();
@@ -317,16 +317,16 @@ async function processLabResultJob(
         .eq("id", job.id);
     } catch (e) {
       logger.error("notification sent but not recorded", { jobId: job.id, error: e instanceof Error ? e.message : String(e) });
-      await markJob(job.id, "failed", nextAttempts, "sent but not recorded", supabase);
+      await markJob(job, "failed", nextAttempts, "sent but not recorded", supabase);
       return "failed";
     }
     return "sent";
   }
   if (nextAttempts >= (job.max_attempts ?? 3)) {
-    await markJob(job.id, "failed", nextAttempts, "send failed after retries", supabase);
+    await markJob(job, "failed", nextAttempts, "send failed after retries", supabase);
     return "failed";
   }
-  await markJob(job.id, "pending", nextAttempts, "send failed, retrying", supabase);
+  await markJob(job, "pending", nextAttempts, "send failed, retrying", supabase);
   return "retry";
 }
 
@@ -342,11 +342,11 @@ async function processLabOrderCancelledJob(
   const nextAttempts = job.attempts + 1;
   const notice = await loadLabOrderNotice(job.clinic_id, job.lab_order_id ?? "");
   if (!notice || notice.status !== "cancelled") {
-    await markJob(job.id, "skipped", nextAttempts, "order not cancelled", supabase);
+    await markJob(job, "skipped", nextAttempts, "order not cancelled", supabase);
     return "skipped";
   }
   if (!job.patient_telegram_user_id || notice.telegramUserId === null || Number(notice.telegramUserId) !== Number(job.patient_telegram_user_id)) {
-    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    await markJob(job, "skipped", nextAttempts, "recipient changed", supabase);
     return "skipped";
   }
   const messageId = await sendTelegramMessage(
@@ -365,16 +365,16 @@ async function processLabOrderCancelledJob(
         .eq("id", job.id);
     } catch (e) {
       logger.error("notification sent but not recorded", { jobId: job.id, error: e instanceof Error ? e.message : String(e) });
-      await markJob(job.id, "failed", nextAttempts, "sent but not recorded", supabase);
+      await markJob(job, "failed", nextAttempts, "sent but not recorded", supabase);
       return "failed";
     }
     return "sent";
   }
   if (nextAttempts >= (job.max_attempts ?? 3)) {
-    await markJob(job.id, "failed", nextAttempts, "send failed after retries", supabase);
+    await markJob(job, "failed", nextAttempts, "send failed after retries", supabase);
     return "failed";
   }
-  await markJob(job.id, "pending", nextAttempts, "send failed, retrying", supabase);
+  await markJob(job, "pending", nextAttempts, "send failed, retrying", supabase);
   return "retry";
 }
 
@@ -435,16 +435,16 @@ async function finishQueueSend(
         .eq("id", job.id);
     } catch (e) {
       logger.error("notification sent but not recorded", { jobId: job.id, error: e instanceof Error ? e.message : String(e) });
-      await markJob(job.id, "failed", nextAttempts, "sent but not recorded", supabase);
+      await markJob(job, "failed", nextAttempts, "sent but not recorded", supabase);
       return "failed";
     }
     return "sent";
   }
   if (nextAttempts >= (job.max_attempts ?? 3)) {
-    await markJob(job.id, "failed", nextAttempts, "send failed after retries", supabase);
+    await markJob(job, "failed", nextAttempts, "send failed after retries", supabase);
     return "failed";
   }
-  await markJob(job.id, "pending", nextAttempts, "send failed, retrying", supabase);
+  await markJob(job, "pending", nextAttempts, "send failed, retrying", supabase);
   return "retry";
 }
 
@@ -461,11 +461,11 @@ async function processQueueTicketJob(
   const nextAttempts = job.attempts + 1;
   const visit = await loadQueueVisit(supabase, job);
   if (!visit || visit.queue_number === null || !["booked", "waiting", "called"].includes(visit.status)) {
-    await markJob(job.id, "skipped", nextAttempts, "visit no longer waiting", supabase);
+    await markJob(job, "skipped", nextAttempts, "visit no longer waiting", supabase);
     return "skipped";
   }
   if ((await isQueueRecipient(supabase, visit, job.patient_telegram_user_id)) !== "patient") {
-    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    await markJob(job, "skipped", nextAttempts, "recipient changed", supabase);
     return "skipped";
   }
   // Paid online, not yet arrived: the number, the booked time, and what to do at the clinic.
@@ -519,11 +519,11 @@ async function processQueueCalledJob(
   const nextAttempts = job.attempts + 1;
   const visit = await loadQueueVisit(supabase, job);
   if (!visit || visit.queue_number === null || visit.status !== "called") {
-    await markJob(job.id, "skipped", nextAttempts, "visit no longer called", supabase);
+    await markJob(job, "skipped", nextAttempts, "visit no longer called", supabase);
     return "skipped";
   }
   if (!(await isQueueRecipient(supabase, visit, job.patient_telegram_user_id))) {
-    await markJob(job.id, "skipped", nextAttempts, "recipient changed", supabase);
+    await markJob(job, "skipped", nextAttempts, "recipient changed", supabase);
     return "skipped";
   }
   const messageId = await sendTelegramMessage(
@@ -554,19 +554,34 @@ export function labResultUrl(clinicId: string, itemId: string): { href: string; 
   return null;
 }
 
+/**
+ * Records a claimed job's outcome. The write applies only while this worker still owns the claim (20261116000001):
+ * status 'in_progress' and the same claim_token. If the lease expired and the job was quarantined for review, a slow
+ * worker can no longer put it back to 'pending', which would send it a second time.
+ */
 async function markJob(
-  jobId: string,
+  job: Pick<ClaimedJob, "id" | "claim_token">,
   status: Database["public"]["Enums"]["notification_job_status"],
   attempts: number,
   error: string,
   supabase: ReturnType<typeof createAdminClient>,
 ) {
   try {
-    await supabase.from("notification_jobs").update({ status, attempts, error }).eq("id", jobId);
+    let update = supabase
+      .from("notification_jobs")
+      .update({ status, attempts, error, claim_token: null, lease_until: null })
+      .eq("id", job.id)
+      .eq("status", "in_progress");
+    update = job.claim_token ? update.eq("claim_token", job.claim_token) : update.is("claim_token", null);
+    const { data, error: writeError } = await update.select("id");
+    if (writeError) throw new Error(writeError.message);
+    if (!data || data.length === 0) {
+      logger.warn("notification job outcome not recorded: claim no longer owned", { jobId: job.id, status });
+    }
   } catch (e) {
     // Never let a failed bookkeeping write crash the whole batch.
     logger.error("failed to update notification job", {
-      jobId,
+      jobId: job.id,
       status,
       error: e instanceof Error ? e.message : String(e),
     });

@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
   // 4. Idempotency: atomically claim this update. The first delivery wins;
   //    duplicates return success without dispatching any work. Claims are
   //    per (bot, update_id) so two clinics' bots never collide.
-  let claimed: boolean;
+  let claimed: string | null;
   try {
     claimed = await claimWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId));
   } catch {
@@ -140,11 +140,11 @@ export async function POST(request: NextRequest) {
       clinicId,
       error: e instanceof Error ? e.message : String(e),
     });
-    await releaseWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId)).catch(() => {});
+    await releaseWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId), claimed).catch(() => {});
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 
-  await finishWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId)).catch(() => {});
+  await finishWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId), claimed).catch(() => {});
   return NextResponse.json({ ok: true });
 }
 

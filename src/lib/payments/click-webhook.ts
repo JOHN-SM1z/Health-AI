@@ -155,7 +155,7 @@ export async function handleClickWebhook(requestBody: string, complete: boolean)
           clickTransId: params.clickTransId,
         });
       }
-      await finishWebhookProcessing("click", params.clickTransId);
+      await finishWebhookProcessing("click", params.clickTransId, claimed);
       return Response.json({
         error_code: "0",
         error_note: "Success",
@@ -185,7 +185,7 @@ export async function handleClickWebhook(requestBody: string, complete: boolean)
         clickTransId: params.clickTransId,
       });
     }
-    await finishWebhookProcessing("click", params.clickTransId);
+    await finishWebhookProcessing("click", params.clickTransId, claimed);
     return Response.json({
       error_code: "0",
       error_note: "Success",
@@ -195,7 +195,7 @@ export async function handleClickWebhook(requestBody: string, complete: boolean)
     });
   } catch (e) {
     // Release the claim so the next Click delivery retries.
-    await releaseWebhookProcessing("click", params.clickTransId).catch(() => {});
+    await releaseWebhookProcessing("click", params.clickTransId, claimed).catch(() => {});
     logger.error("click webhook handler failed", {
       error: e instanceof Error ? e.message : String(e),
       clickTransId: params.clickTransId,

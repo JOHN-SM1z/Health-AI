@@ -849,4 +849,43 @@ describeDb("webhook idempotency atomic claim", () => {
     expect(reclaimed.data).toBe(true);
     await admin.rpc("finish_webhook_update", { p_source: source, p_external_id: externalId });
   });
+
+  it("a worker whose claim expired cannot finish or release the newer claim (20261116000001)", async () => {
+    const externalId = "dup-owner";
+    const a = await admin.rpc("claim_webhook_update_token", { p_source: source, p_external_id: externalId });
+    expect(typeof a.data).toBe("string");
+    await admin
+      .from("processed_webhooks")
+      .update({ processed_at: new Date(Date.now() - 6 * 60_000).toISOString() })
+      .eq("source", source)
+      .eq("external_id", externalId);
+    const b = await admin.rpc("claim_webhook_update_token", { p_source: source, p_external_id: externalId });
+    expect(typeof b.data).toBe("string");
+    expect(b.data).not.toBe(a.data);
+
+    const staleRelease = await admin.rpc("release_webhook_update", { p_source: source, p_external_id: externalId, p_claim_token: a.data });
+    expect(staleRelease.data).toBe(false);
+    const staleFinish = await admin.rpc("finish_webhook_update", { p_source: source, p_external_id: externalId, p_claim_token: a.data });
+    expect(staleFinish.data).toBe(false);
+    const third = await admin.rpc("claim_webhook_update_token", { p_source: source, p_external_id: externalId });
+    expect(third.data).toBeNull();
+
+    const ownerFinish = await admin.rpc("finish_webhook_update", { p_source: source, p_external_id: externalId, p_claim_token: b.data });
+    expect(ownerFinish.data).toBe(true);
+  });
+});
+
+describeDb("job claims are bounded (20261116000001)", () => {
+  beforeAll(() => {
+    buildClients();
+  });
+
+  it("rejects a NULL or out-of-range limit for both channels", async () => {
+    for (const fn of ["claim_due_notification_jobs", "claim_due_sms_jobs"] as const) {
+      for (const limit of [null, 0, 201]) {
+        const { error } = await admin.rpc(fn, { p_limit: limit as unknown as number });
+        expect(error, `${fn}(${limit})`).not.toBeNull();
+      }
+    }
+  });
 });
