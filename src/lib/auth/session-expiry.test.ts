@@ -1,8 +1,6 @@
-import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeAll } from "vitest";
 import { createClient } from "@supabase/supabase-js";
-import { createHmac, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { createHmac } from "node:crypto";
 import { localDbAvailable } from "@/test/local-db";
 
 /**
@@ -16,31 +14,21 @@ import { localDbAvailable } from "@/test/local-db";
  * A live valid session is verified as the baseline so the test is not
  * vacuous.
  *
- * Requires: `npm run db:reset-local` + `.env` with local keys. Skips
+ * Requires: `npm run db:reset-local` + `.env.test` with local keys. Skips
  * cleanly when the stack is down.
  */
 
 const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const ANON_KEY = process.env.SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-const OWNER_EMAIL = `session-${randomUUID()}@example.test`;
-const OWNER_PASSWORD = randomUUID() + randomUUID();
+const OWNER_EMAIL = process.env.OWNER_EMAIL ?? "";
+const OWNER_PASSWORD = process.env.OWNER_PASSWORD ?? "";
 
-// Local Supabase default JWT secret; read from the stack's start-secrets
-// when available so a custom secret still passes.
+// Use only the explicit test stack secret, never another project's files.
 function localJwtSecret(): string {
-  const dir = resolve(process.cwd(), "supabase/.temp/start-secrets");
-  if (existsSync(dir)) {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const envFile = resolve(dir, entry.name, "env/docker.env");
-      if (!entry.isDirectory() || !existsSync(envFile)) continue;
-      for (const line of readFileSync(envFile, "utf8").split("\n")) {
-        const m = line.match(/^SUPABASE_INTERNAL_JWT_SECRET=(.+)$/);
-        if (m) return m[1];
-      }
-    }
-  }
-  return "super-secret-jwt-token-with-at-least-32-characters-long";
+  const secret = process.env.SUPABASE_JWT_SECRET;
+  if (!secret) throw new Error("Set SUPABASE_JWT_SECRET for the disposable local test stack.");
+  return secret;
 }
 
 function signJwt(payload: Record<string, unknown>): string {
@@ -64,24 +52,16 @@ const describeDb = describe.skipIf(!localDbAvailable());
 
 describeDb("staff session expiry (real GoTrue)", () => {
   let ownerId: string;
-  let clinicId: string;
 
   beforeAll(async () => {
     const admin = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
-    const { data: user, error } = await admin.auth.admin.createUser({ email: OWNER_EMAIL, password: OWNER_PASSWORD, email_confirm: true });
+    const { data: session, error } = await admin.auth.signInWithPassword({
+      email: OWNER_EMAIL,
+      password: OWNER_PASSWORD,
+    });
     expect(error).toBeNull();
-    ownerId = user.user!.id;
-    const { data: clinic, error: clinicError } = await admin.from("clinics").insert({ name: "Synthetic session clinic", slug: `session-${randomUUID()}` }).select("id").single();
-    expect(clinicError).toBeNull();
-    clinicId = clinic!.id;
-    expect((await admin.from("profiles").upsert({ id: ownerId, full_name: "Synthetic session owner" })).error).toBeNull();
-    expect((await admin.from("staff_roles").insert({ clinic_id: clinicId, profile_id: ownerId, role: "owner" })).error).toBeNull();
-  });
-
-  afterAll(async () => {
-    const admin = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
-    if (clinicId) await admin.from("clinics").delete().eq("id", clinicId);
-    if (ownerId) await admin.auth.admin.deleteUser(ownerId);
+    if (!session?.user) throw new Error("owner sign-in failed");
+    ownerId = session.user.id;
   });
 
   it("resolves a staff context for a VALID live session (baseline)", async () => {

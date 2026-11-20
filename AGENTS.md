@@ -12,12 +12,22 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Non-negotiable safety
 
-- This is a real clinic operations product, with walk-in registration and live queues as the default workflow. Prioritize patient safety, privacy, authorization, accurate appointment availability, and payment integrity over speed or UI polish.
-- Clinicians may author and view patient records, diagnoses and prescriptions within their authorized care relationship. This scope was explicitly authorized by the owner on 2026-10-05. Never generate clinical decisions with AI or present AI output as medical advice.
-- A referral is patient guidance and a scoped read-access grant. It must not require an acceptance workflow before the receiving doctor can read authorized history. Reading never grants permission to rewrite another clinician’s records.
-- Walk-in queue tickets are not future appointments. Do not invent time slots to register arrivals. Keep scheduled booking optional per clinic.
-- Financial controls must not erase records or obstruct access to existing clinical history. Any configured prepayment check needs an explicit authorized exception path.
-- Do not invent payroll rates, automatic staff penalties, inpatient per-night charges, medical triage rules or external-system integrations. Clinic policy must determine them.
+- This is a real clinic booking product. Prioritize patient safety, privacy, authorization, accurate appointment availability, and payment integrity over speed or UI polish.
+- Never implement AI or automated diagnosis, treatment advice or prescriptions, or claims that AI output is medical advice.
+- Clinical text exists only where a doctor writes it:
+  - `referrals`: the referring doctor's reason and handoff note — visible only to the two doctors on the referral.
+  - `clinical_records`: clinical notes, assessments, diagnoses, prescriptions, laboratory orders and results, medical history and follow-up plans, written by a doctor in their own consultation. Readable only by doctors that `doctor_can_read_appointment()` admits. Records are immutable (corrections are new records) and keep author, consultation, time and type.
+  - Doctor-authored clinical text (`referrals`, `clinical_records`) is never shown to operational staff, lab staff, patients, logs, audit rows, analytics, the patient-facing bot or AI. AI must never write, read, or summarise it, with only the two exceptions below.
+  - AI consultation recorder (approved by the owner on 2026-11-14, decision D-10): with the patient's consent, AI may transcribe a consultation and draft documentation of what was said, visible to the treating doctor only. The draft is not part of the record until the treating doctor reviews, edits and signs it. AI must not add diagnoses, medicines, doses, findings or advice that were not stated in the consultation; every medicine, dose, number, date and diagnosis term in a draft must be checked against the transcript before the doctor sees it.
+  - Patient delivery of signed documents (approved by the owner on 2026-11-14, decision D-14): a prescription or test order the treating doctor has signed and chosen to send may be shown to that patient, and only that patient, inside the verified Mini App (Telegram `initData` checked server-side, card identity confirmed). Notes, assessments and diagnoses stay doctor-only unless the doctor explicitly releases them. Telegram message text and SMS never contain medical content.
+- Laboratory data follows **minimum necessary access by role and purpose**, not all-or-nothing:
+  - Ordering: any authenticated staff member of the clinic (owner, manager, admin, receptionist, doctor, lab staff) may create a lab order for a patient of that clinic. There is no per-role or per-test ordering restriction; the server still validates clinic membership, patient, tests and prices, and records who ordered. Ordering a test does not by itself grant access to its results.
+  - Lab staff see the lab orders and the laboratory data needed to perform the test and enter results — never unrelated doctor notes, diagnoses, prescriptions, referrals or history.
+  - Doctors see lab results only for patients `doctor_patient_access()` admits (own patient or active referral).
+  - Patients see only their own **finalized** lab results, through verified Telegram identity — never another patient's, never unfinalized ones.
+  - AI may process only structured lab-result data for the approved lab-summary feature (built in Phase 18: `src/lib/labs/ai`) — never clinical notes or history, never unnecessary identifiers, never diagnosis or treatment advice. The facts are computed from verified values without AI; the model may only reword them, and its answer is shown only if every value, date and statement checks out against those facts (otherwise the computed text is shown). Nothing in the lab workflow depends on AI.
+  - Operational staff (reception/cashier) may see order, test and payment status needed for their work, not result values.
+  - Lab data never goes into logs, audit row values or analytics; audit rows carry ids and types only.
 - AI must only provide clinic information or non-diagnostic booking navigation. Urgent wording must trigger the approved urgent-care message and human-admin escalation.
 - Never claim a booking, payment, transcription, notification, or Telegram delivery succeeded unless the backend verified it.
 
@@ -31,6 +41,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## Supabase and authorization
 
 - Enable RLS on every exposed table. Enforce authorization in both database policies and server routes.
+- Lab result data is read only through the server, which authorizes by role and purpose and audits each read; signed-in roles get no direct SELECT on lab result tables.
+- A doctor reaches a patient's clinical data only through `public.doctor_patient_access()` (RLS) and `canDoctorAccessPatientClinicalData()` (server): their own patient, or an active referral to them. Never grant doctors clinic-wide patient access.
+- Referral-based access is never permanent: it ends at decline, revocation or completion and, at the latest, at the referral's `expires_at` (≤ 180 days), checked against the database clock on every read. Clinical text (`referrals`, `clinical_records`) is read only through the server, which authorizes and audits each read — never grant signed-in roles SELECT on those tables. `audit_events` is append-only and tenant-checked.
+- Patient merges link records, never move or rewrite them: a merged record points at its canonical record (`patients.merged_into_patient_id`), doctor access and longitudinal reads cover the group (`patient_record_group()`, `patientRecordIds()`), and a merged record takes no new work. Only the owner or an administrator merges, through `merge_patients()` after a preview; a merge is audited and can be undone.
 - Treat the Supabase service-role client as privileged: use it only in server-only code after explicit clinic/role/ownership authorization.
 - Every tenant-owned query and mutation must scope by `clinic_id`.
 - Never trust role, clinic ID, patient ID, payment status, or Telegram identity from the browser.

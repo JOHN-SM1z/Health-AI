@@ -1,0 +1,342 @@
+{
+  "canonicalCommit": "990d082274575baadc402e9c7732d27fc56b1f45",
+  "canonicalMigrations": [
+    {
+      "file": "20260813000001_extensions_types.sql",
+      "sha256": "c0bfbc2b15a0f42393b914085b86a5eeb932b31c7e848a06ae98bab62b214678"
+    },
+    {
+      "file": "20260813000002_clinics_staff_patients.sql",
+      "sha256": "049a30158744d8c69ad19cd936a402803aba5d85dca94039b6543af22daca99d"
+    },
+    {
+      "file": "20260813000003_catalog.sql",
+      "sha256": "034b9c4afddad3fa547a8652a59093906c0c9732a8709db4c6a12002e410aaa8"
+    },
+    {
+      "file": "20260813000004_schedules.sql",
+      "sha256": "1f9da99834765cdbd13df56a0567bedd6efc3fba84a436ec2c19d91c4d5c161b"
+    },
+    {
+      "file": "20260813000005_appointments_payments.sql",
+      "sha256": "9ccccf0d09d8ecd8c039c3195653e27d070633e3fd0e80b7a5a9a7f54250d123"
+    },
+    {
+      "file": "20260813000006_conversations.sql",
+      "sha256": "deb5375f0371e8d050a57d9265d314fb40b2ef3624cc82c5d3984b386d736d0d"
+    },
+    {
+      "file": "20260813000007_faqs_settings.sql",
+      "sha256": "c8967f0f4c145f6c39a33fb8240648d37b82b238ab7613d8e9bce6289a428544"
+    },
+    {
+      "file": "20260813000008_operations.sql",
+      "sha256": "2b81175042421f5d302d8f80767334ede0a68c099e07297d8d7565d87342290c"
+    },
+    {
+      "file": "20260813000009_functions_triggers.sql",
+      "sha256": "6a78da7dc96a8b82cf6d439bb8df093cdf442c78e46ab8772943908696e5a67b"
+    },
+    {
+      "file": "20260813000010_rls.sql",
+      "sha256": "f0306ff69b268b8d8006706b9733add2c6a2b5930a1552139742ec121048fc33"
+    },
+    {
+      "file": "20260813000011_storage.sql",
+      "sha256": "062ef3eedeea8db4ac92d06ae5f95c7d387db12f689afd381f542ae012c413b4"
+    },
+    {
+      "file": "20260813000012_conversation_state.sql",
+      "sha256": "1ff6ee33a23102047fb958406197f16bb2b01fbfd8ba5e23c32ef6a84c3df72f"
+    },
+    {
+      "file": "20260813000013_grants.sql",
+      "sha256": "2f9ed7aaf5311c7fd2e590fba5f25f204e2799b21954d252ae7f9a15074c24c5"
+    },
+    {
+      "file": "20260813000014_release_blockers.sql",
+      "sha256": "b371459d9857b131c36dda86fb5506e015702a153d87f203a49dceb4e3a39f25"
+    },
+    {
+      "file": "20260813000015_fixes.sql",
+      "sha256": "0d86aaeb69cb9a5d16c98a5c2f450b08966c7bb80fa06795a7d102de98887d27"
+    },
+    {
+      "file": "20260813000016_admin_reply_policies.sql",
+      "sha256": "16762680fc94569d4ab210b035fed83511eb1f8249e253700ed613e4f5b3960e"
+    },
+    {
+      "file": "20260813000017_voice_storage_upload.sql",
+      "sha256": "acbc594989cbdbab2f879aefc7bc707215e26b0c2e8f5f8a47eabb35e92b9bed"
+    },
+    {
+      "file": "20260813000018_patient_and_voice_policies.sql",
+      "sha256": "6f8431119788cef89794a42868a755f1a08b99fba756eba1f96774bcfeb51897"
+    },
+    {
+      "file": "20260813000019_voice_messages_optional_telegram_file.sql",
+      "sha256": "b4a00db2e84969d13fc25fdc2e969e9f9ff552a7dacc3eac3573adbf3a4c1f32"
+    },
+    {
+      "file": "20260813000020_appointments_slot_validation.sql",
+      "sha256": "bccca4b500869037b8157929541d7bbb4a03c3a4a1f16691ba95dabd275c1348"
+    },
+    {
+      "file": "20260813000021_integrity_and_consistency.sql",
+      "sha256": "af58c819097664f529b1cb2b9df2e8d00d67ecfb29673afa320970c0eebdc95b"
+    },
+    {
+      "file": "20260818000022_clinic_telegram_integrations_tenancy.sql",
+      "sha256": "717f6d9bf80f39f9151c9ef9110cf6ef20d70cecedab3d7f5c3a9fc7455257e3"
+    },
+    {
+      "file": "20260818000023_role_based_authorization.sql",
+      "sha256": "71a6d70e1ad2ef34b827b82fd4ee435b26be59608052f15ce8d253e168a8cb4c"
+    },
+    {
+      "file": "20260818000024_role_based_rls.sql",
+      "sha256": "c648eb23cf318cf2c36ecb94b0c9ffd7b0fb9cec3b7aee39d8b17fdceb6165a6"
+    },
+    {
+      "file": "20260818000025_no_show_reasons_and_read_tracking.sql",
+      "sha256": "3cfce12b55249f91af98b08e20d9573dd3522e06025eeccc0ed81a9615670b60"
+    },
+    {
+      "file": "20260821000001_telegram_integration_constraint_and_seed_resilience.sql",
+      "sha256": "97eb19e117e99164f4c0566867d59f6c2be18278aebaac29f90516e8ae20b332"
+    },
+    {
+      "file": "20260822000001_payments_server_managed.sql",
+      "sha256": "199e222393ed17267ba0d47aa8d1196229f30db546a7fea9e1f2993acd3843c3"
+    },
+    {
+      "file": "20260822000002_tenancy_hardening.sql",
+      "sha256": "422fec0169c45c6a6e2fcf5ea620332cb38855f82180253a0702dbc0eec4fc52"
+    },
+    {
+      "file": "20260910000001_webhook_claim_recovery.sql",
+      "sha256": "7d896b3991cfb4591572f80f3f4a86016753f8b7c559dc0c4cb9a2058a0a945e"
+    },
+    {
+      "file": "20260910000002_appointment_source_web.sql",
+      "sha256": "1c0cdbee7dfb0666ad50bcab8ed74cf0c83e0e993402f70b58850480b30c3594"
+    },
+    {
+      "file": "20260911000001_patient_operational_notes.sql",
+      "sha256": "941c2786fe038902390ef3dc117f2a7d2c9b8f981da440452d628919ed161a3c"
+    },
+    {
+      "file": "20260912000001_server_only_rpc_grants.sql",
+      "sha256": "0cde4862fbfbbb1a6f9ea75939cf0616d455eb67c842b5522727022854a50129"
+    },
+    {
+      "file": "20260926000001_referrals.sql",
+      "sha256": "4f27f12919fc1726f87184b5e38ac49c35c5dc37e156f05f6d0513b2a8b45d3c"
+    },
+    {
+      "file": "20260927000001_referral_follow_up_and_doctor_accounts.sql",
+      "sha256": "3d57ac5d3c17683895f49310bf57ae21c26a44bfb3718ab16a73f00daaa26912"
+    },
+    {
+      "file": "20260927000002_referral_creation_idempotency.sql",
+      "sha256": "0e156b5e4c5ab083a74a1d2caaa6bcafe04d504e8b1956e6c37a6dca87184dff"
+    },
+    {
+      "file": "20260927000003_referral_clinical_access.sql",
+      "sha256": "14d2faeb316e68b5ebd1bace03572b28c32b906c0ed9715f7a088db8aa6aeb64"
+    },
+    {
+      "file": "20260927000004_clinical_access_hardening.sql",
+      "sha256": "08d794c6e9f7197acf1a9b3d558768f064f4ec0c432cd77a43eaab62a1e8e2d5"
+    },
+    {
+      "file": "20260927000005_clinical_records.sql",
+      "sha256": "d6983231982e8fc5373ddbbee00f9ffef2e644582d70da26777544b18f16ef36"
+    },
+    {
+      "file": "20260928000001_clinical_handoff_types.sql",
+      "sha256": "b083758e76e3715a342d399fef08411a2dc9e3c73a7dc8461fb65a9efcd255ef"
+    },
+    {
+      "file": "20260928000002_clinical_handoff.sql",
+      "sha256": "7f2ef57090f4e5560dcf82805a2c5b08c1c8f6aeb6f954517006f9f163130144"
+    },
+    {
+      "file": "20260929000001_referral_lifecycle_hardening.sql",
+      "sha256": "787c8fb7c67b848b25c0e4177c9788a863228a021bf043ce0eab34c08bb72001"
+    },
+    {
+      "file": "20260930000001_consultation_start.sql",
+      "sha256": "33f931b339b09bd6429cda50f7c1720a014d31c0ae756fbb5f1fd47b695b90b2"
+    },
+    {
+      "file": "20260930000002_server_only_booking_writes.sql",
+      "sha256": "c5da7414a20bdecbc12ff0b9c1659020f94b4f03caf40b7ed574104e61a42f66"
+    },
+    {
+      "file": "20260930000003_shared_rate_limits.sql",
+      "sha256": "8f206175d68e8f5bc47e7e61a49c189753c2f7d008e950541017f8c7a139ad7f"
+    },
+    {
+      "file": "20260930000004_anon_no_table_privileges.sql",
+      "sha256": "3262b3b7ce8d02f5c6cc490d284ecec6a159b733239fda2ef152481c4d32e86e"
+    },
+    {
+      "file": "20260930000005_unified_booking_engine.sql",
+      "sha256": "d78b65a9f7f52fe0b8700bd498a6021c8f0978524f2d87743334dbf5f4ba0f77"
+    },
+    {
+      "file": "20260930000006_tenant_integrity_hardening.sql",
+      "sha256": "92c418fa56b95674bc62b8cb1a2a63ca9d21bb94cb00125ee4541434670c78af"
+    },
+    {
+      "file": "20261005000001_patient_lab_identity.sql",
+      "sha256": "201f2ab30e53541c122d3fba15117eaad19910bee9dc320506b9e42aa7d74653"
+    },
+    {
+      "file": "20261005000002_lab_catalog.sql",
+      "sha256": "0aa0223999cbaadf47d4f5949081eb8cf404df189b7cc4dcdf1c1c6aef2bbb15"
+    },
+    {
+      "file": "20261005000003_lab_orders_samples.sql",
+      "sha256": "d63b9c4805d226a8dfc729b65f9451e318b828345eb9446172672c7423ba7693"
+    },
+    {
+      "file": "20261005000004_lab_results_documents.sql",
+      "sha256": "5411e263ef760fd465505adde2c7060062ac352626365e358c2303ab650e387e"
+    },
+    {
+      "file": "20261005000005_lab_staff_role.sql",
+      "sha256": "3622ea7c4f1e073f834f221f9a3aa0f5e0776486e5bec0a867f497bef326ed39"
+    },
+    {
+      "file": "20261005000006_lab_role_access.sql",
+      "sha256": "96b09e532490bcde3ab0b03d6b22f6dcd296d46bc4abcdf352eb511f5f018a8b"
+    },
+    {
+      "file": "20261005000007_lab_order_creation.sql",
+      "sha256": "c0e5e2379db4dd6d7190161a297a085c6e11d3d7823e754abd78f426f5b4122a"
+    },
+    {
+      "file": "20261005000008_lab_payments.sql",
+      "sha256": "30401bb9a13994cb9325cd435e93267eb25201d5c2f0478ecf096c07ee601970"
+    },
+    {
+      "file": "20261005000009_lab_sample_collection.sql",
+      "sha256": "a64bfb6ba04ee1d15246a2d0595d5718753248254f4573c5850abd01f8f8478a"
+    },
+    {
+      "file": "20261005000010_lab_result_entry.sql",
+      "sha256": "66a7b4f7a06eb20c51f41db3142d4afa07012af0157e2a433aa7d9448df17b4e"
+    },
+    {
+      "file": "20261005000011_lab_result_verification.sql",
+      "sha256": "84d1ead31c540a480d717ad118f02fe95aa347521857381625e9485713e7eea6"
+    },
+    {
+      "file": "20261005000012_lab_documents.sql",
+      "sha256": "2ba3e407905ac2d69fa2438269690a9ab65ba73b32a8c1d4caca00e6cba38164"
+    },
+    {
+      "file": "20261005000013_lab_notification_type.sql",
+      "sha256": "5e02176646578dbdff0fdaf0fc6c58be9b9b5c57b3911a20c82d5ea9a4994c8c"
+    },
+    {
+      "file": "20261005000014_lab_patient_results.sql",
+      "sha256": "f1951348277febf24e5cc87f215c59fe690fc2650d44c1eaba9041cbc636a580"
+    },
+    {
+      "file": "20261005000015_lab_import.sql",
+      "sha256": "01346eb666a856099f1451e9745c5b759b1f90da6cd9ac09f1cb4f6760cb5e8e"
+    },
+    {
+      "file": "20261005000016_patient_merge.sql",
+      "sha256": "f0d76078af4af41b7b726c68dd9ca490a25697122d526fa24696039f08ce3cdf"
+    },
+    {
+      "file": "20261005000017_lab_external_providers.sql",
+      "sha256": "3340f90619f747a7bdfb40ee5598ce77dd95362b60d8b1f28e4c672cf6c449d3"
+    },
+    {
+      "file": "20261005000018_lab_notification_events.sql",
+      "sha256": "f7ab27dd4916b80960e0ef1a9d67b6eff4ff312974b868ea87a2d4b2d266259e"
+    },
+    {
+      "file": "20261005000019_lab_notifications.sql",
+      "sha256": "557d9f05fa5ad0a05166d6574773159d813a5fbd13ba4b1350d056a598d30420"
+    },
+    {
+      "file": "20261005000020_lab_dashboards.sql",
+      "sha256": "210bdf8c16132b0961473214b514fba758367d095b446ab45fcf060408e3bd62"
+    },
+    {
+      "file": "20261005000021_lab_security_hardening.sql",
+      "sha256": "583adf4ecc7c667deadba3d05adbbcc9deac42388be2951bb3c6279fdb7bce7e"
+    },
+    {
+      "file": "20261007000001_operations_enums.sql",
+      "sha256": "0c60b91111a3d54d1ab0c80531cf43dfe2eb9b56c6f0efd6a952afabed643f47"
+    },
+    {
+      "file": "20261007000002_outpatient_operations.sql",
+      "sha256": "e11e758c674818742f12c4f6a6d154e67b787aac1fdb9f7db706ec6d9949c48e"
+    },
+    {
+      "file": "20261007000003_visit_actual_end.sql",
+      "sha256": "463ebfe0f1884e966e6815cfef73fe22412da05518c4016cae8a7f6675c54cca"
+    },
+    {
+      "file": "20261008000001_lab_visits.sql",
+      "sha256": "26fa5a5c73f1d2d57b1e9dcd36a9622b794f6c4a7b61fdd343f8cc10bf5c13dc"
+    },
+    {
+      "file": "20261008000002_queue_called_enum.sql",
+      "sha256": "d2573f9edd2f86122b766e2060e19732892c59ce2a340a3bb4ec0d140168283b"
+    },
+    {
+      "file": "20261008000003_visit_follow.sql",
+      "sha256": "56f421365d2c3fa3d2192849c36b6463cfd4772c2d8b432fead25ad980486810"
+    },
+    {
+      "file": "20261008000004_retention_guard.sql",
+      "sha256": "1de337ba14df3cd5ef10fe64a277f32a18635c5e8fec0580759673b29fa59ee4"
+    },
+    {
+      "file": "20261008000005_patient_identity_privacy.sql",
+      "sha256": "fb53df4f4c773ad241b1ea94aa83f16e00db080c4f73173046e61ea978dcd782"
+    },
+    {
+      "file": "20261008000010_online_identity.sql",
+      "sha256": "54a1e6ea0cf24130062121bc1a47bc9923ea6a63158e30ef5b493aa2b9c6bd53"
+    },
+    {
+      "file": "20261008000011_online_payment_providers.sql",
+      "sha256": "fb29cc4dd7c7daeb0713afe20a874a9e16364af0ac164967fc96cb62fd69b2a1"
+    },
+    {
+      "file": "20261008000012_online_payments.sql",
+      "sha256": "c4b230daceee0c26a075bdfda9323814aff83dc0975b207c054eeb7559743f3d"
+    },
+    {
+      "file": "20261008000013_sms_channel.sql",
+      "sha256": "d36eeea9ceeda2e45b72bfa3d0c92fd46ca177d8e967fec620c8ec1d2e9f6f1d"
+    },
+    {
+      "file": "20261010000001_set_updated_at_search_path.sql",
+      "sha256": "09cc5f4903b8305f5f7cd953693a056a1edb621f15a3f6e0612c70675176384f"
+    },
+    {
+      "file": "20261010000002_saas_onboarding.sql",
+      "sha256": "8c6011a160f514966e1a877715b31201454e0e64b4f9571ba7f6353879344c94"
+    },
+    {
+      "file": "20261010000003_oneid_identity.sql",
+      "sha256": "ac93d1018df9edd4a5f86157fa22e322667dcb721b1e31743aef738a423c61cf"
+    },
+    {
+      "file": "20261010000004_desk_identity_check.sql",
+      "sha256": "3c142f206d06d7503b79fc3b712ca3ac12b3cebd32b410a1a42b52d073dcce2f"
+    }
+  ],
+  "legacyArchive": "legacy-migrations/clinic-operations-pilot/manifest.json"
+}

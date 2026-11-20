@@ -1,7 +1,7 @@
 import "server-only";
 import { Bot } from "grammy";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { registerBotWebhook } from "@/lib/telegram/bots";
+import { registerBotMenuButton, registerBotWebhook } from "@/lib/telegram/bots";
 import { logger } from "@/lib/logger";
 
 /**
@@ -89,6 +89,10 @@ export async function activateClinicBot(
     }
 
     const webhook = await registerBotWebhook(bot, me.username, requestOrigin);
+    // The menu button opens this clinic's Mini App; a failure here leaves the bot working (the chat keyboard has the
+    // same button), so it is logged, not fatal.
+    const menu = await registerBotMenuButton(bot, clinicId, requestOrigin);
+    if (!menu.ok) logger.warn("bot menu button not set", { clinicId, error: menu.error });
     await supabase
       .from("clinic_telegram_integrations")
       .update({

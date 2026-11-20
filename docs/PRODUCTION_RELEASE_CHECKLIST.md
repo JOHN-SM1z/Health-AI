@@ -1,5 +1,3 @@
-> **Historical report — superseded for release decisions.** The October 2026 database audit found defects in the audited implementation. Do not use this document as current production approval. See [current revision status](OPERATIONS_REVISION_2026-10-06.md) and [database audit](DATABASE_AUDIT_2026-10-05.md).
-
 # Production Release Checklist
 
 This operational checklist governs the deployment, verification, and rollback procedures for launching the **Health AI** platform into production.
@@ -19,21 +17,25 @@ This operational checklist governs the deployment, verification, and rollback pr
 - [ ] Provision all server secrets in cloud Secret Manager (or hosting platform secret store).
 
 ### B. Database & Schema Verification
-- [ ] Apply all 25 database migrations (`supabase/migrations/20260813000001_*.sql` through `20260818000025_*.sql`) to the production Supabase PostgreSQL database.
+- [ ] Apply every database migration in `supabase/migrations/` (in filename order) to the production Supabase PostgreSQL database — `npx supabase db push`, or `supabase/full-db-setup.sql` once in the SQL editor on an empty project.
 - [ ] Verify Row Level Security (RLS) is enabled on 100% of tables in the production database schema.
 - [ ] Verify `is_clinic_staff` security definer function exists with `search_path = public`.
 - [ ] Verify partial exclusion constraint `no_overlapping_active_appointments` is active on `public.appointments`.
 - [ ] Confirm `anon` SQL role permissions are revoked on core business tables.
+- [ ] Laboratory module (migrations `20261005000001`–`…021` on an existing database): back up first, apply to staging or a production copy before production, and work through the conditions in [`docs/labs/PRODUCTION_READINESS.md`](labs/PRODUCTION_READINESS.md) §3. Rollback options are in §4 there; the migrations are forward-only. On the existing production project apply only those 21 files, one by one, recorded by file name — not `supabase db push` (its history uses different version stamps; D4 there).
 
 ### C. Initial Data & Staff Bootstrapping
 - [ ] Run owner creation bootstrap script (`npm run create-owner`) with production credentials to create the primary clinic and owner profile.
 - [ ] Log into `/admin/login` using owner credentials and configure clinic settings, services, doctors, working hours, and FAQs.
+- [ ] Add staff under *Xodimlar* (one-time password per new account, replaced by the member under *Parolim*); link doctor accounts under *Shifokorlar*.
 
 ### D. Automated Quality & Build Gates
 - [ ] Run static type check (`npm run typecheck`) and confirm **0 errors**.
 - [ ] Run linter (`npm run lint`) and confirm **0 errors**.
 - [ ] Run test suite (`npm test`) and verify all active tests pass cleanly.
 - [ ] Run production standalone build (`npm run build`) and confirm clean compilation.
+- [ ] CI (`.github/workflows/ci.yml`) is green on the release commit — including the database suites and the end-to-end workflow + HTTP red team (`npm run test:e2e`) against a Supabase stack built from every migration.
+- [ ] `supabase/full-db-setup.sql` is current (`node scripts/build-full-db-setup.mjs --check`) if the schema is applied through the SQL editor.
 
 ---
 
@@ -42,6 +44,7 @@ This operational checklist governs the deployment, verification, and rollback pr
 ### A. Hosting Infrastructure Provisioning
 - [ ] Deploy Next.js standalone application container to Cloud Run (or Vercel).
 - [ ] Verify container startup completes without fail-closed initialization exceptions.
+- [ ] On Vercel: Deployment Protection (Vercel Authentication) must not cover the production domain. With the default "All Deployments except Custom Domains" and no custom domain, every production URL — including `/api/telegram/webhook` and the cron endpoints — answers with the Vercel login page, so patients, Telegram and the scheduler never reach the app. Add a custom domain or set protection to "Only Preview Deployments".
 - [ ] Configure custom domain DNS records (`A` / `AAAA` / `CNAME`) pointing to hosting endpoint.
 - [ ] Confirm HTTPS / TLS certificate provisioned and enforced.
 
@@ -51,8 +54,14 @@ This operational checklist governs the deployment, verification, and rollback pr
 - [ ] Configure Telegram Mini App URL in @BotFather setting `https://<PRODUCTION_DOMAIN>/book`.
 
 ### C. Background Jobs & Scheduler
-- [ ] Configure Cloud Scheduler (or cron daemon) to trigger `POST https://<PRODUCTION_DOMAIN>/api/notifications/process` every 15 minutes (`*/15 * * * *`).
-- [ ] Set Cloud Scheduler HTTP request header `Authorization: Bearer <CRON_SECRET>`.
+Two jobs, both `POST` with header `Authorization: Bearer <CRON_SECRET>`:
+`https://<PRODUCTION_DOMAIN>/api/notifications/process` every 15 minutes (`*/15 * * * *`) — the same run deletes voice messages past their retention (privacy page §2); the response reports `voicePurged` / `voicePurgeFailed` — and `https://<PRODUCTION_DOMAIN>/api/referrals/expire` hourly (`7 * * * *`).
+
+The production project runs them from Supabase itself (pg_cron + pg_net), with [`supabase/ops/scheduled-jobs.sql`](../supabase/ops/scheduled-jobs.sql):
+- [ ] Store the app's `CRON_SECRET` in Supabase Vault under the name `health_ai_cron_secret` (Dashboard → Project Settings → Vault, or `select vault.create_secret('<CRON_SECRET>', 'health_ai_cron_secret');` in the SQL editor). Same value as the app's `CRON_SECRET`; rotate both together.
+- [ ] Set `v_app_url` in the script to the production URL and run it in the SQL editor (re-running replaces the jobs).
+- [ ] After the next quarter hour, check `select status_code, left(content, 200) from net._http_response order by id desc limit 5;` — `200` with `{"ok":true,…}`. A `401` means the Vault secret differs from `CRON_SECRET`; a `200` with an HTML body means Vercel Deployment Protection is intercepting the request (§A).
+- Cloud Scheduler (or any cron service) calling the same two URLs with the same header works equally well — use one scheduler, not both.
 
 ---
 

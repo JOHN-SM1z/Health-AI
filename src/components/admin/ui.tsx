@@ -1,4 +1,4 @@
-import { createElement, type ReactNode } from "react";
+import { createElement, type ReactNode, type InputHTMLAttributes, type SelectHTMLAttributes } from "react";
 import { cn } from "@/components/mini-app/ui";
 
 export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
@@ -108,8 +108,6 @@ const fieldBase =
   "w-full rounded-lg border border-hairline bg-surface px-3 py-2 text-sm text-foreground transition-[border-color,box-shadow] duration-150 placeholder:text-ink-muted/70 focus:border-pine";
 
 export function AInput({
-  id,
-  maxLength,
   value,
   onChange,
   placeholder,
@@ -117,9 +115,8 @@ export function AInput({
   className,
   autoComplete,
   "aria-label": ariaLabel,
-}: {
-  id?: string;
-  maxLength?: number;
+  ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> & {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -130,8 +127,7 @@ export function AInput({
 }) {
   return (
     <input
-      id={id}
-      maxLength={maxLength}
+      {...props}
       type={type}
       value={value}
       aria-label={ariaLabel}
@@ -144,14 +140,13 @@ export function AInput({
 }
 
 export function ASelect({
-  id,
   value,
   onChange,
   options,
   className,
   "aria-label": ariaLabel,
-}: {
-  id?: string;
+  ...props
+}: Omit<SelectHTMLAttributes<HTMLSelectElement>, "value" | "onChange" | "children"> & {
   value: string;
   onChange: (v: string) => void;
   options: Array<{ value: string; label: string }>;
@@ -160,7 +155,7 @@ export function ASelect({
 }) {
   return (
     <select
-      id={id}
+      {...props}
       value={value}
       aria-label={ariaLabel}
       onChange={(e) => onChange(e.target.value)}
@@ -182,6 +177,7 @@ export function ATextArea({
   rows = 3,
   className,
   disabled,
+  "aria-label": ariaLabel,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -189,11 +185,13 @@ export function ATextArea({
   rows?: number;
   className?: string;
   disabled?: boolean;
+  "aria-label"?: string;
 }) {
   return (
     <textarea
       value={value}
       rows={rows}
+      aria-label={ariaLabel}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       disabled={disabled}
@@ -216,7 +214,7 @@ export function ABadge({
     amber: "bg-clay-tint text-clay-deep",
     blue: "bg-info-tint text-info",
     gray: "bg-ink-muted/5 text-ink-muted",
-    purple: "bg-[#efe9f8] text-[#6d4aa8]",
+    purple: "bg-purple-tint text-purple-deep",
     clay: "bg-clay-tint text-clay-deep",
     pine: "bg-pine text-white",
   };

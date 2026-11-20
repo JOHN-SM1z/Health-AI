@@ -1,8 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadTestEnvironment } from "./environment";
 import { createClient } from "@supabase/supabase-js";
+import { loadTestEnvironment } from "./environment";
 
 /**
  * Probes the local Supabase stack once, before any test worker starts.
@@ -16,6 +16,7 @@ const MARKER = join(tmpdir(), "health-ai-local-db.json");
 const SEED_CLINIC_ID = "11111111-1111-4111-8111-111111111111";
 
 export default async function globalSetup(): Promise<void> {
+  // Refuse remote targets before even probing. CI-injected values win over files.
   loadTestEnvironment();
 
   const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -49,6 +50,9 @@ export default async function globalSetup(): Promise<void> {
 
   writeFileSync(MARKER, JSON.stringify({ available, reason }));
   if (!available) {
+    if (process.env.REQUIRE_TEST_DATABASE === "true") {
+      throw new Error(`Required local test database unavailable: ${reason}`);
+    }
     console.warn(`\n⚠️  local Supabase unavailable — integration suites will be SKIPPED (${reason})\n`);
   }
 }

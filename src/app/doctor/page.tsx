@@ -1,7 +1,300 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {redirect} from "next/navigation";
-import {getStaffContext} from "@/lib/auth/staff";
-import {getOperationsSettings} from "@/lib/operations/server";
-import {LiveQueue} from "@/components/operations/live-queue";
-import {ScheduledDoctorQueue} from "@/components/operations/scheduled-doctor-queue";
-export default async function DoctorQueuePage({searchParams}:{searchParams:Promise<{queue?:string}>}){const ctx=await getStaffContext();if(!ctx?.clinicId)redirect("/login");const mode=(await getOperationsSettings(ctx.clinicId)).mode;const scheduled=mode==="scheduled"||(mode==="mixed"&&(await searchParams).queue==="scheduled");return <>{mode==="mixed"&&<nav className="mb-5 flex gap-4 text-sm"><Link href="/doctor">Jonli navbat</Link><Link href="/doctor?queue=scheduled">Belgilangan qabullar</Link></nav>}{scheduled?<ScheduledDoctorQueue timezone={ctx.clinicTimezone}/>:<LiveQueue doctor/>}</>;}
+import { createClient } from "@/lib/supabase/browser";
+import type { Database } from "@/lib/supabase/database.types";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AModal, LoadingRow } from "@/components/admin/ui";
+import { ListOrdered } from "lucide-react";
+import {
+  STATUS_LABELS,
+  STATUS_TONES,
+  REFERRAL_PRIORITY_LABELS,
+  formatTime,
+  formatPrice,
+  formatDateTime,
+  adminApi,
+  AdminApiError,
+} from "@/lib/admin/client";
+import { localDayWindow } from "@/lib/time/local";
+import { ReferralDialog } from "@/components/doctor/referral-dialog";
+import { DoctorLiveQueue } from "@/components/operations/doctor-live-queue";
+import { LabSummaryPanel } from "@/components/doctor/lab-summary";
+
+const WEEKDAYS = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
+const MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
+
+type Row = {
+  id: string;
+  patient_id: string;
+  start_at: string;
+  status: Database["public"]["Enums"]["appointment_status"];
+  patients: { full_name: string | null; phone: string | null } | null;
+  services: { name: string; price: number } | null;
+};
+
+/** Metadata only — the reason and handoff note stay on the referral page. */
+type PendingReferral = {
+  id: string;
+  priority: string;
+  createdAt: string;
+  patientName: string | null;
+  referringDoctor: { id: string; name: string } | null;
+};
+
+export default function DoctorQueuePage() {
+  const [rows, setRows] = useState<Row[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [doctorName, setDoctorName] = useState<string | null>(null);
+  const [referFor, setReferFor] = useState<Row | null>(null);
+  const [labFor, setLabFor] = useState<Row | null>(null);
+  const [sentReferralId, setSentReferralId] = useState<string | null>(null);
+  const [pendingReferrals, setPendingReferrals] = useState<PendingReferral[] | null>(null);
+  const [referralsError, setReferralsError] = useState<string | null>(null);
+  // Client-only: rendered from fixed arrays (NOT Intl) so server and client
+  // produce identical strings regardless of ICU/locale data — avoids React
+  // #418 hydration mismatch (Node and Chromium differ on uz-UZ).
+  const [todayLabel] = useState(() => {
+    const now = new Date();
+    return `${WEEKDAYS[now.getDay()]}, ${now.getDate()}-${MONTHS[now.getMonth()]}`;
+  });
+
+  const load = async () => {
+    const supabase = createClient();
+    const authData = await supabase.auth.getUser();
+    const uid = authData.data.user?.id;
+
+    const { data: doctor } = await supabase
+      .from("doctors")
+      .select("name")
+      .eq("profile_id", uid ?? "")
+      .maybeSingle();
+
+    if (!doctor) {
+      setRows([]);
+      setDoctorName(null);
+      return;
+    }
+    setDoctorName(doctor.name);
+
+    // "Today" must use the clinic's own timezone, never the browser's (see
+    // src/lib/time/local.ts) — a doctor's device may not be set to the
+    // clinic's local time.
+    let day = { start: new Date(new Date().setHours(0, 0, 0, 0)).toISOString(), end: new Date(new Date().setHours(24, 0, 0, 0)).toISOString() };
+    try {
+      const me = await adminApi.get<{ clinicTimezone: string }>("/api/admin/me");
+      day = localDayWindow(me.clinicTimezone);
+    } catch {
+      // Fall back to browser-local "today" rather than blocking the queue
+      // entirely — best-effort only when the identity call itself fails.
+    }
+
+    const { data, error: err } = await supabase
+      .from("appointments")
+      .select("id, patient_id, start_at, status, doctors!inner(profile_id), patients(full_name, phone), services(name, price)")
+      .eq("doctors.profile_id", uid ?? "")
+      .gte("start_at", day.start)
+      .lt("start_at", day.end)
+      .not("status", "in", '("cancelled","no_show")')
+      .order("start_at", { ascending: true });
+    if (err) {
+      setError("Navbatni yuklab bo‘lmadi");
+      return;
+    }
+    setRows(data ?? []);
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  // Referrals colleagues sent to this doctor that still wait for a response.
+  useEffect(() => {
+    adminApi
+      .get<{ referrals: PendingReferral[] }>("/api/doctor/referrals?box=incoming&status=pending")
+      .then((res) => setPendingReferrals(res.referrals))
+      .catch((e) => {
+        setPendingReferrals([]);
+        // An unlinked account already sees the "not linked" notice below.
+        if (!(e instanceof AdminApiError && e.code === "doctor_not_linked")) setReferralsError("Yo‘llanmalarni yuklab bo‘lmadi");
+      });
+  }, []);
+
+  const nextPatient = useMemo(() => {
+    if (!rows) return null;
+    return (
+      rows.find((r) => r.status === "checked_in") ??
+      rows.find((r) => r.status === "confirmed") ??
+      rows.find((r) => r.status === "pending") ??
+      null
+    );
+  }, [rows]);
+
+  const advance = async (r: Row) => {
+    const next =
+      r.status === "pending" || r.status === "confirmed"
+        ? "in_progress"
+        : r.status === "in_progress"
+          ? "completed"
+          : r.status === "checked_in"
+            ? "in_progress"
+            : null;
+    if (!next) return;
+    setBusyId(r.id);
+    try {
+      await adminApi.patch(`/api/doctor/appointments/${r.id}`, { status: next });
+      await load();
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Xatolik yuz berdi");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div>
+      <PageHeader
+        title="Bugungi navbat"
+        subtitle={doctorName ? `Shifokor: ${doctorName}` : todayLabel}
+      />
+
+      {error && <AError message={error} />}
+
+      <DoctorLiveQueue />
+
+      {sentReferralId && (
+        <Card className="mb-6 border-pine/30 bg-pine-tint/60">
+          <p className="text-sm font-medium text-pine-deep">
+            Yo‘llanma yuborildi.{" "}
+            <Link href={`/doctor/referrals/${sentReferralId}`} className="underline">
+              Yo‘llanmani ko‘rish
+            </Link>
+          </p>
+        </Card>
+      )}
+
+      {referralsError && <AError message={referralsError} />}
+      {pendingReferrals && pendingReferrals.length > 0 && (
+        <Card className="mb-6">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="font-display text-sm font-bold text-foreground">Sizga kelgan yo‘llanmalar ({pendingReferrals.length})</p>
+            <Link href="/doctor/referrals" className="text-sm font-medium text-pine hover:underline">
+              Barchasi
+            </Link>
+          </div>
+          <ul className="divide-y divide-hairline/70">
+            {pendingReferrals.slice(0, 5).map((r) => (
+              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                <div>
+                  <p className="font-medium text-foreground">{r.patientName ?? "—"}</p>
+                  <p className="text-xs text-ink-muted">
+                    {r.referringDoctor?.name ?? "—"} · {formatDateTime(r.createdAt)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  {r.priority === "urgent" && <ABadge tone="red">{REFERRAL_PRIORITY_LABELS.urgent}</ABadge>}
+                  <Link href={`/doctor/referrals/${r.id}`} className="font-medium text-pine hover:underline">
+                    Ko‘rish
+                  </Link>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {nextPatient && (
+        <Card className="mb-6 border-pine/30 bg-pine-tint/60">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-pine-deep">
+                <span className="pulse-dot" />
+                Navbatdagi bemor
+              </p>
+              <p className="font-display mt-1 text-lg font-bold text-foreground">{nextPatient.patients?.full_name ?? "—"}</p>
+              <p className="font-numeric text-sm text-ink-muted">
+                {formatTime(nextPatient.start_at)} · {nextPatient.services?.name ?? "—"} · {formatPrice(nextPatient.services?.price)}
+              </p>
+            </div>
+            <AButton loading={busyId === nextPatient.id} onClick={() => void advance(nextPatient)}>
+              {nextPatient.status === "in_progress" ? "Yakunlash" : "Qabulni boshlash"}
+            </AButton>
+          </div>
+        </Card>
+      )}
+
+      {rows === null ? (
+        <Card><LoadingRow /></Card>
+      ) : doctorName === null ? (
+        <Card>
+          <AEmpty
+            title="Shifokor hisobi ulanmagan"
+            subtitle="Admin panelda shifokor kartasiga profilingizni bog‘lang (Shifokorlar → Boshqarish)."
+            icon={<ListOrdered className="h-6 w-6" />}
+          />
+        </Card>
+      ) : rows.length === 0 ? (
+        <Card>
+          <AEmpty
+            title="Bugun navbat yo‘q"
+            subtitle="Barcha qabullar yakunlangan yoki rejalashtirilmagan"
+            icon={<ListOrdered className="h-6 w-6" />}
+          />
+        </Card>
+      ) : (
+        <ATable headers={["Vaqt", "Bemor", "Xizmat", "Narx", "Holat", "Amallar"]}>
+          {rows.map((r) => (
+            <tr key={r.id} className={r.id === nextPatient?.id ? "bg-pine-tint/50" : "hover:bg-sand"}>
+              <td className="px-4 py-3 font-semibold text-foreground">{formatTime(r.start_at)}</td>
+              <td className="px-4 py-3">
+                <Link href={`/doctor/patients/${r.patient_id}`} className="font-medium text-foreground hover:text-pine hover:underline">
+                  {r.patients?.full_name ?? "—"}
+                </Link>
+                {r.patients?.phone && <p className="text-xs text-ink-muted">{r.patients.phone}</p>}
+              </td>
+              <td className="px-4 py-3 text-foreground">{r.services?.name ?? "—"}</td>
+              <td className="px-4 py-3 text-foreground">{formatPrice(r.services?.price)}</td>
+              <td className="px-4 py-3"><ABadge tone={STATUS_TONES[r.status]}>{STATUS_LABELS[r.status]}</ABadge></td>
+              <td className="px-4 py-3">
+                <div className="flex flex-wrap gap-2">
+                  {r.status !== "completed" && (
+                    <AButton size="sm" variant={r.status === "in_progress" ? "primary" : "outline"} loading={busyId === r.id} onClick={() => void advance(r)}>
+                      {r.status === "in_progress" ? "Yakunlash" : r.status === "checked_in" ? "Boshlash" : "Jarayonga olish"}
+                    </AButton>
+                  )}
+                  <AButton size="sm" variant="ghost" onClick={() => setLabFor(r)}>
+                    Laboratoriya xulosasi
+                  </AButton>
+                  {(r.status === "in_progress" || r.status === "completed") && (
+                    <AButton size="sm" variant="outline" onClick={() => setReferFor(r)}>
+                      Yo‘llanma
+                    </AButton>
+                  )}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </ATable>
+      )}
+
+      {labFor && (
+        <AModal title={`Laboratoriya xulosasi — ${labFor.patients?.full_name ?? "bemor"}`} onClose={() => setLabFor(null)} maxWidth="max-w-2xl">
+          <LabSummaryPanel patientId={labFor.patient_id} />
+        </AModal>
+      )}
+
+      {referFor && (
+        <ReferralDialog
+          consultation={{ appointmentId: referFor.id, startAt: referFor.start_at, serviceName: referFor.services?.name ?? null }}
+          patientName={referFor.patients?.full_name ?? "—"}
+          onClose={() => setReferFor(null)}
+          onCreated={(id) => {
+            setReferFor(null);
+            setSentReferralId(id);
+          }}
+        />
+      )}
+    </div>
+  );
+}

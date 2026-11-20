@@ -101,6 +101,19 @@ export async function GET() {
       .eq("ai_enabled", false);
     if (attentionError) throw attentionError;
 
+    // Urgent wording no staff member has taken over since (see
+    // conversations.urgent_at) — few rows, compared here.
+    const { data: urgentRows, error: urgentError } = await supabase
+      .from("conversations")
+      .select("urgent_at, taken_over_at")
+      .eq("clinic_id", ctx.clinicId)
+      .in("status", [...activeStatuses])
+      .not("urgent_at", "is", null);
+    if (urgentError) throw urgentError;
+    const urgentConversations = (urgentRows ?? []).filter(
+      (c) => c.urgent_at && (!c.taken_over_at || c.taken_over_at < c.urgent_at),
+    ).length;
+
     return ok({
       day: { start, end },
       counts,
@@ -111,6 +124,7 @@ export async function GET() {
       upcoming_reminders: upcomingReminders,
       active_conversations: activeConversations ?? 0,
       attention_conversations: attentionConversations ?? 0,
+      urgent_conversations: urgentConversations,
     });
   } catch (e) {
     return handleApiError(e);

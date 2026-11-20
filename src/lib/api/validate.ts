@@ -1,11 +1,21 @@
 import { z } from "zod";
 import { ApiError } from "@/lib/api/errors";
+import { assertSameOrigin } from "@/lib/api/same-origin";
 
-/** Parses and validates a JSON request body against a schema. */
+/**
+ * Parses and validates a JSON request body against a schema.
+ *
+ * Every state-changing JSON route goes through here, so this is also where a
+ * cross-site request is refused (security review F3): a browser always sends
+ * Origin on a cross-site POST/PUT/PATCH, and a foreign Origin is rejected
+ * before the body is read. Session cookies are SameSite=Lax as well; this is
+ * the second, independent layer. Server-to-server callers send no Origin.
+ */
 export async function parseBody<T extends z.ZodTypeAny>(
   request: Request,
   schema: T,
 ): Promise<z.infer<T>> {
+  assertSameOrigin(request);
   let raw: unknown;
   try {
     raw = await request.json();

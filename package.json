@@ -4,13 +4,19 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "node ./node_modules/vitest/vitest.mjs run",
+    "test:notification-claims": "node scripts/test-notification-claims.mjs",
+    "test:schema-rehearsal": "node scripts/rehearse-canonical-schema.mjs",
     "db:reset-local": "npx supabase db reset --local",
-    "create-owner": "node --env-file=.env scripts/create-owner.ts"
+    "db:full-setup": "node scripts/build-full-db-setup.mjs",
+    "create-owner": "node --env-file=.env scripts/create-owner.ts",
+    "e2e:seed": "node scripts/run-e2e.mjs --seed",
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "sync-telegram-bots": "node --env-file=.env scripts/sync-telegram-bots.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
@@ -23,6 +29,7 @@
     "grammy": "^1.45.1",
     "lucide-react": "^1.31.0",
     "next": "16.3.0",
+    "qrcode": "^1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tailwind-merge": "^3.6.0",
@@ -31,10 +38,13 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20.19.43",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
+    "playwright": "1.56.1",
+    "postgres": "^3.4.9",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.10"

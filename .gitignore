@@ -6,6 +6,9 @@
 # testing
 /coverage
 /coverage-html
+/test-results
+/tmp/
+/backups/
 
 # next.js
 /.next/

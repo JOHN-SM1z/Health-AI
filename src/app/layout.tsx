@@ -8,7 +8,8 @@ const sora = Sora({ subsets: ["latin"], variable: "--font-sora", display: "swap"
 const jetbrains = JetBrains_Mono({ subsets: ["latin", "cyrillic"], variable: "--font-jetbrains", display: "swap" });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://app.healthai.uz"),
+  // The public address (healthai.uz in production): links and social previews are built from it.
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL?.startsWith("https://") ? process.env.NEXT_PUBLIC_APP_URL : "https://healthai.uz"),
   title: {
     default: "Health AI — Klinika",
     template: "%s — Health AI",
@@ -27,7 +28,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="uz" data-scroll-behavior="smooth" suppressHydrationWarning>
+    <html lang="uz" suppressHydrationWarning>
       <body
         className={`${inter.variable} ${sora.variable} ${jetbrains.variable} bg-[var(--tg-bg,var(--background))] text-[var(--tg-text,var(--foreground))] antialiased`}
       >

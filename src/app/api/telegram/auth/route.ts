@@ -3,7 +3,8 @@ import { z } from "zod";
 import { getClinicFromRequest } from "@/lib/clinics/context";
 import { resolvePatientFromInitData, devIdentityAllowed } from "@/lib/patients/identity";
 import { handleApiError, ApiError, ok, fail } from "@/lib/api/errors";
-import { rateLimit, keyFromIp } from "@/lib/rate-limit";
+import { keyFromIp } from "@/lib/rate-limit";
+import { sharedRateLimit } from "@/lib/rate-limit-shared";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,7 @@ const schema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-    const limit = rateLimit({ key: keyFromIp(ip, "tg-auth"), limit: 30, windowMs: 10_000 });
+    const limit = await sharedRateLimit({ key: keyFromIp(ip, "tg-auth"), limit: 30, windowMs: 10_000 });
     if (!limit.ok) {
       return fail("Juda ko‘p so‘rov", 429, "rate_limited");
     }

@@ -1,36 +1,35 @@
--- Read-only compatibility gate for codex/clinic-operations-pilot.
--- Run as the migration administrator. Returns schema metadata only, never patients.
--- Any row is a BLOCKER. No rows means these prerequisites exist; it does NOT
--- replace migration-history reconciliation, RLS tests, or workflow verification.
+-- Read-only canonical schema compatibility gate. Returns metadata only.
+-- Any row blocks release. No rows is necessary but does not replace tests.
 with required_columns(table_name, column_name) as (values
-  ('patients', 'patient_number'),
-  ('visits', 'clinic_id'), ('visits', 'patient_id'),
-  ('payments', 'visit_id'),
-  ('clinical_notes', 'content'), ('clinical_notes', 'visit_id'),
-  ('referrals', 'referral_reason'), ('referrals', 'clinical_handoff_note'),
-  ('referrals', 'updated_by'), ('referrals', 'idempotency_key'),
-  ('referrals', 'revocation_reason'),
-  ('lab_orders', 'created_by'), ('lab_orders', 'fingerprint'),
-  ('lab_specimens', 'order_id'),
-  ('lab_order_tests', 'order_id'), ('lab_result_drafts', 'order_id')
+  ('patients','patient_number'), ('patients','merged_into_patient_id'),
+  ('visits','clinic_id'), ('visits','patient_id'), ('visits','kind'),
+  ('appointments','queue_encounter'), ('clinical_records','appointment_id'),
+  ('clinical_records','author_doctor_id'), ('clinical_records','corrects_record_id'),
+  ('referrals','reason'), ('referrals','handoff_note'), ('referrals','expires_at'),
+  ('visit_charges','clinic_id'), ('visit_transactions','clinic_id'),
+  ('lab_order_items','clinic_id'), ('lab_results','clinic_id'),
+  ('notification_jobs','claim_token'), ('notification_jobs','lease_until')
 ), required_rpcs(signature) as (values
-  ('public.register_walk_in(uuid,uuid,uuid,uuid,text,text,uuid,uuid)'),
-  ('public.transition_visit(uuid,uuid,uuid,text,text)'),
-  ('public.doctor_patient_access(uuid,uuid,uuid)'),
-  ('public.set_manual_visit_payment(uuid,uuid,uuid,public.payment_status,public.payment_status,text,text)'),
-  ('public.operations_summary(uuid,uuid,date)'),
-  ('public.lab_workbench(uuid,uuid,text,jsonb)')
+  ('public.register_arrival(uuid,uuid,uuid,uuid,jsonb,uuid,uuid[])'),
+  ('public.record_visit_payment(uuid,uuid,uuid,uuid,jsonb,numeric)'),
+  ('public.transition_visit(uuid,uuid,uuid,text,text,text)'),
+  ('public.start_visit_consultation(uuid,uuid,uuid,text)'),
+  ('public.open_queue_encounter(uuid,uuid,uuid,uuid,uuid)'),
+  ('public.doctor_patient_access(uuid,uuid)'),
+  ('public.renew_notification_job_claim(uuid,uuid,uuid)'),
+  ('public.finish_notification_job_claim(uuid,uuid,uuid,public.notification_job_status,text,bigint)')
+), functions as (
+  select signature, to_regprocedure(signature) as oid from required_rpcs
 )
 select 'missing_column' as blocker, r.table_name || '.' || r.column_name as object
-from required_columns r
-where not exists (
-  select 1 from information_schema.columns c
-  where c.table_schema='public' and c.table_name=r.table_name and c.column_name=r.column_name
+from required_columns r where not exists (
+  select 1 from information_schema.columns c where c.table_schema='public'
+    and c.table_name=r.table_name and c.column_name=r.column_name
 )
-union all
-select 'missing_rpc', signature from required_rpcs where to_regprocedure(signature) is null
-union all
-select 'rls_disabled', c.relname from pg_class c
-join pg_namespace n on n.oid=c.relnamespace
+union all select 'missing_rpc', signature from functions where oid is null
+union all select 'browser_rpc_grant', signature from functions
+where oid is not null and (has_function_privilege('anon',oid,'execute') or has_function_privilege('authenticated',oid,'execute'))
+union all select 'rls_disabled', c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace
 where n.nspname='public' and c.relkind in ('r','p') and not c.relrowsecurity
+union all select 'legacy_schema_present','clinical_notes' where to_regclass('public.clinical_notes') is not null
 order by blocker, object;

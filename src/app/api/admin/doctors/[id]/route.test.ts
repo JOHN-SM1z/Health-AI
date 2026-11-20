@@ -29,7 +29,7 @@ vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => supabaseMock,
 }));
 
-import { PUT, DELETE } from "./route";
+import { POST, PUT, DELETE } from "./route";
 
 const DOCTOR_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -173,5 +173,54 @@ describe("DELETE /api/admin/doctors/[id] (remove time block)", () => {
     expect(res.status).toBe(200);
     expect(blocks.deleteConditions).toContainEqual(["id", "block-1"]);
     expect(blocks.deleteConditions).toContainEqual(["clinic_id", "clinic-a"]);
+  });
+});
+
+describe("POST /api/admin/doctors/[id] (replace weekly working hours)", () => {
+  function hoursTable() {
+    const calls: string[] = [];
+    const conditions: Array<[string, unknown]> = [];
+    const chain: Record<string, unknown> = {};
+    chain.delete = () => {
+      calls.push("delete");
+      return chain;
+    };
+    chain.insert = () => {
+      calls.push("insert");
+      return Promise.resolve({ error: null });
+    };
+    chain.eq = (...args: unknown[]) => {
+      conditions.push(args as [string, unknown]);
+      return chain;
+    };
+    chain.then = (resolve: (v: unknown) => void) => resolve({ error: null });
+    return { chain, calls, conditions };
+  }
+  const postReq = (schedule: unknown) =>
+    new NextRequest(`http://localhost/api/admin/doctors/${DOCTOR_ID}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ schedule }),
+    });
+
+  it("refuses a schedule naming a weekday twice before touching the existing hours", async () => {
+    const hours = hoursTable();
+    supabaseMock.from.mockImplementation((table: string) => (table === "doctors" ? doctorsTable(true) : hours.chain));
+    const res = await POST(postReq([
+      { weekday: 1, start: "09:00", end: "13:00" },
+      { weekday: 1, start: "14:00", end: "18:00" },
+    ]), ctx());
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { code?: string }).code).toBe("duplicate_weekday");
+    expect(hours.calls).toEqual([]);
+  });
+
+  it("replaces the hours only within the staff member's own clinic", async () => {
+    const hours = hoursTable();
+    supabaseMock.from.mockImplementation((table: string) => (table === "doctors" ? doctorsTable(true) : hours.chain));
+    const res = await POST(postReq([{ weekday: 2, start: "09:00", end: "18:00" }]), ctx());
+    expect(res.status).toBe(200);
+    expect(hours.calls).toEqual(["delete", "insert"]);
+    expect(hours.conditions).toEqual(expect.arrayContaining([["doctor_id", DOCTOR_ID], ["clinic_id", "clinic-a"]]));
   });
 });

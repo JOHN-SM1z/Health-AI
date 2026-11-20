@@ -1,20 +1,12 @@
 import type { NextRequest } from "next/server";
-import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRoles } from "@/lib/auth/guards";
 import { canViewPaymentDynamics } from "@/lib/auth/staff";
-import { handleApiError, ApiError, ok } from "@/lib/api/errors";
+import { handleApiError, ok } from "@/lib/api/errors";
 import { aggregateAppointments, type AnalyticsRow } from "@/lib/analytics/aggregate";
-import { localDayWindowForDate } from "@/lib/time/local";
+import { resolveAnalyticsWindow } from "@/lib/analytics/range";
 
 export const dynamic = "force-dynamic";
-
-const isoDate = /^\d{4}-\d{2}-\d{2}$/;
-const querySchema = z.object({
-  range: z.coerce.number().int().min(1).max(365).default(30),
-  from: z.string().regex(isoDate, "Sana YYYY-MM-DD formatida bo‘lishi kerak").optional(),
-  to: z.string().regex(isoDate, "Sana YYYY-MM-DD formatida bo‘lishi kerak").optional(),
-});
 
 /**
  * Management analytics: per-clinic appointment aggregates derived from the
@@ -29,26 +21,14 @@ export async function GET(request: NextRequest) {
   try {
     const ctx = await requireRoles("owner", "admin", "manager");
     const mayViewPaymentDynamics = canViewPaymentDynamics(ctx);
-    const params = querySchema.parse(Object.fromEntries(request.nextUrl.searchParams));
+    const { range, from, to, since, until } = resolveAnalyticsWindow(request.nextUrl.searchParams, ctx.clinicTimezone);
     const supabase = createAdminClient();
-
-    let since: string;
-    let until: string | null = null;
-    let range = params.range;
-    if (params.from && params.to) {
-      if (params.from > params.to) {
-        throw new ApiError(400, "Boshlanish sanasi tugash sanasidan keyin bo‘lishi mumkin emas", "bad_range");
-      }
-      since = localDayWindowForDate(ctx.clinicTimezone, params.from).start;
-      until = localDayWindowForDate(ctx.clinicTimezone, params.to).end;
-      range = Math.round((new Date(until).getTime() - new Date(since).getTime()) / 86400000);
-    } else {
-      since = new Date(Date.now() - range * 86400000).toISOString();
-    }
 
     let query = supabase
       .from("appointments")
-      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name), payments(status, amount)")
+      .select(
+        "id, source, status, cancelled_reason, no_show_reason, start_at, patients(full_name), services(name, price), doctors(name), payments(status, amount)",
+      )
       .eq("clinic_id", ctx.clinicId)
       .gte("start_at", since);
     if (until) query = query.lt("start_at", until);
@@ -59,8 +39,8 @@ export async function GET(request: NextRequest) {
 
     return ok({
       range,
-      from: params.from ?? null,
-      to: params.to ?? null,
+      from,
+      to,
       total: agg.total,
       cancelled: agg.cancelled,
       no_shows: agg.noShows,
@@ -77,6 +57,13 @@ export async function GET(request: NextRequest) {
       revenue_trend: mayViewPaymentDynamics ? agg.revenueTrend : [],
       revenue_by_week: mayViewPaymentDynamics ? agg.revenueByWeek : [],
       revenue_by_month: mayViewPaymentDynamics ? agg.revenueByMonth : [],
+      unpaid_total: mayViewPaymentDynamics ? agg.unpaidTotal : null,
+      pending_total: mayViewPaymentDynamics ? agg.pendingTotal : null,
+      refunded_total: mayViewPaymentDynamics ? agg.refundedTotal : null,
+      average_ticket: mayViewPaymentDynamics ? agg.averageTicket : null,
+      // Individually identifies a patient by name alongside a payment amount
+      // — the same financial-data gate as every other money figure here.
+      recent_payments: mayViewPaymentDynamics ? agg.recentPayments : [],
       top_services: agg.topServices.map(({ name, count, completedCount, revenue }) => ({
         name,
         count,

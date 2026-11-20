@@ -3,6 +3,13 @@
 -- Applied automatically by `supabase db reset` (local only).
 -- ============================================================================
 
+-- This is a TEST database: test suites may erase the clinics and patients
+-- they create. Production and staging never have this row, so there the
+-- database refuses to delete clinics, patients, clinical records and
+-- referrals (20261008000004_retention_guard).
+insert into internal.retention_override (reason)
+values ('local development and CI test database — never in production');
+
 insert into public.clinics (id, name, slug, timezone, phone, address, email, currency, opening_hours, privacy_notice)
 values (
   '11111111-1111-4111-8111-111111111111',

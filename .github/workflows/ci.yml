@@ -1,0 +1,176 @@
+# Release gates on every push: lint, typecheck, tests, build — and the database,
+# integration, authorization and end-to-end suites against a local Supabase
+# stack (migrations + seed) started by the Supabase CLI. No secrets are used:
+# the stack's keys are its local development keys, and the app's own secrets
+# are random per run.
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Lint, typecheck, tests (no database), build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      # Without a database the integration suites skip (they say so); everything else runs.
+      - run: npm test
+      - run: node scripts/build-full-db-setup.mjs --check
+      - name: Build
+        run: |
+          cp .env.test.example .env
+          npm run build
+
+  database:
+    name: Database, integration and end-to-end tests
+    # Pinned: Playwright 1.56 cannot install Chromium on ubuntu-latest (26.04) yet.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: supabase/setup-cli@v1
+        with:
+          # A fixed version: "latest" asks the GitHub API on every run and fails when it is rate-limited.
+          version: 2.120.0
+      - name: Start Supabase (migrations + seed)
+        # The runner's Docker occasionally fails to start a container ("failed to start containers"); try again on a
+        # clean stack rather than failing the whole run. A migration error fails all three attempts and the job.
+        run: |
+          for attempt in 1 2 3; do
+            supabase start -x studio,imgproxy,edge-runtime,logflare,vector,realtime,postgres-meta && exit 0
+            echo "supabase start failed (attempt $attempt); retrying on a clean stack"
+            supabase stop --no-backup || true
+            sleep 10
+          done
+          exit 1
+      - name: Write .env for the local stack
+        run: |
+          supabase status -o env > "$RUNNER_TEMP/supabase.env"
+          set -a; . "$RUNNER_TEMP/supabase.env"; set +a
+          for v in API_URL ANON_KEY SERVICE_ROLE_KEY DB_URL JWT_SECRET; do
+            [ -n "${!v}" ] || { echo "supabase status did not report $v"; exit 1; }
+          done
+          {
+            grep -v -E '^(SUPABASE_URL|SUPABASE_ANON_KEY|SUPABASE_SERVICE_ROLE_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_WEBHOOK_SECRET|CRON_SECRET|ENABLE_TELEGRAM_DEV_MODE)=' .env.test.example
+            echo "SUPABASE_URL=$API_URL"
+            echo "NEXT_PUBLIC_SUPABASE_URL=$API_URL"
+            echo "SUPABASE_ANON_KEY=$ANON_KEY"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$ANON_KEY"
+            echo "SUPABASE_SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY"
+            echo "SUPABASE_DB_URL=$DB_URL"
+            echo "SUPABASE_JWT_SECRET=$JWT_SECRET"
+            echo "OWNER_EMAIL=owner@ci.local"
+            echo "OWNER_PASSWORD=Owner-$(openssl rand -hex 12)"
+            echo "TELEGRAM_BOT_TOKEN=123456789:$(openssl rand -hex 16)"
+            echo "TELEGRAM_WEBHOOK_SECRET=$(openssl rand -hex 32)"
+            echo "CRON_SECRET=$(openssl rand -hex 32)"
+            echo "ENABLE_TELEGRAM_DEV_MODE=false"
+            # The mock external laboratory for the e2e run (local database only; see providers/registry.ts).
+            echo "ALLOW_MOCK_LAB_PROVIDER=true"
+            # The signed test payment provider and the local SMS outbox for the e2e run (local database only;
+            # production refuses both — src/instrumentation.ts).
+            echo "ONLINE_PAYMENT_PROVIDER=test_online"
+            echo "ALLOW_TEST_ONLINE_PAYMENT=true"
+            echo "TEST_ONLINE_PAYMENT_SECRET=$(openssl rand -hex 32)"
+            echo "SMS_PROVIDER=test"
+            echo "ALLOW_TEST_SMS=true"
+          } > .env
+          # Vitest only loads test-specific configuration; never a real app env.
+          cp .env .env.test
+      - name: Clinic owner account (used by the session tests)
+        run: npm run create-owner
+      - name: Tests (unit, integration, authorization, database)
+        run: npm test
+        env:
+          REQUIRE_TEST_DATABASE: "true"
+      - name: Worker claim migration and concurrency checks (disposable database)
+        run: |
+          set -a; . ./.env.test; set +a
+          npm run test:notification-claims
+      - name: Canonical clean-install and upgrade rehearsal (disposable databases)
+        run: |
+          set -a; . ./.env.test; set +a
+          npm run test:schema-rehearsal
+      - name: Build and start the app
+        run: |
+          npm run build
+          cp -r public .next/standalone/ 2>/dev/null || true
+          cp -r .next/static .next/standalone/.next/
+          set -a; . ./.env; set +a
+          HOSTNAME=127.0.0.1 PORT=3000 nohup node .next/standalone/server.js > "$RUNNER_TEMP/app.log" 2>&1 &
+          for i in $(seq 1 60); do curl -fsS -o /dev/null http://127.0.0.1:3000/login && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/app.log"; exit 1
+      - name: Browser for the end-to-end scripts
+        run: npx playwright install --with-deps chromium
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"
+      - name: End-to-end workflow and HTTP red team
+        run: |
+          npm run e2e:seed
+          npm run test:e2e
+      - name: App log and screenshots
+        if: failure()
+        run: cat "$RUNNER_TEMP/app.log" || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-screenshots
+          path: test-results/
+          if-no-files-found: ignore
+
+  docker-image:
+    name: Server image (Uzbekistan hosting)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      # The image deploy/uz/README.md runs on the server: it must build, carry the bot re-pointing script with no
+      # packages, and refuse to start without its secrets (src/instrumentation.ts fails closed).
+      - name: Build the image
+        run: |
+          docker build -t healthai:ci \
+            --build-arg NEXT_PUBLIC_SUPABASE_URL=https://api.healthai.uz \
+            --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=ci-public-anon-key \
+            --build-arg NEXT_PUBLIC_APP_URL=https://healthai.uz .
+      - name: The bot script runs inside the image
+        run: |
+          set +e
+          out=$(docker run --rm --entrypoint node healthai:ci scripts/sync-telegram-bots.mjs 2>&1); code=$?
+          echo "$out"
+          if [ "$code" != "1" ] || ! echo "$out" | grep -q "Set NEXT_PUBLIC_APP_URL"; then echo "unexpected (exit $code)"; exit 1; fi
+          out=$(docker run --rm --entrypoint node -e NEXT_PUBLIC_APP_URL=https://healthai.uz -e SUPABASE_URL=http://127.0.0.1:9 \
+            -e SUPABASE_SERVICE_ROLE_KEY=x -e TELEGRAM_WEBHOOK_SECRET=y healthai:ci scripts/sync-telegram-bots.mjs 2>&1); code=$?
+          echo "$out"
+          if [ "$code" != "1" ] || ! echo "$out" | grep -q "Could not read the clinic bots"; then echo "unexpected (exit $code)"; exit 1; fi
+      - name: The server refuses to start without its secrets
+        run: |
+          set +e
+          timeout 30 docker run --rm healthai:ci > start.log 2>&1
+          cat start.log
+          grep -q "Failing closed" start.log

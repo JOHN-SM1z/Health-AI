@@ -1,42 +1,61 @@
-import { getOperationsSettings } from "@/lib/operations/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { adminWorkspaceRedirect, getStaffContext, hasRole, isCallCenterStaff } from "@/lib/auth/staff";
+import { adminWorkspaceRedirect, requirePanelContext, hasAnyRole, hasRole, isCallCenterStaff, canViewPaymentDynamics, KASSA_ROLES, RECEPTION_ROLES } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
-import { CalendarDays, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users } from "lucide-react";
+import { NavStrip } from "@/components/admin/nav-strip";
+import { CalendarDays, DoorOpen, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge, Activity, Building2, CreditCard } from "lucide-react";
+import { getClinicSubscription } from "@/lib/billing/subscription";
+import { SubscriptionBanner } from "@/components/admin/subscription-banner";
+import { labCan } from "@/lib/labs/permissions";
+import { NotificationBell } from "@/components/staff/notification-bell";
 
 export const metadata = { title: "Boshqaruv paneli" };
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const ctx = await getStaffContext();
-  if (!ctx) redirect("/login");
+  const ctx = await requirePanelContext();
   const workspaceRedirect = adminWorkspaceRedirect(ctx);
   if (workspaceRedirect) redirect(workspaceRedirect);
 
   const isManagement = hasRole(ctx, "admin");
   const callCenter = isCallCenterStaff(ctx);
+  // Manager can reach Analytics for appointment stats, but never actual money
+  // figures (see canViewPaymentDynamics) — a page whose entire purpose is
+  // cash flow has no non-financial content to fall back to, so it's gated
+  // on the same, narrower, owner/admin-only check rather than isManagement.
+  const financeVisible = canViewPaymentDynamics(ctx);
 
-  const scheduled = (await getOperationsSettings(ctx.clinicId!)).mode !== "walk_in";
   const nav = [
-    { href: "/admin", label: "Registratsiya va navbat", icon: <LayoutDashboard className="h-4 w-4" />, show: true },
-    { href: "/admin/appointments", label: "Belgilangan qabullar", icon: <ClipboardList className="h-4 w-4" />, show: scheduled },
-    { href: "/admin/calendar", label: "Kalendar", icon: <CalendarDays className="h-4 w-4" />, show: scheduled },
-    { href: "/admin/cashier", label: "Xizmatlar kassasi", icon: <ClipboardList className="h-4 w-4" />, show: isManagement },
-    { href: "/admin/staff", label: "Xodimlar", icon: <Users className="h-4 w-4" />, show: ctx.roles.includes("owner") },
+    { href: "/admin", label: "Bugun", icon: <LayoutDashboard className="h-4 w-4" />, show: true, exact: true },
+    { href: "/admin/reception", label: "Qabulxona", icon: <DoorOpen className="h-4 w-4" />, show: hasAnyRole(ctx.roles, RECEPTION_ROLES) },
+    { href: "/kassa", label: "Kassa", icon: <Wallet className="h-4 w-4" />, show: hasAnyRole(ctx.roles, KASSA_ROLES) },
+    { href: "/admin/appointments", label: "Qabullar", icon: <ClipboardList className="h-4 w-4" />, show: true },
+    { href: "/admin/calendar", label: "Kalendar", icon: <CalendarDays className="h-4 w-4" />, show: true },
     { href: "/admin/conversations", label: "Suhbatlar", icon: <MessagesSquare className="h-4 w-4" />, show: true },
-    { href: "/admin/patients", label: "Bemorlar", icon: <Users className="h-4 w-4" />, show: true },
+    { href: "/admin/patients", label: "Bemorlar", icon: <Users className="h-4 w-4" />, show: true, exact: true },
+    { href: "/admin/patients/merge", label: "Kartalarni birlashtirish", icon: <Merge className="h-4 w-4" />, show: hasAnyRole(ctx.roles, ["owner", "admin"]) },
+    { href: "/admin/lab-queue", label: "Namunalar", icon: <TestTube className="h-4 w-4" />, show: labCan(ctx.roles, "queue.read") },
     { href: "/admin/doctors", label: "Shifokorlar", icon: <Stethoscope className="h-4 w-4" />, show: isManagement },
     { href: "/admin/services", label: "Xizmatlar", icon: <Scissors className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/lab", label: "Laboratoriya", icon: <FlaskConical className="h-4 w-4" />, show: isManagement },
     { href: "/admin/specialties", label: "Yo‘nalishlar", icon: <Sparkles className="h-4 w-4" />, show: isManagement },
     { href: "/admin/faqs", label: "Savol-javoblar", icon: <MessagesSquare className="h-4 w-4" />, show: isManagement },
-    { href: "/admin/operations", label: "Tashriflar hisoboti", icon: <BarChart3 className="h-4 w-4" />, show: isManagement },
-    { href: "/admin/analytics", label: "Belgilangan qabullar tahlili", icon: <BarChart3 className="h-4 w-4" />, show: isManagement && scheduled },
+    { href: "/admin/analytics", label: "Tahlillar", icon: <BarChart3 className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/lab-analytics", label: "Laboratoriya tahlili", icon: <Activity className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/finance", label: "Moliya", icon: <Wallet className="h-4 w-4" />, show: financeVisible },
+    { href: "/admin/lab-kassa", label: "Laboratoriya kassasi", icon: <Receipt className="h-4 w-4" />, show: financeVisible },
+    { href: "/admin/staff", label: "Xodimlar", icon: <UserCog className="h-4 w-4" />, show: hasRole(ctx, "owner") },
+    { href: "/admin/departments", label: "Bo‘limlar", icon: <Building2 className="h-4 w-4" />, show: hasAnyRole(ctx.roles, ["owner", "admin", "manager"]) },
+    { href: "/admin/billing", label: "Obuna", icon: <CreditCard className="h-4 w-4" />, show: hasRole(ctx, "owner") },
     { href: "/admin/settings", label: "Sozlamalar", icon: <Settings className="h-4 w-4" />, show: isManagement },
+    { href: "/admin/password", label: "Parolim", icon: <KeyRound className="h-4 w-4" />, show: true },
   ].filter((n) => n.show !== false);
+
+  // Owners and administrators see the trial / payment state; nothing is blocked here (the platform decides that).
+  const subscription = hasAnyRole(ctx.roles, ["owner", "admin"]) && ctx.clinicId ? await getClinicSubscription(ctx.clinicId).catch(() => null) : null;
 
   return (
     <div className="flex min-h-dvh bg-sand">
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-hairline bg-surface md:flex">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-hairline bg-surface md:flex print:hidden">
         <div className="flex items-center gap-3 px-5 pb-5 pt-6">
           <span className="brand-tile flex h-9 w-9 items-center justify-center rounded-xl text-white">
             <HeartPulse className="h-5 w-5" />
@@ -45,13 +64,16 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <p className="font-display text-sm font-bold tracking-tight text-foreground">Health AI</p>
             <p className="max-w-[10rem] truncate text-xs text-ink-muted">{ctx.clinicName}</p>
           </div>
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 text-sm">
           <p className="font-numeric px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.16em] text-ink-muted/80">
-            {callCenter ? "Registratsiya" : "Klinika boshqaruvi"}
+            {callCenter ? "Call Center" : "Klinika boshqaruvi"}
           </p>
           {nav.map((n) => (
-            <NavLink key={n.href} href={n.href} icon={n.icon} exact={n.href === "/admin"}>
+            <NavLink key={n.href} href={n.href} icon={n.icon} exact={n.exact}>
               {n.label}
             </NavLink>
           ))}
@@ -63,7 +85,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-hairline bg-surface px-4 py-3 md:hidden">
+        <header className="flex items-center justify-between border-b border-hairline bg-surface px-4 py-3 md:hidden print:hidden">
           <Link href="/admin" className="flex items-center gap-2.5">
             <span className="brand-tile flex h-8 w-8 items-center justify-center rounded-lg text-white">
               <HeartPulse className="h-4 w-4" />
@@ -71,9 +93,22 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <span className="font-display text-sm font-bold tracking-tight">Health AI</span>
           </Link>
           <span className="pulse-dot" title="Jonli" />
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </header>
-        <nav aria-label="Mobil ish bo‘limlari" className="flex gap-2 overflow-x-auto border-b border-hairline bg-surface p-3 md:hidden">{nav.map(n => <NavLink key={n.href} href={n.href} exact={n.href === "/admin"}><span className="whitespace-nowrap">{n.label}</span></NavLink>)}</nav>
-        <div className="flex-1 overflow-x-hidden p-4 md:p-8">{children}</div>
+        {/* Phones and small tablets: the sidebar is hidden, so its sections sit in a scrollable strip. */}
+        <NavStrip label="Boshqaruv bo‘limlari">
+          {nav.map((n) => (
+            <NavLink key={n.href} href={n.href} icon={n.icon} exact={n.exact}>
+              {n.label}
+            </NavLink>
+          ))}
+        </NavStrip>
+        <div className="flex-1 overflow-x-hidden p-4 md:p-8 print:p-0">
+          {subscription && <SubscriptionBanner subscription={subscription} isOwner={hasRole(ctx, "owner")} />}
+          {children}
+        </div>
       </div>
     </div>
   );

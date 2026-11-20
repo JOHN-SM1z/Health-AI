@@ -1,30 +1,14 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
+import type { Database } from "@/lib/supabase/database.types";
+import { canDoctorAccessPatientClinicalData as clinicalAccess } from "@/lib/clinical-access/access";
 import type { StaffContext, StaffRole } from "@/lib/auth/staff";
 
-export type ReferralRow = {
-  id: string;
-  clinic_id: string;
-  patient_id: string;
-  referring_doctor_id: string;
-  referred_to_doctor_id: string;
-  originating_appointment_id: string | null;
-  referral_reason: string;
-  clinical_handoff_note: string | null;
-  priority: "routine" | "urgent" | "emergency";
-  status: "pending" | "accepted" | "in_progress" | "completed" | "declined" | "expired" | "revoked";
-  created_at: string;
-  updated_at: string;
-  accepted_at: string | null;
-  completed_at: string | null;
-  expires_at: string | null;
-  revoked_at: string | null;
-  revocation_reason: string | null;
-  revoked_by: string | null;
-  created_by: string | null;
-  updated_by: string | null;
-};
+// Compatibility callers receive metadata only. Clinical reads always go
+// through the canonical audited service and database-clock access decision.
+export type ReferralRow = Pick<Database["public"]["Tables"]["referrals"]["Row"],
+  "id" | "clinic_id" | "patient_id" | "referring_doctor_id" | "referred_to_doctor_id" | "status" | "expires_at" | "revoked_at">;
 
 export type CallerRole =
   | "referring_doctor"
@@ -49,7 +33,7 @@ export async function assertReferralAccess(
   // Resolve the referral, always scoped to the caller's clinic.
   const { data: rawReferral, error } = await supabase
     .from("referrals")
-    .select("*")
+    .select("id, clinic_id, patient_id, referring_doctor_id, referred_to_doctor_id, status, expires_at, revoked_at")
     .eq("id", referralId)
     .eq("clinic_id", ctx.clinicId)
     .maybeSingle();
@@ -153,16 +137,13 @@ export async function canDoctorAccessPatientClinicalData(
   const noAccess: PatientAccessResult = { level: "none", doctorId: null, referralId: null };
   if (!roles.includes("doctor")) return noAccess;
   const supabase = createAdminClient();
-  const { data: allowed, error } = await supabase.rpc("doctor_patient_access", {
-    p_clinic: clinicId, p_patient: patientId, p_actor: doctorProfileId,
-  });
-  if (error || allowed !== true) return noAccess;
   const { data: doctor, error: doctorError } = await supabase.from("doctors")
     .select("id").eq("profile_id", doctorProfileId).eq("clinic_id", clinicId)
     .eq("active", true).maybeSingle();
   if (doctorError || !doctor) return noAccess;
-  // Every authorized doctor sees shared history and only their own private notes.
-  return { level: "own_patient", doctorId: doctor.id, referralId: null };
+  const access = await clinicalAccess(doctor.id, patientId);
+  if (!access.allowed) return noAccess;
+  return { level: access.relationship === "own" ? "own_patient" : "referral", doctorId: doctor.id, referralId: access.activeReferralIds[0] ?? null };
 }
 
 /**

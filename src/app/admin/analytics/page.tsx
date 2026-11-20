@@ -4,22 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import { PageHeader, Card, AEmpty, AError, AInput, ASelect, StatCard, LoadingRow } from "@/components/admin/ui";
 import { BarChart3, Users, CalendarX2, TrendingUp, Stethoscope, Scissors, UserX, Wallet } from "lucide-react";
-import { adminApi, AdminApiError, SOURCE_LABELS, STATUS_LABELS, formatPrice } from "@/lib/admin/client";
+import { adminApi, AdminApiError, SOURCE_LABELS, STATUS_LABELS, PAYMENT_STATUS_LABELS, formatPrice } from "@/lib/admin/client";
 import { localDayWindowForDate } from "@/lib/time/local";
 
 type AnalyticsRow = {
   event_type: string;
   created_at: string;
   patient_id: string | null;
-};
-
-const PAYMENT_STATUS_LABELS: Record<string, string> = {
-  paid: "To‘langan",
-  unpaid: "To‘lanmagan",
-  pending: "Kutilmoqda",
-  refunded: "Qaytarilgan",
-  failed: "Muvaffaqiyatsiz",
-  manual_review: "Tekshiruvda",
 };
 
 type AppointmentAnalytics = {
@@ -191,7 +182,7 @@ export default function AnalyticsPage() {
     <div>
       <PageHeader
         title="Tahlillar"
-        subtitle="Faqat belgilangan qabullar. Jonli tashriflar uchun Tashriflar hisoboti sahifasini oching."
+        subtitle="Qabul manbalari, bekor qilish sabablari va hodisalar"
         action={
           <div className="flex flex-wrap items-center gap-2">
             {isCustomRange && (
@@ -237,7 +228,7 @@ export default function AnalyticsPage() {
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
         {appointments?.can_view_payment_dynamics && (
           <StatCard
-            label="To‘langan, yakunlangan qabullar"
+            label="Jami tushum"
             value={appointments.total_revenue === null ? "—" : formatPrice(appointments.total_revenue)}
             tone="pine"
           />

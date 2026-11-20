@@ -1,7 +1,9 @@
 /**
- * In-memory sliding-window rate limiter.
- * Suitable for a single Cloud Run instance pilot; document that global
- * limiting requires a shared store or a load-balancer policy.
+ * In-memory fixed-window rate limiter, per server instance — with N
+ * instances a caller gets up to N times the limit. Used for the public,
+ * IP-keyed limits (pair with a load-balancer policy for a global cap). Limits
+ * that guard clinical data use sharedRateLimit() (rate-limit-shared.ts),
+ * counted in Postgres across every instance.
  */
 type Bucket = { count: number; resetAt: number };
 

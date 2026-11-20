@@ -1,11 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Stethoscope, UserRound } from "lucide-react";
 import { useTelegramInitData } from "@/components/mini-app/telegram-provider";
 import { Button, Card, Input, Badge, Spinner, EmptyState, ErrorBanner, NoticeBanner, SectionTitle, cn } from "@/components/mini-app/ui";
-import { apiGet, apiPost } from "@/lib/client/api";
+import { apiGet, apiPost, getClientClinicId } from "@/lib/client/api";
+import { newIdempotencyKey } from "@/lib/idempotency-key";
+import { IdentityStep, type OnlineProfile } from "@/components/mini-app/identity-step";
+import { ConcernStep } from "@/components/mini-app/concern-step";
+import { OnlinePayment } from "@/components/mini-app/online-payment";
 
 type Catalog = {
   clinic: {
@@ -53,6 +57,8 @@ type AppointmentResponse = {
 
 type Step =
   | { name: "consent" }
+  | { name: "identity" }
+  | { name: "concern" }
   | { name: "choose" }
   | { name: "service"; mode: "known" | "help"; specialtyId: string | null }
   | { name: "doctor" }
@@ -94,7 +100,18 @@ export function BookingFlow() {
   const [patientName, setPatientName] = useState("");
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
-  const [bookingResult, setBookingResult] = useState<{ ok: boolean; message: string; appointmentId?: string; paymentUrl?: string } | null>(null);
+  // Telegram patients identify first (passport/JSHSHIR + date of birth, proven by their Telegram phone); their own
+  // proven details then fill the booking, and the details form is skipped. Website visitors have no Telegram identity.
+  const [profile, setProfile] = useState<OnlineProfile | null>(null);
+  const identityFirst = Boolean(initData) || devMode;
+  const [bookingResult, setBookingResult] = useState<{
+    ok: boolean;
+    message: string;
+    appointmentId?: string;
+    paymentUrl?: string;
+    /** The chosen slot is gone: going back reloads availability. */
+    refreshSlots?: boolean;
+  } | null>(null);
   const [creating, setCreating] = useState(false);
 
   // Mirrors the server-side rules in src/lib/api/validate.ts (phoneSchema,
@@ -136,12 +153,20 @@ export function BookingFlow() {
     }
     return [...groups.entries()];
   }, [slots]);
+  // The day on screen: the first day with free time when slots load, then wherever the patient steps.
+  const [dayIndex, setDayIndex] = useState(0);
+  useEffect(() => setDayIndex(0), [slots]);
+  const shownDay = groupSlotsByDay[Math.min(dayIndex, groupSlotsByDay.length - 1)] ?? null;
 
   const loadSlots = useCallback(
     async (sid: string, did: string) => {
       setLoadingSlots(true);
       setError(null);
       const params = new URLSearchParams({ serviceId: sid, doctorId: did, days: "14" });
+      // The clinic of this booking link — without it the server answers for
+      // the default clinic (another clinic's services are "not found").
+      const clinicId = getClientClinicId();
+      if (clinicId) params.set("clinic", clinicId);
       const res = await fetch(`/api/availability?${params}`);
       const json = (await res.json()) as { ok?: boolean; data?: SlotResponse; error?: string };
       if (res.ok && json.ok && json.data) {
@@ -157,16 +182,25 @@ export function BookingFlow() {
 
   const selectedDoctor = catalog?.doctors.find((d) => d.id === doctorId) ?? null;
 
-  const startBooking = () => {
-    if (!serviceId || !doctorId) return;
-    void loadSlots(serviceId, doctorId);
+  // Takes the doctor just chosen: the doctorId state is not updated yet
+  // inside the same click.
+  const startBooking = (chosenDoctorId: string) => {
+    if (!serviceId) return;
+    void loadSlots(serviceId, chosenDoctorId);
     setStep({ name: "slot" });
   };
+
+  // One idempotency key per booking attempt (doctor, service, slot): a retry
+  // of the same attempt — a second tap, a timed-out request sent again —
+  // returns the appointment the first one created instead of a second one.
+  const attempt = useRef<{ id: string; key: string } | null>(null);
 
   const confirmBooking = async () => {
     if (!serviceId || !doctorId || !selectedSlot) return;
     setCreating(true);
     setError(null);
+    const attemptId = `${doctorId}|${serviceId}|${selectedSlot.start}`;
+    if (attempt.current?.id !== attemptId) attempt.current = { id: attemptId, key: newIdempotencyKey() };
     const res = await apiPost<AppointmentResponse>(
       "/api/bookings",
       {
@@ -178,9 +212,13 @@ export function BookingFlow() {
         consent: true,
         notes: notes.trim() || undefined,
         source: chatDeepLink ? "telegram_chat" : "telegram_mini_app",
+        idempotencyKey: attempt.current.key,
       },
       identity,
     );
+    // Whatever the outcome, the confirm button is usable again (after a taken
+    // slot the patient comes back here to confirm another time).
+    setCreating(false);
 
     if (res.ok) {
       trackEvent("booking_success");
@@ -206,15 +244,21 @@ export function BookingFlow() {
         paymentUrl,
       });
       setStep({ name: "result" });
-    } else if (res.code === "slot_taken") {
+    } else if (res.code === "SLOT_UNAVAILABLE" || res.code === "INVALID_TIME") {
+      // Taken (online or at reception) since the slots were shown, or no
+      // longer bookable: the availability was only a hint. Offer fresh slots.
+      attempt.current = null;
       setBookingResult({
         ok: false,
-        message: "Bu vaqt boshqa bemor tomonidan band qilingan. Iltimos, boshqa vaqtni tanlang.",
+        message:
+          res.code === "SLOT_UNAVAILABLE"
+            ? "Bu vaqt endi bo‘sh emas. Iltimos, boshqa vaqtni tanlang."
+            : res.error,
+        refreshSlots: true,
       });
       setStep({ name: "result" });
     } else {
       setError(res.error);
-      setCreating(false);
     }
   };
 
@@ -233,7 +277,7 @@ export function BookingFlow() {
     return (
       <div className="mt-8">
         <ErrorBanner message={error} />
-        <Button variant="outline" size="full" onClick={() => router.push("/")}>
+        <Button variant="outline" size="full" onClick={() => router.push("/home")}>
           Orqaga
         </Button>
       </div>
@@ -246,9 +290,9 @@ export function BookingFlow() {
 
   return (
     <div className="flex flex-col gap-4">
-      <StepHeader step={step.name} />
+      <StepHeader step={identityFirst && step.name === "consent" ? "identity" : step.name} />
 
-      {step.name === "consent" && (
+      {step.name === "consent" && !identityFirst && (
         <div className="flex flex-col gap-4">
           <Card>
             <SectionTitle>Xizmatimiz haqida</SectionTitle>
@@ -279,10 +323,38 @@ export function BookingFlow() {
               </span>
             </label>
           </Card>
-          <Button size="full" disabled={!consentChecked} onClick={() => setStep({ name: "choose" })}>
+          <Button size="full" disabled={!consentChecked} onClick={() => setStep(identityFirst ? { name: "identity" } : { name: "choose" })}>
             Davom etish
           </Button>
         </div>
+      )}
+
+      {(step.name === "identity" || (step.name === "consent" && identityFirst)) && (
+        <IdentityStep
+          identity={identity}
+          clinicPhone={catalog?.clinic.phone ?? null}
+          onDone={(p) => {
+            setProfile(p);
+            if (p.fullName) setPatientName(p.fullName);
+            if (p.phone) setPhone(p.phone);
+            setStep({ name: "concern" });
+          }}
+        />
+      )}
+
+      {step.name === "concern" && (
+        <ConcernStep
+          identity={identity}
+          onChoose={(specialtyId, concern) => {
+            setNotes(concern.slice(0, 300));
+            setStep({ name: "service", mode: "help", specialtyId });
+          }}
+          onSkip={(concern) => {
+            setNotes(concern.slice(0, 300));
+            setStep({ name: "choose" });
+          }}
+          onUrgentExit={() => router.push("/home")}
+        />
       )}
 
       {step.name === "choose" && (
@@ -390,7 +462,7 @@ export function BookingFlow() {
               key={d.id}
               onClick={() => {
                 setDoctorId(d.id);
-                startBooking();
+                startBooking(d.id);
               }}
               className={cn(
                 "rounded-xl border p-3 text-left transition-colors",
@@ -424,13 +496,28 @@ export function BookingFlow() {
             />
           ) : (
             <div className="flex flex-col gap-4">
-              {groupSlotsByDay.map(([day, daySlots]) => (
-                <div key={day}>
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--tg-hint,#8a9699)]">
-                    {new Date(`${day}T00:00:00`).toLocaleDateString("uz-UZ", { weekday: "long", day: "numeric", month: "long" })}
-                  </p>
+              {/* One day at a time (owner decision 2026-10-08): the patient steps through days that have free time. */}
+              {shownDay && (
+                <div key={shownDay[0]} data-testid="slot-day">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <Button variant="ghost" size="sm" disabled={dayIndex <= 0} onClick={() => setDayIndex(dayIndex - 1)} aria-label="Oldingi kun">
+                      ‹
+                    </Button>
+                    <p className="text-center text-sm font-semibold text-[var(--tg-text,var(--foreground))]">
+                      {dayTitle(shownDay[0])}
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={dayIndex >= groupSlotsByDay.length - 1}
+                      onClick={() => setDayIndex(dayIndex + 1)}
+                      aria-label="Keyingi kun"
+                    >
+                      ›
+                    </Button>
+                  </div>
                   <div className="grid grid-cols-3 gap-2">
-                    {daySlots.map((s) => (
+                    {shownDay[1].map((s) => (
                       <button
                         key={s.start}
                         onClick={() => setSelectedSlot(s)}
@@ -446,11 +533,11 @@ export function BookingFlow() {
                     ))}
                   </div>
                 </div>
-              ))}
+              )}
               <Button
                 size="full"
                 disabled={!selectedSlot}
-                onClick={() => setStep({ name: "details" })}
+                onClick={() => setStep(profile && detailsValid ? { name: "review" } : { name: "details" })}
               >
                 Davom etish: {selectedSlot ? selectedSlot.startLocal : ""}
               </Button>
@@ -549,12 +636,23 @@ export function BookingFlow() {
           message={bookingResult?.message ?? ""}
           appointmentId={bookingResult?.appointmentId}
           paymentUrl={bookingResult?.paymentUrl}
-          onRetry={bookingResult?.ok ? undefined : () => setStep({ name: "slot" })}
+          identity={identity}
+          onRetry={
+            bookingResult?.ok
+              ? undefined
+              : () => {
+                  if (bookingResult?.refreshSlots && serviceId && doctorId) {
+                    setSelectedSlot(null);
+                    void loadSlots(serviceId, doctorId);
+                  }
+                  setStep({ name: "slot" });
+                }
+          }
           onDone={() => {
             if (bookingResult?.appointmentId) {
               router.push(`/booking/confirmation?id=${bookingResult.appointmentId}`);
             } else {
-              router.push("/");
+              router.push("/home");
             }
           }}
         />
@@ -563,9 +661,24 @@ export function BookingFlow() {
   );
 }
 
+/** "Bugun, 9-oktabr" / "Ertaga, …" / "Juma, 11-oktabr" for a clinic-local YYYY-MM-DD (the slot's own day). */
+function dayTitle(day: string): string {
+  const date = new Date(`${day}T00:00:00`);
+  const label = date.toLocaleDateString("uz-UZ", { day: "numeric", month: "long" });
+  const local = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  if (day === local(today)) return `Bugun, ${label}`;
+  if (day === local(tomorrow)) return `Ertaga, ${label}`;
+  const weekday = date.toLocaleDateString("uz-UZ", { weekday: "long" });
+  return `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)}, ${label}`;
+}
+
 function StepHeader({ step }: { step: string }) {
   const labels: Record<string, string> = {
     consent: "1/7 · Rozilik",
+    identity: "Shaxsni tasdiqlash",
+    concern: "Shikoyat",
     choose: "2/7 · Tanlov",
     service: "3/7 · Xizmat",
     doctor: "4/7 · Shifokor",
@@ -591,6 +704,7 @@ function ResultView({
   message,
   appointmentId,
   paymentUrl,
+  identity,
   onRetry,
   onDone,
 }: {
@@ -598,6 +712,7 @@ function ResultView({
   message: string;
   appointmentId?: string;
   paymentUrl?: string;
+  identity: string | null;
   onRetry?: () => void;
   onDone: () => void;
 }) {
@@ -617,6 +732,7 @@ function ResultView({
           Boshqa vaqtni tanlash
         </Button>
       )}
+      {ok && appointmentId && identity && <OnlinePayment identity={identity} appointmentId={appointmentId} />}
       {ok && paymentUrl && (
         <a href={paymentUrl} target="_blank" rel="noopener noreferrer" className="block w-full">
           <Button size="full">To‘lov qilish (Click)</Button>

@@ -1,9 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, ATextArea, LoadingRow } from "@/components/admin/ui";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, AInput, AModal, ASelect, ATextArea, LoadingRow } from "@/components/admin/ui";
+import { QuickBookingModal, type FollowUpPreset } from "@/components/admin/quick-booking-modal";
 import { Users } from "lucide-react";
-import { adminApi, AdminApiError, formatDateTime, STATUS_LABELS, STATUS_TONES, CHANNEL_LABELS } from "@/lib/admin/client";
+import {
+  adminApi,
+  AdminApiError,
+  formatDateTime,
+  STATUS_LABELS,
+  STATUS_TONES,
+  CHANNEL_LABELS,
+  REFERRAL_PRIORITY_LABELS,
+  REFERRAL_STATUS_LABELS,
+  REFERRAL_STATUS_TONES,
+} from "@/lib/admin/client";
 
 type PatientRow = {
   id: string;
@@ -32,6 +43,13 @@ type PatientDetail = {
   last_seen_at: string | null;
   created_at: string;
   operational_notes: string | null;
+  merged_into_patient_id: string | null;
+  /** Recorded or not — the values themselves stay on the server (owner decision 2026-10-08). */
+  has_date_of_birth: boolean;
+  has_sex: boolean;
+  /** Queue SMS (20261008000013): only for a patient without Telegram who agreed. */
+  has_telegram: boolean;
+  sms_consent: boolean;
 };
 
 type AppointmentLite = {
@@ -50,14 +68,17 @@ type ConversationLite = {
   updated_at: string;
 };
 
-type ReferralLite = {
+/** Scheduling metadata only — the clinical text stays with the doctors. */
+type PatientReferral = {
   id: string;
   status: string;
-  urgency: string;
-  reason: string;
-  referred_at: string;
-  referring_doctor: { name: string; specialties?: { name: string } | null } | null;
-  receiving_doctor: { name: string; specialties?: { name: string } | null } | null;
+  priority: string;
+  createdAt: string;
+  expiresAt: string;
+  referringDoctor: string | null;
+  referredToDoctor: { id: string; name: string } | null;
+  followUp: { id: string; startAt: string; status: string } | null;
+  canBookFollowUp: boolean;
 };
 
 type ListResponse = {
@@ -71,7 +92,10 @@ type DetailResponse = {
   patient: PatientDetail | null;
   appointments: AppointmentLite[];
   conversations: ConversationLite[];
+  referrals: PatientReferral[];
 };
+
+const MANAGEMENT_ROLES = ["owner", "admin", "manager"];
 
 export default function PatientsPage() {
   const [rows, setRows] = useState<PatientRow[] | null>(null);
@@ -83,12 +107,27 @@ export default function PatientsPage() {
   const [noConsent, setNoConsent] = useState(false);
   const [detail, setDetail] = useState<DetailResponse | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [patientReferrals, setPatientReferrals] = useState<ReferralLite[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
+  const [dobDraft, setDobDraft] = useState("");
+  const [sexDraft, setSexDraft] = useState("");
+  const [demoSaving, setDemoSaving] = useState(false);
+  const [demoSaved, setDemoSaved] = useState(false);
+  const [isManagement, setIsManagement] = useState(false);
+  const [bookingFor, setBookingFor] = useState<FollowUpPreset | null>(null);
+  const [revokeFor, setRevokeFor] = useState<PatientReferral | null>(null);
+  const [revokeReason, setRevokeReason] = useState("");
+  const [revoking, setRevoking] = useState(false);
+
+  useEffect(() => {
+    adminApi
+      .get<{ roles: string[] }>("/api/admin/me")
+      .then((me) => setIsManagement(me.roles.some((r) => MANAGEMENT_ROLES.includes(r))))
+      .catch(() => setIsManagement(false));
+  }, []);
 
   const load = useCallback(async (pageNum: number, term: string, tg: boolean, nc: boolean) => {
     const params = new URLSearchParams({ page: String(pageNum) });
@@ -121,17 +160,16 @@ export default function PatientsPage() {
   const openDetail = async (id: string) => {
     setDetailId(id);
     setDetail(null);
-    setPatientReferrals([]);
     setBusy(true);
     setNotesSaved(false);
+    setDemoSaved(false);
     try {
-      const [res, refRes] = await Promise.all([
-        adminApi.get<DetailResponse>(`/api/admin/patients?id=${id}`),
-        adminApi.get<{ referrals: ReferralLite[] }>(`/api/admin/referrals?patientId=${id}`).catch(() => ({ referrals: [] })),
-      ]);
+      const res = await adminApi.get<DetailResponse>(`/api/admin/patients?id=${id}`);
       setDetail(res);
-      setPatientReferrals(refRes.referrals ?? []);
       setNotesDraft(res.patient?.operational_notes ?? "");
+      // Write-only fields: the form starts empty; staff type a value only to set or correct it.
+      setDobDraft("");
+      setSexDraft("");
     } catch (e) {
       setError(e instanceof AdminApiError ? e.message : "Bemor ma'lumotlarini yuklab bo‘lmadi");
     } finally {
@@ -154,9 +192,69 @@ export default function PatientsPage() {
     }
   };
 
+  const saveSmsConsent = async (consent: boolean) => {
+    if (!detailId) return;
+    try {
+      const res = await adminApi.post<{ smsConsent: boolean }>(`/api/operations/patients/${detailId}/sms-consent`, { consent });
+      setDetail((prev) => (prev?.patient ? { ...prev, patient: { ...prev.patient, sms_consent: res.smsConsent } } : prev));
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "SMS roziligini saqlab bo‘lmadi");
+    }
+  };
+
+  const saveDemographics = async () => {
+    if (!detailId || (!dobDraft && !sexDraft)) return;
+    setDemoSaving(true);
+    setDemoSaved(false);
+    try {
+      const body: { patientId: string; dateOfBirth?: string; sex?: "female" | "male" } = { patientId: detailId };
+      if (dobDraft) body.dateOfBirth = dobDraft;
+      if (sexDraft === "female" || sexDraft === "male") body.sex = sexDraft;
+      const res = await adminApi.patch<{ hasDateOfBirth: boolean; hasSex: boolean }>(`/api/admin/patients/demographics`, body);
+      setDetail((prev) =>
+        prev?.patient ? { ...prev, patient: { ...prev.patient, has_date_of_birth: res.hasDateOfBirth, has_sex: res.hasSex } } : prev,
+      );
+      setDobDraft("");
+      setSexDraft("");
+      setDemoSaved(true);
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Saqlab bo‘lmadi");
+    } finally {
+      setDemoSaving(false);
+    }
+  };
+
+  const bookFollowUp = (referral: PatientReferral) => {
+    const patient = detail?.patient;
+    if (!patient || !referral.referredToDoctor) return;
+    setBookingFor({
+      referralId: referral.id,
+      patientId: patient.id,
+      patientName:
+        patient.full_name ?? ([patient.telegram_first_name, patient.telegram_last_name].filter(Boolean).join(" ") || "Bemor"),
+      doctor: referral.referredToDoctor,
+    });
+  };
+
+  const revokeReferral = async () => {
+    if (!revokeFor || !detailId) return;
+    setRevoking(true);
+    try {
+      await adminApi.patch(`/api/admin/referrals/${revokeFor.id}`, { action: "revoke", reason: revokeReason.trim() });
+      setRevokeFor(null);
+      setRevokeReason("");
+      await openDetail(detailId);
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Yo‘llanmani bekor qilib bo‘lmadi");
+    } finally {
+      setRevoking(false);
+    }
+  };
+
   const pageCount = Math.max(1, Math.ceil(total / 25));
   const selected = detail?.patient ?? null;
   const notesDirty = notesDraft.trim() !== (selected?.operational_notes ?? "").trim();
+  const demoDirty = dobDraft !== "" || sexDraft !== "";
 
   const visitStats = useMemo(() => {
     const completed = (detail?.appointments ?? []).filter((a) => a.status === "completed");
@@ -192,7 +290,7 @@ export default function PatientsPage() {
         </AButton>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         <div className="lg:col-span-3">
           {rows === null ? (
             <Card><LoadingRow /></Card>
@@ -288,6 +386,65 @@ export default function PatientsPage() {
                 </p>
               </div>
 
+              <section aria-label="Shaxsiy ma’lumotlar">
+                <p className="mb-2 font-display text-sm font-bold text-foreground">Shaxsiy ma’lumotlar</p>
+                {selected.merged_into_patient_id ? (
+                  <p className="text-sm text-ink-muted">Bu karta boshqa kartaga birlashtirilgan — ma’lumotlarni asosiy kartada o‘zgartiring.</p>
+                ) : (
+                  <>
+                    <p className="mb-2 text-xs text-ink-muted">
+                      Laboratoriya tahlili buyurtmasi uchun tug‘ilgan sana kerak. Jins va yosh klinika belgilagan me’yor oralig‘ini tanlash uchun ishlatiladi.
+                      Bu ma’lumotlar xodimlarga ko‘rsatilmaydi — faqat kiritilgan yoki kiritilmaganligi.
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="text-sm text-foreground">
+                        <span className="mb-1 block text-xs text-ink-muted">
+                          Tug‘ilgan sana — {selected.has_date_of_birth ? "kiritilgan (o‘zgartirish uchun yangisini kiriting)" : "kiritilmagan"}
+                        </span>
+                        <AInput type="date" value={dobDraft} onChange={(v) => { setDobDraft(v); setDemoSaved(false); }} aria-label="Tug‘ilgan sana" />
+                      </label>
+                      <label className="text-sm text-foreground">
+                        <span className="mb-1 block text-xs text-ink-muted">Jins — {selected.has_sex ? "kiritilgan" : "kiritilmagan"}</span>
+                        <ASelect
+                          value={sexDraft}
+                          onChange={(v) => { setSexDraft(v); setDemoSaved(false); }}
+                          options={[
+                            { value: "", label: "O‘zgartirmaslik" },
+                            { value: "female", label: "Ayol" },
+                            { value: "male", label: "Erkak" },
+                          ]}
+                          aria-label="Jins"
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <AButton size="sm" loading={demoSaving} disabled={!demoDirty} onClick={() => void saveDemographics()}>
+                        Ma’lumotlarni saqlash
+                      </AButton>
+                      {demoSaved && !demoDirty && <span className="text-xs text-pine-deep">Saqlandi ✓</span>}
+                      {!selected.has_date_of_birth && !demoSaved && <ABadge tone="amber">Tug‘ilgan sana kiritilmagan</ABadge>}
+                    </div>
+                  </>
+                )}
+              </section>
+
+              {!selected.has_telegram && !selected.merged_into_patient_id && (
+                <section aria-label="SMS xabarnomalar" className="rounded-xl border border-hairline p-3 text-sm">
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selected.sms_consent}
+                      onChange={(e) => void saveSmsConsent(e.target.checked)}
+                      aria-label="SMS orqali navbat xabarlari"
+                    />
+                    <span>
+                      Bemor navbat raqami va chaqiruv SMS orqali kelishiga rozi
+                      <span className="block text-xs text-ink-muted">Telegrami yo‘q bemorlar uchun. Klinikada SMS yoqilgan bo‘lishi kerak.</span>
+                    </span>
+                  </label>
+                </section>
+              )}
+
               <div>
                 <p className="mb-2 font-display text-sm font-bold text-foreground">Operatsion izoh</p>
                 <p className="mb-2 text-xs text-ink-muted">
@@ -332,6 +489,48 @@ export default function PatientsPage() {
               </div>
 
               <div>
+                <p className="mb-2 font-display text-sm font-bold text-foreground">Yo‘llanmalar ({detail.referrals.length})</p>
+                {detail.referrals.length === 0 ? (
+                  <p className="text-sm text-ink-muted">Yo‘llanmalar yo‘q</p>
+                ) : (
+                  <div className="space-y-2">
+                    {detail.referrals.map((r) => (
+                      <div key={r.id} className="rounded-xl border border-hairline px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-medium text-foreground">
+                            {r.referringDoctor ?? "Shifokor"} → {r.referredToDoctor?.name ?? "Shifokor"}
+                          </p>
+                          <ABadge tone={REFERRAL_STATUS_TONES[r.status] ?? "gray"}>{REFERRAL_STATUS_LABELS[r.status] ?? r.status}</ABadge>
+                        </div>
+                        <p className="text-xs text-ink-muted">
+                          {formatDateTime(r.createdAt)} · {REFERRAL_PRIORITY_LABELS[r.priority] ?? r.priority}
+                        </p>
+                        {r.followUp && (
+                          <p className="mt-1 text-xs text-ink-muted">
+                            Qabul: {formatDateTime(r.followUp.startAt)} · {STATUS_LABELS[r.followUp.status] ?? r.followUp.status}
+                          </p>
+                        )}
+                        {(r.canBookFollowUp || (isManagement && ["pending", "accepted", "in_progress"].includes(r.status))) && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {r.canBookFollowUp && r.referredToDoctor && (
+                              <AButton size="sm" onClick={() => bookFollowUp(r)}>
+                                Qabulga yozish
+                              </AButton>
+                            )}
+                            {isManagement && ["pending", "accepted", "in_progress"].includes(r.status) && (
+                              <AButton size="sm" variant="ghost" onClick={() => setRevokeFor(r)}>
+                                Bekor qilish
+                              </AButton>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
                 <p className="mb-2 font-display text-sm font-bold text-foreground">Suhbatlar ({detail.conversations.length})</p>
                 {detail.conversations.length === 0 ? (
                   <p className="text-sm text-ink-muted">Suhbatlar yo‘q</p>
@@ -351,35 +550,6 @@ export default function PatientsPage() {
                   </div>
                 )}
               </div>
-
-              <div>
-                <p className="mb-2 font-display text-sm font-bold text-foreground">Yo‘llanmalar ({patientReferrals.length})</p>
-                {patientReferrals.length === 0 ? (
-                  <p className="text-sm text-ink-muted">Yo‘llanmalar yo‘q</p>
-                ) : (
-                  <div className="space-y-2">
-                    {patientReferrals.map((r) => (
-                      <div key={r.id} className="rounded-xl border border-hairline p-3 space-y-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs font-semibold text-foreground">
-                            {r.referring_doctor?.name ?? "Shifokor"} → {r.receiving_doctor?.name ?? "Mutaxassis"}
-                          </p>
-                          <div className="flex items-center gap-1.5">
-                            <ABadge tone={r.urgency === "emergency" ? "clay" : r.urgency === "urgent" ? "amber" : "neutral"}>
-                              {r.urgency === "emergency" ? "Kechiktirib bo'lmas" : r.urgency === "urgent" ? "Shoshilinch" : "Oddiy"}
-                            </ABadge>
-                            <ABadge tone={r.status === "completed" ? "pine" : r.status === "accepted" ? "blue" : r.status === "declined" ? "clay" : "amber"}>
-                              {r.status === "completed" ? "Yakunlangan" : r.status === "accepted" ? "Qabul qilingan" : r.status === "declined" ? "Rad etilgan" : "Kutilmoqda"}
-                            </ABadge>
-                          </div>
-                        </div>
-                        <p className="text-xs text-ink-muted line-clamp-2">{r.reason}</p>
-                        <p className="text-[11px] text-ink-muted font-numeric">{formatDateTime(r.referred_at)}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </Card>
           ) : (
             <Card>
@@ -388,6 +558,41 @@ export default function PatientsPage() {
           )}
         </div>
       </div>
+
+      {bookingFor && (
+        <QuickBookingModal
+          followUp={bookingFor}
+          onClose={() => setBookingFor(null)}
+          onCreated={() => {
+            setBookingFor(null);
+            if (detailId) void openDetail(detailId);
+          }}
+          onError={setError}
+        />
+      )}
+
+      {revokeFor && (
+        <AModal
+          title="Yo‘llanmani bekor qilish"
+          onClose={() => setRevokeFor(null)}
+          footer={
+            <>
+              <AButton variant="ghost" onClick={() => setRevokeFor(null)} disabled={revoking}>
+                Orqaga
+              </AButton>
+              <AButton variant="danger" loading={revoking} disabled={revokeReason.trim().length < 3} onClick={() => void revokeReferral()}>
+                Bekor qilish
+              </AButton>
+            </>
+          }
+        >
+          <p className="text-sm text-ink-muted">
+            {revokeFor.referringDoctor ?? "Shifokor"} → {revokeFor.referredToDoctor?.name ?? "Shifokor"}. Sababni yozing — qabul
+            qiluvchi shifokor yo‘llanmani boshqa ko‘rmaydi.
+          </p>
+          <ATextArea value={revokeReason} onChange={setRevokeReason} rows={3} aria-label="Bekor qilish sababi" />
+        </AModal>
+      )}
     </div>
   );
 }

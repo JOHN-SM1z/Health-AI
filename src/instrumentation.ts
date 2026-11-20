@@ -7,6 +7,25 @@
  * instance until the operator fixes the configuration. A misconfigured
  * production service must never serve traffic.
  */
+/** Shared secrets that guard the cron jobs and every Telegram webhook. */
+const MIN_SECRET_LENGTH = 32;
+const PLACEHOLDER_SECRETS = new Set(["change-me-in-production", "your-random-secret", "changeme", "secret"]);
+
+/** Too short to resist guessing, a placeholder copied from the docs, or one character repeated. */
+function weakSecret(value: string): boolean {
+  return value.length < MIN_SECRET_LENGTH || PLACEHOLDER_SECRETS.has(value.toLowerCase()) || /^(.)\1*$/.test(value);
+}
+
+/** The test payment provider in a production build: explicit flag and a local Supabase stack (E2E only). */
+function testOnlinePaymentAllowed(): boolean {
+  return (
+    process.env.ALLOW_TEST_ONLINE_PAYMENT === "true" &&
+    !!process.env.TEST_ONLINE_PAYMENT_SECRET &&
+    !weakSecret(process.env.TEST_ONLINE_PAYMENT_SECRET) &&
+    /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "")
+  );
+}
+
 export function register() {
   if (process.env.NODE_ENV !== "production") return;
   if (process.env.NEXT_PHASE === "phase-production-build") return;
@@ -31,8 +50,8 @@ export function register() {
   }
 
   const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret || cronSecret === "change-me-in-production") {
-    missing.push("CRON_SECRET (must be set and must not be the known default 'change-me-in-production')");
+  if (!cronSecret || weakSecret(cronSecret)) {
+    missing.push(`CRON_SECRET (must be set, at least ${MIN_SECRET_LENGTH} random characters — e.g. openssl rand -hex 32 — and not a documented placeholder)`);
   }
 
   // TELEGRAM_WEBHOOK_SECRET seeds the per-bot HMAC secret every clinic's
@@ -47,10 +66,44 @@ export function register() {
   // unconditionally, exactly like CRON_SECRET.
   if (!process.env.TELEGRAM_WEBHOOK_SECRET) {
     missing.push("TELEGRAM_WEBHOOK_SECRET (required to validate every clinic's Telegram webhook — any clinic admin can activate a bot at any time)");
+  } else if (weakSecret(process.env.TELEGRAM_WEBHOOK_SECRET)) {
+    missing.push(`TELEGRAM_WEBHOOK_SECRET (at least ${MIN_SECRET_LENGTH} random characters and not a documented placeholder — every clinic's webhook secret is derived from it)`);
   }
 
   if (process.env.ENABLE_TELEGRAM_DEV_MODE === "true") {
     missing.push("ENABLE_TELEGRAM_DEV_MODE must not be enabled in production");
+  }
+
+  // Online payment (Mini App): the test provider only against a local database with the explicit flag (E2E of a
+  // production build); Rahmat only once its adapter is implemented — never a provider that cannot verify payments.
+  const online = process.env.ONLINE_PAYMENT_PROVIDER ?? "none";
+  if (online === "test_online" && !testOnlinePaymentAllowed()) {
+    missing.push("ONLINE_PAYMENT_PROVIDER=test_online is for local development and E2E only");
+  }
+  if (online === "rahmat") {
+    missing.push("ONLINE_PAYMENT_PROVIDER=rahmat (the Rahmat adapter is not implemented yet: merchant API documentation, webhook signature scheme and credentials are required)");
+  }
+  if (!["none", "rahmat", "test_online"].includes(online)) {
+    missing.push(`ONLINE_PAYMENT_PROVIDER=${online} is not a known provider`);
+  }
+
+  // SMS (20261008000013): the test outbox only for an E2E run against a local database; Eskiz only with credentials
+  // and a strong callback secret (its delivery reports are unsigned).
+  const sms = process.env.SMS_PROVIDER ?? "none";
+  if (sms === "test" && !(process.env.ALLOW_TEST_SMS === "true" && /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""))) {
+    missing.push("SMS_PROVIDER=test is for local development and E2E only");
+  }
+  if (sms === "eskiz") {
+    if (!process.env.ESKIZ_EMAIL || !process.env.ESKIZ_PASSWORD) missing.push("ESKIZ_EMAIL and ESKIZ_PASSWORD (SMS_PROVIDER=eskiz)");
+    if (weakSecret(process.env.ESKIZ_CALLBACK_SECRET ?? "")) missing.push(`ESKIZ_CALLBACK_SECRET (at least ${MIN_SECRET_LENGTH} random characters — it guards Eskiz delivery reports)`);
+    if (!process.env.NEXT_PUBLIC_APP_URL) missing.push("NEXT_PUBLIC_APP_URL (Eskiz delivery reports are sent to it)");
+  }
+  if (!["none", "eskiz", "test"].includes(sms)) missing.push(`SMS_PROVIDER=${sms} is not a known provider`);
+
+  // OneID: either fully configured (both credentials and an HTTPS callback base) or off — never half on.
+  if (process.env.ONEID_CLIENT_ID || process.env.ONEID_CLIENT_SECRET) {
+    if (!process.env.ONEID_CLIENT_ID || !process.env.ONEID_CLIENT_SECRET) missing.push("ONEID_CLIENT_ID and ONEID_CLIENT_SECRET (both, or neither)");
+    if (!/^https:\/\//.test(process.env.NEXT_PUBLIC_APP_URL ?? "")) missing.push("NEXT_PUBLIC_APP_URL as https:// (the OneID callback)");
   }
 
   if ((process.env.PAYMENT_PROVIDER ?? "manual") !== "manual") {

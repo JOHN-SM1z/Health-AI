@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { HeartPulse } from "lucide-react";
 import { createClient } from "@/lib/supabase/browser";
+import { signInEmail } from "@/lib/auth/login";
 import { AButton, AInput, AError, Card } from "@/components/admin/ui";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const router = useRouter();
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -24,9 +28,21 @@ export default function LoginPage() {
     return () => data.subscription.unsubscribe();
   }, []);
 
+  // Sent back from a panel: say why, and end the session so the next sign-in starts clean.
+  useEffect(() => {
+    const reason = new URLSearchParams(window.location.search).get("reason");
+    if (reason !== "clinic_inactive" && reason !== "no_access") return;
+    setError(
+      reason === "clinic_inactive"
+        ? "Klinikangiz hisobi vaqtincha o‘chirilgan (masalan, obuna to‘lanmagan). Klinika rahbari Health AI bilan bog‘lansin."
+        : "Bu hisob hech qaysi klinikaga biriktirilmagan. Klinika rahbaringizga murojaat qiling.",
+    );
+    void createClient().auth.signOut();
+  }, []);
+
   const submit = async () => {
-    if (!password || (!passwordRecovery && !email)) {
-      setError(passwordRecovery ? "Yangi parolni kiriting" : "Email va parolni kiriting");
+    if (!password || (!passwordRecovery && !identifier.trim())) {
+      setError(passwordRecovery ? "Yangi parolni kiriting" : "Login va parolni kiriting");
       return;
     }
     if (passwordRecovery && password.length < 12) {
@@ -46,20 +62,21 @@ export default function LoginPage() {
         return;
       }
       setPasswordRecovery(false);
-      window.location.replace("/admin");
+      router.push("/admin");
+      router.refresh();
       return;
     }
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    // One login page for every employee: a login (dilnoza.qabul) or, for older accounts, an email.
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email: signInEmail(identifier), password });
     setLoading(false);
 
     if (signInError) {
-      setError("Kirish amalga oshmadi. Email yoki parol noto‘g‘ri.");
+      setError("Kirish amalga oshmadi. Login yoki parol noto‘g‘ri.");
       return;
     }
-    // Start a fresh authenticated document after the session cookie is stored.
-    // A concurrent push + refresh can remount the next screen and erase form input.
-    window.location.replace("/admin");
+    router.push("/admin");
+    router.refresh();
   };
 
   return (
@@ -76,21 +93,20 @@ export default function LoginPage() {
             Panelga kirish
           </h1>
           <p className="mt-1.5 text-sm text-ink-muted">
-            {passwordRecovery ? "Yangi parolni o‘rnating" : "Admin va shifokor paneliga kirish"}
+            {passwordRecovery ? "Yangi parolni o‘rnating" : "Barcha xodimlar uchun yagona kirish"}
           </p>
         </div>
         <Card className="flex flex-col gap-3.5 p-6 shadow-[var(--shadow-pop)]">
           {error && <AError message={error} />}
           {!passwordRecovery && (
             <label className="text-sm">
-              <span className="mb-1.5 block text-xs font-semibold text-ink-muted">Email</span>
+              <span className="mb-1.5 block text-xs font-semibold text-ink-muted">Login</span>
               <AInput
-                value={email}
-                onChange={setEmail}
-                type="email"
-                autoComplete="email"
-                placeholder="xodim@klinika.uz"
-                aria-label="Email"
+                value={identifier}
+                onChange={setIdentifier}
+                autoComplete="username"
+                placeholder="masalan: dilnoza.qabul"
+                aria-label="Login"
               />
             </label>
           )}
@@ -111,8 +127,14 @@ export default function LoginPage() {
             {passwordRecovery ? "Parolni yangilash" : "Kirish"}
           </AButton>
         </Card>
-        <p className="mt-5 text-center text-xs text-ink-muted/80">
-          Hisob yo‘qmi? Administrator yoki owner hisobini yaratish bo‘yicha READMEga qarang.
+        <p className="mt-5 text-center text-xs leading-relaxed text-ink-muted/80">
+          Login va vaqtinchalik parolni klinika rahbari beradi. Parolni unutsangiz, rahbaringizga murojaat qiling.
+        </p>
+        <p className="mt-2 text-center text-xs text-ink-muted/80">
+          Klinikangiz hali ulanmaganmi?{" "}
+          <Link href="/signup" className="font-semibold text-pine hover:underline">
+            Klinikani ro‘yxatdan o‘tkazing
+          </Link>
         </p>
       </div>
     </div>

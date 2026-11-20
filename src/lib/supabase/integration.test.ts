@@ -33,6 +33,8 @@ const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? 
 
 const CLINIC_ID = "11111111-1111-4111-8111-111111111111";
 const TZ = "Asia/Tashkent"; // UTC+5
+/** Throwaway processed_webhooks key used by the server-only RPC grant tests. */
+const RPC_GRANT_PROBE = `rpc-grant-probe-${Date.now()}`;
 
 let admin: SupabaseClient;
 let anon: SupabaseClient;
@@ -62,10 +64,11 @@ function nextWeekdayAt10(weekday: number, minDaysAhead = 2): string {
   const day = new Date(`${localDate}T00:00:00Z`);
   const localWeekday = day.getUTCDay() === 0 ? 7 : day.getUTCDay(); // Sun=7
   const diff = ((weekday - localWeekday) % 7 + 7) % 7;
-  target.setUTCDate(target.getUTCDate() + diff);
-  // 10:00 Tashkent == 05:00 UTC.
-  const startUtc = new Date(target.toISOString().slice(0, 10) + "T05:00:00Z");
-  return startUtc.toISOString();
+  // 10:00 Tashkent == 05:00 UTC, on the Tashkent calendar day (not the UTC one:
+  // from 19:00 UTC Tashkent is already on the next date).
+  day.setUTCDate(day.getUTCDate() + diff);
+  day.setUTCHours(5, 0, 0, 0);
+  return day.toISOString();
 }
 
 describeDb("local Supabase booking engine", () => {
@@ -77,17 +80,12 @@ describeDb("local Supabase booking engine", () => {
       admin.from("services").select("id").eq("name", "Terapevt qabuli").single(),
       admin.from("patients").select("id").eq("telegram_user_id", 777000).single(),
     ]);
-    const { data: isolatedDoctor, error: doctorError } = await admin.from("doctors").insert({ clinic_id: CLINIC_ID, name: `Booking fixture ${Date.now()}`, active: true }).select("id").single();
-    expect(doctorError).toBeNull();
-    doctorId = isolatedDoctor!.id;
-    const { data: hours, error: hoursReadError } = await admin.from("doctor_working_hours").select("weekday,start_time,end_time").eq("doctor_id", doctor!.id);
-    expect(hoursReadError).toBeNull();
-    expect((await admin.from("doctor_working_hours").insert((hours ?? []).map(h => ({ ...h, clinic_id: CLINIC_ID, doctor_id: doctorId })))).error).toBeNull();
+    doctorId = doctor!.id;
     serviceId = service!.id;
     patientId = patient!.id;
     // Wipe leftovers from previous runs so the suite is idempotent.
     // All fixture appointments target this seed doctor.
-    await admin.from("appointments").update({ status: "cancelled" }).eq("doctor_id", doctorId);
+    await admin.from("appointments").delete().eq("doctor_id", doctorId);
   });
 
   /** Next occurrence of `weekday` (1=Mon..7=Sun) at 10:00 Tashkent, ≥48h ahead. */
@@ -110,7 +108,7 @@ describeDb("local Supabase booking engine", () => {
     expect(result.appointment_id).toBeTruthy();
 
     // Cleanup so other tests run on a fresh schedule.
-    await admin.from("appointments").update({ status: "cancelled" }).eq("id", result.appointment_id);
+    await admin.from("appointments").delete().eq("id", result.appointment_id);
   });
 
   it("rejects a double booking on the same slot (slot_taken)", async () => {
@@ -139,7 +137,7 @@ describeDb("local Supabase booking engine", () => {
     expect(second.error_code).toBe("slot_taken");
     expect(second.appointment_id).toBeNull();
 
-    await admin.from("appointments").update({ status: "cancelled" }).eq("id", first.appointment_id!);
+    await admin.from("appointments").delete().eq("id", first.appointment_id!);
   });
 
   it("exactly one of two concurrent RPC bookings wins the same slot (no race)", async () => {
@@ -163,7 +161,7 @@ describeDb("local Supabase booking engine", () => {
     const loser = winners === 1 && ra.error_code !== null ? ra : rb;
     expect(loser.error_code).toBe("slot_taken");
     const winnerId = ra.error_code === null ? ra.appointment_id : rb.appointment_id;
-    await admin.from("appointments").update({ status: "cancelled" }).eq("id", winnerId!);
+    await admin.from("appointments").delete().eq("id", winnerId!);
   });
 
   it("cancel-after-book race: exactly one active appointment survives at the slot", async () => {
@@ -206,7 +204,7 @@ describeDb("local Supabase booking engine", () => {
     const rebookWon = pending.length === 1 && cancelled.length === 1;
     const cancelWon = pending.length === 0 && cancelled.length === 1 && (all ?? []).length === 1;
     expect(rebookWon || cancelWon).toBe(true);
-    await admin.from("appointments").update({ status: "cancelled" }).eq("doctor_id", doctorId).eq("start_at", startAt);
+    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", startAt);
   });
 
   it("reschedule-during-booking race: exactly one appointment lands on the target slot", async () => {
@@ -227,11 +225,12 @@ describeDb("local Supabase booking engine", () => {
 
     // A fresh patient tries to book slot2 while the first appointment is
     // rescheduled onto slot2 — serialized by the per-doctor advisory lock.
-    await Promise.all([
+    const [moved, fresh] = await Promise.all([
       admin.rpc("reschedule_appointment", {
+        p_clinic_id: CLINIC_ID,
         p_appointment_id: booked.appointment_id!,
         p_new_start_at: slot2,
-        p_actor: null,
+        p_actor: undefined,
       }),
       admin.rpc("book_appointment", {
         p_clinic_id: CLINIC_ID,
@@ -246,6 +245,15 @@ describeDb("local Supabase booking engine", () => {
       }),
     ]);
 
+    // Both calls ran (no RPC error) and exactly one of them got slot2.
+    expect(moved.error).toBeNull();
+    expect(fresh.error).toBeNull();
+    const outcomes = [
+      (moved.data as { error_code: string | null }).error_code,
+      (fresh.data as { error_code: string | null }).error_code,
+    ];
+    expect(outcomes.filter((c) => c === null)).toHaveLength(1);
+    expect(outcomes.filter((c) => c === "slot_taken")).toHaveLength(1);
     // Exactly one pending appointment may occupy slot2 (the rescheduled one
     // or the new one — never both, never zero with two successes).
     const { data: onSlot2 } = await admin
@@ -256,8 +264,8 @@ describeDb("local Supabase booking engine", () => {
       .eq("status", "pending");
     expect(onSlot2 ?? []).toHaveLength(1);
 
-    await admin.from("appointments").update({ status: "cancelled" }).eq("doctor_id", doctorId).eq("start_at", slot1);
-    await admin.from("appointments").update({ status: "cancelled" }).eq("doctor_id", doctorId).eq("start_at", slot2);
+    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", slot1);
+    await admin.from("appointments").delete().eq("doctor_id", doctorId).eq("start_at", slot2);
   });
 
   it("rejects booking outside working hours (outside_working_hours)", async () => {
@@ -301,7 +309,7 @@ describeDb("local Supabase booking engine", () => {
     expect(second.error_code).toBeNull();
     expect(second.appointment_id).toBeTruthy();
 
-    await admin.from("appointments").update({ status: "cancelled" }).eq("id", second.appointment_id!);
+    await admin.from("appointments").delete().eq("id", second.appointment_id!);
   });
 
   it("enforces the no-overlap exclusion constraint on direct inserts", async () => {
@@ -338,7 +346,7 @@ describeDb("local Supabase booking engine", () => {
       expect(["P0001", "23P01"]).toContain(overlap.error.code);
     }
 
-    await admin.from("appointments").update({ status: "cancelled" }).eq("id", first.data!.id);
+    await admin.from("appointments").delete().eq("id", first.data!.id);
   });
 
   it("rejects a non-existent clinic (clinic_not_found)", async () => {
@@ -464,7 +472,7 @@ describeDb("local Supabase booking engine", () => {
     const acceptedResult = accepted.data as { appointment_id: string | null; error_code: string | null };
     expect(acceptedResult.error_code).toBeNull();
 
-    await admin.from("appointments").update({ status: "cancelled" }).eq("id", acceptedResult.appointment_id!);
+    await admin.from("appointments").delete().eq("id", acceptedResult.appointment_id!);
     await admin.from("doctor_working_hours").delete().eq("doctor_id", restrictedDoctor!.id);
     await admin.from("doctor_services").delete().eq("doctor_id", restrictedDoctor!.id);
     await admin.from("services").delete().eq("id", otherService!.id);
@@ -561,6 +569,7 @@ describeDb("RPC authorization + tenant isolation", () => {
   });
 
   afterAll(async () => {
+    await admin.from("processed_webhooks").delete().eq("source", RPC_GRANT_PROBE);
     if (userId) {
       await admin.auth.admin.deleteUser(userId);
     }
@@ -576,16 +585,19 @@ describeDb("RPC authorization + tenant isolation", () => {
       p_status: "pending",
       p_source: "telegram_mini_app",
     });
-    expect(error).not.toBeNull();
+    // Refused for lack of EXECUTE, not for a missing function.
+    expect(error?.code).toBe("42501");
     expect(data).toBeNull();
   });
 
   it("denies reschedule_appointment to an authenticated non-staff user", async () => {
     const { data, error } = await userClient.rpc("reschedule_appointment", {
+      p_clinic_id: CLINIC_ID,
       p_appointment_id: "00000000-0000-0000-0000-000000000000",
       p_new_start_at: new Date(Date.now() + 2 * 86400000).toISOString(),
     });
-    expect(error).not.toBeNull();
+    // Refused for lack of EXECUTE, not for a missing function.
+    expect(error?.code).toBe("42501");
     expect(data).toBeNull();
   });
 
@@ -611,7 +623,7 @@ describeDb("RPC authorization + tenant isolation", () => {
 
   it("service_role can still book after the revoke (server path unaffected)", async () => {
     const [{ data: doctor }, { data: service }, { data: patient }] = await Promise.all([
-      admin.from("doctors").select("id").eq("id", doctorId).single(),
+      admin.from("doctors").select("id").eq("name", "Karimov Alisher").single(),
       admin.from("services").select("id").eq("name", "Terapevt qabuli").single(),
       admin.from("patients").select("id").eq("telegram_user_id", 777000).single(),
     ]);
@@ -628,8 +640,55 @@ describeDb("RPC authorization + tenant isolation", () => {
     expect(error).toBeNull();
     expect((data as { error_code: string | null }).error_code).toBeNull();
     if (data?.appointment_id) {
-      await admin.from("appointments").update({ status: "cancelled" }).eq("id", data.appointment_id);
+      await admin.from("appointments").delete().eq("id", data.appointment_id);
     }
+  });
+
+  // Server-only job/idempotency primitives. They are SECURITY DEFINER and the
+  // only callers in the codebase go through the service-role client, but
+  // PostgreSQL's default PUBLIC EXECUTE plus Supabase's blanket
+  // anon/authenticated grants left them callable over PostgREST with nothing
+  // but the publishable anon key. That was enough for an anonymous caller to
+  // read pending reminder payloads and flip them to 'in_progress' so patients
+  // never got reminded, or to pre-claim Telegram update ids so genuine
+  // deliveries were discarded as duplicates and the bot went silent.
+  const SERVER_ONLY_RPCS: Array<[string, Record<string, unknown>]> = [
+    ["claim_due_notification_jobs", { p_limit: 1 }],
+    ["claim_webhook_update", { p_source: RPC_GRANT_PROBE, p_external_id: RPC_GRANT_PROBE }],
+    ["finish_webhook_update", { p_source: RPC_GRANT_PROBE, p_external_id: RPC_GRANT_PROBE }],
+    ["release_webhook_update", { p_source: RPC_GRANT_PROBE, p_external_id: RPC_GRANT_PROBE }],
+  ];
+
+  it.each(SERVER_ONLY_RPCS)("denies %s to an anonymous caller", async (fn, args) => {
+    const { data, error } = await anon.rpc(fn, args);
+    expect(error).not.toBeNull();
+    expect(data).toBeNull();
+  });
+
+  it.each(SERVER_ONLY_RPCS)("denies %s to an authenticated non-staff user", async (fn, args) => {
+    const { data, error } = await userClient.rpc(fn, args);
+    expect(error).not.toBeNull();
+    expect(data).toBeNull();
+  });
+
+  // Positive control: the same arguments succeed for service_role, so the
+  // denials above are genuinely about the EXECUTE grant and not about a
+  // malformed call that would "pass" the test for the wrong reason.
+  it("still allows the server's own service-role client through", async () => {
+    const claimed = await admin.rpc("claim_webhook_update", {
+      p_source: RPC_GRANT_PROBE,
+      p_external_id: RPC_GRANT_PROBE,
+    });
+    expect(claimed.error).toBeNull();
+    expect(claimed.data).toBe(true);
+
+    const finished = await admin.rpc("finish_webhook_update", {
+      p_source: RPC_GRANT_PROBE,
+      p_external_id: RPC_GRANT_PROBE,
+    });
+    expect(finished.error).toBeNull();
+
+    await admin.from("processed_webhooks").delete().eq("source", RPC_GRANT_PROBE);
   });
 });
 

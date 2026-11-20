@@ -96,7 +96,20 @@ describeDb("analytics integrity (real DB totals)", () => {
       source,
       cancelled_reason: reason,
       no_show_reason: noShowReason,
+    }).select("id").single();
+
+  // Revenue is recognized only for completed appointments whose payment is
+  // "paid" (see aggregateAppointments), so completed fixtures get one.
+  const payFor = async (appointmentId: string) => {
+    const { error } = await admin.from("payments").insert({
+      clinic_id: clinicId,
+      appointment_id: appointmentId,
+      patient_id: patientId,
+      amount: 50_000,
+      status: "paid",
     });
+    expect(error).toBeNull();
+  };
 
   /** Local calendar day in Asia/Tashkent for a UTC instant. */
   const localDay = (d: Date) =>
@@ -111,24 +124,27 @@ describeDb("analytics integrity (real DB totals)", () => {
     const day2 = new Date("2026-08-18T05:00:00Z"); // local Tue 10:00
     const day2Noon = new Date("2026-08-18T05:30:00Z"); // local Tue 10:30
 
-    expect((await insertAppt(day1, "completed", "telegram_mini_app")).error).toBeNull(); // revenue 50k, bucket Mon
-    expect((await insertAppt(day1Plus, "completed", "walk_in")).error).toBeNull(); // revenue 50k, bucket Mon
-    expect((await insertAppt(day1Late, "completed", "walk_in")).error).toBeNull(); // revenue 50k, bucket Wed (00:30 local)
-    expect((await insertAppt(day2, "pending", "walk_in")).error).toBeNull(); // no revenue
-    expect((await insertAppt(day2Noon, "cancelled", "telegram_mini_app", "Narxi qimmat")).error).toBeNull(); // cancel reason
-    expect((await insertAppt(day1Plus, "no_show", "telegram_chat", null, "Bemorga aloqa yo‘q")).error).toBeNull(); // no-show reason
-    expect((await insertAppt(day2Noon, "no_show", "telegram_chat", null, "Bemorga aloqa yo‘q")).error).toBeNull(); // no-show reason
-
-    // Revenue comes from actual paid records, never inferred from completed visits.
-    const { data: completed, error: completedError } = await admin.from("appointments").select("id").eq("clinic_id", clinicId).eq("status", "completed");
-    expect(completedError).toBeNull();
-    expect((await admin.from("payments").insert((completed ?? []).map(a => ({ clinic_id: clinicId, patient_id: patientId, appointment_id: a.id, amount: 50000, currency: "UZS", status: "paid", provider: "manual" })))).error).toBeNull();
+    for (const [at, source] of [
+      [day1, "telegram_mini_app"], // revenue 50k, bucket Mon
+      [day1Plus, "walk_in"], // revenue 50k, bucket Mon
+      [day1Late, "walk_in"], // revenue 50k, bucket Wed (00:30 local)
+    ] as const) {
+      const { data: completedAppt, error: completedError } = await insertAppt(at, "completed", source);
+      expect(completedError).toBeNull();
+      await payFor(completedAppt!.id);
+    }
+    await insertAppt(day2, "pending", "walk_in"); // no revenue
+    await insertAppt(day2Noon, "cancelled", "telegram_mini_app", "Narxi qimmat"); // cancel reason
+    await insertAppt(day1Plus, "no_show", "telegram_chat", null, "Bemorga aloqa yo‘q"); // no-show reason
+    await insertAppt(day2Noon, "no_show", "telegram_chat", null, "Bemorga aloqa yo‘q"); // no-show reason
 
     // Fetch exactly what the endpoint queries (clinic-scoped, same columns).
-    const since = day1.toISOString();
+    // The window starts just before the fixed fixture dates rather than at
+    // the endpoint's rolling "last 30 days", which the fixture ages out of.
+    const since = new Date(day1.getTime() - 86400000).toISOString();
     const { data, error } = await admin
       .from("appointments")
-      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name), payments(amount,status)")
+      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name), payments(status, amount)")
       .eq("clinic_id", clinicId)
       .gte("start_at", since);
     expect(error).toBeNull();
@@ -169,13 +185,15 @@ describeDb("analytics integrity (real DB totals)", () => {
 
     // Top service/doctor: counts + revenue only from completed rows.
     expect(agg.topServices).toEqual([{ name: `Konsultatsiya ${suffix}`, count: 7, completedCount: 3, revenue: 150_000 }]);
-    expect(agg.topDoctors).toEqual([{ name: `Dr Analytics ${suffix}`, count: 7, completedCount: 3, completionRate: 42.9, revenue: 150_000 }]);
+    expect(agg.topDoctors).toEqual([
+      { name: `Dr Analytics ${suffix}`, count: 7, completedCount: 3, revenue: 150_000, completionRate: 42.9 },
+    ]);
   });
 
   it("partial days and empty ranges aggregate to zero without errors", async () => {
     const { data: none } = await admin
       .from("appointments")
-      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name), payments(amount,status)")
+      .select("source, status, cancelled_reason, no_show_reason, start_at, services(name, price), doctors(name)")
       .eq("clinic_id", clinicId)
       .gte("start_at", new Date(Date.now() + 2 * 86400000).toISOString());
     const agg = aggregateAppointments((none ?? []) as unknown as AnalyticsRow[], TZ, 3);

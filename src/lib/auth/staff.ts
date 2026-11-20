@@ -1,4 +1,5 @@
 import "server-only";
+import { redirect } from "next/navigation";
 import { createStaffClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -12,6 +13,8 @@ export type StaffContext = {
   clinicTimezone: string;
   roles: StaffRole[];
   platformAdmin: boolean;
+  /** The account still has a temporary password: every panel sends it to /account/password first. */
+  mustChangePassword?: boolean;
 };
 
 /**
@@ -20,6 +23,10 @@ export type StaffContext = {
  * "doctor" and "receptionist" are below management: they cannot manage the
  * catalog, analytics or bot configuration. requireStaff("doctor") therefore
  * only passes for literal doctors (receptionist weight 0 < doctor weight 1).
+ * Lab staff weigh -1: no weight-based check ever admits them, not even
+ * requireStaff("receptionist"); lab routes name their roles exactly
+ * (requireLabCapability / requireRoles). Cashiers likewise weigh -1: they
+ * reach only the kassa routes, which name the role explicitly.
  */
 const ROLE_WEIGHT: Record<StaffRole, number> = {
   owner: 4,
@@ -27,6 +34,8 @@ const ROLE_WEIGHT: Record<StaffRole, number> = {
   manager: 3,
   doctor: 1,
   receptionist: 0,
+  cashier: -1,
+  lab: -1,
 };
 
 export function roleAtLeast(roles: StaffRole[], min: StaffRole): boolean {
@@ -65,11 +74,19 @@ const ADMIN_WORKSPACE_ROLES: StaffRole[] = ["owner", "admin", "manager", "recept
  * them to their own working portal instead, mirroring the equivalent
  * doctor-only guard in doctor/layout.tsx.
  */
-export function adminWorkspaceRedirect(ctx: StaffContext): "/platform" | "/doctor" | null {
+export function adminWorkspaceRedirect(ctx: StaffContext): "/platform" | "/doctor" | "/lab" | "/kassa" | null {
   if (ctx.platformAdmin) return "/platform";
-  if (!hasAnyRole(ctx.roles, ADMIN_WORKSPACE_ROLES)) return "/doctor";
+  if (!hasAnyRole(ctx.roles, ADMIN_WORKSPACE_ROLES)) {
+    if (hasAnyRole(ctx.roles, ["cashier"])) return "/kassa";
+    return hasAnyRole(ctx.roles, ["lab"]) ? "/lab" : "/doctor";
+  }
   return null;
 }
+
+/** Roles that work the kassa (collect and, under the refund rules, refund). Reception is not one. */
+export const KASSA_ROLES: StaffRole[] = ["owner", "manager", "admin", "cashier"];
+/** Roles that register arrivals and run the live queue at the desk. */
+export const RECEPTION_ROLES: StaffRole[] = ["owner", "manager", "admin", "receptionist"];
 
 /**
  * Resolves the staff member's clinic context from the session.
@@ -83,18 +100,22 @@ export async function getStaffContext(): Promise<StaffContext | null> {
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const [{ data: roles }, { data: platformAdmins }] = await Promise.all([
+  const [{ data: allRoles }, { data: platformAdmins }, { data: profile }] = await Promise.all([
     supabase
       .from("staff_roles")
-      .select("clinic_id, role, clinics!inner(id, name, timezone)")
+      .select("clinic_id, role, clinics!inner(id, name, timezone, is_active)")
       .eq("profile_id", user.id)
       .order("created_at", { ascending: true }),
     supabase.from("platform_admins").select("profile_id").eq("profile_id", user.id).maybeSingle(),
+    supabase.from("profiles").select("must_change_password").eq("id", user.id).maybeSingle(),
   ]);
 
   const platformAdmin = !!platformAdmins;
+  const mustChangePassword = profile?.must_change_password === true;
+  // A deactivated clinic (switched off by the platform, e.g. an unpaid subscription) admits none of its staff.
+  const roles = (allRoles ?? []).filter((r) => r.clinics?.is_active !== false);
 
-  if (platformAdmin && (!roles || roles.length === 0)) {
+  if (platformAdmin && roles.length === 0) {
     return {
       profileId: user.id,
       clinicId: null,
@@ -102,6 +123,7 @@ export async function getStaffContext(): Promise<StaffContext | null> {
       clinicTimezone: "Asia/Tashkent",
       roles: [],
       platformAdmin: true,
+      mustChangePassword,
     };
   }
 
@@ -113,8 +135,8 @@ export async function getStaffContext(): Promise<StaffContext | null> {
   // determinism — so roles from a DIFFERENT clinic must never leak in here.
   // Merging roles across clinics would let e.g. a receptionist at Clinic A
   // who is also owner at Clinic B act with owner privileges inside Clinic A.
-  const first = roles![0];
-  const sameClinicRoles = roles!.filter((r) => r.clinic_id === first.clinic_id).map((r) => r.role);
+  const first = roles[0];
+  const sameClinicRoles = roles.filter((r) => r.clinic_id === first.clinic_id).map((r) => r.role);
   return {
     profileId: user.id,
     clinicId: first.clinic_id,
@@ -122,7 +144,34 @@ export async function getStaffContext(): Promise<StaffContext | null> {
     clinicTimezone: first.clinics?.timezone ?? "Asia/Tashkent",
     roles: sameClinicRoles,
     platformAdmin,
+    mustChangePassword,
   };
+}
+
+/**
+ * The signed-in staff context for a panel layout: sends a signed-out visitor to /login and an account with a
+ * temporary password to /account/password before anything else.
+ */
+export async function requirePanelContext(): Promise<StaffContext> {
+  const ctx = await getStaffContext();
+  if (!ctx) redirect(`/login${await noAccessReason()}`);
+  if (ctx.mustChangePassword) redirect("/account/password");
+  return ctx;
+}
+
+/**
+ * Why a signed-in account reaches no panel, for the login page to say (it then signs the session out):
+ * "?reason=clinic_inactive" when every clinic it works at is switched off, "?reason=no_access" when it works nowhere.
+ * Nothing for a visitor who is not signed in.
+ */
+async function noAccessReason(): Promise<string> {
+  const supabase = await createStaffClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return "";
+  const { data } = await supabase.from("staff_roles").select("clinics!inner(is_active)").eq("profile_id", user.id).limit(1);
+  return (data ?? []).length > 0 ? "?reason=clinic_inactive" : "?reason=no_access";
 }
 
 function errorOrEmpty(roles: Array<{ clinic_id: string; role: StaffRole }> | null): boolean {

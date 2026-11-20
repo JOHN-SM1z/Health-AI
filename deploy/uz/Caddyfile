@@ -1,0 +1,29 @@
+# HTTPS for Health AI. Caddy obtains and renews the certificates itself (Let's Encrypt); ports 80 and 443 must be
+# open and the DNS A records for healthai.uz, www.healthai.uz and api.healthai.uz must point at this server.
+{
+	email admin@healthai.uz
+}
+
+# The website for clinics, the staff panels and the patients' Telegram Mini App: one Next.js server.
+healthai.uz {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	reverse_proxy app:8080
+}
+
+www.healthai.uz {
+	redir https://healthai.uz{uri} permanent
+}
+
+# The Supabase gateway (auth, REST, storage) for the browser. Studio and Postgres are never exposed:
+# they are reached over an SSH tunnel only (README.md).
+api.healthai.uz {
+	encode zstd gzip
+	header -Server
+	reverse_proxy kong:8000
+}

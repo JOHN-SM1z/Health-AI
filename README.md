@@ -1,14 +1,12 @@
 # Health AI
 
-Clinic operations software centered on walk-in registration, live queues, services cashier, clinician-authored history and simple referrals. Scheduled booking is an optional clinic setting. AI is restricted to nonclinical information and navigation.
+Clinic booking and patient-communication platform: a Telegram bot + Mini App for patients, an admin panel and a doctor panel, powered by Supabase (Postgres + Auth + Storage + RLS) and a provider-agnostic AI layer, deployed to Google Cloud Run or Vercel.
 
-**Status: development revision, not production approved.** See the [phased pilot checklist](docs/PILOT_IMPLEMENTATION_CHECKLIST.md) and [latest validation](docs/PILOT_VALIDATION_2026-10-06.md) for current implementation and release blockers. The October database audit found authorization and integrity defects despite earlier approval claims. See [current product direction](docs/CLINIC_OPERATIONS_PRODUCT.md), [database findings](docs/DATABASE_AUDIT_2026-10-05.md), and [implementation and validation status](docs/OPERATIONS_REVISION_2026-10-06.md). Inpatient management, full billing and device-connected laboratory workflows remain before operational replacement. Payroll is deferred and stays in the clinic’s existing process. See the [device integration plan](docs/labs/DEVICE_INTEGRATION_PLAN.md).
+**Status:** **LOCAL RELEASE GATES PASSED**. The 20 November migration-history, compiler and legacy-test blockers are repaired: lint, typecheck, production build, 1,353 tests (zero skipped) and 522 browser/HTTP checks pass. See [current implementation status and upgrade boundaries](docs/IMPLEMENTATION_STATUS_2026-11-20.md). No production database or deployment was changed; earlier audit approvals remain historical evidence.
 
 ---
 
-## 1. Historical release records
-
-These reports describe an earlier booking-focused version. They do not approve the current revision or override the October audit.
+## 1. Production Readiness & Release Records
 
 | Document | Contents |
 | --- | --- |
@@ -26,11 +24,11 @@ These reports describe an earlier booking-focused version. They do not approve t
 | --- | --- |
 | Telegram Bot | `/start`, menu, appointment booking flow, reminders, voice notes (transcription), admin notifications |
 | Mini App | `/book` booking flow, `/my-appointments`, `/help`, `/privacy` — inside Telegram via `WebApp` |
-| Admin Panel | `/admin` registration/live queue, `/admin/cashier` services collection, patients, conversations, catalog and settings; scheduled calendar is optional |
-| Doctor Panel | Own live queue, append-only patient history, printing, simple referrals and working hours |
+| Admin Panel | `/admin` — today view, appointments, calendar, conversations, doctors, services, specialties, FAQs, analytics, settings |
+| Doctor Panel | `/doctor` — queue (checked-in → in-progress → completed), schedule + self-service breaks |
 | Backend | Transactional booking engine (no double-booking), payment status machine, notification lifecycle daemon, OpenAI-compatible AI receptionist |
-| Database | Ordered migrations in `supabase/migrations/`; apply each file in its own transaction |
-| Verification | Unit/API tests plus an isolated PostgreSQL replay and concurrency/security harness; see current validation report |
+| Database | 25 SQL migrations: schema, RLS policies, functions/triggers, grants, role-based authorization, slot-validation + integrity fixes |
+| Verification | 33 test files / 219 tests covering unit, API, concurrency, security, and RLS policies |
 
 ---
 
@@ -47,7 +45,7 @@ These reports describe an earlier booking-focused version. They do not approve t
 
 ## 4. Quick Start (Local Development)
 
-Requirements: Node 20+.
+Requirements: Node 22.18+ (CI uses Node 22).
 
 ```bash
 # 1. Install dependencies
@@ -66,13 +64,39 @@ Useful scripts:
 ```bash
 npm run typecheck      # tsc --noEmit (0 errors)
 npm run lint           # eslint (0 errors)
-cp .env.test.example .env.test # loopback-only disposable test environment
 npm test               # vitest — DB integration suites probe the local stack and
                        # SKIP with a clear warning when it is unavailable
 npm run db:reset-local # clean local DB: migrations + seed, one command
+npm run db:full-setup  # regenerate supabase/full-db-setup.sql after adding a migration
 npm run create-owner   # create the first owner account + clinic (see supabase-setup.md)
 npm run build          # production build (standalone)
+
+# End-to-end, against the built app on the LOCAL stack only (npm run build && npm start):
+npm run e2e:seed       # demo clinic + staff accounts (idempotent; refuses non-local hosts)
+npm run test:e2e       # referral workflow, online-vs-reception booking race, staff management and
+                       # urgent escalation (browser) + HTTP red team
 ```
+
+Vitest and the E2E runner load `.env.test` when present, otherwise `.env.test.example`. They never load
+the app's `.env` or `.env.local`; every Supabase API/database target must use a
+loopback host. For database integration tests, configure `.env.test` with keys
+from a disposable local stack. CI creates that file using its generated local
+credentials. Set `REQUIRE_TEST_DATABASE=true` for a release verification run; an
+unavailable database then fails instead of skipping integration suites. E2E also
+requires an explicit local `SUPABASE_DB_URL`. Worker migration/claim checks can run independently with
+`SUPABASE_DB_URL` set to a local administrator connection and
+`npm run test:notification-claims`; they create and remove their own test database.
+`npm run test:schema-rehearsal` additionally verifies canonical clean installs,
+upgrades, RLS/grants and the generated SQL bundle. See the
+[migration lineage rules](supabase/legacy-migrations/README.md) before upgrading.
+
+The working-tree compatibility findings and current verification results are in
+[the implementation status](docs/IMPLEMENTATION_STATUS_2026-11-20.md). Historical
+approval and test counts elsewhere in this README do not certify this checkout.
+
+CI (`.github/workflows/ci.yml`) runs all of the above on every push: lint, typecheck, tests
+without a database, build, then a Supabase stack from the CLI with every migration and the
+seed, the full test suite, and the end-to-end scripts against the built app.
 
 ---
 

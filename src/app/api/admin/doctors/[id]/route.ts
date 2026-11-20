@@ -38,17 +38,22 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
       .maybeSingle();
     if (!doctor) throw new ApiError(404, "Shifokor topilmadi");
 
-    // Validate ranges server-side.
+    // Validate ranges server-side — all of it before anything is replaced,
+    // so a bad schedule never leaves the doctor with no working hours.
     for (const w of body.schedule) {
       if (w.start >= w.end) {
         throw new ApiError(400, "Ish vaqti tugashi boshlanishidan keyin bo‘lishi kerak", "bad_range");
       }
     }
+    if (new Set(body.schedule.map((w) => w.weekday)).size !== body.schedule.length) {
+      throw new ApiError(400, "Har bir hafta kuni uchun bitta ish vaqti kiriting", "duplicate_weekday");
+    }
 
     const { error: deleteError } = await supabase
       .from("doctor_working_hours")
       .delete()
-      .eq("doctor_id", id);
+      .eq("doctor_id", id)
+      .eq("clinic_id", staff.clinicId);
     if (deleteError) throw new ApiError(500, "Jadvalni yangilab bo‘lmadi");
 
     if (body.schedule.length > 0) {

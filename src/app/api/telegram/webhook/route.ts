@@ -12,7 +12,11 @@ import {
   handleVoiceCorrect,
   handleVoiceWrong,
   requestHumanHandoff,
+  handleContactShared,
 } from "@/lib/telegram/handlers";
+import { answerCallbackQuery } from "@/lib/telegram/bot";
+import { handleQueueFollowStart, handleQueueStatus } from "@/lib/telegram/queue-follow";
+import { QUEUE_STATUS_CALLBACK } from "@/lib/operations/queue-messages";
 
 export const dynamic = "force-dynamic";
 // 120s, not the 60s default: the voice-message pipeline (handleVoiceConsent)
@@ -31,6 +35,7 @@ type TelegramUpdate = {
     chat?: { id?: number };
     from?: { id?: number; first_name?: string; last_name?: string; username?: string };
     voice?: { file_id: string; file_unique_id?: string; duration?: number; mime_type?: string; file_size?: number };
+    contact?: { phone_number?: string; user_id?: number; first_name?: string };
   };
   callback_query?: {
     id?: string;
@@ -115,7 +120,7 @@ export async function POST(request: NextRequest) {
   // 4. Idempotency: atomically claim this update. The first delivery wins;
   //    duplicates return success without dispatching any work. Claims are
   //    per (bot, update_id) so two clinics' bots never collide.
-  let claimed: boolean;
+  let claimed: string | null;
   try {
     claimed = await claimWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId));
   } catch {
@@ -135,11 +140,11 @@ export async function POST(request: NextRequest) {
       clinicId,
       error: e instanceof Error ? e.message : String(e),
     });
-    await releaseWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId)).catch(() => {});
+    await releaseWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId), claimed).catch(() => {});
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 
-  await finishWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId)).catch(() => {});
+  await finishWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId), claimed).catch(() => {});
   return NextResponse.json({ ok: true });
 }
 
@@ -158,7 +163,22 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
       username: rawFrom.username,
     };
 
+    // A shared contact (the Mini App's "share my phone", or the bot's contact button) proves the sender's own phone
+    // for online identity — kept only when the contact is theirs.
+    if (message.contact) {
+      await handleContactShared({ clinicId, chatId, from, contact: message.contact });
+      return;
+    }
+
     const text = message.text?.trim() ?? "";
+
+    // The kassa's QR: "/start v_<token>" follows that visit's queue only —
+    // no patient card is created or linked for it.
+    const follow = /^\/start\s+v_(\S+)$/.exec(text);
+    if (follow) {
+      await handleQueueFollowStart({ clinicId, chatId, telegramUserId: from.id, token: follow[1] });
+      return;
+    }
 
     if (text.startsWith("/")) {
       const command = text.split(" ")[0];
@@ -188,20 +208,27 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
       username: rawFrom.username,
     };
 
+    // Stop the button's spinner first; the reply follows as a message.
+    if (callback.id) await answerCallbackQuery(callback.id, clinicId);
+
     if (data.startsWith("voice_consent_yes:")) {
-      await handleVoiceConsent({ clinicId, chatId, voiceMessageId: data.split(":")[1], consent: true });
+      await handleVoiceConsent({ clinicId, chatId, telegramUserId: from.id, voiceMessageId: data.split(":")[1], consent: true });
       return;
     }
     if (data.startsWith("voice_consent_no:")) {
-      await handleVoiceConsent({ clinicId, chatId, voiceMessageId: data.split(":")[1], consent: false });
+      await handleVoiceConsent({ clinicId, chatId, telegramUserId: from.id, voiceMessageId: data.split(":")[1], consent: false });
       return;
     }
     if (data.startsWith("voice_correct:")) {
-      await handleVoiceCorrect({ clinicId, chatId, voiceMessageId: data.split(":")[1] });
+      await handleVoiceCorrect({ clinicId, chatId, telegramUserId: from.id, voiceMessageId: data.split(":")[1] });
       return;
     }
     if (data.startsWith("voice_wrong:")) {
-      await handleVoiceWrong({ clinicId, chatId, voiceMessageId: data.split(":")[1] });
+      await handleVoiceWrong({ clinicId, chatId, telegramUserId: from.id, voiceMessageId: data.split(":")[1] });
+      return;
+    }
+    if (data === QUEUE_STATUS_CALLBACK) {
+      await handleQueueStatus({ clinicId, chatId, telegramUserId: from.id });
       return;
     }
     if (data === "contact_operator") {
@@ -213,7 +240,7 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
 
 const MENU_BUTTONS = [
   "Qabulga yozilish",
-  "Klinika ma’lumotlari",
+  "Mening qabullarim",
   "Shifokor tanlashda yordam",
   "Narxlar",
   "Manzil",

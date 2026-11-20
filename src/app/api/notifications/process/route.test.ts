@@ -9,6 +9,10 @@ vi.mock("@/lib/notifications/processor", () => ({
   processDueNotificationJobs: vi.fn(async () => ({ processed: 0 })),
 }));
 
+vi.mock("@/lib/voice/retention", () => ({
+  purgeExpiredVoiceMessages: vi.fn(async () => ({ purged: 2, failed: 0 })),
+}));
+
 vi.mock("@/lib/rate-limit", () => ({
   rateLimit: vi.fn(() => ({ ok: true, retryAfterSeconds: 0 })),
   keyFromIp: vi.fn(() => "test-ip"),
@@ -50,5 +54,10 @@ describe("notification cron endpoint (red-team)", () => {
     const res = await post("Bearer test-cron-secret-0123456789abcdef");
     expect(res.status).toBe(200);
     expect(processMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("enforces voice-message retention in the same scheduled run", async () => {
+    const res = await post("Bearer test-cron-secret-0123456789abcdef");
+    expect(await res.json()).toMatchObject({ ok: true, voicePurged: 2, voicePurgeFailed: 0 });
   });
 });

@@ -1,5 +1,4 @@
 import type { NextRequest } from "next/server";
-import { operationsSettingsSchema } from "@/lib/operations/settings";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireStaff } from "@/lib/auth/guards";
@@ -18,7 +17,6 @@ export async function PUT(request: NextRequest) {
   try {
     const staff = await requireStaff("admin");
     const body = await parseBody(request, settingSchema);
-    if (body.key === "clinic_operations") body.value = operationsSettingsSchema.parse(body.value);
     const supabase = createAdminClient();
     const { data, error } = await supabase
       .from("app_settings")
@@ -33,12 +31,4 @@ export async function PUT(request: NextRequest) {
   } catch (e) {
     return handleApiError(e);
   }
-}
-
-export async function GET() {
-  try { const staff = await requireStaff("admin");
-    const {data,error}=await createAdminClient().from("app_settings").select("key,value").eq("clinic_id",staff.clinicId);
-    if(error) throw new ApiError(503,"Sozlamalar yuklanmadi");
-    return ok({settings:data??[]});
-  } catch(e){ return handleApiError(e); }
 }

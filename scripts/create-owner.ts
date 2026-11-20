@@ -15,8 +15,8 @@ import { z } from "zod";
 const envSchema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(10),
-  OWNER_EMAIL: z.string().email().default("owner@example.com"),
-  OWNER_PASSWORD: z.string().min(12).default("ChangeMe_123456!"),
+  OWNER_EMAIL: z.string().email(),
+  OWNER_PASSWORD: z.string().min(12),
   OWNER_NAME: z.string().min(2).default("Klinika egasi"),
   CLINIC_NAME: z.string().min(2).default("Mening Klinikam"),
   CLINIC_SLUG: z.string().min(2).default("my-clinic"),
@@ -123,12 +123,12 @@ async function main() {
 
   console.log("\nTayyor! Kirish ma'lumotlari:");
   console.log(`  Email:    ${env.OWNER_EMAIL}`);
-  console.log(`  Parol:    ${env.OWNER_PASSWORD}`);
+  console.log("  Parol:    OWNER_PASSWORD orqali berilgan (logga yozilmaydi)");
   console.log(`  Panel:    ${env.SUPABASE_URL}/auth/v1  (yoki sizning domeningiz /admin/login)`);
   console.log("\n⚠️  Ushbu parolni darhol o‘zgartirishni unutmang.");
 }
 
-main().catch((e) => {
-  console.error("Kutilmagan xatolik:", e);
+main().catch(() => {
+  console.error("Owner yaratilmadi. Konfiguratsiya va oldingi bosqich holatini tekshiring.");
   process.exit(1);
 });

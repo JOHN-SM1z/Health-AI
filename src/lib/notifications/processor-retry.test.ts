@@ -1,179 +1,115 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-/** Chainable supabase mock: rpc() for the claim, from() per table. */
-const supabaseMock = {
-  rpc: vi.fn(),
-  from: vi.fn(),
-  appointmentLookupThrows: false,
-  notificationJobUpdateThrows: false,
-};
-
-const APPOINTMENT_CTX = {
-  patients: {telegram_user_id:777000},
-  start_at: "2026-08-20T05:00:00Z",
-  status: "confirmed",
-  doctors: { name: "Karimov Alisher" },
-  services: { name: "Terapevt qabuli" },
-  payments: { amount: 150000, currency: "UZS" },
-};
-
-vi.mock("@/lib/supabase/admin", () => ({
-  createAdminClient: () => supabaseMock,
+const state = vi.hoisted(() => ({
+  rpc: vi.fn(), from: vi.fn(), send: vi.fn(),
+  contextError: false, renew: true, finishError: false,
+  conversation: "open", jobs: [] as Record<string, unknown>[],
+  filters: [] as Array<[string, string, unknown]>,
 }));
+vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => state }));
+vi.mock("@/lib/telegram/bot", () => ({ sendTelegramMessage: state.send }));
+import { processDueNotificationJobs } from "./processor";
 
-vi.mock("@/lib/telegram/bot", () => ({
-  sendTelegramMessage: vi.fn(async () => 1),
-  telegramConfigured: vi.fn(() => true),
-}));
-
-import { processDueNotificationJobs } from "@/lib/notifications/processor";
-
-/** Collects every notification_jobs update payload across all from() calls. */
-function notificationJobUpdates(): unknown[] {
-  const updates: unknown[] = [];
-  for (const result of supabaseMock.from.mock.results) {
-    const value = result.value as { update?: ReturnType<typeof vi.fn> };
-    if (value?.update) updates.push(...value.update.mock.calls.map((c) => c[0]));
-  }
-  return updates;
-}
-
-function makeJob(overrides: Record<string, unknown> = {}) {
-  return {
-    id: "job-1",
-    clinic_id: "clinic-1",
-    appointment_id: "appt-1",
-    conversation_id: null,
-    patient_telegram_user_id: 777000,
-    type: "booking_confirmation",
-    attempts: 0,
-    max_attempts: 3,
-    scheduled_for: new Date(Date.now() - 1000).toISOString(),
-    ...overrides,
-  };
-}
+const job = (fields: Record<string, unknown> = {}) => ({
+  id: "job-1", clinic_id: "clinic-1", claim_token: "token-1",
+  appointment_id: "appointment-1", conversation_id: null,
+  patient_telegram_user_id: 777000, type: "booking_confirmation", attempts: 0, max_attempts: 3,
+  scheduled_for: new Date(Date.now() - 1000).toISOString(), ...fields,
+});
+const outcomes = () => state.rpc.mock.calls.filter(([name]) => name === "finish_notification_job_claim").map(([, args]) => args);
 
 beforeEach(() => {
   vi.clearAllMocks();
-
-  supabaseMock.appointmentLookupThrows = false;
-  supabaseMock.notificationJobUpdateThrows = false;
-
-  supabaseMock.rpc.mockImplementation(async () => ({ data: [], error: null }));
-
-  supabaseMock.from.mockImplementation((table: string) => {
-    if (table === "appointments") {
-      return {
-        select: vi.fn(() => ({
-          eq: vi.fn().mockReturnThis(),
-          maybeSingle: vi.fn(async () => {
-            if (supabaseMock.appointmentLookupThrows) throw new Error("db connection reset");
-            return {data:APPOINTMENT_CTX,error:null};
-          }),
-        })),
-      };
-    }
-    if (table === "clinics") {
-      return {
-        select: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            maybeSingle: vi.fn(async () => ({ data: { timezone: "Asia/Tashkent" }, error: null })),
-          })),
-        })),
-      };
-    }
-    if (table === "notification_jobs") {
-      return {
-        update: vi.fn((data: unknown) => ({
-          eq: vi.fn().mockReturnThis(),
-          then: (resolve: (value: unknown) => void, reject: (error: Error) => void) => {
-            if (supabaseMock.notificationJobUpdateThrows) return reject(new Error("db write failed"));
-            return resolve({ error: null, data });
-          },
-        })),
-      };
-    }
-    return {};
+  Object.assign(state, { contextError: false, renew: true, finishError: false, conversation: "open", jobs: [job()], filters: [] });
+  state.send.mockResolvedValue(42);
+  state.rpc.mockImplementation(async (name: string) => {
+    if (name === "claim_due_notification_jobs") return { data: state.jobs, error: null };
+    if (name === "renew_notification_job_claim") return { data: state.renew, error: null };
+    if (name === "finish_notification_job_claim") return state.finishError
+      ? { data: null, error: { code: "database_unavailable", message: "private provider detail" } }
+      : { data: true, error: null };
+    throw new Error("unexpected RPC");
+  });
+  state.from.mockImplementation((table: string) => {
+    const query = {
+      select: vi.fn(() => query),
+      eq: vi.fn((key: string, value: unknown) => { state.filters.push([table, key, value]); return query; }),
+      maybeSingle: vi.fn(async () => {
+        if (table === "appointments") {
+          if (state.contextError) throw new Error("private preparation error");
+          return { data: { start_at: new Date(Date.now() + 7 * 86400000).toISOString(), status: "confirmed",
+            doctors: { name: "Test doctor" }, services: { name: "Test service" }, payments: { amount: 150000, currency: "UZS" } }, error: null };
+        }
+        if (table === "conversations") return { data: { status: state.conversation }, error: null };
+        return { data: { timezone: "Asia/Tashkent" }, error: null };
+      }),
+    };
+    return query;
   });
 });
 
-describe("notification processor — release claimed jobs on processing failure", () => {
-  it("resets an errored job to pending so the next run retries it", async () => {
-    supabaseMock.appointmentLookupThrows = true;
-    supabaseMock.rpc.mockImplementation(async () => ({ data: [makeJob()], error: null }));
-
-    const result = await processDueNotificationJobs(50);
-
-    // The job was claimed but its processing threw — it must be released.
-    expect(result.processed).toBe(1);
-    expect(result.sent).toBe(0);
-    expect(result.failed).toBe(0);
-
-    expect(notificationJobUpdates()).toContainEqual(
-      expect.objectContaining({
-        status: "pending",
-        attempts: 1,
-        error: "processing error, retrying",
-      }),
-    );
+describe("notification worker claim ownership and uncertain delivery", () => {
+  it("renews before sending and records acceptance under the same clinic and token", async () => {
+    expect(await processDueNotificationJobs()).toMatchObject({ processed: 1, sent: 1, failed: 0 });
+    expect(state.rpc).toHaveBeenCalledWith("renew_notification_job_claim", {
+      p_clinic_id: "clinic-1", p_job_id: "job-1", p_claim_token: "token-1",
+    });
+    expect(outcomes()).toContainEqual(expect.objectContaining({ p_status: "sent", p_telegram_message_id: 42, p_claim_token: "token-1", p_clinic_id: "clinic-1" }));
+    expect(state.filters).toContainEqual(["appointments", "clinic_id", "clinic-1"]);
+    expect(state.rpc.mock.invocationCallOrder[1]).toBeLessThan(state.send.mock.invocationCallOrder[0]);
   });
 
-  it("fails the job once max attempts are exhausted", async () => {
-    supabaseMock.appointmentLookupThrows = true;
-    supabaseMock.rpc.mockImplementation(async () => ({
-      data: [makeJob({ attempts: 2, max_attempts: 3 })],
-      error: null,
-    }));
-
-    const result = await processDueNotificationJobs(50);
-
-    expect(result.processed).toBe(1);
-    expect(result.failed).toBe(1);
-
-    expect(notificationJobUpdates()).toContainEqual(
-      expect.objectContaining({
-        status: "failed",
-        attempts: 3,
-        error: "processing error after retries",
-      }),
-    );
+  it("an expired, cancelled or replaced claim cannot reach the provider", async () => {
+    state.renew = false;
+    expect(await processDueNotificationJobs()).toMatchObject({ sent: 0, failed: 1 });
+    expect(state.send).not.toHaveBeenCalled();
+    expect(outcomes()).toEqual([]);
   });
 
-  it("never releases a job whose message was already sent (no duplicate send)", async () => {
-    supabaseMock.notificationJobUpdateThrows = true;
-    supabaseMock.rpc.mockImplementation(async () => ({ data: [makeJob()], error: null }));
-
-    const result = await processDueNotificationJobs(50);
-
-    // The send succeeded (messageId returned) but recording it failed: the
-    // job must NOT go back to pending, or the next run would send the same
-    // reminder twice. It is marked failed instead.
-    expect(result.processed).toBe(1);
-    expect(result.sent).toBe(1);
-    expect(result.failed).toBe(1);
-
-    expect(notificationJobUpdates()).toContainEqual(
-      expect.objectContaining({ status: "failed", error: "sent but not recorded" }),
-    );
-    expect(notificationJobUpdates().some((u) => (u as { status?: string }).status === "pending")).toBe(false);
+  it("a legacy token-less claim cannot send", async () => {
+    state.jobs = [job({ claim_token: null })];
+    await processDueNotificationJobs();
+    expect(state.send).not.toHaveBeenCalled();
+    expect(outcomes()).toEqual([]);
   });
 
-  it("still processes the remaining jobs after one job fails", async () => {
-    supabaseMock.appointmentLookupThrows = true;
-    supabaseMock.rpc.mockImplementation(async () => ({
-      data: [makeJob({ id: "job-bad", max_attempts: 1 }), makeJob({ id: "job-ok" })],
-      error: null,
-    }));
+  it.each(["null", "throw"])("quarantines an uncertain %s send instead of replaying it", async (failure) => {
+    if (failure === "null") state.send.mockResolvedValue(null);
+    else state.send.mockRejectedValue(new Error("request timeout"));
+    expect(await processDueNotificationJobs()).toMatchObject({ sent: 0, failed: 1 });
+    expect(outcomes()).toHaveLength(1);
+    expect(outcomes()[0]).toMatchObject({ p_status: "quarantined" });
+    expect(state.send).toHaveBeenCalledTimes(1);
+  });
 
-    const result = await processDueNotificationJobs(50);
+  it("never requeues an accepted send when PostgREST returns an error object", async () => {
+    state.finishError = true;
+    expect(await processDueNotificationJobs()).toMatchObject({ sent: 0, failed: 1 });
+    expect(state.send).toHaveBeenCalledTimes(1);
+    expect(outcomes().map((o) => o.p_status)).toEqual(["sent"]);
+    expect(state.from).not.toHaveBeenCalledWith("notification_jobs");
+  });
 
-    // job-bad exhausted its attempts -> failed; job-ok was released back to
-    // pending. The loop must not abort after the first failure.
-    expect(result.processed).toBe(2);
-    expect(result.failed).toBe(1);
+  it("retries a preparation failure before any provider I/O", async () => {
+    state.contextError = true;
+    expect(await processDueNotificationJobs()).toMatchObject({ processed: 1, sent: 0 });
+    expect(state.send).not.toHaveBeenCalled();
+    expect(outcomes()[0]).toMatchObject({ p_status: "pending" });
+  });
 
-    const updates = notificationJobUpdates();
-    expect(updates).toContainEqual(expect.objectContaining({ status: "failed" }));
-    expect(updates).toContainEqual(expect.objectContaining({ status: "pending" }));
+  it("bounds preparation retries and keeps processing the rest of the batch", async () => {
+    state.contextError = true;
+    state.jobs = [job({ id: "exhausted", attempts: 2 }), job({ id: "retry" })];
+    expect(await processDueNotificationJobs()).toMatchObject({ processed: 2, failed: 1 });
+    expect(outcomes().map((o) => [o.p_job_id, o.p_status])).toEqual([["exhausted", "failed"], ["retry", "pending"]]);
+  });
+
+  it("stops automated messages for a human-held conversation", async () => {
+    state.conversation = "assigned";
+    state.jobs = [job({ conversation_id: "conversation-1" })];
+    await processDueNotificationJobs();
+    expect(state.send).not.toHaveBeenCalled();
+    expect(outcomes()[0]).toMatchObject({ p_status: "skipped" });
+    expect(state.filters).toContainEqual(["conversations", "clinic_id", "clinic-1"]);
   });
 });

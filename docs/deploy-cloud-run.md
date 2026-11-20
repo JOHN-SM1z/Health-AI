@@ -6,7 +6,7 @@
 Git push → Cloud Build → Artifact Registry image → Cloud Run (health-ai)
                                                           │
                                                           ├─ Secret Manager (env secrets)
-                                                          ├─ Cloud Scheduler → /api/notifications/process
+                                                          ├─ Cloud Scheduler → /api/notifications/process, /api/referrals/expire
                                                           └─ External HTTPS LB → your domain (TLS)
 ```
 
@@ -43,7 +43,8 @@ done
 Notes:
 
 - `TELEGRAM_WEBHOOK_SECRET` and `CRON_SECRET` must be long random strings
-  (`openssl rand -hex 32`).
+  (`openssl rand -hex 32`): production refuses to start with either shorter than 32
+  characters or copied from the docs.
 - There is no `WEBHOOK_SECRET` secret — the webhook secret is
   `TELEGRAM_WEBHOOK_SECRET` (the app validates it at startup and the webhook
   rejects requests without the matching `X-Telegram-Bot-Api-Secret-Token`).
@@ -110,7 +111,7 @@ separate manual webhook-registration step: each clinic's webhook is registered
 automatically by the app when that clinic's admin activates their bot from the
 dashboard (telegram-setup.md §1).
 
-## 5. Cloud Scheduler (reminders)
+## 5. Cloud Scheduler (reminders, referral expiry)
 
 ```bash
 gcloud scheduler jobs create http health-ai-notifications \
@@ -118,10 +119,20 @@ gcloud scheduler jobs create http health-ai-notifications \
   --uri="https://health.example.com/api/notifications/process" \
   --http-method=POST \
   --oidc-service-account-email=YOUR_SCHEDULER_SA@PROJECT.iam.gserviceaccount.com \
-  --headers="Authorization=Bearer $(gcloud secrets versions access CRON_SECRET --latest --secret=CRON_SECRET)"
+  --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret=CRON_SECRET)"
+
+gcloud scheduler jobs create http health-ai-referral-expiry \
+  --schedule="7 * * * *" \
+  --uri="https://health.example.com/api/referrals/expire" \
+  --http-method=POST \
+  --oidc-service-account-email=YOUR_SCHEDULER_SA@PROJECT.iam.gserviceaccount.com \
+  --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret=CRON_SECRET)"
 ```
 
-Job is idempotent (per-job row lock via notification_jobs) and cheap to run every 5 min.
+The reminder job is idempotent (per-job row lock via notification_jobs) and cheap to run every
+5 min. The referral job records open referrals past `expires_at` as `expired` (audited,
+`referral_expired`); access already ends at `expires_at` without it — the job makes the status
+and the audit trail say so. Both answer 401 without the bearer secret.
 
 ## 6. CI/CD trigger (optional)
 

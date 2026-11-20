@@ -1,4 +1,3 @@
-vi.mock("@/lib/operations/server", () => ({ requireScheduledBookings: vi.fn().mockResolvedValue(undefined) }));
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
@@ -17,13 +16,14 @@ const getOrCreateMock = vi.fn();
 vi.mock("@/lib/patients/identity", () => ({
   resolvePatientFromInitData: (...args: unknown[]) => resolveMock(...args),
   devIdentityAllowed: () => true,
-  getOrCreatePatientByContact: () => getOrCreateMock(),
+  getOrCreateWebPatient: () => getOrCreateMock(),
 }));
 
 vi.mock("@/lib/rate-limit", () => ({
   rateLimit: () => ({ ok: true }),
   keyFromIp: () => "test-ip",
 }));
+vi.mock("@/lib/rate-limit-shared", () => ({ sharedRateLimit: async () => ({ ok: true, retryAfterSeconds: 0 }) }));
 
 vi.mock("@/lib/analytics", () => ({ trackAnalytics: vi.fn(async () => {}) }));
 vi.mock("@/lib/notifications/jobs", () => ({ enqueueBookingNotifications: vi.fn(async () => {}) }));
@@ -54,7 +54,8 @@ function stubSuccess() {
   supabaseMock.from.mockImplementation((table: string) => {
     if (table === "patients") {
       return {
-        update: vi.fn(() => ({ eq: vi.fn().mockReturnThis(), then: (resolve: (v: unknown) => void) => resolve({data:null,error:null}) })),
+        update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })) })),
+        select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { full_name: null, phone: null }, error: null })) })) })) })),
       };
     }
     return {
@@ -148,7 +149,8 @@ describe("POST /api/bookings", () => {
     supabaseMock.from.mockImplementation((table: string) => {
       if (table === "patients") {
         return {
-          update: vi.fn(() => ({ eq: vi.fn().mockReturnThis(), then: (resolve: (v: unknown) => void) => resolve({data:null,error:null}) })),
+          update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })) })),
+          select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { full_name: null, phone: null }, error: null })) })) })) })),
         };
       }
       return {
@@ -241,7 +243,8 @@ describe("POST /api/bookings — appointment source attribution (audit finding)"
     supabaseMock.from.mockImplementation((table: string) => {
       if (table === "patients") {
         return {
-          update: vi.fn(() => ({ eq: vi.fn().mockReturnThis(), then: (resolve: (v: unknown) => void) => resolve({data:null,error:null}) })),
+          update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })) })),
+          select: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { full_name: null, phone: null }, error: null })) })) })) })),
         };
       }
       return {

@@ -1,6 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import { handleApiError, ApiError } from "./errors";
+import { logger } from "@/lib/logger";
+
+vi.mock("@/lib/logger", () => ({ logger: { error: vi.fn() } }));
+beforeEach(() => vi.clearAllMocks());
 
 describe("handleApiError (red-team: never leak internals, never 500 on bad input)", () => {
   it("maps a raw ZodError to a safe 400 instead of a 500", async () => {
@@ -27,5 +31,7 @@ describe("handleApiError (red-team: never leak internals, never 500 on bad input
     expect(res.status).toBe(500);
     const text = await res.text();
     expect(text).not.toContain("super-secret-value");
+    expect(logger.error).toHaveBeenCalledWith("unhandled api error");
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain("super-secret-value");
   });
 });

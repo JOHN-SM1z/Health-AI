@@ -1,10 +1,9 @@
 import "server-only";
-import { getOperationsSettings } from "@/lib/operations/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getClinicContact } from "@/lib/clinics/contact";
 
 export type ClinicKnowledge = {
   clinicName: string;
-  operatingMode?: "walk_in" | "mixed" | "scheduled";
   address: string | null;
   phone: string | null;
   email: string | null;
@@ -20,7 +19,8 @@ export type ClinicKnowledge = {
 export async function loadClinicKnowledge(clinicId: string): Promise<ClinicKnowledge> {
   const supabase = createAdminClient();
 
-  const results = await Promise.all([
+  const [{ data: clinic }, { data: faqs }, { data: specialties }, { data: services }, { data: doctors }] =
+    await Promise.all([
       supabase.from("clinics").select("*").eq("id", clinicId).maybeSingle(),
       supabase
         .from("faq_entries")
@@ -47,20 +47,14 @@ export async function loadClinicKnowledge(clinicId: string): Promise<ClinicKnowl
         .eq("active", true),
     ]);
 
-  if (results.some(result => result.error)) throw new Error("Clinic knowledge unavailable");
-  const [{data:clinic},{data:faqs},{data:specialties},{data:services},{data:doctors}] = results;
-  if (!clinic?.is_active) throw new Error("Clinic unavailable");
-  const operations = await getOperationsSettings(clinicId);
-  const {data:settings,error:settingsError}=await supabase.from("app_settings").select("key,value").eq("clinic_id",clinicId).in("key",["address","phone","opening_hours"]);
-  if(settingsError) throw new Error("Clinic settings unavailable");
-  const configuredText=(key:string)=>{const value=settings?.find(s=>s.key===key)?.value;return value&&typeof value==='object'&&!Array.isArray(value)&&typeof value.text==='string'?value.text:null;};
+  // The phone and address the owner set under Sozlamalar win over the clinic record.
+  const contact = clinic ? await getClinicContact(clinic) : null;
   const knowledge: ClinicKnowledge = {
-    operatingMode: operations.mode,
     clinicName: clinic?.name ?? "Klinika",
-    address: configuredText("address") ?? clinic?.address ?? null,
-    phone: configuredText("phone") ?? clinic?.phone ?? null,
+    address: contact?.address ?? clinic?.address ?? null,
+    phone: contact?.phone ?? clinic?.phone ?? null,
     email: clinic?.email ?? null,
-    openingHours: configuredText("opening_hours") ? {"Ish vaqti":configuredText("opening_hours")} : (clinic?.opening_hours as Record<string, string | null>) ?? {},
+    openingHours: (clinic?.opening_hours as Record<string, string | null>) ?? {},
     currency: clinic?.currency ?? "UZS",
     faqs: (faqs ?? []).map((f) => ({ question: f.question, answer: f.answer })),
     specialties: (specialties ?? []).map((s) => ({ name: s.name, description: s.description })),
@@ -126,9 +120,7 @@ export function buildReceptionistSystemPrompt(k: ClinicKnowledge): string {
     "3. Agar javob ma'lumotlarda bo'lmasa: 'Afsuski, bu savolga aniq javob bera olmayman. Operatorlarimiz sizga yordam berishi mumkin — “Operator bilan bog‘lanish” tugmasini bosing.' deb yozing.",
     "4. Shoshilinch holatlarda: 'Bu holat shoshilinch yordam talab qilishi mumkin. Iltimos, mahalliy tez yordam xizmatiga murojaat qiling yoki zudlik bilan shifokorga boring.' deb yozing.",
     "5. Qisqa va aniq javob bering. Uzbek lotin tilida yozing.",
-    k.operatingMode === "scheduled" || k.operatingMode === "mixed"
-      ? "6. Oldindan yozilish uchun ilovani ochishni taklif qilishingiz mumkin. Tasdiqlanmagan qabulni muvaffaqiyatli deb aytmang."
-      : "6. Bu klinikada jonli navbat. Kelganda registratsiyaga murojaat qilishni tushuntiring. Oldindan yozilish, band qilingan vaqt yoki masofadan navbatga qo‘shishni va’da qilmang.",
+    "6. Qabulga yozilishni taklif qilganda “Qabulga yozilish” tugmasidan foydalanishni eslatib o'ting.",
     "",
     "KLINIKA MA'LUMOTLARI (faqat shu manbadan foydalaning):",
     renderKnowledge(k),

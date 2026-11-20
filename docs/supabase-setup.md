@@ -33,15 +33,11 @@ probe the local stack at startup (service-role lookup of the seed clinic):
   misleading failed run.
 
 Prerequisite for a full local run: `npm run db:reset-local` (above) and a
-`.env.test` with local test keys. Tests never load `.env` or `.env.local`, and non-loopback Supabase URLs are rejected.
+`.env` with the real local keys.
 
 ## Migrations
 
-The source of truth is `supabase/migrations/`, applied in filename order with one transaction per file. `full-db-setup.sql` is retired; never concatenate the migrations into one SQL Editor transaction.
-
-For an existing deployment, first compare its migration history. The previously uncommitted referral migrations were split/renumbered to separate enum creation from use. Do not replay renamed files against a deployment that already applied them without reconciliation. New foreign keys validate existing data and stop on conflicts.
-
-Historical migration groups:
+47 migrations in `supabase/migrations/` (ordered, repeatable on any environment; `supabase/full-db-setup.sql` is all of them as one script). The first 21:
 
 1. `0001`–`0008` — schema: clinics, profiles, staff_roles, patients, specialties,
    services, doctors, doctor_services, working hours, time blocks, appointments,
@@ -60,6 +56,12 @@ Historical migration groups:
    file ids, booking availability validation on all writes, and integrity gaps
    (payment inserts, conversation timestamps, Telegram-identity protection,
    notification indexes).
+
+Later migrations add the referral and clinical-records model and lifecycle, the unified
+booking engine (`20260930000005`) and tenant integrity (`20260930000006`: composite
+same-clinic foreign keys everywhere, patient communication written by the server only —
+which supersedes the staff reply/upload policies of `0015`–`0021` — SECURITY DEFINER
+search_path and grants, reactivation checks, clinic deletion, `urgent_at`, `purged_at`).
 
 Regenerate TypeScript types after schema changes:
 
@@ -94,17 +96,24 @@ Reads `OWNER_EMAIL` / `OWNER_PASSWORD` (and `CLINIC_SLUG`/`CLINIC_NAME` for a ne
 from `.env`, creates the auth user, the clinic if missing, and the `owner` staff role.
 Idempotent — safe to re-run.
 
-**Additional staff:** create the auth user in Supabase Studio → insert `profiles` +
-`staff_roles` rows (or use the admin panel once an owner exists).
+**Additional staff:** the owner adds them in the admin panel under *Xodimlar* (email, name,
+role — admin, manager, receptionist or doctor). A new account gets a one-time password shown
+to the owner once; the member replaces it under *Parolim*. The owner changes roles and removes
+members there too (audited); the owner role itself is only assigned by `create-owner`.
 
 ## Postgres functions (used by the app)
 
-- `book_appointment(p_clinic_id, p_patient_id, p_doctor_id, p_service_id, p_start_at, p_status, p_source, p_notes, p_created_by)`
-  → `{ appointment_id, error_code, error_message }`
-- `reschedule_appointment(p_appointment_id, p_new_start_at, p_updated_by)`
-  → `{ appointment_id, error_code, error_message }`
+- `book_appointment(p_clinic_id, p_patient_id, p_doctor_id, p_service_id, p_start_at, p_status, p_source, p_notes, p_created_by, p_idempotency_key)`
+  → `{ appointment_id, amount, error_code, error_message, replayed }` — the one booking operation
+  (service role only; called through `src/lib/booking/engine.ts`). `error_code` ∈ `invalid_status,
+  clinic_not_found, doctor_not_found, service_not_found, patient_not_found, service_not_offered,
+  past_slot, outside_working_hours, time_blocked, slot_taken, idempotency_key_reused`.
+- `reschedule_appointment(p_clinic_id, p_appointment_id, p_new_start_at, p_actor)`
+  → `{ error_code, error_message }` — `appointment_not_found, not_reschedulable, past_slot,
+  outside_working_hours, time_blocked, slot_taken`.
 
-Both return `error_code` in `{slot_taken, outside_working_hours, conflict, not_found, invalid_state}`.
+See [architecture.md › Booking engine](architecture.md#booking-engine-double-booking-protection)
+for the invariant and the constraint that enforces it.
 Statuses in `appointment_status` enum: `pending, confirmed, checked_in, in_progress, completed, cancelled, no_show`.
 
 ## Production database
@@ -115,5 +124,7 @@ Provision a Supabase project; apply migrations with:
 npx supabase db push --db-url "$PROD_DB_URL"
 ```
 
-or via the Supabase dashboard (SQL editor). Then follow
-[deploy-cloud-run.md](deploy-cloud-run.md) for secrets.
+or, on an empty project, by running `supabase/full-db-setup.sql` once in the dashboard's SQL
+editor — every migration in order, regenerated with `npm run db:full-setup` whenever a migration
+is added (a test and CI fail while it is stale; it commits after enum additions so it runs as one
+query). Then follow [deploy-cloud-run.md](deploy-cloud-run.md) for secrets.

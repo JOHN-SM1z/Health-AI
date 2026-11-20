@@ -15,12 +15,19 @@ const eslintConfig = defineConfig([
     "node_modules/**",
     "coverage/**",
     ".freebuff/**",
-    ".kilo/worktrees/**",
     // Local supabase runtime files (generated, not part of the app).
     "supabase/.temp/**",
     "supabase/seed.sql",
     // Third-party agent skill templates (not project code).
     ".agents/**",
+    // Archived checkouts and generated review artifacts are not application source.
+    "backups/**",
+    "tmp/**",
+    "output/**",
+    ".codex/**",
+    ".claude/**",
+    ".kilo/**",
+    ".presentation-build/**",
   ]),
   {
     rules: {

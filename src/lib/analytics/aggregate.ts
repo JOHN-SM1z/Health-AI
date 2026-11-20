@@ -2,14 +2,26 @@ import type { Database } from "@/lib/supabase/database.types";
 import { clinicDateKey } from "@/lib/time/local";
 
 export type AnalyticsRow = {
+  id: string;
   source: Database["public"]["Enums"]["appointment_source"];
   status: Database["public"]["Enums"]["appointment_status"];
   cancelled_reason: string | null;
   no_show_reason: string | null;
   start_at: string;
+  patients: { full_name: string } | null;
   services: { name: string; price: number } | null;
   doctors: { name: string } | null;
   payments: { status: Database["public"]["Enums"]["payment_status"]; amount: number } | null;
+};
+
+export type LedgerEntry = {
+  id: string;
+  date: string;
+  patientName: string;
+  serviceName: string;
+  doctorName: string;
+  amount: number;
+  status: Database["public"]["Enums"]["payment_status"];
 };
 
 export type AppointmentsAggregate = {
@@ -30,6 +42,16 @@ export type AppointmentsAggregate = {
   revenueByMonth: Array<{ key: string; revenue: number }>;
   topServices: Array<{ name: string; count: number; completedCount: number; revenue: number }>;
   topDoctors: Array<{ name: string; count: number; completedCount: number; revenue: number; completionRate: number }>;
+  /** Sum of payments.amount currently sitting at "unpaid" (money owed, not yet collected). */
+  unpaidTotal: number;
+  /** Sum of payments.amount currently sitting at "pending" (in flight — e.g. awaiting a manual-review confirmation). */
+  pendingTotal: number;
+  /** Sum of payments.amount currently sitting at "refunded" (money paid out back to the patient). */
+  refundedTotal: number;
+  /** totalRevenue / count of recognized-revenue payments — 0 when there are none (never NaN). */
+  averageTicket: number;
+  /** Every appointment that has a payment record at all (any status), newest first, capped at `ledgerLimit`. */
+  recentPayments: LedgerEntry[];
 };
 
 /**
@@ -83,6 +105,7 @@ export function aggregateAppointments(
   rows: AnalyticsRow[],
   clinicTimezone: string,
   topN = 8,
+  ledgerLimit = 20,
 ): AppointmentsAggregate {
   const bySource = new Map<string, number>();
   const byStatus = new Map<string, number>();
@@ -94,11 +117,16 @@ export function aggregateAppointments(
   const monthTrend = new Map<string, number>();
   const services = new Map<string, { count: number; completedCount: number; revenue: number }>();
   const doctors = new Map<string, { count: number; completedCount: number; revenue: number }>();
+  const ledger: LedgerEntry[] = [];
   let cancelled = 0;
   let noShows = 0;
   let completed = 0;
   let total = 0;
   let totalRevenue = 0;
+  let paidCount = 0;
+  let unpaidTotal = 0;
+  let pendingTotal = 0;
+  let refundedTotal = 0;
 
   for (const a of rows) {
     total += 1;
@@ -125,12 +153,37 @@ export function aggregateAppointments(
     const amount = isRevenue ? Number(a.payments?.amount ?? 0) : 0;
     if (isRevenue) {
       totalRevenue += amount;
+      paidCount += 1;
       const day = clinicDateKey(clinicTimezone, new Date(a.start_at));
       trend.set(day, (trend.get(day) ?? 0) + amount);
       const week = weekKeyFromDayKey(day);
       weekTrend.set(week, (weekTrend.get(week) ?? 0) + amount);
       const month = monthKeyFromDayKey(day);
       monthTrend.set(month, (monthTrend.get(month) ?? 0) + amount);
+    }
+
+    // Money owed / in flight / paid back — distinct from `totalRevenue`,
+    // which recognizes only completed-and-paid appointments. These sums
+    // reflect the payment's own amount regardless of appointment status, so
+    // an unpaid balance still shows up even if, say, the visit is done.
+    if (a.payments) {
+      const paymentAmount = Number(a.payments.amount ?? 0);
+      if (a.payments.status === "unpaid") unpaidTotal += paymentAmount;
+      else if (a.payments.status === "pending" || a.payments.status === "manual_review") pendingTotal += paymentAmount;
+      else if (a.payments.status === "refunded") refundedTotal += paymentAmount;
+      // "failed" and "paid" are deliberately excluded here: a failed attempt
+      // never held real money (nothing to add to receivables), and paid
+      // money is already counted in totalRevenue above.
+
+      ledger.push({
+        id: a.id,
+        date: a.start_at,
+        patientName: a.patients?.full_name?.trim() || "Noma’lum bemor",
+        serviceName: a.services?.name ?? "Noma’lum xizmat",
+        doctorName: a.doctors?.name ?? "Noma’lum shifokor",
+        amount: paymentAmount,
+        status: a.payments.status,
+      });
     }
 
     const svcName = a.services?.name ?? "Noma’lum xizmat";
@@ -190,5 +243,12 @@ export function aggregateAppointments(
         revenue: v.revenue,
         completionRate: percent(v.completedCount, v.count),
       })),
+    unpaidTotal,
+    pendingTotal,
+    refundedTotal,
+    averageTicket: paidCount > 0 ? Math.round(totalRevenue / paidCount) : 0,
+    recentPayments: ledger
+      .sort((a, b) => (a.date < b.date ? 1 : -1))
+      .slice(0, ledgerLimit),
   };
 }

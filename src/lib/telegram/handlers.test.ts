@@ -1,4 +1,3 @@
-vi.mock("@/lib/operations/server", () => ({ getOperationsSettings: vi.fn().mockResolvedValue({mode:"scheduled",ticketPrinting:true}) }));
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const supabaseMock = {
@@ -8,6 +7,16 @@ const supabaseMock = {
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => supabaseMock,
 }));
+
+// handlers.ts reads NEXT_PUBLIC_APP_URL through the validated `env` singleton
+// (shared with bots.ts's appUrlCandidates/resolveHttpsAppUrl), not raw
+// process.env, so tests mutate this hoisted mock instead — matching the
+// pattern already established in bots.test.ts for the exact same reason.
+const envMock = vi.hoisted(() => ({
+  NEXT_PUBLIC_APP_URL: undefined as string | undefined,
+  TELEGRAM_WEBHOOK_SECRET: "deployment-secret",
+}));
+vi.mock("@/lib/env", () => ({ env: envMock, adminChatIds: () => [] }));
 
 vi.mock("@/lib/telegram/store", () => ({
   getOrCreateConversation: vi.fn(async () => ({ id: "conv-1" })),
@@ -48,10 +57,14 @@ import { handleVoiceCorrect, handleVoiceConsent, handleTelegramMessage, buildMai
 import { conversationIsHeld, appendMessage } from "@/lib/telegram/store";
 import { generateReceptionistReply } from "@/lib/ai/receptionist";
 import { sendTelegramMessage } from "@/lib/telegram/bot";
+import { URGENT_MESSAGE_UZ } from "@/lib/safety/policy";
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(conversationIsHeld).mockResolvedValue(false);
+  envMock.NEXT_PUBLIC_APP_URL = undefined;
+  delete process.env.VERCEL_URL;
+  delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
 
   supabaseMock.from.mockImplementation((table: string) => {
     if (table === "voice_messages") {
@@ -66,6 +79,7 @@ beforeEach(() => {
                   conversation_id: "conv-1",
                   transcription: "Boshim og'riyapti",
                   transcription_status: "transcribed",
+                  conversations: { patients: { telegram_user_id: 777000 } },
                 },
                 error: null,
               })),
@@ -75,21 +89,18 @@ beforeEach(() => {
       };
     }
     if (table === "conversations") {
-      return {
-        select: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            maybeSingle: vi.fn(async () => ({ data: { patient_id: "p-1" }, error: null })),
-          })),
-        })),
-      };
+      const row = { data: { patient_id: "p-1" }, error: null };
+      const filter: Record<string, unknown> = {};
+      filter.eq = vi.fn(() => filter);
+      filter.maybeSingle = vi.fn(async () => row);
+      return { select: vi.fn(() => filter) };
     }
     return {};
   });
 });
 
 describe("buildMainKeyboard", () => {
-  it("keeps a plain text booking button when no app URL is configured", () => {
-    delete process.env.NEXT_PUBLIC_APP_URL;
+  it("keeps a plain text booking button when no app URL is configured at all", () => {
     const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
     expect(buttons.length).toBeGreaterThan(0);
     for (const b of buttons) {
@@ -98,7 +109,7 @@ describe("buildMainKeyboard", () => {
   });
 
   it("attaches a web_app booking button with the clinic tenant when an HTTPS app URL is configured", () => {
-    process.env.NEXT_PUBLIC_APP_URL = "https://health.example.com";
+    envMock.NEXT_PUBLIC_APP_URL = "https://health.example.com";
     const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
     expect(buttons[0]).toEqual({
       text: "📅 Qabulga yozilish",
@@ -111,15 +122,58 @@ describe("buildMainKeyboard", () => {
   });
 
   it("never attaches web_app for a t.me deep-link base", () => {
-    process.env.NEXT_PUBLIC_APP_URL = "https://t.me/health_bot/book";
+    envMock.NEXT_PUBLIC_APP_URL = "https://t.me/health_bot/book";
     const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
     expect(buttons[0]).not.toHaveProperty("web_app");
+  });
+
+  // Real production incident (2026-09-12): NEXT_PUBLIC_APP_URL was set in
+  // the Vercel dashboard but never actually took effect in the running
+  // deployment (wrong environment, or saved without a new build — NEXT_
+  // PUBLIC_* values are inlined at build time), so the booking button kept
+  // silently degrading to plain text run after run. Vercel sets its own
+  // platform env vars with zero configuration, so falling back to those
+  // closes this failure mode without depending on the operator getting a
+  // manual dashboard step exactly right.
+  it("attaches a web_app booking button from VERCEL_PROJECT_PRODUCTION_URL when NEXT_PUBLIC_APP_URL is unset", () => {
+    process.env.VERCEL_PROJECT_PRODUCTION_URL = "health-ai-w1vc.vercel.app";
+    const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
+    expect(buttons[0]).toEqual({
+      text: "📅 Qabulga yozilish",
+      web_app: { url: "https://health-ai-w1vc.vercel.app/book?clinic=clinic-1" },
+    });
+  });
+
+  it("falls back to VERCEL_URL when neither NEXT_PUBLIC_APP_URL nor the production alias is set", () => {
+    process.env.VERCEL_URL = "health-ai-git-feature-abc123.vercel.app";
+    const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
+    expect(buttons[0]).toEqual({
+      text: "📅 Qabulga yozilish",
+      web_app: { url: "https://health-ai-git-feature-abc123.vercel.app/book?clinic=clinic-1" },
+    });
+  });
+
+  it("still prefers an explicitly configured NEXT_PUBLIC_APP_URL over the Vercel platform vars", () => {
+    envMock.NEXT_PUBLIC_APP_URL = "https://custom-domain.uz";
+    process.env.VERCEL_PROJECT_PRODUCTION_URL = "health-ai-w1vc.vercel.app";
+    const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
+    expect(buttons[0]).toEqual({
+      text: "📅 Qabulga yozilish",
+      web_app: { url: "https://custom-domain.uz/book?clinic=clinic-1" },
+    });
+  });
+});
+
+describe("main keyboard: Mening qabullarim", () => {
+  it("offers a plain “📋 Mening qabullarim” button (answered in the chat, so it works however the app was opened)", () => {
+    const buttons = buildMainKeyboard("clinic-1").keyboard.flat();
+    expect(buttons).toContainEqual({ text: "📋 Mening qabullarim" });
   });
 });
 
 describe("handleMenuButton booking reply (source attribution)", () => {
   it("marks the chat deep-link with startapp=booking (telegram_chat attribution)", async () => {
-    process.env.NEXT_PUBLIC_APP_URL = "https://health.example.com";
+    envMock.NEXT_PUBLIC_APP_URL = "https://health.example.com";
     await handleMenuButton({
       clinicId: "clinic-1",
       chatId: 111,
@@ -220,7 +274,7 @@ describe("handleVoiceCorrect", () => {
   it("does not auto-reply when an admin holds the conversation", async () => {
     vi.mocked(conversationIsHeld).mockResolvedValue(true);
 
-    await handleVoiceCorrect({ clinicId: "clinic-1", chatId: 777000, voiceMessageId: "vm-1" });
+    await handleVoiceCorrect({ clinicId: "clinic-1", chatId: 777000, telegramUserId: 777000, voiceMessageId: "vm-1" });
 
     // AI automation must stay silent while the conversation is assigned to a
     // human admin — no generation, no send.
@@ -229,7 +283,7 @@ describe("handleVoiceCorrect", () => {
   });
 
   it("routes the transcription through the AI when the conversation is free", async () => {
-    await handleVoiceCorrect({ clinicId: "clinic-1", chatId: 777000, voiceMessageId: "vm-1" });
+    await handleVoiceCorrect({ clinicId: "clinic-1", chatId: 777000, telegramUserId: 777000, voiceMessageId: "vm-1" });
 
     expect(generateReceptionistReply).toHaveBeenCalledWith(
       expect.objectContaining({ userText: "Boshim og'riyapti" }),
@@ -238,6 +292,65 @@ describe("handleVoiceCorrect", () => {
       expect.objectContaining({ chatId: 777000 }),
       "clinic-1",
     );
+  });
+});
+
+describe("urgent wording reaches the clinic's own staff", () => {
+  let updates: Array<Record<string, unknown>>;
+  function conversationsRecording(result: { data: unknown; error: unknown }) {
+    updates = [];
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table !== "conversations") return {};
+      return {
+        update: vi.fn((values: Record<string, unknown>) => {
+          updates.push(values);
+          const chain: Record<string, unknown> = {};
+          chain.eq = vi.fn(() => chain);
+          chain.select = vi.fn(async () => result);
+          return chain;
+        }),
+      };
+    });
+  }
+  const urgentText = "Tez yordam kerak, ko‘krak og‘rig‘i kuchli";
+  const send = () =>
+    handleTelegramMessage({ clinicId: "clinic-1", chatId: 777000, from: { id: 777000, first_name: "Ali" }, text: urgentText, updateId: 5 });
+
+  it("flags the conversation urgent, stops automatic replies and sends the approved message — no AI involved", async () => {
+    conversationsRecording({ data: [{ id: "conv-1" }], error: null });
+    await send();
+    expect(updates).toEqual([expect.objectContaining({ ai_enabled: false, urgent_at: expect.any(String) })]);
+    expect(generateReceptionistReply).not.toHaveBeenCalled();
+    const [payload] = vi.mocked(sendTelegramMessage).mock.calls[0];
+    expect(payload.text.startsWith(URGENT_MESSAGE_UZ)).toBe(true);
+    expect(payload.text).toContain("xabar berildi");
+  });
+
+  it("answers urgent wording with the approved message even while an operator holds the conversation", async () => {
+    conversationsRecording({ data: [{ id: "conv-1" }], error: null });
+    vi.mocked(conversationIsHeld).mockResolvedValue(true);
+    await send();
+    expect(updates).toHaveLength(1);
+    expect(vi.mocked(sendTelegramMessage).mock.calls[0][0].text.startsWith(URGENT_MESSAGE_UZ)).toBe(true);
+  });
+
+  it("never tells the patient the staff were alerted when the alert could not be recorded", async () => {
+    conversationsRecording({ data: null, error: { code: "57014" } });
+    await send();
+    expect(vi.mocked(sendTelegramMessage).mock.calls[0][0].text).toBe(URGENT_MESSAGE_UZ);
+  });
+});
+
+describe("voice buttons belong to the patient who pressed them", () => {
+  it("ignores a button press naming another patient's recording (forged callback data)", async () => {
+    await handleVoiceCorrect({ clinicId: "clinic-1", chatId: 555000, telegramUserId: 555000, voiceMessageId: "vm-1" });
+    expect(generateReceptionistReply).not.toHaveBeenCalled();
+    expect(sendTelegramMessage).not.toHaveBeenCalled();
+
+    await handleVoiceConsent({ clinicId: "clinic-1", chatId: 555000, telegramUserId: 555000, voiceMessageId: "vm-1", consent: true });
+    // Answered as if the recording did not exist; nothing about it is revealed or changed.
+    expect(sendTelegramMessage).toHaveBeenCalledTimes(1);
+    expect(sendTelegramMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: 555000, text: expect.stringContaining("topilmadi") }), "clinic-1");
   });
 });
 
@@ -262,7 +375,7 @@ describe("handleVoiceConsent", () => {
       return {};
     });
 
-    await handleVoiceConsent({ clinicId: "clinic-1", chatId: 777000, voiceMessageId: "missing-vm", consent: true });
+    await handleVoiceConsent({ clinicId: "clinic-1", chatId: 777000, telegramUserId: 777000, voiceMessageId: "missing-vm", consent: true });
 
     expect(sendTelegramMessage).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: 777000, text: expect.stringContaining("topilmadi") }),

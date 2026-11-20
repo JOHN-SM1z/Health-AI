@@ -11,14 +11,14 @@ function configure() {
 }
 
 describe("health endpoint", () => {
-  it("checks metadata server-side without exposing the credential or response body", async () => {
+  it("checks database readiness without exposing the credential or response body", async () => {
     configure();
     const fetchMock = vi.fn().mockResolvedValue(new Response("private metadata", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const res = await GET();
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
-    expect(fetchMock).toHaveBeenCalledWith("https://project.supabase.co/rest/v1/", expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith("https://project.supabase.co/rest/v1/clinics?select=id&limit=1", expect.objectContaining({
       headers: { apikey: "synthetic-server-key" }, cache: "no-store", redirect: "error",
     }));
     const body = await res.text();
@@ -46,6 +46,6 @@ describe("health endpoint", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     expect((await GET()).status).toBe(200);
-    expect(fetchMock.mock.calls[0][0]).toBe("https://legacy.supabase.co/rest/v1/");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://legacy.supabase.co/rest/v1/clinics?select=id&limit=1");
   });
 });

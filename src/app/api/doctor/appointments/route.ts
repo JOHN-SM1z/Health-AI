@@ -21,6 +21,10 @@ const breakSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const staff = await requireStaff("doctor");
+    // The doctor role itself: requireStaff ranks owner/admin/manager above
+    // doctor, and a management account linked to a doctor record is still
+    // not a doctor for the doctor portal (same rule as requireLinkedDoctor).
+    if (!staff.roles.includes("doctor")) throw new ApiError(403, "Bu amal faqat shifokorlar uchun", "forbidden");
     const body = await parseBody(request, breakSchema);
     const supabase = createAdminClient();
 
@@ -61,6 +65,10 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const staff = await requireStaff("doctor");
+    // The doctor role itself: requireStaff ranks owner/admin/manager above
+    // doctor, and a management account linked to a doctor record is still
+    // not a doctor for the doctor portal (same rule as requireLinkedDoctor).
+    if (!staff.roles.includes("doctor")) throw new ApiError(403, "Bu amal faqat shifokorlar uchun", "forbidden");
     const blockId = request.nextUrl.searchParams.get("blockId");
     if (!blockId) throw new ApiError(400, "blockId parametri kerak", "missing_id");
     const supabase = createAdminClient();
@@ -87,19 +95,4 @@ export async function DELETE(request: NextRequest) {
   } catch (e) {
     return handleApiError(e);
   }
-}
-export async function GET() {
-  try {
-    const staff=await requireStaff("doctor");
-    const {requireLinkedDoctor}=await import("@/lib/referrals/access");
-    const doctor=await requireLinkedDoctor(staff);
-    const {localDayWindow}=await import("@/lib/time/local");
-    const day=localDayWindow(staff.clinicTimezone);
-    const {data,error}=await createAdminClient().from("appointments")
-      .select("id,patient_id,start_at,status,patients(full_name,phone),services(name,price),doctors(name)")
-      .eq("clinic_id",staff.clinicId).eq("doctor_id",doctor.id).gte("start_at",day.start).lt("start_at",day.end)
-      .not("status","in","(cancelled,no_show)").order("start_at");
-    if(error) throw new ApiError(503,"Qabullar yuklanmadi");
-    return ok({appointments:data??[],doctorName:data?.[0]?.doctors?.name??"Shifokor"});
-  }catch(e){return handleApiError(e);}
 }

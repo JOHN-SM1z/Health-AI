@@ -29,7 +29,7 @@ Clinic-specific settings choose walk-in, scheduled or mixed operation. Never har
 - Keep separate registration and cashier permissions even when a small clinic assigns both to one staff member.
 - Separate administrative routing from clinical priority. Do not automatically triage patients or deduct staff wages for routing mistakes.
 - Remove generic AI/lab-provider expansion from the critical path. Do not build a speculative MedPlus/eHealth/Mehmon integration. Documented adapters or reviewed exports can come later.
-- Clinical history and staff-entered prescriptions are authorized; AI diagnosis, prescribing and clinical summaries are not.
+- Clinical history and staff-entered prescriptions are authorized; AI diagnosis and prescribing are not. Updated 2026-11-14 (owner decision D-10): an AI consultation recorder may draft documentation of what was said in a consented consultation; the draft enters the record only after the treating doctor edits and signs it, and it may not contain diagnoses, medicines, doses, findings or advice that were not stated. Updated 2026-11-14 (owner decision D-14): signed prescriptions and test orders the doctor chooses to send are delivered to that patient in the verified Mini App; notes, assessments and diagnoses stay doctor-only unless the doctor releases them.
 - A payment warning may guide an elective workflow. Reading historical records must not be hidden behind payment; any configured clinical-work gate needs an authorized audited exception.
 - Printing an internal payment acknowledgement is not claiming a fiscal receipt or card-terminal integration. Two physical receipts on card transactions do not mean two payments.
 

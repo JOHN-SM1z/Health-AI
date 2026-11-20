@@ -15,6 +15,8 @@ type Conversation = {
   last_message_at: string | null;
   patient_id: string | null;
   taken_over_by: string | null;
+  taken_over_at: string | null;
+  urgent_at: string | null;
   admin_seen_at: string | null;
   patients: {
     full_name: string | null;
@@ -40,11 +42,20 @@ const EPOCH = "1970-01-01T00:00:00.000Z";
 
 const STATUS_FILTERS = [
   { value: "all", label: "Barcha suhbatlar" },
+  { value: "urgent", label: "Shoshilinch" },
   { value: "attention", label: "Diqqat talab" },
   { value: "bot", label: "Botda" },
   { value: "assigned", label: "Operatorda" },
   { value: "closed", label: "Yopilgan" },
 ] as const;
+
+/**
+ * The patient wrote urgent wording and no staff member has taken the
+ * conversation over since: it is listed first, flagged, until someone does.
+ */
+function isUrgent(c: Conversation): boolean {
+  return !!c.urgent_at && c.status !== "closed" && (!c.taken_over_at || c.taken_over_at < c.urgent_at);
+}
 
 export default function ConversationsPage() {
   const [list, setList] = useState<Conversation[] | null>(null);
@@ -64,7 +75,7 @@ export default function ConversationsPage() {
     const { data, error: err } = await supabase
       .from("conversations")
       .select(
-        "id, status, ai_enabled, updated_at, last_message_at, patient_id, taken_over_by, admin_seen_at, patients(full_name, phone, telegram_username, telegram_first_name), profiles!conversations_taken_over_by_fkey(full_name)",
+        "id, status, ai_enabled, updated_at, last_message_at, patient_id, taken_over_by, taken_over_at, urgent_at, admin_seen_at, patients(full_name, phone, telegram_username, telegram_first_name), profiles!conversations_taken_over_by_fkey(full_name)",
       )
       .order("updated_at", { ascending: false })
       .limit(100);
@@ -202,8 +213,9 @@ export default function ConversationsPage() {
 
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return (list ?? []).filter((c) => {
-      if (statusFilter === "attention" && !(c.status === "open" && !c.ai_enabled)) return false;
+    const filtered = (list ?? []).filter((c) => {
+      if (statusFilter === "urgent" && !isUrgent(c)) return false;
+      if (statusFilter === "attention" && !(isUrgent(c) || (c.status === "open" && !c.ai_enabled))) return false;
       if (statusFilter === "bot" && !(c.ai_enabled && c.status !== "closed")) return false;
       if (statusFilter === "assigned" && c.status !== "assigned") return false;
       if (statusFilter === "closed" && c.status !== "closed") return false;
@@ -217,6 +229,8 @@ export default function ConversationsPage() {
         (preview?.content ?? "").toLowerCase().includes(needle)
       );
     });
+    // Urgent conversations first; otherwise the order the list was loaded in.
+    return filtered.map((c, i) => ({ c, i })).sort((a, b) => Number(isUrgent(b.c)) - Number(isUrgent(a.c)) || a.i - b.i).map(({ c }) => c);
   }, [list, q, statusFilter, previews]);
 
   return (
@@ -238,7 +252,7 @@ export default function ConversationsPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div>
           {list === null ? (
             <Card><LoadingRow /></Card>
@@ -276,7 +290,9 @@ export default function ConversationsPage() {
                       </p>
                     </td>
                     <td className="px-4 py-3">
-                      {c.status === "assigned" ? (
+                      {isUrgent(c) ? (
+                        <ABadge tone="red">Shoshilinch</ABadge>
+                      ) : c.status === "assigned" ? (
                         <ABadge tone="purple">Operatorda{c.profiles?.full_name ? `: ${c.profiles.full_name}` : ""}</ABadge>
                       ) : needsAttention ? (
                         <ABadge tone="clay">Diqqat talab</ABadge>

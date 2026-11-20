@@ -32,10 +32,14 @@ export function telegramConfigured(): boolean {
 }
 
 /**
- * Returns a NEW keyboard with web_app buttons removed (or, on reply
- * keyboards, downgraded to plain text buttons so they still route to the
- * text handler). Inline-keyboard buttons with no action are invalid, so
- * those are dropped entirely. Returns the original object when unchanged.
+ * Returns a NEW keyboard with web_app buttons downgraded (or removed).
+ * Reply keyboards downgrade to a plain text button so they still route to
+ * the text handler. Inline keyboards downgrade to a plain `url` link button
+ * using the same address — Telegram opens that in an external browser
+ * instead of embedding the Mini App, but it is never a dead end. A button
+ * with no fallback URL to offer (defensive only; every web_app button we
+ * build carries one) is dropped outright, since an inline button with no
+ * action at all is invalid. Returns the original object when unchanged.
  */
 function stripWebAppButtons(markup: unknown): unknown {
   if (typeof markup !== "object" || markup === null) return markup;
@@ -55,14 +59,21 @@ function stripWebAppButtons(markup: unknown): unknown {
             const b = btn as Record<string, unknown>;
             if (!("web_app" in b)) return btn;
             changed = true;
+            const rest = { ...b };
+            const webApp = rest.web_app as { url?: unknown } | undefined;
+            delete rest.web_app;
             if (key === "keyboard") {
               // Reply keyboards: keep it as a plain text button.
-              const rest = { ...b };
-              delete rest.web_app;
               return rest;
             }
-            // Inline keyboards: a button without an action is invalid.
-            return null;
+            // Inline keyboards: fall back to a plain link button so a
+            // single-button row (e.g. the booking button) never collapses
+            // to an empty, filtered-out row — a message telling the patient
+            // to "tap the button below" must never leave them with no
+            // button there. Only drop it if there is truly no URL to offer.
+            const url = typeof webApp?.url === "string" ? webApp.url : undefined;
+            if (!url) return null;
+            return { ...rest, url };
           })
           .filter((btn) => btn !== null);
       })
@@ -79,7 +90,7 @@ function stripWebAppButtons(markup: unknown): unknown {
  */
 export async function sendTelegramMessage(payload: TelegramMessagePayload, clinicId?: string): Promise<number | null> {
   if (telegramDevModeEnabled()) {
-    logger.info("telegram send skipped (dev mode)", { chatId: payload.chatId, clinicId });
+    logger.info("telegram send skipped (dev mode)", { clinicId });
     return null;
   }
 
@@ -88,14 +99,13 @@ export async function sendTelegramMessage(payload: TelegramMessagePayload, clini
     try {
       target = await getClinicBot(clinicId);
     } catch {
-      logger.warn("telegram send skipped (clinic bot not configured)", { chatId: payload.chatId, clinicId });
+      logger.warn("telegram send skipped (clinic bot not configured)", { clinicId });
       return null;
     }
   } else if (telegramConfigured()) {
     target = getBot();
   } else {
     logger.info("telegram send skipped (not configured)", {
-      chatId: payload.chatId,
       devMode: telegramDevModeEnabled(),
     });
     return null;
@@ -125,29 +135,43 @@ export async function sendTelegramMessage(payload: TelegramMessagePayload, clini
       if (stripped !== payload.replyMarkup) {
         try {
           const id = await send(stripped);
-          logger.warn("telegram send succeeded without web_app buttons", { chatId: payload.chatId });
+          logger.warn("telegram send succeeded without web_app buttons", { clinicId });
           return id;
-        } catch {
-          // Structural problem — fall through to a plain send.
+        } catch (retryError) {
+          const reason = retryError instanceof Error ? retryError.message : "";
+          // Only an explicit keyboard rejection proves the retry was not
+          // accepted. A network failure may hide success; never send again.
+          if (!reason.includes("BUTTON_URL_INVALID") && !reason.includes("KeyboardButton")) {
+            logger.error("telegram fallback outcome unknown", { clinicId });
+            return null;
+          }
         }
       }
       try {
         const id = await send(undefined);
-        logger.warn("telegram send succeeded without keyboard", { chatId: payload.chatId });
+        logger.warn("telegram send succeeded without keyboard", { clinicId });
         return id;
-      } catch (e2) {
-        logger.error("telegram send failed", {
-          chatId: payload.chatId,
-          error: e2 instanceof Error ? e2.message : String(e2),
-        });
+      } catch {
+        logger.error("telegram send failed", { clinicId });
         return null;
       }
     }
-    logger.error("telegram send failed", {
-      chatId: payload.chatId,
-      error: message,
-    });
+    logger.error("telegram send failed", { clinicId });
     return null;
+  }
+}
+
+/**
+ * Acknowledges an inline-button press through the clinic's bot, so the
+ * patient's button stops spinning. Best effort: never throws.
+ */
+export async function answerCallbackQuery(callbackQueryId: string, clinicId: string, text?: string): Promise<void> {
+  if (telegramDevModeEnabled()) return;
+  try {
+    const target = await getClinicBot(clinicId);
+    await target.api.answerCallbackQuery(callbackQueryId, text ? { text } : undefined);
+  } catch {
+    logger.warn("telegram answerCallbackQuery failed", { clinicId });
   }
 }
 
@@ -159,8 +183,8 @@ export async function getTelegramFileUrl(fileId: string, clinicId: string): Prom
     const file = await target.api.getFile(fileId);
     if (!file.file_path) return null;
     return `https://api.telegram.org/file/bot${target.token}/${file.file_path}`;
-  } catch (e) {
-    logger.error("telegram getFile failed", { error: e instanceof Error ? e.message : String(e) });
+  } catch {
+    logger.error("telegram getFile failed", { clinicId });
     return null;
   }
 }

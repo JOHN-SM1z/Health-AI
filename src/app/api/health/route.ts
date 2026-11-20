@@ -24,14 +24,16 @@ export async function GET() {
 
 async function checkDatabase(): Promise<boolean> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  // Server-side only: the anon key can no longer read the REST root (Supabase answers 401 "Only the service_role
+  // API key can be used for this endpoint"), and signed-out roles hold no table privileges by design — so the probe
+  // asks the database one trivial question with the server's own key. The response carries only the status.
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return false;
 
   try {
-    const res = await fetch(`${url}/rest/v1/`, {
-      // Probe PostgREST metadata only: no tenant or patient records are read.
-      // Hosted projects can require a server key for the OpenAPI root.
-      // Keep it server-side and never return the response body or credentials.
+    const res = await fetch(`${url}/rest/v1/clinics?select=id&limit=1`, {
+      // The apikey header works for both legacy JWT keys and the new `sb_secret_…` keys (which are not JWTs and are
+      // rejected as a Bearer token).
       headers: { apikey: key },
       cache: "no-store",
       redirect: "error",
