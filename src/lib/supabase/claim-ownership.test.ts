@@ -138,18 +138,19 @@ describeDb("claim ownership — webhooks and notification jobs (database layer)"
   });
 
   it("claims stamp a lease; an expired lease is quarantined and a late worker cannot requeue it", async () => {
-    const [job] = await sql<{ id: string }[]>`insert into public.notification_jobs ${sql({
-      clinic_id: clinic,
-      type: "booking_confirmation",
-      channel: "telegram",
-      recipient_type: "patient",
-      patient_telegram_user_id: 1,
-      scheduled_for: new Date(Date.now() - 60_000),
-      idempotency_key: `claim-${suffix}`,
-    })} returning id`;
-    const claimed = await asServer((tx) => tx<{ id: string; claim_token: string | null; lease_until: Date | null }[]>`
-      select id, claim_token, lease_until from public.claim_due_notification_jobs(10, array[${clinic}]::uuid[])`);
+    const { job, claimed } = await asServer(async (tx) => {
+      // Use the claim's clock and keep the fixture invisible to other workers until it is claimed.
+      const [job] = await tx<{ id: string }[]>`
+        insert into public.notification_jobs (
+          clinic_id, type, channel, recipient_type, patient_telegram_user_id, scheduled_for, idempotency_key
+        ) values (${clinic}, 'booking_confirmation', 'telegram', 'patient', 1, now() - interval '1 minute', ${`claim-${suffix}`})
+        returning id`;
+      const claimed = await tx<{ id: string; claim_token: string | null; lease_until: Date | null }[]>`
+        select id, claim_token, lease_until from public.claim_due_notification_jobs(10, array[${clinic}]::uuid[])`;
+      return { job, claimed };
+    });
     expect(claimed).toHaveLength(1);
+    expect(claimed[0].id).toBe(job.id);
     expect(claimed[0].claim_token).toBeTruthy();
     expect(claimed[0].lease_until).toBeTruthy();
 

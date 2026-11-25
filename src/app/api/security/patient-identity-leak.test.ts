@@ -22,7 +22,7 @@ vi.mock("@/lib/auth/staff", async (importOriginal) => {
   return { ...actual, getStaffContext: async () => session.ctx };
 });
 
-import { GET as receptionSearch } from "@/app/api/operations/patients/route";
+import { POST as receptionSearch } from "@/app/api/operations/patients/route";
 import { GET as directory } from "@/app/api/admin/patients/route";
 import { GET as labSearch } from "@/app/api/lab/patients/route";
 import { GET as mergePreview } from "@/app/api/admin/patients/merge/route";
@@ -56,6 +56,13 @@ describeDb("patient identity never leaves the server through a staff API", () =>
   };
   const read = async (res: Response) => ({ status: res.status, body: (await res.json()) as Body });
   const get = (url: string) => new NextRequest(`http://localhost${url}`);
+  const deskLookup = async (query: string, dateOfBirth?: string) => read(await receptionSearch(
+    new NextRequest("http://localhost/api/operations/patients", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query, dateOfBirth }),
+    }),
+  ));
   /** The response, whole, must not contain any planted identity value. */
   const clean = (label: string, r: { status: number; body: Body }) => {
     expect(r.status, `${label}: ${JSON.stringify(r.body).slice(0, 200)}`).toBe(200);
@@ -100,16 +107,16 @@ describeDb("patient identity never leaves the server through a staff API", () =>
 
   it("reception: the passport + date-of-birth lookup finds the card and returns name, phone and card number only", async () => {
     as(people.reception, "receptionist");
-    const byDocument = await read(await receptionSearch(get(`/api/operations/patients?q=${M.document}&dob=${M.dob}`)));
+    const byDocument = await deskLookup(M.document, M.dob);
     clean("reception by passport", byDocument);
     expect(byDocument.body.data).toMatchObject({ exact: true });
-    const byPinfl = await read(await receptionSearch(get(`/api/operations/patients?q=${M.pinfl}&dob=${M.dob}`)));
+    const byPinfl = await deskLookup(M.pinfl, M.dob);
     clean("reception by JSHSHIR", byPinfl);
     expect(byPinfl.body.data).toMatchObject({ exact: true });
-    clean("reception by name", await read(await receptionSearch(get(`/api/operations/patients?q=${encodeURIComponent(name)}`))));
-    clean("reception by name + date", await read(await receptionSearch(get(`/api/operations/patients?q=${encodeURIComponent(name)}&dob=${M.dob}`))));
+    clean("reception by name", await deskLookup(name));
+    clean("reception by name + date", await deskLookup(name, M.dob));
     // A passport alone is refused (the date of birth is required on the server).
-    expect((await read(await receptionSearch(get(`/api/operations/patients?q=${M.document}`)))).body.code).toBe("dob_required");
+    expect((await deskLookup(M.document)).body.code).toBe("dob_required");
   });
 
   it("the patient directory: list and card — whether a date of birth is recorded, never what it is", async () => {

@@ -12,12 +12,16 @@ vi.mock("@/lib/clinics/context", () => ({
 }));
 
 const resolveMock = vi.fn();
+const resolveExistingMock = vi.fn();
 const getOrCreateMock = vi.fn();
 vi.mock("@/lib/patients/identity", () => ({
   resolvePatientFromInitData: (...args: unknown[]) => resolveMock(...args),
+  resolveExistingPatientFromInitData: (...args: unknown[]) => resolveExistingMock(...args),
   devIdentityAllowed: () => true,
   getOrCreateWebPatient: () => getOrCreateMock(),
 }));
+const onlineProfileMock = vi.fn();
+vi.mock("@/lib/patients/online-identity", () => ({ onlineProfile: (...args: unknown[]) => onlineProfileMock(...args) }));
 
 vi.mock("@/lib/rate-limit", () => ({
   rateLimit: () => ({ ok: true }),
@@ -84,6 +88,62 @@ beforeEach(() => {
 });
 
 describe("POST /api/bookings", () => {
+  describe("clinic with identity required", () => {
+    const booking = {
+      doctorId: CLINIC.id,
+      serviceId: CLINIC.id,
+      startAt: "2030-01-07T05:00:00Z",
+      patientName: "Test Bemor",
+      phone: "+998900000000",
+      consent: true,
+    };
+    beforeEach(() => {
+      stubSuccess();
+      getClinicMock.mockResolvedValue({ ...CLINIC, online_identity_required: true });
+    });
+
+    it.each([undefined, null, ""])("refuses web booking without a Telegram session (%s) before writing anything", async (initData) => {
+      const res = await POST(postReq({ ...booking, initData }));
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ code: "identity_required" });
+      expect(getOrCreateMock).not.toHaveBeenCalled();
+      expect(resolveMock).not.toHaveBeenCalled();
+      expect(resolveExistingMock).not.toHaveBeenCalled();
+      expect(supabaseMock.from).not.toHaveBeenCalled();
+      expect(supabaseMock.rpc).not.toHaveBeenCalled();
+    });
+
+    it("refuses invalid Telegram data without falling back to a website booking", async () => {
+      resolveExistingMock.mockResolvedValue(null);
+      const res = await POST(postReq({ ...booking, initData: "invalid" }));
+      expect(res.status).toBe(401);
+      expect(await res.json()).toMatchObject({ code: "invalid_init_data" });
+      expect(resolveExistingMock).toHaveBeenCalledWith("invalid", CLINIC.id);
+      expect(getOrCreateMock).not.toHaveBeenCalled();
+      expect(supabaseMock.rpc).not.toHaveBeenCalled();
+    });
+
+    it.each([null, { id: "p-1" }])("refuses an absent or incomplete card before mutating it (%s)", async (patient) => {
+      resolveExistingMock.mockResolvedValue({ patient });
+      onlineProfileMock.mockResolvedValue({ complete: false });
+      const res = await POST(postReq({ ...booking, initData: "signed" }));
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ code: "identity_required" });
+      expect(resolveMock).not.toHaveBeenCalled();
+      expect(supabaseMock.from).not.toHaveBeenCalled();
+      expect(supabaseMock.rpc).not.toHaveBeenCalled();
+    });
+
+    it("books with a verified Telegram session and a completed card in that clinic", async () => {
+      resolveExistingMock.mockResolvedValue({ patient: { id: "p-1" } });
+      onlineProfileMock.mockResolvedValue({ complete: true });
+      const res = await POST(postReq({ ...booking, initData: "signed" }));
+      expect(res.status).toBe(201);
+      expect(onlineProfileMock).toHaveBeenCalledWith(CLINIC.id, "p-1");
+      expect(supabaseMock.rpc).toHaveBeenCalledWith("book_appointment", expect.objectContaining({ p_patient_id: "p-1" }));
+    });
+  });
+
   it("passes the patient's reason through as notes", async () => {
     stubSuccess();
     const res = await POST(

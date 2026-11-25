@@ -1,0 +1,224 @@
+{
+  "m": [
+    {
+      "month": 1,
+      "active": 2,
+      "arpa": 200,
+      "mrr": 400,
+      "newGross": 2,
+      "opex": 18080,
+      "cumulative": -17680
+    },
+    {
+      "month": 2,
+      "active": 3,
+      "arpa": 200,
+      "mrr": 600,
+      "newGross": 1.02,
+      "opex": 18120,
+      "cumulative": -35200
+    },
+    {
+      "month": 3,
+      "active": 5,
+      "arpa": 200,
+      "mrr": 1000,
+      "newGross": 2.03,
+      "opex": 18200,
+      "cumulative": -52400
+    },
+    {
+      "month": 4,
+      "active": 8,
+      "arpa": 250,
+      "mrr": 2000,
+      "newGross": 3.05,
+      "opex": 25400,
+      "cumulative": -75800
+    },
+    {
+      "month": 5,
+      "active": 12,
+      "arpa": 250,
+      "mrr": 3000,
+      "newGross": 4.08,
+      "opex": 25600,
+      "cumulative": -98400
+    },
+    {
+      "month": 6,
+      "active": 15,
+      "arpa": 250,
+      "mrr": 3750,
+      "newGross": 3.12,
+      "opex": 25750,
+      "cumulative": -120400
+    },
+    {
+      "month": 7,
+      "active": 23,
+      "arpa": 300,
+      "mrr": 6900,
+      "newGross": 8.15,
+      "opex": 39380,
+      "cumulative": -152880
+    },
+    {
+      "month": 8,
+      "active": 32,
+      "arpa": 300,
+      "mrr": 9600,
+      "newGross": 9.23,
+      "opex": 39920,
+      "cumulative": -183200
+    },
+    {
+      "month": 9,
+      "active": 40,
+      "arpa": 300,
+      "mrr": 12000,
+      "newGross": 8.32,
+      "opex": 40400,
+      "cumulative": -211600
+    },
+    {
+      "month": 10,
+      "active": 53,
+      "arpa": 350,
+      "mrr": 18550,
+      "newGross": 13.4,
+      "opex": 55710,
+      "cumulative": -248760
+    },
+    {
+      "month": 11,
+      "active": 67,
+      "arpa": 350,
+      "mrr": 23450,
+      "newGross": 14.53,
+      "opex": 56690,
+      "cumulative": -282000
+    },
+    {
+      "month": 12,
+      "active": 80,
+      "arpa": 350,
+      "mrr": 28000,
+      "newGross": 13.67,
+      "opex": 57600,
+      "cumulative": -311600
+    },
+    {
+      "month": 13,
+      "active": 103,
+      "arpa": 400,
+      "mrr": 41200,
+      "newGross": 23.8,
+      "opex": 78240,
+      "cumulative": -348640
+    },
+    {
+      "month": 14,
+      "active": 127,
+      "arpa": 400,
+      "mrr": 50800,
+      "newGross": 25.03,
+      "opex": 80160,
+      "cumulative": -378000
+    },
+    {
+      "month": 15,
+      "active": 150,
+      "arpa": 400,
+      "mrr": 60000,
+      "newGross": 24.27,
+      "opex": 82000,
+      "cumulative": -400000
+    },
+    {
+      "month": 16,
+      "active": 183,
+      "arpa": 450,
+      "mrr": 82350,
+      "newGross": 34.5,
+      "opex": 106470,
+      "cumulative": -424120
+    },
+    {
+      "month": 17,
+      "active": 217,
+      "arpa": 450,
+      "mrr": 97650,
+      "newGross": 35.83,
+      "opex": 109530,
+      "cumulative": -436000
+    },
+    {
+      "month": 18,
+      "active": 250,
+      "arpa": 450,
+      "mrr": 112500,
+      "newGross": 35.17,
+      "opex": 112500,
+      "cumulative": -436000
+    },
+    {
+      "month": 19,
+      "active": 290,
+      "arpa": 480,
+      "mrr": 139200,
+      "newGross": 42.5,
+      "opex": 137840,
+      "cumulative": -434640
+    },
+    {
+      "month": 20,
+      "active": 330,
+      "arpa": 480,
+      "mrr": 158400,
+      "newGross": 42.9,
+      "opex": 141680,
+      "cumulative": -417920
+    },
+    {
+      "month": 21,
+      "active": 370,
+      "arpa": 480,
+      "mrr": 177600,
+      "newGross": 43.3,
+      "opex": 145520,
+      "cumulative": -385840
+    },
+    {
+      "month": 22,
+      "active": 413,
+      "arpa": 500,
+      "mrr": 206500,
+      "newGross": 46.7,
+      "opex": 171300,
+      "cumulative": -350640
+    },
+    {
+      "month": 23,
+      "active": 457,
+      "arpa": 500,
+      "mrr": 228500,
+      "newGross": 48.13,
+      "opex": 175700,
+      "cumulative": -297840
+    },
+    {
+      "month": 24,
+      "active": 500,
+      "arpa": 500,
+      "mrr": 250000,
+      "newGross": 47.57,
+      "opex": 180000,
+      "cumulative": -227840
+    }
+  ],
+  "rev": 1713950,
+  "gross": 532.3000000000001,
+  "peakDeficit": 436000,
+  "totalNet": -227840
+}

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
+import postgres from "postgres";
 import { localDbAvailable } from "@/test/local-db";
 
 /**
@@ -26,6 +27,7 @@ import { localDbAvailable } from "@/test/local-db";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const ANON_KEY = process.env.SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const DB_URL = process.env.SUPABASE_DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 // A zone where it is daytime now: walk-ins "now" stay inside one local day.
 const TZ = daytimeTimezone();
 const PASSWORD = "RedTeam-Test-123!";
@@ -60,6 +62,7 @@ type ListHandler = (req: NextRequest) => Promise<Response>;
 
 describeDb("RED TEAM — referral-based clinical access", () => {
   let admin: SupabaseClient;
+  let sql: postgres.Sql;
   const suffix = Date.now().toString(36);
   const SECRET = `RT-SECRET-${suffix}`;
   const users: Record<string, string> = {};
@@ -191,24 +194,31 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     expect(error).toBeNull();
     return { id, consultation, record: rec!.id as string };
   }
-  async function insertReferral(clinicKey: "A" | "B", p: { id: string; consultation: string }, from: string, to: string, createdBy: string, ms = 30 * 86_400_000) {
-    const { data, error } = await admin
-      .from("referrals")
-      .insert({
-        clinic_id: clinic[clinicKey],
-        patient_id: p.id,
-        referring_doctor_id: doctors[from],
-        referred_to_doctor_id: doctors[to],
-        originating_appointment_id: p.consultation,
-        reason: `${SECRET} reason`,
-        handoff_note: `${SECRET} note`,
-        created_by: users[createdBy],
-        expires_at: new Date(Date.now() + ms).toISOString(),
-      })
-      .select("id")
-      .single();
-    expect(error).toBeNull();
-    return data!.id as string;
+  async function insertReferral(
+    clinicKey: "A" | "B", p: { id: string; consultation: string }, from: string, to: string, createdBy: string,
+    elapsed?: "accepted" | { completeWith: string },
+  ) {
+    return sql.begin(async (tx) => {
+      // Lifecycle triggers use the transaction clock. These transitions are
+      // valid in this transaction, while the deadline has passed on the next read.
+      const lifetime = elapsed ? "1 microsecond" : "30 days";
+      const [{ id }] = await tx<{ id: string }[]>`
+        insert into public.referrals (
+          clinic_id, patient_id, referring_doctor_id, referred_to_doctor_id,
+          originating_appointment_id, reason, handoff_note, created_by, expires_at
+        ) values (
+          ${clinic[clinicKey]}, ${p.id}, ${doctors[from]}, ${doctors[to]},
+          ${p.consultation}, ${`${SECRET} reason`}, ${`${SECRET} note`}, ${users[createdBy]}, now() + ${lifetime}::interval
+        ) returning id`;
+      if (elapsed) {
+        await tx`update public.referrals set status = 'accepted', accepted_by = ${users[to]} where id = ${id}`;
+        if (elapsed !== "accepted") {
+          await tx`update public.referrals set follow_up_appointment_id = ${elapsed.completeWith} where id = ${id}`;
+          await tx`update public.referrals set status = 'completed', completed_by = ${users[to]} where id = ${id}`;
+        }
+      }
+      return id;
+    });
   }
   const transition = async (id: string, patch: Record<string, unknown>) => {
     const { error } = await admin.from("referrals").update(patch).eq("id", id);
@@ -223,6 +233,7 @@ describeDb("RED TEAM — referral-based clinical access", () => {
 
   beforeAll(async () => {
     admin = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
+    sql = postgres(DB_URL, { max: 1, onnotice: () => {} });
     const { data: clinics } = await admin
       .from("clinics")
       .insert([
@@ -267,8 +278,7 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     clinicBReferral = await insertReferral("B", Z, "k", "k2", "k");
 
     const x2 = await patientWithRecord("A", "a", "a");
-    expired = { referral: await insertReferral("A", x2, "a", "b", "a", 2_000), patient: x2.id };
-    await transition(expired.referral, { status: "accepted", accepted_by: users.b });
+    expired = { referral: await insertReferral("A", x2, "a", "b", "a", "accepted"), patient: x2.id };
 
     const x3 = await patientWithRecord("A", "a", "a");
     revoked = { referral: await insertReferral("A", x3, "a", "b", "a"), patient: x3.id };
@@ -276,22 +286,17 @@ describeDb("RED TEAM — referral-based clinical access", () => {
     await transition(revoked.referral, { status: "revoked", revoked_by: users.a, revoked_reason: "Red team" });
 
     const x4 = await patientWithRecord("A", "a", "a");
-    const c4 = await insertReferral("A", x4, "a", "b", "a", 3_000);
-    await transition(c4, { status: "accepted", accepted_by: users.b });
     const own = await visit("A", x4.id, doctors.b, "in_progress");
-    await transition(c4, { follow_up_appointment_id: own });
-    await transition(c4, { status: "completed", completed_by: users.b });
+    const c4 = await insertReferral("A", x4, "a", "b", "a", { completeWith: own });
     completed = { referral: c4, patient: x4.id, own };
 
     const x5 = await patientWithRecord("A", "a", "a");
     declined = { referral: await insertReferral("A", x5, "a", "b", "a"), patient: x5.id };
     await transition(declined.referral, { status: "declined", declined_by: users.b });
-
-    // Let the short-lived referrals lapse (expired: pending access gone; completed: past its validity).
-    await new Promise((r) => setTimeout(r, 3_500));
   }, 90_000);
 
   afterAll(async () => {
+    await sql?.end({ timeout: 2 });
     if (!admin) return;
     for (const c of [clinic.A, clinic.B]) {
       if (!c) continue;
@@ -389,12 +394,17 @@ describeDb("RED TEAM — referral-based clinical access", () => {
 
   // 4 ----------------------------------------------------------------------
   it("4. expired referral IDs: nothing — no data, no transitions — even before the expiry is recorded", async () => {
+    const patient = await patientWithRecord("A", "a", "a");
+    const referralId = await insertReferral("A", patient, "a", "b", "a", "accepted");
+    const [state] = await sql<{ status: string; elapsed: boolean }[]>`
+      select status, expires_at <= now() as elapsed from public.referrals where id = ${referralId}`;
+    expect(state).toEqual({ status: "accepted", elapsed: true });
     as("b");
-    denied(await workspace(expired.patient), [410]);
-    denied(await writeRecord(expired.patient, { appointmentId: randomUUID() }), [410]);
-    denied(await startConsultation(expired.patient, { serviceId: service.A }), [410]);
-    denied(await actOn(expired.referral, { action: "complete" }), [409, 410]);
-    denied(await referral(expired.referral), [410]);
+    denied(await workspace(patient.id), [410]);
+    denied(await writeRecord(patient.id, { appointmentId: randomUUID() }), [410]);
+    denied(await startConsultation(patient.id, { serviceId: service.A }), [410]);
+    denied(await actOn(referralId, { action: "complete" }), [409, 410]);
+    denied(await referral(referralId), [410]);
   });
 
   // 5 ----------------------------------------------------------------------

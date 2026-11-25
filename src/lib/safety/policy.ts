@@ -25,36 +25,48 @@ export const URGENT_KEYWORDS: string[] = [
   "tez yordam", "shoshilinch", "ongini yo'qotdi", "ongini yoqotdi", "hushidan ketdi",
   "qattiq og'riq", "qattiq ogriq", "ko'krak og'rig'i", "ko‘krak og‘rig‘i", "nafas olish qiyin",
   "qon ketish", "yurak xuruji", "infarkt", "insult", "falaj", "zaharlanish", "o'tkir",
-  "og'ir ahvol", "ogir ahvol", "hayot xavfi", "behush", "siyanoz",
+  "og'ir ahvol", "ogir ahvol", "hayot xavfi", "behush", "siyanoz", "tutqanoq", "talvasa",
+  // uz (Cyrillic)
+  "тез ёрдам", "ҳушидан кет", "қон кетиш", "тутқаноқ", "талваса",
   // ru
   "скорая", "скорую", "срочно", "неотложн", "потерял сознание", "резкая боль", "боль в груди",
-  "трудно дышать", "кровотечение", "инфаркт", "инсульт", "отравление", "тяжелое состояние",
+  "трудно дышать", "кровотечение", "инфаркт", "инсульт", "отравление", "тяжелое состояние", "судорог",
   // en
   "emergency", "urgent", "unconscious", "chest pain", "cannot breathe", "can't breathe",
-  "bleeding heavily", "heart attack", "stroke", "suicide", "self-harm",
+  "bleeding heavily", "heart attack", "stroke", "suicide", "self-harm", "convulsion", "seizure",
+];
+
+const UZ_CYRILLIC_URGENT_PATTERNS = [
+  /к[ўу]кра[кг].{0,20}о[ғг]ри/u,
+  /нафас.{0,25}([қк]ийин|ололма|ола олма)/u,
 ];
 
 /** Phrases whose appearance in a message triggers the urgent flow. */
 export const URGENT_PATTERNS: RegExp[] = [
   /(shoshilinch|tez yordam)/i,
   /(ongini (yo'qotdi|yoqotdi)|hushidan ket)/i,
-  /(ko'krak|ko‘krak|ko.krak).{0,20}(og'riq|ogriq|og‘riq|pain)/i,
+  /ko'?kra[kg].{0,20}(og'?ri|pain)/i,
   /(nafas ol).{0,20}(qiyin|olmay)/i,
   /(qon ket)/i,
   /(yurak xuruji|infarkt|insult|infarct|stroke)/i,
   /(заболе|срочн|скорой|неотложн|кровотеч|инфаркт|инсульт)/i,
   /(emergency|urgent|heart attack|stroke|suicide|self-harm)/i,
   /(tez yordam|ambulance)/i,
+  ...UZ_CYRILLIC_URGENT_PATTERNS,
 ];
 
 export type UrgencyLevel = "none" | "urgent";
 
 /** Detects urgent/escalation wording in a free-text message. */
 export function detectUrgency(text: string): UrgencyLevel {
-  const lower = text.toLowerCase();
-  const keywordHit = URGENT_KEYWORDS.some((k) => lower.includes(k));
-  const patternHit = URGENT_PATTERNS.some((re) => re.test(text));
+  const normalized = normalizeUrgentText(text);
+  const keywordHit = URGENT_KEYWORDS.some((k) => normalized.includes(k));
+  const patternHit = URGENT_PATTERNS.some((re) => re.test(normalized));
   return keywordHit || patternHit ? "urgent" : "none";
+}
+
+function normalizeUrgentText(text: string): string {
+  return text.normalize("NFKC").toLowerCase().replace(/[’‘`ʻʼ]/g, "'").replace(/\s+/g, " ");
 }
 
 /** Claims the AI must never make, in any wording. */
@@ -112,7 +124,10 @@ export const GENERIC_FALLBACK_UZ =
 
 /** Returns the urgent guidance text appropriate for the message language. */
 export function urgentMessage(text: string): string {
-  if (/[а-яА-ЯЁё]/.test(text)) return URGENT_MESSAGE_RU;
+  const normalized = normalizeUrgentText(text);
+  const isUzbekCyrillic = /[ўқғҳ]|тез ёрдам|талваса/u.test(normalized)
+    || UZ_CYRILLIC_URGENT_PATTERNS.some((re) => re.test(normalized));
+  if (!isUzbekCyrillic && /[а-яё]/u.test(normalized)) return URGENT_MESSAGE_RU;
   return URGENT_MESSAGE_UZ;
 }
 

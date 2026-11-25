@@ -43,6 +43,22 @@ describe("getHealthTranscriptionProvider", () => {
   it("refuses a known foreign provider even when listed", async () => {
     expect(await load({ ...on, TRANSCRIPTION_BASE_URL: "https://api.openai.com/v1", HEALTH_AUDIO_ALLOWED_HOSTS: "api.openai.com" })).toBeNull();
     expect(await load({ ...on, TRANSCRIPTION_BASE_URL: "https://api.groq.com/openai/v1", HEALTH_AUDIO_ALLOWED_HOSTS: "api.groq.com" })).toBeNull();
+    expect(await load({ ...on, TRANSCRIPTION_BASE_URL: "https://api.openai.com./v1", HEALTH_AUDIO_ALLOWED_HOSTS: "api.openai.com." })).toBeNull();
+  });
+
+  it.each(["http://stt.clinic.uz/v1", "https://user@stt.clinic.uz/v1", "https://stt.clinic.uz/v1?redirect=other"])(
+    "refuses a nonsecure or ambiguous endpoint: %s",
+    async (baseUrl) => {
+      expect(await load({ ...on, TRANSCRIPTION_BASE_URL: baseUrl, HEALTH_AUDIO_ALLOWED_HOSTS: "stt.clinic.uz" })).toBeNull();
+    },
+  );
+
+  it("uses the approved endpoint and prevents redirects", async () => {
+    const provider = await load({ ...on, TRANSCRIPTION_BASE_URL: "https://stt.clinic.uz/v1/", HEALTH_AUDIO_ALLOWED_HOSTS: "stt.clinic.uz" });
+    const fetchMock = vi.fn(async () => new Response(null, { status: 307, headers: { Location: "https://unapproved.invalid" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(provider!.transcribe({ file: Buffer.from("synthetic audio"), mimeType: "audio/ogg", fileName: "test.ogg" })).rejects.toThrow("returned 307");
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("https://stt.clinic.uz/v1/audio/transcriptions", expect.objectContaining({ redirect: "error" }));
   });
 
   it("is off when transcription is disabled or no host is allowed", async () => {

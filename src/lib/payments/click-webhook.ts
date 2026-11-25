@@ -96,10 +96,7 @@ export async function handleClickWebhook(requestBody: string, complete: boolean)
     signString: params.signString,
   });
   if (!signatureValid) {
-    logger.warn("click webhook signature mismatch", {
-      clickTransId: params.clickTransId,
-      complete,
-    });
+    logger.warn("click webhook signature mismatch", { complete });
     return signError("SIGN CHECK FAILED!");
   }
 
@@ -125,7 +122,7 @@ export async function handleClickWebhook(requestBody: string, complete: boolean)
       .maybeSingle();
 
     if (fetchError || !payment) {
-      logger.warn("click webhook unknown appointment", { merchantTransId: params.merchantTransId });
+      logger.warn("click webhook unknown appointment", { complete });
       return signError("TRANSACTION NOT FOUND", "-5");
     }
 
@@ -193,14 +190,10 @@ export async function handleClickWebhook(requestBody: string, complete: boolean)
       merchant_trans_id: params.merchantTransId,
       merchant_prepare_id: params.merchantPrepareId ?? "",
     });
-  } catch (e) {
+  } catch {
     // Release the claim so the next Click delivery retries.
     await releaseWebhookProcessing("click", params.clickTransId, claimed).catch(() => {});
-    logger.error("click webhook handler failed", {
-      error: e instanceof Error ? e.message : String(e),
-      clickTransId: params.clickTransId,
-      complete,
-    });
+    logger.error("click webhook handler failed", { complete });
     return signError("INTERNAL ERROR", "-9");
   }
 }

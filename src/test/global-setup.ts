@@ -1,21 +1,18 @@
-import { writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
+import type { TestProject } from "vitest/node";
 import { loadTestEnvironment } from "./environment";
 
 /**
  * Probes the local Supabase stack once, before any test worker starts.
- * Writes a marker file that `local-db.ts` reads synchronously.
+ * Passes the result to this Vitest project's workers for test collection.
  *
  * If the stack is down, half-migrated or unseeded, integration suites skip
  * with a visible warning instead of failing misleadingly.
  */
 
-const MARKER = join(tmpdir(), "health-ai-local-db.json");
 const SEED_CLINIC_ID = "11111111-1111-4111-8111-111111111111";
 
-export default async function globalSetup(): Promise<void> {
+export default async function globalSetup(project: TestProject): Promise<void> {
   // Refuse remote targets before even probing. CI-injected values win over files.
   loadTestEnvironment();
 
@@ -26,7 +23,7 @@ export default async function globalSetup(): Promise<void> {
   let available = false;
   let reason = "";
 
-  if (!url || serviceKey.startsWith("test-") || anonKey.startsWith("test-")) {
+  if (!url || !serviceKey || !anonKey || serviceKey.startsWith("test-") || anonKey.startsWith("test-")) {
     reason = "placeholder/empty Supabase keys — configure .env.test with local keys (npx supabase status)";
   } else {
     try {
@@ -48,11 +45,11 @@ export default async function globalSetup(): Promise<void> {
     }
   }
 
-  writeFileSync(MARKER, JSON.stringify({ available, reason }));
   if (!available) {
     if (process.env.REQUIRE_TEST_DATABASE === "true") {
       throw new Error(`Required local test database unavailable: ${reason}`);
     }
     console.warn(`\n⚠️  local Supabase unavailable — integration suites will be SKIPPED (${reason})\n`);
   }
+  project.provide("localDbAvailable", available);
 }

@@ -31,8 +31,10 @@ vi.mock("@/lib/ai/knowledge", () => ({
   loadClinicKnowledge: () => loadClinicKnowledgeMock(),
   buildReceptionistSystemPrompt: () => "SYSTEM PROMPT",
 }));
+vi.mock("@/lib/logger", () => ({ logger: { error: vi.fn(), warn: vi.fn() } }));
 
 import { generateReceptionistReply } from "@/lib/ai/receptionist";
+import { logger } from "@/lib/logger";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -75,9 +77,10 @@ describe("generateReceptionistReply — AI enabled", () => {
   });
 
   it("falls back to FAQs instead of surfacing an error when the provider throws (timeout, 5xx, network)", async () => {
+    const sentinel = "SYNTHETIC_SENSITIVE_RECEPTIONIST_EXCEPTION";
     getAiProviderMock.mockReturnValue({
       generateReply: vi.fn(async () => {
-        throw new Error("upstream timeout");
+        throw new Error(sentinel);
       }),
     });
 
@@ -85,6 +88,9 @@ describe("generateReceptionistReply — AI enabled", () => {
 
     expect(reply.usedAi).toBe(false);
     expect(reply.text).toContain("9:00-18:00");
+    expect(reply.text).not.toContain(sentinel);
+    expect(logger.error).toHaveBeenCalledWith("ai receptionist failed, using fallback", { clinicId: "clinic-1" });
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(sentinel);
   });
 
   it("discards an AI reply that fails the safety check (e.g. a diagnosis) and hands off instead of sending it", async () => {

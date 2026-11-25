@@ -33,7 +33,7 @@ vi.mock("@/lib/telegram/bot", () => ({
   telegramConfigured: vi.fn(() => true),
 }));
 
-import { GET as searchPatients } from "./patients/route";
+import { POST as searchPatients } from "./patients/route";
 import { GET as catalog } from "./catalog/route";
 import { GET as queue, POST as register } from "./arrivals/route";
 import { POST as transition } from "./arrivals/[id]/route";
@@ -93,6 +93,8 @@ describeDb("outpatient pilot — routes", () => {
     read(await pay(new NextRequest("http://x", json("POST", { key: randomUUID(), expectedOutstanding, lines })), params({ visitId })));
   const refundVisit = async (visitId: string, body: Record<string, unknown>) =>
     read(await refund(new NextRequest("http://x", json("POST", { key: randomUUID(), reason: "Xizmat ko‘rsatilmadi", ...body })), params({ visitId })));
+  const search = async (query: string, dateOfBirth?: string) =>
+    read(await searchPatients(new NextRequest("http://x/api/operations/patients", json("POST", { query, dateOfBirth }))));
 
   beforeAll(async () => {
     admin = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
@@ -168,16 +170,27 @@ describeDb("outpatient pilot — routes", () => {
     expect((await payVisit(r.body.data!.visitId as string, [{ method: "cash", amount: 180000 }], 180000)).status).toBe(403);
 
     // A passport alone is never looked up: the date of birth is required, on the server too.
-    const bare = await read(await searchPatients(new NextRequest(`http://x/api/operations/patients?q=${encodeURIComponent("ac1234567")}`)));
+    const bare = await search("ac1234567");
     expect(bare).toMatchObject({ status: 400, body: { code: "dob_required" } });
     // The same person is found again by passport + date of birth and is never duplicated. Staff see name, phone and
     // card number only — no passport, JSHSHIR, date of birth or sex (owner decision 2026-10-08).
-    const found = await read(await searchPatients(new NextRequest(`http://x/api/operations/patients?q=${encodeURIComponent("ac1234567")}&dob=1990-05-06`)));
+    const found = await search("ac1234567", "1990-05-06");
     const matches = found.body.data!.patients as Array<{ id: string; phone: string; patientNumber: number; dobMatches: boolean }>;
     expect(matches).toHaveLength(1);
     expect(matches[0]).toMatchObject({ phone: "+998 90 111 22 33", dobMatches: true });
     expect(Object.keys(matches[0]).sort()).toEqual(["dobMatches", "fullName", "id", "identityVerified", "patientNumber", "phone"]);
     expect(JSON.stringify(found.body)).not.toMatch(/1234567|1990-05-06|female|male/i);
+    const [audit] = await sql`
+      select actor_id, patient_id, metadata, old_values, new_values
+      from public.audit_events where clinic_id = ${clinicA} and action = 'patient_identity_lookup'
+    `;
+    expect(audit).toEqual({
+      actor_id: people.reception,
+      patient_id: matches[0].id,
+      metadata: { method: "document", outcome: "matched" },
+      old_values: null,
+      new_values: null,
+    });
     const dup = await registerNew(`Boshqa ism ${suffix}`, { documentNumber: "AC1234567" });
     expect(dup).toMatchObject({ status: 409, body: { code: "patient_exists", details: { patientId: matches[0].id } } });
     // The same passport with another date of birth: still never a second card, but the desk is not told whose
@@ -189,18 +202,33 @@ describeDb("outpatient pilot — routes", () => {
     expect(((await sql`select count(*)::int as n from public.patients where clinic_id = ${clinicA} and document_number = 'AC1234567'`)[0] as { n: number }).n).toBe(1);
 
     // The owner's one-step lookup: passport + date of birth → exactly this card.
-    const exact = (await read(await searchPatients(new NextRequest("http://x?q=AC1234567&dob=1990-05-06")))).body.data!;
+    const exact = (await search("AC1234567", "1990-05-06")).body.data!;
     expect(exact).toMatchObject({ exact: true, dobMismatch: false });
     expect((exact.patients as Array<{ id: string }>).map((p) => p.id)).toEqual([matches[0].id]);
     // The right passport with another date of birth: reported, and the card is not shown.
-    const wrong = (await read(await searchPatients(new NextRequest("http://x?q=AC1234567&dob=1991-05-06")))).body.data!;
+    const wrong = (await search("AC1234567", "1991-05-06")).body.data!;
     expect(wrong).toEqual({ patients: [], exact: false, dobMismatch: true });
     // An unknown passport: nothing, so reception opens the new-patient form.
-    expect((await read(await searchPatients(new NextRequest("http://x?q=AC7654321&dob=1990-05-06")))).body.data).toEqual({ patients: [], exact: false, dobMismatch: false });
+    expect((await search("AC7654321", "1990-05-06")).body.data).toEqual({ patients: [], exact: false, dobMismatch: false });
 
     // Another clinic's reception finds nothing of clinic A.
     as(people.receptionB, "receptionist", clinicB);
-    expect(((await read(await searchPatients(new NextRequest("http://x?q=AC1234567&dob=1990-05-06")))).body.data!.patients as unknown[]).length).toBe(0);
+    expect((await search("AC1234567", "1990-05-06")).body.data!.patients).toEqual([]);
+  });
+
+  it("requires a bounded JSON body on reception search and disables response caching", async () => {
+    as(people.reception, "receptionist");
+    const urlInput = await searchPatients(new NextRequest(
+      "http://x/api/operations/patients?q=unused",
+      json("POST", { query: "test" }),
+    ));
+    expect(await read(urlInput)).toMatchObject({ status: 400, body: { code: "query_in_url" } });
+    expect(urlInput.headers.get("Cache-Control")).toBe("private, no-store");
+    const oversized = await search("x".repeat(1100));
+    expect(oversized).toMatchObject({ status: 413, body: { code: "body_too_large" } });
+
+    as(people.cashier, "cashier");
+    expect((await search("test")).status).toBe(403);
   });
 
   it("the cashier takes a split payment; the queue number appears only then; totals reconcile by method", async () => {

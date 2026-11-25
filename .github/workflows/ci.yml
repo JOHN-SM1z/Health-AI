@@ -35,6 +35,8 @@ jobs:
       # Without a database the integration suites skip (they say so); everything else runs.
       - run: npm test
       - run: node scripts/build-full-db-setup.mjs --check
+      - name: Test encrypted backup and restore with synthetic data
+        run: bash deploy/uz/scripts/test-backup.sh
       - name: Build
         run: |
           cp .env.test.example .env

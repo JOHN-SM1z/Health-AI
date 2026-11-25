@@ -7,7 +7,7 @@ afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 function configure() {
   vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
   vi.stubEnv("SUPABASE_URL", "");
-  vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "synthetic-server-key");
+  vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "sb_secret_synthetic_server_key");
 }
 
 describe("health endpoint", () => {
@@ -19,11 +19,27 @@ describe("health endpoint", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(fetchMock).toHaveBeenCalledWith("https://project.supabase.co/rest/v1/clinics?select=id&limit=1", expect.objectContaining({
-      headers: { apikey: "synthetic-server-key" }, cache: "no-store", redirect: "error",
+      method: "HEAD",
+      cache: "no-store",
+      redirect: "error",
     }));
+    const headers: Headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers.get("apikey")).toBe("sb_secret_synthetic_server_key");
+    expect(headers.has("Authorization")).toBe(false);
     const body = await res.text();
-    expect(body).not.toContain("synthetic-server-key");
+    expect(body).not.toContain("sb_secret_synthetic_server_key");
     expect(body).not.toContain("private metadata");
+  });
+  it("authenticates a legacy service-role JWT with both headers", async () => {
+    configure();
+    const legacyKey = "eyJhbGciOiJIUzI1NiJ9.c3ludGhldGlj.c2lnbmF0dXJl";
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", legacyKey);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect((await GET()).status).toBe(200);
+    const headers: Headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers.get("apikey")).toBe(legacyKey);
+    expect(headers.get("Authorization")).toBe(`Bearer ${legacyKey}`);
   });
   it.each(["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"])("fails closed without %s", async (name) => {
     configure(); vi.stubEnv(name, "");

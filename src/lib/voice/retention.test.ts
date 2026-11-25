@@ -9,7 +9,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 type Update = { table: string; values: Record<string, unknown>; filters: Array<[string, unknown]> };
 const state = vi.hoisted(() => ({
   due: [] as Array<{ id: string; clinic_id: string; storage_path: string | null }>,
+  missedQuotes: [] as Array<{ id: string; clinic_id: string }>,
   removeError: null as { message: string } | null,
+  redactError: null as { code: string } | null,
   removed: [] as string[][],
   updates: [] as Update[],
 }));
@@ -19,8 +21,8 @@ vi.mock("@/lib/supabase/admin", () => ({
     from: (table: string) => ({
       select: () => {
         const q: Record<string, unknown> = {};
-        for (const m of ["lte", "is", "order"]) q[m] = () => q;
-        q.limit = async () => ({ data: state.due, error: null });
+        for (const m of ["lte", "is", "order", "not", "neq"]) q[m] = () => q;
+        q.limit = async () => ({ data: table === "messages" ? state.missedQuotes : state.due, error: null });
         return q;
       },
       update: (values: Record<string, unknown>) => {
@@ -31,7 +33,7 @@ vi.mock("@/lib/supabase/admin", () => ({
           u.filters.push([col, val]);
           return chain;
         };
-        chain.then = (resolve: (v: unknown) => void) => resolve({ error: null });
+        chain.then = (resolve: (v: unknown) => void) => resolve({ error: table === "messages" ? state.redactError : null });
         return chain;
       },
     }),
@@ -50,7 +52,9 @@ import { purgeExpiredVoiceMessages, EXPIRED_VOICE_TEXT } from "@/lib/voice/reten
 
 beforeEach(() => {
   state.due = [];
+  state.missedQuotes = [];
   state.removeError = null;
+  state.redactError = null;
   state.removed = [];
   state.updates = [];
 });
@@ -79,5 +83,26 @@ describe("purgeExpiredVoiceMessages", () => {
     state.due = [{ id: "vm-3", clinic_id: "clinic-1", storage_path: null }];
     expect(await purgeExpiredVoiceMessages()).toEqual({ purged: 1, failed: 0 });
     expect(state.removed).toEqual([]);
+  });
+
+  it("retries quote redaction before marking a recording purged", async () => {
+    state.due = [{ id: "vm-4", clinic_id: "clinic-1", storage_path: "clinic-1/vm-4.ogg" }];
+    state.redactError = { code: "57014" };
+    expect(await purgeExpiredVoiceMessages()).toEqual({ purged: 0, failed: 1 });
+    expect(state.updates.some((u) => u.table === "voice_messages")).toBe(false);
+
+    state.redactError = null;
+    expect(await purgeExpiredVoiceMessages()).toEqual({ purged: 1, failed: 0 });
+    expect(state.updates.at(-1)?.values).toMatchObject({ purged_at: expect.any(String) });
+  });
+
+  it("redacts a lingering quote from a previously purged recording", async () => {
+    state.missedQuotes = [{ id: "late-quote", clinic_id: "clinic-1" }];
+    expect(await purgeExpiredVoiceMessages()).toEqual({ purged: 0, failed: 0 });
+    expect(state.updates).toEqual([{
+      table: "messages",
+      values: { content: EXPIRED_VOICE_TEXT },
+      filters: [["id", "late-quote"], ["clinic_id", "clinic-1"]],
+    }]);
   });
 });

@@ -38,8 +38,8 @@ export async function POST(request: NextRequest) {
       if (error) logger.error("job quarantine failed", { code: error.code });
       else quarantined = typeof data === "number" ? data : 0;
       if (quarantined > 0) logger.warn("notification jobs quarantined after an expired claim", { count: quarantined });
-    } catch (e) {
-      logger.error("job quarantine threw", { error: e instanceof Error ? e.message : String(e) });
+    } catch {
+      logger.error("job quarantine threw");
     }
 
     const result = await processDueNotificationJobs();
@@ -47,16 +47,16 @@ export async function POST(request: NextRequest) {
     let sms = { processed: 0, sent: 0, failed: 0, skipped: 0 };
     try {
       sms = await processDueSmsJobs();
-    } catch (e) {
-      logger.error("sms run threw", { error: e instanceof Error ? e.message : String(e) });
+    } catch {
+      logger.error("sms run threw");
     }
     // The same scheduled run enforces voice-message retention (privacy page
     // §2); a failure there never holds back the reminders.
     let voice = { purged: 0, failed: 0 };
     try {
       voice = await purgeExpiredVoiceMessages();
-    } catch (e) {
-      logger.error("voice retention run threw", { error: e instanceof Error ? e.message : String(e) });
+    } catch {
+      logger.error("voice retention run threw");
     }
     return NextResponse.json({ ok: true, ...result, sms, voicePurged: voice.purged, voicePurgeFailed: voice.failed, quarantined });
   } catch (e) {

@@ -46,9 +46,9 @@ async function insertAudit(events: AuditEvent[], strict: boolean | undefined): P
       failed = true;
       logger.error("audit insert failed", { action: events[0].action, count: events.length, code: error.code });
     }
-  } catch (e) {
+  } catch {
     failed = true;
-    logger.error("audit insert threw", { action: events[0].action, error: String(e) });
+    logger.error("audit insert threw", { action: events[0].action, count: events.length });
   }
   if (failed && strict) {
     throw new ApiError(503, "Kirish jurnaliga yozib bo‘lmadi, keyinroq urinib ko‘ring", "audit_unavailable");

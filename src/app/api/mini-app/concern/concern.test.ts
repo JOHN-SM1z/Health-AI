@@ -12,6 +12,8 @@ vi.mock("@/lib/telegram/bot", () => ({
 }));
 
 import { sendTelegramMessage } from "@/lib/telegram/bot";
+import * as telegramStore from "@/lib/telegram/store";
+import { URGENT_MESSAGE_UZ } from "@/lib/safety/policy";
 import { POST as concern } from "./route";
 import { POST as voice } from "./voice/route";
 
@@ -110,6 +112,20 @@ describeDb("Mini App concern — suggest a direction, escalate urgent wording", 
     const { data: audit } = await admin.from("audit_events").select("action, old_values, new_values").eq("entity_id", conv!.id).eq("action", "conversation_urgent");
     expect(audit).toEqual([{ action: "conversation_urgent", old_values: null, new_values: null }]);
     expect(vi.mocked(sendTelegramMessage).mock.calls.some(([m]) => m.chatId === tg)).toBe(true);
+  });
+
+  it("shows the approved urgent notice after verified sign-in even if the conversation cannot open", async () => {
+    tg++;
+    const lookup = vi.spyOn(telegramStore, "getOrCreateConversation")
+      .mockRejectedValueOnce(new Error("synthetic initialization failure"));
+    try {
+      const r = await post("Кўкрагим оғрияпти, нафас олишим қийин");
+      expect(lookup).toHaveBeenCalledOnce();
+      expect(r).toMatchObject({ status: 200, body: { data: { urgent: true, message: URGENT_MESSAGE_UZ } } });
+      expect(r.body.data).not.toHaveProperty("suggestions");
+    } finally {
+      lookup.mockRestore();
+    }
   });
 
   it("voice: refused without consent, and refused when no allowed local speech service is configured", async () => {

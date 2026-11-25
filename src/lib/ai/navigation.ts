@@ -93,10 +93,8 @@ export async function suggestNavigation(clinicId: string, userInput: string): Pr
       return directory;
     }
     return `${NOT_DIAGNOSIS_DISCLAIMER}\n\n${text}`;
-  } catch (e) {
-    logger.error("navigation ai failed, deterministic fallback", {
-      error: e instanceof Error ? e.message : String(e),
-    });
+  } catch {
+    logger.error("navigation ai failed, deterministic fallback", { clinicId });
     return directory;
   }
 }

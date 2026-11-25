@@ -97,7 +97,7 @@ const textUpdate = (updateId: number) => ({
   message: {
     message_id: 1,
     text: "Assalomu alaykum",
-    chat: { id: 42 },
+    chat: { id: 42, type: "private" },
     from: { id: 42, first_name: "Ali" },
   },
 });
@@ -106,7 +106,7 @@ const voiceUpdate = (updateId: number) => ({
   update_id: updateId,
   message: {
     message_id: 2,
-    chat: { id: 42 },
+    chat: { id: 42, type: "private" },
     from: { id: 42, first_name: "Ali" },
     voice: { file_id: "voice-1", file_unique_id: "vu-1", duration: 5, mime_type: "audio/ogg" },
   },
@@ -118,6 +118,8 @@ beforeEach(() => {
   finishMock.mockClear();
   releaseMock.mockClear();
   handleMessageMock.mockClear();
+  menuButtonMock.mockClear();
+  handleCommandMock.mockClear();
 });
 
 describe("telegram webhook route (per-clinic bots)", () => {
@@ -138,6 +140,12 @@ describe("telegram webhook route (per-clinic bots)", () => {
   it("rejects requests with a wrong secret token", async () => {
     const res = await post(textUpdate(1), "wrong-secret");
     expect(res.status).toBe(401);
+  });
+
+  it("rejects a non-object JSON update before claiming it", async () => {
+    const res = await post(null);
+    expect(res.status).toBe(400);
+    expect(claimMock).not.toHaveBeenCalled();
   });
 
   it("routes a voice update to the clinic's handler with the voice payload", async () => {
@@ -161,6 +169,43 @@ describe("telegram webhook route (per-clinic bots)", () => {
     expect(call.clinicId).toBe("clinic-1");
     expect(call.text).toBe("Assalomu alaykum");
     expect(call.voice).toBeUndefined();
+  });
+
+  it("ignores appointment menu buttons and queue callbacks sent in groups", async () => {
+    const queueStatusMock = vi.mocked(handleQueueStatus);
+    queueStatusMock.mockClear();
+    answerCallbackMock.mockClear();
+    const group = { id: -100123, type: "supergroup" };
+    const update = textUpdate(110);
+
+    const message = await post({
+      ...update,
+      message: { ...update.message, chat: group, text: "📋 Mening qabullarim" },
+    });
+    const callback = await post({
+      update_id: 111,
+      callback_query: { id: "group-query", from: update.message.from, data: "queue_status", message: { chat: group } },
+    });
+
+    expect(message.status).toBe(200);
+    expect(callback.status).toBe(200);
+    expect(menuButtonMock).not.toHaveBeenCalled();
+    expect(handleMessageMock).not.toHaveBeenCalled();
+    expect(handleCommandMock).not.toHaveBeenCalled();
+    expect(queueStatusMock).not.toHaveBeenCalled();
+    expect(answerCallbackMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "Qabulga yozilish uchun keldim, ko‘kragim og‘riyapti",
+    "/start Кўкрагим оғрияпти, нафас олишим қийин",
+  ])("sends urgent wording to the escalation handler even after a menu label or command", async (text) => {
+    const update = textUpdate(121);
+    const res = await post({ ...update, message: { ...update.message, text } });
+    expect(res.status).toBe(200);
+    expect(handleMessageMock).toHaveBeenCalledWith(expect.objectContaining({ text, clinicId: "clinic-1" }));
+    expect(menuButtonMock).not.toHaveBeenCalled();
+    expect(handleCommandMock).not.toHaveBeenCalled();
   });
 
   it("routes emoji-prefixed reply-keyboard taps to handleMenuButton, not the AI", async () => {
@@ -218,7 +263,7 @@ describe("telegram webhook route (per-clinic bots)", () => {
     expect(followMock).toHaveBeenCalledTimes(1);
 
     // "🔄 Navbatim" asks for the live position, for the user who pressed it.
-    await post({ update_id: 72, callback_query: { id: "c9", from: { id: 42 }, data: "queue_status", message: { chat: { id: 42 } } } });
+    await post({ update_id: 72, callback_query: { id: "c9", from: { id: 42 }, data: "queue_status", message: { chat: { id: 42, type: "private" } } } });
     expect(vi.mocked(handleQueueStatus)).toHaveBeenCalledWith({ clinicId: "clinic-1", chatId: 42, telegramUserId: 42 });
     expect(answerCallbackMock).toHaveBeenCalledWith("c9", "clinic-1");
     answerCallbackMock.mockClear();
@@ -277,13 +322,13 @@ describe("telegram webhook route (per-clinic bots)", () => {
     const correctMock = vi.mocked(handleVoiceCorrect);
     const wrongMock = vi.mocked(handleVoiceWrong);
 
-    await post({ update_id: 60, callback_query: { id: "c1", from: { id: 42 }, data: "voice_consent_yes:vm-1", message: { chat: { id: 42 } } } });
+    await post({ update_id: 60, callback_query: { id: "c1", from: { id: 42 }, data: "voice_consent_yes:vm-1", message: { chat: { id: 42, type: "private" } } } });
     expect(consentMock).toHaveBeenCalledWith(expect.objectContaining({ clinicId: "clinic-1", voiceMessageId: "vm-1" }));
 
-    await post({ update_id: 61, callback_query: { id: "c2", from: { id: 42 }, data: "voice_correct:vm-2", message: { chat: { id: 42 } } } });
+    await post({ update_id: 61, callback_query: { id: "c2", from: { id: 42 }, data: "voice_correct:vm-2", message: { chat: { id: 42, type: "private" } } } });
     expect(correctMock).toHaveBeenCalledWith(expect.objectContaining({ clinicId: "clinic-1", voiceMessageId: "vm-2" }));
 
-    await post({ update_id: 62, callback_query: { id: "c3", from: { id: 42 }, data: "voice_wrong:vm-3", message: { chat: { id: 42 } } } });
+    await post({ update_id: 62, callback_query: { id: "c3", from: { id: 42 }, data: "voice_wrong:vm-3", message: { chat: { id: 42, type: "private" } } } });
     expect(wrongMock).toHaveBeenCalledWith(expect.objectContaining({ clinicId: "clinic-1", voiceMessageId: "vm-3" }));
 
     // Each press names the Telegram user who pressed it (ownership is checked

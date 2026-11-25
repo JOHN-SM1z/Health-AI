@@ -23,8 +23,10 @@ const generateReply = vi.fn();
 const getAiProviderMock = vi.fn();
 vi.mock("@/lib/ai/provider", () => ({ getAiProvider: () => getAiProviderMock() }));
 vi.mock("@/lib/ai/knowledge", () => ({ loadClinicKnowledge: async () => knowledgeFixture }));
+vi.mock("@/lib/logger", () => ({ logger: { error: vi.fn(), warn: vi.fn() } }));
 
 import { suggestNavigation } from "@/lib/ai/navigation";
+import { logger } from "@/lib/logger";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -51,8 +53,13 @@ describe("suggestNavigation", () => {
   });
 
   it("falls back to the directory when the provider fails", async () => {
-    generateReply.mockRejectedValue(new Error("down"));
-    expect(await suggestNavigation("clinic-1", "boshim og‘riyapti")).toContain("Klinikamizdagi yo‘nalishlar va shifokorlar");
+    const sentinel = "SYNTHETIC_SENSITIVE_NAVIGATION_EXCEPTION";
+    generateReply.mockRejectedValue(new Error(sentinel));
+    const reply = await suggestNavigation("clinic-1", "boshim og‘riyapti");
+    expect(reply).toContain("Klinikamizdagi yo‘nalishlar va shifokorlar");
+    expect(reply).not.toContain(sentinel);
+    expect(logger.error).toHaveBeenCalledWith("navigation ai failed, deterministic fallback", { clinicId: "clinic-1" });
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(sentinel);
   });
 
   it("urgent wording never reaches the AI", async () => {

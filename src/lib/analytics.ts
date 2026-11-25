@@ -22,9 +22,9 @@ export async function trackAnalytics(opts: {
       payload: (opts.payload ?? {}) as never,
     });
     if (error) {
-      logger.warn("analytics insert failed", { eventType: opts.eventType, error: error.message });
+      logger.warn("analytics insert failed", { eventType: opts.eventType });
     }
-  } catch (e) {
-    logger.warn("analytics insert threw", { eventType: opts.eventType, error: String(e) });
+  } catch {
+    logger.warn("analytics insert threw", { eventType: opts.eventType });
   }
 }

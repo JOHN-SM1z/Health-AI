@@ -26,6 +26,9 @@ vi.mock("@/lib/payments/status", () => ({
   transitionPaymentStatus: (...args: unknown[]) => transitionMock(...args),
 }));
 
+const log = vi.hoisted(() => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }));
+vi.mock("@/lib/logger", () => ({ logger: log }));
+
 import type { handleClickWebhook } from "@/lib/payments/click-webhook";
 
 let handler: typeof handleClickWebhook;
@@ -225,11 +228,13 @@ describe("click webhook: idempotency", () => {
   });
 
   it("releases the claim when the handler fails", async () => {
-    transitionMock.mockRejectedValue(new Error("db down"));
-    const { form, clickTransId } = signedBody();
+    transitionMock.mockRejectedValue(new Error("synthetic-sensitive-provider-response"));
+    const { form, clickTransId } = signedBody({ clickTransId: "synthetic-private-transaction-id" });
     const res = await handler(form, false);
+    expect(res.status).toBe(200);
     expect((await res.json()).error_code).toBe("-9");
     expect(releaseMock).toHaveBeenCalledWith("click", clickTransId, "00000000-0000-4000-8000-000000000002");
+    expect(log.error).toHaveBeenCalledExactlyOnceWith("click webhook handler failed", { complete: false });
   });
 });
 

@@ -27,7 +27,7 @@ export async function purgeExpiredVoiceMessages(limit = 200): Promise<{ purged: 
     .limit(limit);
   if (error) {
     logger.error("voice retention: could not list expired voice messages", { code: error.code });
-    return { purged: 0, failed: 0 };
+    return { purged: 0, failed: 1 };
   }
 
   let purged = 0;
@@ -37,37 +37,80 @@ export async function purgeExpiredVoiceMessages(limit = 200): Promise<{ purged: 
       const { error: removeError } = await supabase.storage.from("voice-messages").remove([row.storage_path]);
       if (removeError) {
         failed++;
-        logger.error("voice retention: audio not deleted, will retry", { voiceMessageId: row.id, error: removeError.message });
+        logger.error("voice retention: audio not deleted, will retry", { voiceMessageId: row.id });
         continue;
       }
     }
+
+    const { error: redactError } = await supabase
+      .from("messages")
+      .update({ content: EXPIRED_VOICE_TEXT })
+      .eq("voice_message_id", row.id)
+      .eq("clinic_id", row.clinic_id);
+    if (redactError) {
+      failed++;
+      logger.error("voice retention: quoted transcript not redacted, will retry", {
+        voiceMessageId: row.id,
+        code: redactError.code,
+      });
+      continue;
+    }
+
+    // Set the permanent purge marker only after audio removal and redaction.
+    // Both operations can be retried if the row update fails.
     const { error: clearError } = await supabase
       .from("voice_messages")
       .update({
         storage_path: null,
         transcription: null,
         corrected_transcription: null,
+        transcription_provider: null,
+        transcription_error: null,
         telegram_file_id: null,
         telegram_file_unique_id: null,
         purged_at: new Date().toISOString(),
       })
       .eq("id", row.id)
       .eq("clinic_id", row.clinic_id);
-    const { error: redactError } = await supabase
-      .from("messages")
-      .update({ content: EXPIRED_VOICE_TEXT })
-      .eq("voice_message_id", row.id)
-      .eq("clinic_id", row.clinic_id);
-    if (clearError || redactError) {
+    if (clearError) {
       failed++;
       logger.error("voice retention: transcript not removed, will retry", {
         voiceMessageId: row.id,
-        code: clearError?.code ?? redactError?.code,
+        code: clearError.code,
       });
       continue;
     }
     purged++;
   }
+  failed += await repairVoiceQuotes(limit);
   if (purged || failed) logger.info("voice retention run", { purged, failed });
   return { purged, failed };
+}
+
+/** Find quotes missed by older workers or appended during a purge. */
+async function repairVoiceQuotes(limit: number): Promise<number> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("messages")
+    .select("id, clinic_id, voice_messages!inner()")
+    .not("voice_messages.purged_at", "is", null)
+    .neq("content", EXPIRED_VOICE_TEXT)
+    .limit(limit);
+  if (error) {
+    logger.error("voice retention: could not list unredacted quotes", { code: error.code });
+    return 1;
+  }
+  let failed = 0;
+  for (const row of data ?? []) {
+    const { error: redactError } = await supabase
+      .from("messages")
+      .update({ content: EXPIRED_VOICE_TEXT })
+      .eq("id", row.id)
+      .eq("clinic_id", row.clinic_id);
+    if (redactError) {
+      failed++;
+      logger.error("voice retention: old quote redaction failed", { code: redactError.code });
+    }
+  }
+  return failed;
 }

@@ -1,0 +1,1007 @@
+<title>Health AI Technical Specification</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@600;700;800&display=swap">
+<style>
+/* Layout: one reading column (~72ch) with a sticky contents rail on wide screens; requirement IDs in mono. */
+:root {
+  --bg: #f6f8f8;
+  --surface: #ffffff;
+  --fg: #16201f;
+  --muted: #566664;
+  --line: #d8e1df;
+  --accent: #0b6b62;
+  --accent-soft: #e3f1ef;
+  --ok: #1f7a3d; --ok-bg: #e5f4ea;
+  --warn: #8a5a00; --warn-bg: #fbf0d9;
+  --bad: #a3271c; --bad-bg: #fbe7e4;
+  --info: #24508f; --info-bg: #e6eefa;
+  --code-bg: #eef3f2;
+  --font-display: "Manrope", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1615; --surface: #151f1e; --fg: #e3ecea; --muted: #9db0ad; --line: #2a3a38;
+    --accent: #5cc4b8; --accent-soft: #17302d;
+    --ok: #7fd49a; --ok-bg: #16301f; --warn: #f0c060; --warn-bg: #33280f; --bad: #f19489; --bad-bg: #3a1a16;
+    --info: #9cbcf0; --info-bg: #17253a; --code-bg: #1b2827; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1615; --surface: #151f1e; --fg: #e3ecea; --muted: #9db0ad; --line: #2a3a38;
+  --accent: #5cc4b8; --accent-soft: #17302d;
+  --ok: #7fd49a; --ok-bg: #16301f; --warn: #f0c060; --warn-bg: #33280f; --bad: #f19489; --bad-bg: #3a1a16;
+  --info: #9cbcf0; --info-bg: #17253a; --code-bg: #1b2827; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15.5px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 48px; padding-block: 40px 80px; }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; max-height: calc(100vh - 48px); overflow: auto; font-size: 13.5px; }
+nav.toc p { font-family: var(--font-display); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 11.5px; color: var(--muted); margin: 0 0 10px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+nav.toc a { color: var(--fg); text-decoration: none; display: block; padding: 3px 8px; border-radius: 6px; }
+nav.toc a:hover, nav.toc a:focus-visible { background: var(--accent-soft); color: var(--accent); outline: none; }
+main { min-width: 0; }
+header.doc { border-bottom: 1px solid var(--line); padding-bottom: 28px; margin-bottom: 8px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; color: var(--accent); letter-spacing: .04em; text-transform: uppercase; }
+h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(30px, 4.4vw, 44px); line-height: 1.1; margin: 10px 0 14px; text-wrap: balance; letter-spacing: -.01em; }
+h2 { font-family: var(--font-display); font-weight: 700; font-size: 25px; line-height: 1.25; margin: 56px 0 14px; padding-top: 12px; border-top: 1px solid var(--line); text-wrap: balance; scroll-margin-top: 16px; }
+h2 .num { color: var(--accent); font-family: var(--font-mono); font-size: 16px; font-weight: 500; margin-right: 10px; }
+h3 { font-family: var(--font-display); font-weight: 700; font-size: 18.5px; margin: 32px 0 8px; text-wrap: balance; scroll-margin-top: 16px; }
+h4 { font-size: 15.5px; font-weight: 600; margin: 22px 0 6px; }
+p, li { max-width: 74ch; }
+p { margin: 0 0 12px; }
+ul, ol { padding-left: 22px; margin: 0 0 14px; }
+li { margin: 3px 0; }
+a { color: var(--accent); }
+code, .mono { font-family: var(--font-mono); font-size: .88em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre.code { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.55; margin: 0 0 16px; }
+.meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 24px; margin-top: 18px; font-size: 13.5px; }
+.meta div span { display: block; color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; }
+.lede { font-size: 17px; color: var(--fg); max-width: 70ch; }
+.table-wrap { overflow-x: auto; margin: 0 0 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 560px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; font-size: 12.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; background: var(--code-bg); }
+tr:last-child td { border-bottom: 0; }
+td.id, th.id { font-family: var(--font-mono); font-size: 12.5px; white-space: nowrap; color: var(--accent); }
+.chip { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap; letter-spacing: .02em; }
+.c-ok { background: var(--ok-bg); color: var(--ok); }
+.c-part { background: var(--warn-bg); color: var(--warn); }
+.c-no { background: var(--bad-bg); color: var(--bad); }
+.c-ext { background: var(--info-bg); color: var(--info); }
+.callout { border: 1px solid var(--line); border-left: 4px solid var(--accent); background: var(--surface); padding: 14px 16px; border-radius: 8px; margin: 0 0 18px; }
+.callout.warn { border-left-color: var(--warn); }
+.callout.bad { border-left-color: var(--bad); }
+.callout strong.t { display: block; font-family: var(--font-display); margin-bottom: 4px; }
+.callout p:last-child, .callout ul:last-child { margin-bottom: 0; }
+.steps { counter-reset: s; list-style: none; padding: 0; display: grid; gap: 10px; }
+.steps > li { counter-increment: s; position: relative; padding: 10px 14px 10px 50px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; max-width: none; }
+.steps > li::before { content: counter(s); position: absolute; left: 14px; top: 10px; width: 24px; height: 24px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font: 600 12.5px/24px var(--font-mono); text-align: center; }
+.diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow-x: auto; margin: 0 0 18px; }
+pre.mermaid { margin: 0; background: transparent; font-family: var(--font-body); }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.small { font-size: 13px; color: var(--muted); }
+.sources li { font-size: 13.5px; }
+@media (max-width: 900px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; padding-block: 24px 60px; }
+  nav.toc { position: static; max-height: none; border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 24px; background: var(--surface); }
+  nav.toc ol { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#summary">1 Summary</a></li>
+    <li><a href="#state">2 Starting point</a></li>
+    <li><a href="#scope">3 Scope and rules</a></li>
+    <li><a href="#journeys">4 Patient journeys</a></li>
+    <li><a href="#identity">5 Identity and auto-fill</a></li>
+    <li><a href="#privacy">6 Who sees what</a></li>
+    <li><a href="#agent">7 AI agent</a></li>
+    <li><a href="#voice">8 Voice and telephony</a></li>
+    <li><a href="#dash">9 Doctor tools, e-prescription</a></li>
+    <li><a href="#queue">10 Booking and queue</a></li>
+    <li><a href="#pay">11 Payments</a></li>
+    <li><a href="#notify">12 Notifications and SMS</a></li>
+    <li><a href="#arch">13 Architecture and hosting</a></li>
+    <li><a href="#data">14 Data model changes</a></li>
+    <li><a href="#nfr">15 Non-functional</a></li>
+    <li><a href="#audit">16 Audit readiness</a></li>
+    <li><a href="#pilot">17 Clinic pilot</a></li>
+    <li><a href="#plan">18 Delivery plan</a></li>
+    <li><a href="#added">19 Added to the brief</a></li>
+    <li><a href="#decisions">20 Open decisions</a></li>
+    <li><a href="#qa">21 Owner's questions</a></li>
+    <li><a href="#sources">Sources</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="doc">
+  <div class="eyebrow">Technical specification · for the CTO</div>
+  <h1>Health AI: AI receptionist, online booking with ID auto-fill, payments and queue</h1>
+  <p class="lede">One patient record, one queue and one payment ledger, reached from three places: the clinic desk, the clinic's Telegram bot and Mini App (text or voice), and a phone line answered by an AI agent. This document says what to build, what already exists, what must not be built, and what needs a contract or a legal answer first.</p>
+  <div class="meta">
+    <div><span>Version</span>1.1 draft, 14 Nov 2026</div>
+    <div><span>Status</span>For CTO review and owner decisions</div>
+    <div><span>Code base</span>GitHub <code>main</code> @ <code>990d082</code></div>
+    <div><span>Production DB</span>Supabase <code>cpoiachyfozjnlguaykz</code></div>
+    <div><span>Domain</span>healthai.uz</div>
+  </div>
+</header>
+
+<h2 id="summary"><span class="num">1</span>Summary</h2>
+<p>Health AI is a clinic operating system for private clinics in Uzbekistan. Walk-in registration with a live queue is the default. Scheduled booking is optional for each clinic. This release adds the following:</p>
+<ul>
+  <li><strong>An AI receptionist on the phone.</strong> It answers calls in Uzbek and Russian: address, hours, prices, which doctor works when. It books an appointment through the same booking engine staff use and puts the request on the reception and doctor dashboards. Phone-booked patients get updates by SMS.</li>
+  <li><strong>Voice-first Telegram booking.</strong> The patient sends a voice note or types what they need. The bot proposes a doctor and a time for that day, the patient confirms, then pays online and gets a queue number, or chooses to pay at the clinic.</li>
+  <li><strong>"Passport + date of birth, and the details fill in."</strong> This works for patients the clinic already knows, and for anyone who confirms through the state's OneID. <a href="#identity">Section 5</a> explains why it cannot work for strangers by passport number alone.</li>
+  <li><strong>Online payment through Rahmat.</strong> The patient pays and receives a queue number. Paying cash at the kassa remains available.</li>
+  <li><strong>Doctor tools.</strong>
+    <ul>
+      <li>An e-prescription screen where typing two letters ("an") lists matching medicines by INN and trade name.</li>
+      <li>An AI recorder that turns a consented consultation into a draft note for the doctor to edit and sign.</li>
+      <li>One button to send signed prescriptions, test orders and released results to the patient's Telegram bot.</li>
+    </ul>
+  </li>
+  <li><strong>Audit and pilot readiness.</strong> This covers the open database findings, release gates, an evidence pack and a staged pilot plan for real clinics.</li>
+</ul>
+<div class="callout warn">
+  <strong class="t">Six things change the owner's brief</strong>
+  <ul>
+    <li><strong>Prescription-only medicines go through the national "Elektron retsept" system.</strong> Health AI's prescription screen hands them over (copy panel first, integration after the Ministry approves the connection). Its own PDF is not a legal prescription for those medicines.</li>
+    <li><strong>The AI recorder drafts; the doctor signs.</strong> Nothing from the recorder enters the medical record until the treating doctor edits and signs it. This replaces the 2026-10-05 decision that excluded AI clinical summaries; the owner approved the change on 14 Nov 2026 (D-10).</li>
+    <li><strong>The AI suggests a direction; it does not diagnose or refer.</strong> It maps the patient's own words to one of the clinic's directions (for example therapist, cardiologist, lab) and the patient confirms. Clinical referrals stay with doctors. Urgent wording stops booking and goes to a human.</li>
+    <li><strong>The phone agent says it is an AI assistant.</strong> A natural female voice is fine. A cloned real person's voice needs that person's written consent. It must not be used to make callers believe they are talking to a human.</li>
+    <li><strong>Passport + DOB alone is never shown back as personal data.</strong> Without proof (the patient's own phone, or OneID), anyone who knows someone's passport number could read their address and phone.</li>
+    <li><strong>MyID is not needed.</strong> OneID returns state-verified details without a face check. Phone possession plus the passport checked at the desk covers patients who do not use OneID.</li>
+  </ul>
+</div>
+
+<h2 id="state"><span class="num">2</span>Starting point: what exists today</h2>
+<h3>2.1 The code base to build on</h3>
+<div class="callout bad">
+  <strong class="t">Build on GitHub <code>main</code>, not on <code>codex/clinic-operations-pilot</code></strong>
+  <p><code>main</code> (merge of PR #24, commit <code>990d082</code>) is the line the production database was migrated from: online identity, OneID, SMS, online payments, the Uzbekistan hosting kit. The local branch <code>codex/clinic-operations-pilot</code> is 3 commits ahead of their common base and 128 commits behind <code>main</code>. It calls 5 RPCs, a table and a column that production lacks (see <code>docs/DATABASE_AUDIT_2026-11-14.md</code>). Any piece of that branch worth keeping (for example the lab workbench screens) is ported onto <code>main</code> as a reviewed PR. The branch itself is never deployed.</p>
+</div>
+
+<h3>2.2 Capability inventory</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Capability</th><th>Status</th><th>Where / what is missing</th></tr></thead>
+<tbody>
+<tr><td>Desk registration, itemized services, kassa (cash/terminal), live queue, doctor queue</td><td><span class="chip c-ok">Built</span></td><td>Outpatient operations on <code>main</code>; visits, charges, append-only transactions in production</td></tr>
+<tr><td>Identity hidden from employees (column-level privileges)</td><td><span class="chip c-ok">Built</span></td><td>Migration <code>20261008000005</code>; leak tests. Stored as plain text; encryption is a requirement here (<a href="#privacy">ID-07</a>)</td></tr>
+<tr><td>Mini App: passport/ID or JSHSHIR + DOB lookup, proof by Telegram phone or SMS code</td><td><span class="chip c-ok">Built</span></td><td><code>/api/mini-app/identity/*</code>, <code>online_identity_lookup</code>, <code>issue_card_link_otp</code>, <code>verify_card_link_otp</code></td></tr>
+<tr><td>OneID sign-in (state-verified details)</td><td><span class="chip c-ext">Needs contract</span></td><td>Code and migration ready (<code>/api/oneid/callback</code>); needs an agreement with the OneID operator and credentials</td></tr>
+<tr><td>Passport checked at the desk</td><td><span class="chip c-ok">Built</span></td><td><code>verify_identity_at_desk()</code>; status shown, never values</td></tr>
+<tr><td>Concern → direction (typed)</td><td><span class="chip c-ok">Built</span></td><td>Deterministic keyword router <code>src/lib/booking/router.ts</code>; urgent wording escalates</td></tr>
+<tr><td>Concern by voice in the Mini App</td><td><span class="chip c-part">Built, switched off</span></td><td><code>/api/mini-app/concern/voice</code>; waits for a speech host in Uzbekistan and explicit consent</td></tr>
+<tr><td>Day-only slot view</td><td><span class="chip c-ok">Built</span></td><td>One day at a time</td></tr>
+<tr><td>Online payment framework (server-priced invoice, signed webhook, settle once, refunds ledger)</td><td><span class="chip c-ok">Built</span></td><td><code>create_online_invoice</code>, <code>settle_online_payment</code>, <code>payment_provider_events</code>; <code>test_online</code> provider for E2E</td></tr>
+<tr><td>Rahmat adapter</td><td><span class="chip c-ext">Needs contract</span></td><td>Waiting for merchant API docs, signature scheme, refund API, test credentials</td></tr>
+<tr><td>Click adapter</td><td><span class="chip c-part">Partial</span></td><td>Exists on <code>main</code>; not production-ready. Payme, Uzum: not built</td></tr>
+<tr><td>SMS (Eskiz) with delivery reports</td><td><span class="chip c-ext">Needs contract</span></td><td>Adapter and callback built; needs contract, sender name, template approval, one live test</td></tr>
+<tr><td>Telegram bot chat AI (FAQ-grounded, safety filter)</td><td><span class="chip c-ok">Built</span></td><td><code>src/lib/safety/policy.ts</code>; OpenAI-compatible provider; off unless <code>ENABLE_AI</code></td></tr>
+<tr><td>Voice-first booking in bot chat</td><td><span class="chip c-no">Not built</span></td><td>This spec, <a href="#agent">section 7</a></td></tr>
+<tr><td>Phone AI agent, telephony, call inbox</td><td><span class="chip c-no">Not built</span></td><td>This spec, <a href="#voice">section 8</a></td></tr>
+<tr><td>Doctor-authored clinical records (append-only, corrections reference originals)</td><td><span class="chip c-ok">Built</span></td><td><code>clinical_records</code> in production; referral read access without acceptance</td></tr>
+<tr><td>Lab results released to the patient in the Mini App</td><td><span class="chip c-ok">Built</span></td><td><code>lab_release_to_patient</code> per clinic; patient notifications</td></tr>
+<tr><td>E-prescription screen with drug autocomplete; national e-prescription hand-over</td><td><span class="chip c-no">Not built</span></td><td>This spec, <a href="#rx">9.3</a>; needs a drug catalogue source and the Ministry connection</td></tr>
+<tr><td>AI consultation recorder (draft note)</td><td><span class="chip c-no">Not built</span></td><td>This spec, <a href="#scribe">9.4</a>; rule change approved 14 Nov 2026 (D-10)</td></tr>
+<tr><td>Send prescriptions and analyses to the patient's bot</td><td><span class="chip c-no">Not built</span></td><td>This spec, <a href="#share">9.5</a>; rule change approved 14 Nov 2026 (D-14)</td></tr>
+<tr><td>Uzbekistan hosting kit (self-hosted Supabase + app + Caddy, backups)</td><td><span class="chip c-ok">Built</span></td><td><code>deploy/uz/</code>; not yet cut over</td></tr>
+<tr><td>Smartphone-share measurement</td><td><span class="chip c-ok">Built</span></td><td>Kassa totals: how each queue number reached the patient (Telegram / SMS / neither)</td></tr>
+</tbody></table></div>
+
+<h3>2.3 Open audit findings that block a pilot</h3>
+<p>From <code>docs/DATABASE_AUDIT_2026-11-14.md</code> (read-only audit of production):</p>
+<ul>
+  <li>Starting a walk-in consultation goes through the future-slot booking engine, so a queued patient can be blocked by working hours or time blocks.</li>
+  <li>Webhook claims have no ownership token, so a slow worker can finish or release another worker's claim.</li>
+  <li>The notification and SMS claim functions accept a NULL limit, which means no limit. Neither recovers jobs left by a crashed worker.</li>
+  <li>Stale data: 9 past "pending" appointments and unpaid payment rows on cancelled or no-show visits.</li>
+  <li>An active clinic with no owner, a doctor role with no doctor record, and stray <code>todos</code>/<code>inbox_entries</code> tables.</li>
+  <li>Leaked-password protection is off.</li>
+</ul>
+
+<h2 id="scope"><span class="num">3</span>Scope, non-goals and rules</h2>
+<div class="two">
+<div>
+<h4>In scope</h4>
+<ul>
+  <li>Phone AI agent (inbound), call summaries, human transfer</li>
+  <li>Voice and text booking in the Telegram bot and Mini App</li>
+  <li>Identity lookup, proof and auto-fill; OneID</li>
+  <li>Rahmat online payment; pay-at-clinic path</li>
+  <li>SMS for phone-booked and no-Telegram patients</li>
+  <li>Reception and doctor "requests" inbox</li>
+  <li>Field encryption of identity data</li>
+  <li>E-prescription screen, drug catalogue, national e-prescription hand-over</li>
+  <li>AI consultation recorder (draft notes, doctor signs)</li>
+  <li>Delivery of signed documents to the patient's bot</li>
+  <li>Audit fixes, evidence pack, pilot</li>
+</ul>
+</div>
+<div>
+<h4>Out of scope</h4>
+<ul>
+  <li>AI diagnosis, triage scoring, AI-suggested medicines or doses, unsigned AI notes in the record</li>
+  <li>Drug interaction checking (until a licensed database is chosen)</li>
+  <li>Controlled-substance prescriptions</li>
+  <li>MyID, face checks, commercial KYC</li>
+  <li>Direct connection to state registries other than OneID</li>
+  <li>Outbound AI sales or marketing calls</li>
+  <li>Family booking (one Telegram account = one patient)</li>
+  <li>Payroll, staff penalties</li>
+  <li>Inventing prices, hours or triage rules the clinic has not set</li>
+</ul>
+</div>
+</div>
+<h3>3.1 Rules every component must follow</h3>
+<p>These come from <code>AGENTS.md</code> and the owner's decision records. They apply to all new code.</p>
+<div class="table-wrap"><table>
+<thead><tr><th class="id">ID</th><th>Rule</th></tr></thead>
+<tbody>
+<tr><td class="id">R-01</td><td>Patient-facing AI gives clinic information and non-diagnostic booking navigation only: never a diagnosis, a prescription or medical advice. Doctor-facing AI (the recorder, approved 14 Nov 2026) only drafts what was said; the doctor signs every clinical entry.</td></tr>
+<tr><td class="id">R-02</td><td>Urgent wording (uz/ru/en lists in <code>policy.ts</code>, extended for speech) triggers the approved urgent-care message and an alert to a human admin. The booking flow stops.</td></tr>
+<tr><td class="id">R-03</td><td>Never say a booking, payment, SMS, transcription or Telegram message succeeded unless the backend confirmed it.</td></tr>
+<tr><td class="id">R-04</td><td>All bookings go through the database booking engine (<code>book_appointment</code>, <code>reschedule_appointment</code>), with availability re-checked server-side immediately before writing.</td></tr>
+<tr><td class="id">R-05</td><td>Payment status is server-controlled. Only a provider webhook with a verified signature, or a kassa transaction, can mark money as received.</td></tr>
+<tr><td class="id">R-06</td><td>Every tenant query is scoped by <code>clinic_id</code>, and the clinic is resolved server-side: from the dialed number, the bot token or the staff session. Never from the browser or the caller.</td></tr>
+<tr><td class="id">R-07</td><td>Audio is processed only after explicit consent. It goes only to an allowed speech host and is stored privately or not at all.</td></tr>
+<tr><td class="id">R-08</td><td>AI automation stops while a conversation or call is assigned to a human.</td></tr>
+<tr><td class="id">R-09</td><td>Walk-in queue tickets are not future appointments. No invented time slots for arrivals.</td></tr>
+<tr><td class="id">R-10</td><td>No secret, token, passport number, JSHSHIR, phone number or transcript text appears in logs, analytics or error trackers.</td></tr>
+</tbody></table></div>
+
+<h2 id="journeys"><span class="num">4</span>Patient journeys</h2>
+
+<h3>4.1 Walk-in at the desk (the default)</h3>
+<ol class="steps">
+  <li>The patient gives passport/ID series and number (for example <span class="mono">AB1234567</span>) or JSHSHIR, plus date of birth. The receptionist searches. A known patient's card opens showing name, phone, card number and identity status, never the document values.</li>
+  <li>New patient: the receptionist registers name, phone and DOB, plus the document typed from the passport in hand. The card is marked "confirmed at desk". If the clinic has OneID, the patient may confirm on their own phone instead.</li>
+  <li>Receptionist adds services (itemized, priced from the clinic catalog) and the doctor.</li>
+  <li>Kassa collects cash or terminal payment. The queue number is issued on payment (<code>queue_after_payment</code> per clinic).</li>
+  <li>The number reaches the patient by Telegram if their card is linked, otherwise by SMS if they agreed at the desk, otherwise on paper.</li>
+  <li>The doctor calls the patient from their queue, writes their own clinical record, and may order lab tests or refer to a colleague. A referral gives the receiving doctor read access at once, with no acceptance step.</li>
+  <li>"You are called" goes out by the same channel as the queue number.</li>
+</ol>
+
+<h3>4.2 Online booking in the Mini App</h3>
+<ol class="steps">
+  <li><strong>Identity first.</strong> The first screen asks for passport/ID (or JSHSHIR) and date of birth, with a recommended "Confirm with OneID" button above it once the contract exists.</li>
+  <li><strong>Proof.</strong> The patient shares their Telegram contact. If that phone equals the phone on the card, it counts as proof. If not, a 6-digit SMS code goes to the card's phone. The same neutral answer is returned for "no card", "wrong DOB" and "phone mismatch".</li>
+  <li><strong>Details appear.</strong> After proof, the patient sees their own details (name, DOB, address; document masked as <span class="mono">AB*****67</span>) and can correct address or phone. New patients with no card: OneID fills everything; otherwise the patient types name, sex and address, and the card is marked unconfirmed until the desk checks the passport.</li>
+  <li><strong>Concern.</strong> The patient types or records (with consent) what they need: "tizzam og'riyapti", "qon tahlili topshirmoqchiman". The system proposes one of the clinic's directions plus the matching service, and the patient confirms or picks another. Urgent wording stops here with the approved message.</li>
+  <li><strong>Doctor and time.</strong> One day at a time. Today is shown first, with arrows for the next days. Only free slots of doctors who provide the chosen service appear.</li>
+  <li><strong>Payment choice.</strong> "Onlayn to'lash va navbat olish" (pay now, number issued immediately for the slot's day), or "Klinikada to'layman" (slot held; number issued at the kassa).</li>
+  <li><strong>Confirmation.</strong> Only after the backend returns the appointment id (and, if paid, the settled invoice) does the Mini App show the booking and queue number. Telegram notifications follow.</li>
+</ol>
+
+<h3>4.3 Voice-first in the bot chat ("simple mode")</h3>
+<ol class="steps">
+  <li>The patient opens the bot and sends a voice note, or types. The first voice note triggers a one-tap consent question ("Ovozli xabaringizni matnga aylantirishga rozimisiz?"). Without consent, the bot asks them to type.</li>
+  <li>Speech-to-text on the allowed host. The transcript enters the same agent orchestrator as the phone line (<a href="#agent">section 7</a>).</li>
+  <li>The agent answers questions directly (hours, address with a map link, prices, doctors). For booking it collects direction, preferred day and morning/afternoon, then proposes up to three concrete slots as buttons.</li>
+  <li>If the Telegram account is not yet linked to a confirmed card, the bot opens the Mini App identity step (4.2, steps 1–3) and then returns.</li>
+  <li>The agent reads back doctor, day, time and price, and books on the patient's tap. It then shows "Pay online" (Mini App payment page) or "Pay at clinic".</li>
+</ol>
+
+<h3>4.4 Phone call to the clinic (AI agent)</h3>
+<ol class="steps">
+  <li>The patient dials the clinic's number. The call is routed by the dialed number to that clinic's agent configuration.</li>
+  <li>Opening line, approved by the clinic: "Assalomu alaykum, [clinic] klinikasi. Men klinikaning sun'iy intellekt yordamchisiman. Suhbat sifat uchun yozib olinishi mumkin. Operator kerak bo'lsa, 'operator' deng." Russian on request or detection.</li>
+  <li>Questions are answered from clinic data only (<a href="#agent">7.3</a>). Anything the data does not cover gets "I will pass this to reception" and becomes a callback request.</li>
+  <li>Booking: direction from the caller's words (confirmed), day, slot. Identity: if the caller ID equals a card's phone, the agent asks only for the date of birth to confirm. Otherwise it asks for document + DOB and sends an SMS code to the card's phone. New caller: name, DOB and concern are taken, and the card is "unconfirmed — check passport at desk".</li>
+  <li>The agent reads back the booking and books only on a clear "ha"/"да". It then states the result returned by the backend.</li>
+  <li>SMS confirmation with day, time, doctor and clinic address. If online payment is on, the SMS carries a short payment link on healthai.uz. Paying there issues the queue number by SMS. Otherwise the patient pays at the kassa.</li>
+  <li>Transfer to a human at any time ("operator"), on urgent wording, after two failed understanding attempts, or when the caller is upset. Outside staffed hours, a callback request is created instead.</li>
+  <li>After the call: a structured summary appears in the reception inbox, and the booking appears on the doctor's day with the concern labeled "patient's own words".</li>
+</ol>
+
+<h3>4.5 Which channel gets the notifications</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Booked via</th><th>Confirmation</th><th>Queue number, "you are called", changes</th></tr></thead>
+<tbody>
+<tr><td>Telegram bot / Mini App</td><td>Telegram</td><td>Telegram (SMS only if Telegram delivery fails and the patient agreed to SMS)</td></tr>
+<tr><td>Phone (AI or human)</td><td>SMS</td><td>SMS; switches to Telegram once the patient links Telegram</td></tr>
+<tr><td>Desk walk-in</td><td>None</td><td>Telegram if linked; else SMS if agreed; else paper ticket</td></tr>
+</tbody></table></div>
+<p class="small">SMS consent is recorded per patient (<code>sms_consent_at</code>). A phone booking counts as consent to transactional SMS only if the agent asked and the caller agreed. That question is part of the script.</p>
+
+<h2 id="identity"><span class="num">5</span>Identity and "the details fill in"</h2>
+<h3>5.1 What is technically and legally possible</h3>
+<div class="callout warn">
+  <strong class="t">There is no lawful way for a private clinic to pull a stranger's personal details from the state by passport number and DOB</strong>
+  <p>MyGov, OneID and MyID are not lookup services for private companies. OneID and MyID identify a person who signs in themselves. Direct access to the Personalization Center through the e-government interoperability platform is in practice limited to state bodies and specifically authorized organizations. Even if it were available, a "type any passport + DOB, see the address and phone" form would let anyone harvest other people's data. Passport + DOB is therefore a <strong>lookup key</strong>, never proof.</p>
+</div>
+<div class="table-wrap"><table>
+<thead><tr><th>Patient situation</th><th>Where the details come from</th><th>What proves it is them</th></tr></thead>
+<tbody>
+<tr><td>Already has a card at this clinic</td><td>The clinic's own database</td><td>Telegram contact phone = card phone, or SMS code to card phone, or caller ID + DOB on the phone line</td></tr>
+<tr><td>New, signs in with OneID</td><td>OneID: JSHSHIR, passport number and dates, full name, DOB, sex, permanent address, phone</td><td>OneID sign-in (login/password, e-signature or phone). No face check. Only used when OneID marks the profile <code>valid</code> and the JSHSHIR carries the returned DOB</td></tr>
+<tr><td>New, no OneID</td><td>Patient types name, sex, address; the phone comes from Telegram or caller ID</td><td>Format checks plus phone possession now; passport in hand checked at the first desk visit (<code>verify_identity_at_desk</code>)</td></tr>
+</tbody></table></div>
+
+<h3>5.2 Requirements</h3>
+<div class="table-wrap"><table>
+<thead><tr><th class="id">ID</th><th>Requirement</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td class="id">ID-01</td><td>Accept passport/ID (2 letters + 7 digits, Latin, normalized: spaces removed, upper case) or JSHSHIR (14 digits, digits 2–7 = DOB as DDMMYY, first digit 1–6) plus DOB (real date, not future, ≤120 years).</td><td><span class="chip c-ok">Built</span></td></tr>
+<tr><td class="id">ID-02</td><td>Identical response for no match, DOB mismatch and phone mismatch. At most 3 DOB failures per document per day, then the comparison stops.</td><td><span class="chip c-ok">Built</span></td></tr>
+<tr><td class="id">ID-03</td><td>SMS code: 6 digits, stored as HMAC, 5 attempts, 5-minute expiry, single use; 3/hour per Telegram user, 5/day per card.</td><td><span class="chip c-ok">Built</span></td></tr>
+<tr><td class="id">ID-04</td><td>A Telegram contact counts only when <code>contact.user_id</code> equals the sender.</td><td><span class="chip c-ok">Built</span></td></tr>
+<tr><td class="id">ID-05</td><td>Phone line: caller ID is used as possession only when present and not withheld; plus DOB confirmation. Otherwise an SMS code is read back by the caller. The agent never speaks any stored personal value except the patient's own first name after proof.</td><td><span class="chip c-no">New</span></td></tr>
+<tr><td class="id">ID-06</td><td>OneID connection (contract, then <code>ONEID_CLIENT_ID/SECRET/SCOPE</code>, migration <code>20261010000003</code>, redeploy).</td><td><span class="chip c-ext">Contract</span></td></tr>
+<tr><td class="id">ID-07</td><td>Encrypt <code>document_number</code>, <code>pinfl</code>, <code>home_address</code> and <code>date_of_birth</code> at rest with AES-256-GCM. Key in a secrets manager or KMS, never in the database. Add HMAC-SHA256 blind-index columns (keyed, normalized value) for exact-match lookup. Remove the plain columns after backfill.</td><td><span class="chip c-no">New</span></td></tr>
+<tr><td class="id">ID-08</td><td>Someone else's document typed online is never stored on the new record. It creates a staff "identity claim" for reception to resolve.</td><td><span class="chip c-ok">Built</span></td></tr>
+<tr><td class="id">ID-09</td><td>Per-clinic switch <code>online_identity_required</code>: the server refuses online bookings without completed identity.</td><td><span class="chip c-ok">Built</span></td></tr>
+</tbody></table></div>
+
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+  A[Passport or JSHSHIR + date of birth] --> B{Card in this clinic?}
+  B -- yes --> C{Proof}
+  C -- Telegram phone = card phone --> D[Show own details, masked document]
+  C -- else --> E[SMS code to card phone] --> D
+  B -- no or neutral answer --> F{OneID available?}
+  F -- yes --> G[OneID sign-in] --> H[State details fill the card, verified]
+  F -- no --> I[Patient types name, sex, address] --> J[Card unconfirmed until desk checks passport]
+  D --> K[Concern, doctor, time, payment]
+  H --> K
+  J --> K
+</pre></div>
+
+<h2 id="privacy"><span class="num">6</span>Who sees what</h2>
+<p>The owner asked that every employee see only the phone number and medical details, and that everything else stay in our database. The table below refines that with the clinical-access rules already agreed: medical details go to the people treating the patient, not to every employee. Cashiers and receptionists have no clinical need for diagnoses.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Reception / kassa</th><th>Doctor (own or referred patient)</th><th>Lab</th><th>Owner / manager</th><th>Patient (self)</th><th>AI agent</th></tr></thead>
+<tbody>
+<tr><td>Name, phone, card number</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Name only, after proof</td></tr>
+<tr><td>Age (derived)</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td><td>—</td><td>No</td></tr>
+<tr><td>Passport / ID, JSHSHIR</td><td>No (desk compares, sees result only)</td><td>No</td><td>No</td><td>No</td><td>Masked</td><td>No</td></tr>
+<tr><td>Date of birth, address</td><td>No</td><td>No</td><td>No</td><td>No</td><td>Yes</td><td>Compares DOB only</td></tr>
+<tr><td>Identity status (confirmed, how)</td><td>Yes</td><td>Yes</td><td>No</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Clinical records, lab results</td><td>No</td><td>Yes (authorized relationship)</td><td>Results they handle</td><td>No by default</td><td>Released results</td><td>Never</td></tr>
+<tr><td>Concern text from booking</td><td>Yes (routing)</td><td>Yes, labeled "patient's words"</td><td>No</td><td>Yes</td><td>Yes</td><td>Current conversation only</td></tr>
+<tr><td>Call recordings, transcripts</td><td>Summary only</td><td>No</td><td>No</td><td>Yes, audited</td><td>On request</td><td>—</td></tr>
+<tr><td>Consultation audio and transcripts (AI recorder)</td><td>No</td><td>Treating doctor only</td><td>No</td><td>No</td><td>On request</td><td>Processes, never keeps</td></tr>
+<tr><td>Signed prescriptions</td><td>Print only (no contents in lists)</td><td>Yes (authorized relationship)</td><td>No</td><td>No by default</td><td>Yes, in the bot</td><td>Never</td></tr>
+<tr><td>Allergies</td><td>No</td><td>Yes</td><td>Yes</td><td>No</td><td>Yes</td><td>Never</td></tr>
+</tbody></table></div>
+<ul>
+  <li><strong>PRV-01</strong> Identity values never leave the server in any staff API response. Leak tests scan responses for stored values. Extend those tests to the new call-inbox and agent endpoints.</li>
+  <li><strong>PRV-02</strong> Correcting a document number is a dedicated owner-only action with a reason, audited with ids and outcome only. This is an owner decision: today corrections go through re-registration.</li>
+  <li><strong>PRV-03</strong> Every read of identity or clinical data by a person is recorded in <code>audit_events</code> (actor, patient id, purpose), never the values.</li>
+</ul>
+
+<h2 id="agent"><span class="num">7</span>AI agent (phone, bot chat, Mini App)</h2>
+<h3>7.1 Architecture</h3>
+<p>One conversation brain serves all channels. Channels only convert media. The language model never touches the database. It can only call a fixed set of server tools, and each tool repeats the authorization and clinic scoping a staff route would.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph Channels
+    P[Phone: SIP trunk to PBX] --> VG[Voice gateway: STT, TTS, barge-in]
+    T[Telegram text and voice notes] --> TB[Bot webhook]
+    M[Mini App] --> MA[Mini App API]
+  end
+  VG --> O[Agent orchestrator]
+  TB --> O
+  MA --> O
+  O -->|tool calls only| TL[Agent tools API]
+  O --> LLM[Language model]
+  TL --> DB[(Postgres: booking engine, catalog, queue)]
+  TL --> PAY[Payment adapter: Rahmat]
+  TL --> SMS[SMS adapter: Eskiz]
+  O --> INBOX[Reception and doctor inbox]
+  O --> H[Human handoff: transfer or Telegram admin]
+</pre></div>
+<ul>
+  <li><strong>AG-01 Orchestrator.</strong> A server-side state machine with states <code>greeting → understand → (answer | book | handoff) → confirm → done</code>. The LLM is used to understand the caller and phrase replies. Transitions, required slots and confirmations are enforced in code, not by the prompt.</li>
+  <li><strong>AG-02 Conversation record.</strong> Every session is a <code>conversations</code> row (channel <code>phone</code>, <code>telegram</code> or <code>mini_app</code>). Turns go in <code>messages</code> with role <code>patient</code>, <code>ai</code> or <code>admin</code>. Reuse the existing tables and extend the enums.</li>
+  <li><strong>AG-03 Provider-agnostic model.</strong> Use the existing OpenAI-compatible client. The model is chosen by an evaluation on Uzbek/Russian clinic dialogues (<a href="#audit">16.3</a>). Temperature ≤ 0.3. A per-clinic monthly token budget with alerts.</li>
+</ul>
+
+<h3>7.2 Tools the agent may call</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Tool</th><th>Returns</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>clinic_info</code></td><td>Name, address, map link, landmarks, parking, phone, hours today and this week</td><td>Hours derived from clinic and doctor schedule tables, never typed into the prompt</td></tr>
+<tr><td><code>search_services</code></td><td>Matching services with current price and currency</td><td>Prices only from <code>services</code>; "from" prices only if the clinic marked them so</td></tr>
+<tr><td><code>list_doctors</code></td><td>Doctors for a direction/service, working days</td><td>Active doctors only</td></tr>
+<tr><td><code>day_slots</code></td><td>Free slots for one doctor or service on one day</td><td>Same function the Mini App uses; one day per call</td></tr>
+<tr><td><code>route_concern</code></td><td>Up to 3 directions from the clinic's routing table, or "general consultation"</td><td>Deterministic table first; LLM may only pick from the returned list</td></tr>
+<tr><td><code>identify_patient</code></td><td><code>proof_needed</code> / <code>sms_sent</code> / <code>confirmed</code> / neutral failure</td><td>Never returns personal values</td></tr>
+<tr><td><code>book</code></td><td>Appointment id, amount, or an error code</td><td>Calls <code>book_appointment</code> with source <code>phone_ai</code>/<code>telegram_chat</code> and an idempotency key per conversation turn</td></tr>
+<tr><td><code>create_payment_link</code></td><td>Short URL for the invoice</td><td>Only when the clinic's online payment is on</td></tr>
+<tr><td><code>cancel_booking</code>, <code>reschedule_booking</code></td><td>Result code</td><td>Only for the identified patient's own future bookings</td></tr>
+<tr><td><code>handoff</code></td><td>Transfer started, or callback request id</td><td>Stops automation on that conversation (R-08)</td></tr>
+<tr><td><code>send_sms_summary</code></td><td>Queued job id</td><td>Approved templates only</td></tr>
+</tbody></table></div>
+
+<h3>7.3 Grounding: answers come from clinic data</h3>
+<ul>
+  <li><strong>AG-04</strong> Facts about price, availability, hours, address and doctors are spoken only from tool output in the same turn. If a tool fails, the agent says it cannot check right now and offers a callback. It never guesses.</li>
+  <li><strong>AG-05</strong> The per-clinic knowledge base holds FAQ entries approved by the clinic: preparation for tests ("och qoringa keling"), documents to bring, payment methods, parking. These are the only free-text facts. Each entry has an owner and an "approved on" date.</li>
+  <li><strong>AG-06</strong> Location answers give the address, a landmark ("mo'ljal") and a map link sent by SMS or Telegram. Directions are never improvised.</li>
+</ul>
+
+<h3>7.4 Concern → direction (navigation, not diagnosis)</h3>
+<ul>
+  <li><strong>AG-07</strong> Each clinic maintains a routing table: phrases and keywords in uz-Latin, uz-Cyrillic and ru, mapped to a direction and a default service. It is seeded from a template the clinic's medical lead reviews. The existing <code>routeConcern()</code> is the engine.</li>
+  <li><strong>AG-08</strong> The LLM may normalize the patient's words into a clean phrase ("bel og'rig'i" → back pain) and choose among directions the table returned. It may not invent a direction, name a disease, or say why symptoms occur.</li>
+  <li><strong>AG-09</strong> If nothing matches, the agent offers a general consultation with a therapist or GP ("terapevt ko'rigi"). The patient always confirms the direction.</li>
+  <li><strong>AG-10</strong> Wording shown or spoken: "Bu tashxis emas. Sizni to'g'ri mutaxassisga yozish uchun taklif." (This is not a diagnosis.)</li>
+  <li><strong>AG-11</strong> Urgent wording (chest pain, heavy bleeding, loss of consciousness, difficulty breathing, child with high fever and convulsions, as listed in the clinic-approved list) triggers the approved urgent message: call 103 / go to emergency. On the phone, the call is transferred immediately if staff are available. A Telegram admin alert is sent. No booking is offered.</li>
+</ul>
+
+<h3>7.5 Conversation rules</h3>
+<ul>
+  <li><strong>AG-12</strong> Disclosure: the first sentence says it is an AI assistant. If asked "Are you a human?", the agent answers truthfully.</li>
+  <li><strong>AG-13</strong> Read-back before any write: "Kardiolog Aliyeva Nodira, ertaga, 14-noyabr, soat 10:30, konsultatsiya 150 000 so'm. Tasdiqlaysizmi?" The agent books only on an explicit yes.</li>
+  <li><strong>AG-14</strong> After a write, the agent states the backend result exactly. On error it offers an alternative slot or a human. It never says "booked" when the backend did not confirm it (R-03).</li>
+  <li><strong>AG-15</strong> Languages: Uzbek (Latin speech output; understands Cyrillic text) and Russian. The agent switches when the caller switches and keeps numbers, dates and prices in the caller's language.</li>
+  <li><strong>AG-16</strong> Money and times are spoken in full words ("bir yuz ellik ming so'm", "o'n yarimda") and also sent in text by SMS or Telegram.</li>
+  <li><strong>AG-17</strong> Prompt-injection and abuse: user text is data. The agent ignores instructions to change rules, reveal other patients or alter prices. Calls are rate-limited per caller ID and per clinic. After 2 abusive turns, the agent ends politely or transfers.</li>
+  <li><strong>AG-18</strong> Human mode: when staff take over a Telegram conversation or a transferred call, the agent stays silent until staff release it.</li>
+</ul>
+
+<h2 id="voice"><span class="num">8</span>Voice and telephony</h2>
+<h3>8.1 Speech stack: choose by measurement</h3>
+<p>Uzbek is the deciding constraint. ElevenLabs lists Uzbek (<code>uz</code>) for its Eleven v3 speech model. Its agents platform uses the languages of the agent's speech model, and new agents default to a newer model whose Uzbek coverage was not confirmed during this review. Aisha (aisha.group) is an Uzbek company offering Uzbek speech-to-text, text-to-speech and a phone agent with SIP support, according to its own materials. Neither claim is verified for clinic-quality calls. Run a bake-off before committing.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>How it fits</th><th>Risks</th></tr></thead>
+<tbody>
+<tr><td><strong>A. ElevenLabs Agents</strong> over SIP</td><td>Fast to build: hosted turn-taking, barge-in, voice library, SIP inbound to <code>sip.rtc.elevenlabs.io</code> (TLS 5061 recommended; G.722/PCMU/PCMA; digest auth). Our tools are exposed as server webhooks.</td><td>Uzbek quality and latency unproven for real-time; audio and transcripts processed abroad; per-minute cost in USD</td></tr>
+<tr><td><strong>B. Aisha</strong> STT/TTS (and possibly its agent)</td><td>Uzbek-first; Uzbek company, so audio can stay in the country (get written confirmation); SIP claimed</td><td>Vendor claims unverified; API maturity, SLA and pricing to confirm</td></tr>
+<tr><td><strong>C. Own pipeline</strong>: STT (Aisha or self-hosted Whisper-class model) + our LLM + TTS (Aisha or ElevenLabs), with a media server (Asterisk/FreeSWITCH, or LiveKit SIP)</td><td>Full control of data location, cost and logic; one orchestrator for all channels</td><td>Most engineering: barge-in, echo, jitter, endpointing</td></tr>
+</tbody></table></div>
+<p><strong>VO-01 Bake-off.</strong> Record 100 consented test calls from clinic staff acting as patients (Uzbek, Russian, mixed, noisy, elderly speakers). Measure:</p>
+<ul>
+  <li>word error rate on names, numbers and dates;</li>
+  <li>end-of-speech to start-of-reply latency (target p50 ≤ 1.2 s, p95 ≤ 2 s);</li>
+  <li>barge-in handling;</li>
+  <li>task success (correct booking) ≥ 90% on scripted tasks;</li>
+  <li>cost per resolved call;</li>
+  <li>data location.</li>
+</ul>
+<p>The owner picks from the results. The recommended starting point is option C with Aisha components and ElevenLabs as the control. Keep the orchestrator independent so the speech vendor can change.</p>
+
+<h3>8.2 The voice</h3>
+<ul>
+  <li><strong>VO-02</strong> Use either a stock voice from the provider's library, or a clone of a real person's voice. A clone requires: a written, signed consent and licence from that person (scope, channels, term, payment, right to withdraw); the provider's verified-voice process; and the file stored as confidential. Cloning anyone without consent is prohibited.</li>
+  <li><strong>VO-03</strong> The voice must sound natural and warm, and it is always presented as the clinic's AI assistant (AG-12). The goal is comfort, not hiding that it is a machine. A voiceprint may count as biometric data under the 2026 personal-data rules, which must stay in Uzbekistan. Ask counsel before storing a clone abroad (<a href="#arch">13.3</a>).</li>
+</ul>
+
+<h3>8.3 Telephony</h3>
+<ul>
+  <li><strong>VO-04</strong> Each clinic keeps its published number. The clinic's operator provides a SIP trunk to our PBX. Which Uzbek operators sell SIP trunks to businesses, at what price and with which codecs, is to be confirmed with the operators (for example Uztelecom, Beeline, Ucell, Mobiuz). Alternatively, call forwarding from the existing line to a number we host.</li>
+  <li><strong>VO-05</strong> The PBX (Asterisk or FreeSWITCH in Uzbekistan) maps the dialed number to <code>clinic_id</code>. It routes to the AI and can transfer to the reception extension or a mobile number with the context announced to the staff member ("AI: bemor kardiologga yozilmoqchi").</li>
+  <li><strong>VO-06</strong> Hours and modes per clinic: AI first, AI only after hours, or AI only when reception does not answer within N rings. There is a concurrent call limit per clinic; over the limit, callers hear a polite queue message.</li>
+  <li><strong>VO-07</strong> Recording is off by default. When on, it is announced in the greeting, stored encrypted in private storage in Uzbekistan, and kept for the clinic-set retention (default 30 days), then deleted by a job. Transcripts follow the same rule. Summaries are kept with the conversation.</li>
+  <li><strong>VO-08</strong> Caller ID is stored only as an HMAC for matching and rate limits. The plain number is used in memory for the SMS and then discarded, unless it becomes the card phone with the caller's agreement.</li>
+</ul>
+
+<div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  participant C as Caller
+  participant PBX as PBX (Uzbekistan)
+  participant VG as Voice gateway
+  participant O as Orchestrator
+  participant DB as Booking engine
+  participant S as SMS
+  C->>PBX: dials clinic number
+  PBX->>VG: SIP INVITE + clinic id
+  VG->>C: AI disclosure greeting
+  C->>VG: "Ertaga kardiologga yozilmoqchiman"
+  VG->>O: transcript
+  O->>DB: route_concern, day_slots
+  O->>VG: offers 3 slots
+  C->>VG: chooses, confirms DOB
+  O->>DB: identify_patient, then book after read-back
+  DB-->>O: appointment id
+  O->>VG: states confirmed booking
+  O->>S: confirmation + optional pay link
+  O->>O: summary to reception inbox
+</pre></div>
+
+<h2 id="dash"><span class="num">9</span>Dashboards and doctor tools</h2>
+<h3 id="inbox">9.1 Reception requests inbox and live board</h3>
+<ul>
+  <li><strong>DB-01 Requests inbox (reception).</strong> Shows a new item for each AI outcome:
+    <ul>
+      <li>booking created (source, patient, doctor, time, paid or unpaid);</li>
+      <li>callback requested;</li>
+      <li>question not answered;</li>
+      <li>identity needs desk check;</li>
+      <li>urgent escalation (red, with sound);</li>
+      <li>payment failed or needs review.</li>
+    </ul>
+    Each item has an assignee, a status (new / in progress / done) and a link to the conversation.</li>
+  <li><strong>DB-02 Call summary.</strong> Structured fields, not free medical prose: reason in the patient's words (verbatim, short), requested direction/service, preferred time, outcome, follow-up needed (yes/no). Generated after the call. Staff may correct it, and the correction is audited.</li>
+  <li><strong>DB-04 Live board.</strong> Calls in progress per clinic, calls waiting, transfers, and today's AI resolution rate.</li>
+  <li><strong>DB-05 Realtime.</strong> The inbox updates within 5 seconds via Supabase Realtime or polling, with authorization checked server-side.</li>
+</ul>
+
+<h3 id="doctor">9.2 Doctor's workspace</h3>
+<p>The doctor's screen for one visit, top to bottom: the patient header, then four tabs, then the action bar.</p>
+<ul>
+  <li><strong>Patient header:</strong> name, age, card number, identity status, allergies and the concern in the patient's words.</li>
+  <li><strong>Tabs:</strong>
+    <ul>
+      <li>"Ko'rik" (consultation note, with the AI recorder);</li>
+      <li>"Retsept" (prescription);</li>
+      <li>"Tahlillar" (lab orders and results);</li>
+      <li>"Tarix" (the patient's history across visits and authorized doctors).</li>
+    </ul>
+  </li>
+  <li><strong>Action bar:</strong> Sign, Send to patient, Print, Refer.</li>
+</ul>
+<ul>
+  <li><strong>DB-03 Doctor's day.</strong> AI-made bookings appear in the doctor's queue like any other, marked with their source. The concern is shown as "Bemorning so'zlari" and paid status as a chip. Doctors do not see call recordings.</li>
+  <li><strong>DW-01</strong> Everything the doctor writes or signs is a <code>clinical_records</code> entry authored by that doctor. The table already exists in production, with types <code>consultation_note</code>, <code>assessment</code>, <code>diagnosis</code>, <code>prescription</code>, <code>lab_order</code>, <code>medical_history</code> and <code>follow_up</code>. It is append-only: a correction is a new entry referencing the old one, and nobody rewrites another doctor's record.</li>
+  <li><strong>DW-02</strong> The diagnosis is chosen by the doctor from an ICD-10 picker (code + Uzbek/Russian name), typed with the same autocomplete pattern as drugs. The system never proposes a diagnosis.</li>
+  <li><strong>DW-03</strong> Allergies and chronic conditions live on the patient card (new <code>patient_allergies</code> with substance as INN or class, reaction, recorded by, date). They are shown in the header on every visit.</li>
+</ul>
+
+<h3 id="rx">9.3 E-prescription with drug autocomplete</h3>
+<div class="callout warn">
+  <strong class="t">Uzbekistan already has a national e-prescription system</strong>
+  <p>Legally valid prescriptions for <strong>prescription-only medicines</strong> are generated in the Ministry of Health's "Electronic Healthcare" information system, "Elektron retsept" module. They are signed with the doctor's electronic digital signature (ERI) and written by international nonproprietary name (INN). Pharmacies dispense from that electronic record. The legal basis is Cabinet Resolution No. 570 of 8 September 2025, the Ministry orders on using the modules, and Order No. 3277 on INN prescribing. The Ministry said in May 2026 that the system is expanding, not being withdrawn. The Ministry publishes a form for organizations to apply to connect to the module.</p>
+  <p><strong>Consequence:</strong> a PDF from Health AI is not a valid prescription for prescription-only drugs where the national system applies. Health AI therefore builds the doctor's prescribing screen and patient delivery, and hands prescription-only items to the national module. The first release does this by the doctor's own login; after the connection is approved, by integration.</p>
+</div>
+<h4>How the doctor prescribes</h4>
+<ol class="steps">
+  <li>The doctor presses <strong>"+ Dori qo'shish"</strong> and types. After 2 characters (for example "an"), matching medicines appear within 200 ms. Matching covers INN, trade names and common spellings, in Latin and Cyrillic, so "an" also finds "ан". The clinic's formulary and the doctor's recent choices come first.</li>
+  <li>Each result shows the INN in bold, then trade names, form and strength (for example <span class="mono">Amoksitsillin · Amoxil, Flemoxin · kapsula 500 mg</span>), with chips for "Retsept bilan" (prescription-only) and "Nazoratdagi" (controlled). Arrow keys and Enter select.</li>
+  <li>The structured fields fill: dose and unit, route, frequency as chips ("1×1", "2×1", "3×1", or custom), timing (before/after food), duration in days, and quantity calculated from dose × frequency × days (editable). There is a free-text instruction in Uzbek ("Ovqatdan keyin, ko'p suv bilan").</li>
+  <li>The doctor can save a set as a template ("Angina — kattalar") and reuse it. Templates are the doctor's own, never generated.</li>
+  <li>If the patient has a recorded allergy to the INN or its class, a blocking warning appears and the doctor must confirm with a reason. This is a deterministic match against recorded data, not AI.</li>
+  <li>The doctor presses <strong>"Imzolash va yuborish"</strong> (sign and send). The prescription becomes a signed <code>clinical_records</code> entry and is delivered to the patient (9.5). Prescription-only items carry status "national e-prescription required" until the national prescription number is recorded.</li>
+</ol>
+<div class="table-wrap"><table>
+<thead><tr><th class="id">ID</th><th>Requirement</th></tr></thead>
+<tbody>
+<tr><td class="id">RX-01</td><td>Drug catalogue (<code>drug_catalog</code>): INN, trade name, form, strength, manufacturer, registration number, prescription-only flag, controlled flag, active flag, source and import date. Search uses a trigram plus prefix index over INN, trade names and transliterations (Latin ↔ Cyrillic). The p95 query time target is 50 ms.</td></tr>
+<tr><td class="id">RX-02</td><td>Catalogue source, in this order of preference: (1) the national register of medicines, via an official export or the open-data portal API with an access key; (2) a licensed commercial drug database for Uzbekistan; (3) a clinic-maintained formulary as a stop-gap. The source and version are shown in the screen footer. No AI-generated drug entries.</td></tr>
+<tr><td class="id">RX-03</td><td>No AI anywhere in prescribing. No suggested drugs, doses or durations from a model. Ordering, templates and recents are the doctor's own data.</td></tr>
+<tr><td class="id">RX-04</td><td>Controlled (narcotic/psychotropic) medicines cannot be issued from Health AI. The screen says they require the special form or national procedure.</td></tr>
+<tr><td class="id">RX-05</td><td>Phase 1: prescription-only items show a "Copy to Elektron retsept" panel (INN, form, dose, schedule, quantity) and a field for the national prescription number. Phase 2: after the Ministry approves the connection, the national module is called from the server with the doctor's e-signature flow. The national number and status are stored, and dispensing status is shown if the module provides it.</td></tr>
+<tr><td class="id">RX-06</td><td>A signed prescription is immutable. Cancelling or changing it creates a new entry referencing the old one, with a reason. The patient sees the current version and a "replaced" mark on the old one.</td></tr>
+<tr><td class="id">RX-07</td><td>The printed or PDF version carries the clinic, doctor, date, items and a QR code linking to <code>healthai.uz/v/&lt;code&gt;</code>. That page confirms only that the document is genuine and current (clinic, doctor, date, valid/replaced), never the medicines, unless the patient is signed in.</td></tr>
+<tr><td class="id">RX-08</td><td>Drug interaction checking is out of scope until a licensed interaction database is chosen. The screen does not imply that interactions were checked.</td></tr>
+</tbody></table></div>
+
+<h3 id="scribe">9.4 AI consultation recorder</h3>
+<div class="callout bad">
+  <strong class="t">Approved by the owner on 14 Nov 2026 (decision D-10)</strong>
+  <p>This replaces the 2026-10-05 product rule (<code>docs/CLINIC_OPERATIONS_PRODUCT.md</code>) that excluded AI clinical summaries, and adds a rule to <code>AGENTS.md</code>. The recorder drafts documentation of what was said. It makes no clinical decisions, and the draft enters the record only when the doctor signs it. On <code>main</code>, <code>AGENTS.md</code> also says AI must never write, read or summarise clinical records. The same approval amends that line when this change lands on <code>main</code>: it gains the exception for the consented recorder draft, scoped to the treating doctor.</p>
+  <p>Approved wording: <em>"With the patient's consent, AI may transcribe a consultation and draft documentation of what was said. The draft is not part of the record until the treating doctor reviews, edits and signs it. AI must not add diagnoses, medicines, doses, findings or advice that were not stated in the consultation."</em></p>
+</div>
+<h4>How it works for the doctor</h4>
+<ol class="steps">
+  <li>The doctor presses <strong>"Yozib olish"</strong> (record) on the visit. The patient is asked first, and the consent is recorded per visit:
+    <ul>
+      <li>the doctor asks, and ticks "Bemor rozi" (patient agreed); or</li>
+      <li>the patient taps consent in the bot before the visit.</li>
+    </ul>
+    Without consent, the button stays off and the doctor types or dictates as usual. The recording indicator stays visible on screen.</li>
+  <li>Audio is captured in the browser (laptop or tablet microphone) and streamed to the speech host in Uzbekistan. A live transcript appears with speakers labeled "Shifokor" and "Bemor". Recording can be paused, for example for an examination. It stops automatically after 60 minutes.</li>
+  <li>When the doctor presses Stop, a draft note appears in the clinic's chosen template. Sections:
+    <ul>
+      <li>shikoyatlar (complaints);</li>
+      <li>anamnez (history);</li>
+      <li>ko'rik natijalari (examination findings), only as the doctor dictated them;</li>
+      <li>shifokor xulosasi (assessment), only as the doctor stated it;</li>
+      <li>reja (plan): tests, medicines, follow-up as stated.</li>
+    </ul>
+    Each sentence links to the transcript lines it came from.</li>
+  <li>Medicines and tests mentioned in the conversation appear as unconfirmed suggestions in the Retsept and Tahlillar tabs. Each one is matched to the catalogue and must be confirmed field by field by the doctor. Nothing is added automatically.</li>
+  <li>The doctor edits and signs. Only then is the note saved as a <code>clinical_records</code> entry authored by the doctor, with "drafted with AI recorder" in its metadata. Discarding the draft saves nothing.</li>
+  <li>The history tab ("Tarix") shows signed notes across visits. The patient's medical card is built from these signed entries, never from unsigned drafts.</li>
+</ol>
+<div class="table-wrap"><table>
+<thead><tr><th class="id">ID</th><th>Requirement</th></tr></thead>
+<tbody>
+<tr><td class="id">SC-01</td><td>Per-visit consent: who asked, when, how (verbal at desk / bot tap), and whether the patient withdrew. Withdrawal stops recording and deletes audio collected so far. The clinic shows a notice in consultation rooms.</td></tr>
+<tr><td class="id">SC-02</td><td>Audio goes only to the allowed speech host (R-07), streamed over TLS. Default: audio is deleted as soon as the doctor signs or discards the draft, and in any case within 24 hours. Transcripts are kept 30 days (clinic-configurable) for review, then deleted. Signed notes follow medical-record retention.</td></tr>
+<tr><td class="id">SC-03</td><td>Fact check before showing the draft. Every medicine, dose, number, date, laterality (left/right) and diagnosis term in the draft must appear in the transcript. Anything that does not is removed or flagged in red for the doctor. Uses the same "the model may only reword checked facts" pattern as the lab assistance module (Phase 18).</td></tr>
+<tr><td class="id">SC-04</td><td>The draft never contains advice, differential diagnoses or "consider…" suggestions. The prompt and an output filter both block them; tested in EV-04.</td></tr>
+<tr><td class="id">SC-05</td><td>Languages: Uzbek, Russian and mixed speech. Medical terms are written as the doctor said them; no translation of drug names.</td></tr>
+<tr><td class="id">SC-06</td><td>Works with poor internet: audio is buffered locally (encrypted, in memory) for up to 2 minutes of disconnection. If the stream fails, the doctor is told at once and keeps typing. Never show a partial transcript as complete.</td></tr>
+<tr><td class="id">SC-07</td><td>Only the treating doctor (and a referred doctor, read-only after signing) can open drafts and transcripts. Owners and managers cannot listen to consultations. Every open is audited.</td></tr>
+<tr><td class="id">SC-08</td><td>Costs per clinic: speech minutes and model tokens per signed note, with a monthly budget (AG-03).</td></tr>
+</tbody></table></div>
+
+<h3 id="share">9.5 Sending prescriptions and analyses to the patient's bot</h3>
+<p class="small">Approved by the owner on 14 Nov 2026 (decision D-14): a prescription or test order the treating doctor has signed and chosen to send may be shown to that patient, and only that patient, inside the verified Mini App. Notes, assessments and diagnoses stay doctor-only unless the doctor explicitly releases them. <code>AGENTS.md</code> on <code>main</code> gains this exception when the change lands there.</p>
+<ol class="steps">
+  <li>After the doctor signs, <strong>"Bemorga yuborish"</strong> (send to patient) is enabled. Sending is on by default and can be turned off per item.</li>
+  <li>Delivery goes to the Telegram account linked to the patient's confirmed card, through the clinic's own bot. The message text has no medical content: "Shifokor Aliyeva N. sizga retsept va tahlil yo'llanmasini yubordi." It has a button that opens the Mini App.</li>
+  <li>The Mini App verifies Telegram <code>initData</code> server-side and shows the patient's own documents:
+    <ul>
+      <li>prescription items (INN, trade name chosen, dose, schedule, duration, instructions) and the national prescription number when there is one;</li>
+      <li>ordered tests with preparation instructions ("och qoringa");</li>
+      <li>lab results once verified and released (existing <code>lab_release_to_patient</code> setting);</li>
+      <li>a PDF to download or show at a pharmacy.</li>
+    </ul>
+  </li>
+  <li>Patients without Telegram get an SMS without medical content ("[Klinika]: retseptingiz tayyor, klinikadan oling") and a printed copy at the desk.</li>
+  <li>Each delivery is recorded: channel, sent, delivered or failed, opened. The doctor's screen shows the status, and "Yuborildi" (sent) appears only after Telegram accepted the message (R-03).</li>
+</ol>
+<ul>
+  <li><strong>SH-01</strong> Delivery only to the Telegram account linked to the card through completed identity (section 5). Never to an unverified Telegram contact.</li>
+  <li><strong>SH-02</strong> Documents are fetched from private storage through short-lived signed URLs after authorization. They are never attached as files in the chat, so they cannot be forwarded by Telegram's file cache.</li>
+  <li><strong>SH-03</strong> A patient can see their full history of prescriptions and released results across visits in the Mini App ("Mening hujjatlarim").</li>
+</ul>
+
+<h2 id="queue"><span class="num">10</span>Booking and queue rules</h2>
+<div class="table-wrap"><table>
+<thead><tr><th class="id">ID</th><th>Rule</th><th>Source</th></tr></thead>
+<tbody>
+<tr><td class="id">Q-01</td><td>Patients see one day at a time; never a week grid.</td><td>Owner, built</td></tr>
+<tr><td class="id">Q-02</td><td>The queue number is issued on payment, for the slot's day. Unpaid online bookings get their number at the kassa.</td><td>Decision 2026-10-08</td></tr>
+<tr><td class="id">Q-03</td><td>A doctor's queue orders booked patients by slot time. Walk-ins fit in between by payment time.</td><td>Decision 2026-10-08</td></tr>
+<tr><td class="id">Q-04</td><td>Arriving more than 10 minutes after the slot: the patient takes a turn from arrival.</td><td>Decision 2026-10-08</td></tr>
+<tr><td class="id">Q-05</td><td>Unpaid online holds expire after 15 minutes when online payment is on; with pay-at-clinic, the hold lasts until the slot start minus 10 minutes. This needs a scheduled job and an SMS/Telegram notice. The owner must confirm both numbers.</td><td>Proposal, not built</td></tr>
+<tr><td class="id">Q-06</td><td>Starting a walk-in consultation must not call the future-slot booking engine. Model the encounter separately (fixes audit P1-2).</td><td>Audit 2026-11-14</td></tr>
+<tr><td class="id">Q-07</td><td>Past "pending" bookings are resolved by a daily job into a reception task. The job does not auto-mark no-show; clinic policy decides.</td><td>Audit 2026-11-14</td></tr>
+<tr><td class="id">Q-08</td><td>Refunds: patient cancels before the slot → full; clinic cancels → full; no-show → none; duplicate payment or lost slot → full. Owner/manager records the provider refund reference.</td><td>Decision 2026-10-08</td></tr>
+</tbody></table></div>
+
+<h2 id="pay"><span class="num">11</span>Payments</h2>
+<h3>11.1 Rahmat (primary online provider)</h3>
+<p>Rahmat is reported to be a payment brand of the licensed payment organization Multicard, offering internet acquiring and a unified QR. No public merchant API documentation was found during this review. Integration starts when the merchant contract delivers documentation and test credentials.</p>
+<ul>
+  <li><strong>PAY-01</strong> The adapter implements <code>createInvoice</code>, <code>verifyWebhook(rawBody, headers)</code>, <code>getStatus</code> and <code>refund</code> against the existing provider interface. Signatures are verified over the raw body with a constant-time comparison.</li>
+  <li><strong>PAY-02</strong> Events are stored in <code>payment_provider_events</code> with a unique provider event id, and settlement runs once (<code>settle_online_payment</code>). An amount or currency mismatch goes to manual review, never to paid.</li>
+  <li><strong>PAY-03</strong> Startup fails closed if <code>ONLINE_PAYMENT_PROVIDER=rahmat</code> and credentials are missing, or a test provider is configured in production.</li>
+  <li><strong>PAY-04</strong> The payment page is on healthai.uz and shows clinic, service, doctor, time and amount from the server. Payment links in SMS are short, single-invoice and expire with the hold.</li>
+  <li><strong>PAY-05</strong> Online money is ledger method <code>online</code>; kassa cash and terminal totals stay separate. Reconcile daily against the provider's settlement report.</li>
+  <li><strong>PAY-06 Fiscal receipts.</strong> Whether online payments for medical services require an electronic fiscal receipt (and through whom: provider, virtual cash register or clinic) must be confirmed with the clinic's accountant or counsel before go-live. Do not label an internal acknowledgement a fiscal receipt.</li>
+</ul>
+<h3>11.2 Other providers and cash</h3>
+<ul>
+  <li><strong>PAY-07</strong> Click (adapter exists, not production-ready), Payme and Uzum are added only with merchant contracts, using the same interface and tests.</li>
+  <li><strong>PAY-08</strong> Cash and terminal at the kassa remain first-class. "Pay at clinic" never blocks booking.</li>
+  <li><strong>PAY-09</strong> Reading clinical history is never blocked by payment status. Any clinic-configured prepayment gate has an authorized, audited exception.</li>
+</ul>
+
+<h2 id="notify"><span class="num">12</span>Notifications and SMS</h2>
+<ul>
+  <li><strong>NT-01</strong> Templates (uz Latin, ru): booking confirmed, queue number, you are called, booking changed or cancelled, payment link, payment received. Text carries the clinic name, time, number and short link only. No diagnoses, no personal identifiers.</li>
+  <li><strong>NT-02</strong> Eskiz: "sent" = accepted by Eskiz; "delivered" only from the delivery report callback (secret-verified). Store no phone or text with SMS records.</li>
+  <li><strong>NT-03</strong> Jobs are claimed atomically with an ownership token and lease. Expired leases go to a quarantine for review instead of being resent automatically. NULL limits are rejected (fixes audit P2-1).</li>
+  <li><strong>NT-04</strong> Before go-live: an Eskiz contract in the operating company's name, a registered sender name, approved templates (a template with a URL may need separate approval), and one live test confirming the API and callback field names.</li>
+  <li><strong>NT-05</strong> Cost control: count SMS per clinic per month, show it in the clinic's billing page, and alert at a clinic-set threshold. Cyrillic text uses more SMS segments, so default templates to Latin.</li>
+  <li><strong>NT-06</strong> Fallback provider: keep the SMS interface provider-neutral so a second Uzbek gateway can be added if Eskiz has an outage. Choose and contract one only if needed.</li>
+</ul>
+
+<h2 id="arch"><span class="num">13</span>Architecture, hosting and local setup</h2>
+<h3>13.1 Do we need to rewrite the backend?</h3>
+<p>No. The Next.js server routes are the backend. Postgres functions (the booking engine, queue, ledger) hold the rules that must be atomic. Supabase supplies Postgres, auth, storage and realtime, and runs self-hosted on our own server. What is missing are two long-running services that serverless request handlers are not suited for:</p>
+<ul>
+  <li><strong>Voice gateway</strong>: SIP/RTP media, streaming STT/TTS, barge-in. A Node or Go service next to the PBX.</li>
+  <li><strong>Worker</strong>: notification and SMS sending, webhook processing, hold expiry, retention deletes, daily reconciliation. Replaces the cron-to-HTTP calls with a process that claims jobs from the database.</li>
+</ul>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+  subgraph UZ[Servers in Uzbekistan]
+    CADDY[Caddy HTTPS: healthai.uz, api.healthai.uz] --> APP[Next.js app: staff UI, Mini App, APIs, agent tools]
+    APP --> PG[(Postgres via self-hosted Supabase)]
+    APP --> ST[(Private storage: voice, lab documents)]
+    WK[Worker: jobs, SMS, webhooks, retention] --> PG
+    PBX[PBX: Asterisk or FreeSWITCH] --> VGW[Voice gateway]
+    VGW --> APP
+    BK[Nightly encrypted backups to a second machine]
+  end
+  TG[Telegram] --> CADDY
+  RH[Rahmat webhooks] --> CADDY
+  ES[Eskiz callbacks] --> CADDY
+  ONE[OneID] --> CADDY
+  VGW -.-> SPEECH[Speech provider, chosen by bake-off]
+  APP -.-> LLMP[LLM provider]
+</pre></div>
+
+<h3>13.2 Domain layout</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Host</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>healthai.uz</code></td><td>Landing, staff app, Mini App, payment pages, OneID callback</td></tr>
+<tr><td><code>api.healthai.uz</code></td><td>Supabase API (self-hosted)</td></tr>
+<tr><td><code>sip.healthai.uz</code></td><td>SIP over TLS for operator trunks (firewalled to operator IPs)</td></tr>
+<tr><td><code>stt.healthai.uz</code></td><td>Speech endpoint if self-hosted (listed in <code>HEALTH_AUDIO_ALLOWED_HOSTS</code>)</td></tr>
+<tr><td><code>pay.healthai.uz</code> (optional)</td><td>Short payment links in SMS</td></tr>
+</tbody></table></div>
+
+<h3>13.3 Where the data lives (legal status changed in 2026)</h3>
+<div class="callout">
+  <strong class="t">What changed</strong>
+  <ul>
+    <li>Until March 2026, Article 27-1 of the Personal Data Law required personal data of Uzbek citizens to be processed on servers in Uzbekistan.</li>
+    <li>Amendments that took effect in late March 2026 narrow mandatory in-country storage to biometric data, genetic data and telecom operators' subscriber data. Other data may be stored abroad if the law's criteria are met.</li>
+    <li>Cabinet Resolution No. 415 of 29 July 2026 lists 49 countries with equivalent protection; Japan is reported on it.</li>
+  </ul>
+  <p><strong>Consequences for Health AI.</strong> The current production database (Tokyo) may now be permissible for ordinary personal data. However:</p>
+  <ul>
+    <li>lab results that include genetic tests;</li>
+    <li>voiceprints or a cloned voice, if they count as biometric;</li>
+    <li>health data, if the rules treat it specially;</li>
+    <li>OneID's own conditions;</li>
+  </ul>
+  <p>may each require Uzbekistan. <strong>Recommendation:</strong> cut over to the existing Uzbekistan hosting kit before the pilot. That gives clinics and the OneID operator the simplest answer. Obtain a written opinion from Uzbek counsel. This document is not legal advice.</p>
+</div>
+
+<h3>13.4 Running the full system locally</h3>
+<pre class="code">npm ci
+npx supabase start                  # Docker must be running
+npm run db:reset-local              # applies supabase/migrations
+cp .env.example .env                # fill from `npx supabase status`; random CRON_SECRET, TELEGRAM_* values
+npm run create-owner
+npm run dev                         # http://localhost:3000
+# Telegram needs public HTTPS: expose a dev subdomain with a tunnel, e.g.
+cloudflared tunnel --url http://localhost:3000   # then point the bot webhook at the tunnel URL
+# Test providers for local E2E only (production refuses them):
+#   ONLINE_PAYMENT_PROVIDER=test_online  ALLOW_TEST_ONLINE_PAYMENT=true  TEST_ONLINE_PAYMENT_SECRET=&lt;32+ chars&gt;
+#   SMS_PROVIDER=test  ALLOW_TEST_SMS=true
+npm test &amp;&amp; npm run build &amp;&amp; npm run test:e2e</pre>
+<p class="small">The phone agent adds a local Asterisk container and a softphone (for example Zoiper or Linphone) registered to it, so calls can be tested without an operator trunk.</p>
+
+<h2 id="data"><span class="num">14</span>Data model changes</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Change</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>Enums</td><td><code>conversation_channel</code> + <code>phone</code>; <code>appointment_source</code> + <code>phone_ai</code>, <code>phone_staff</code>; <code>message_role</code> already has <code>ai</code></td></tr>
+<tr><td><code>clinic_phone_lines</code> (new)</td><td><code>clinic_id</code>, <code>e164_number</code> unique, mode (ai_first / after_hours / overflow), transfer target, max concurrent calls, recording on/off, retention days, active. RLS: owner/admin read and write via server routes</td></tr>
+<tr><td><code>calls</code> (new)</td><td><code>clinic_id</code>, <code>conversation_id</code>, <code>caller_hash</code> (HMAC), started/answered/ended, outcome (answered, booked, transferred, callback, abandoned, urgent), <code>transferred_to</code>, recording object key (nullable), consent flags. Server-only writes</td></tr>
+<tr><td><code>agent_requests</code> (new)</td><td>Inbox items: <code>clinic_id</code>, type, status, assignee, conversation/call/appointment refs, summary JSON (structured fields), timestamps. RLS: reception, admin, owner read</td></tr>
+<tr><td><code>concern_routes</code> (new or extend router config)</td><td><code>clinic_id</code>, language, phrase, direction (specialty id), default service, active, approved_by, approved_at</td></tr>
+<tr><td><code>agent_kb_entries</code></td><td>Extend <code>faq_entries</code> with approved_by/approved_at and channel visibility</td></tr>
+<tr><td><code>patients</code></td><td>Encrypted columns + blind-index columns for document, JSHSHIR, DOB, address (ID-07); keep <code>identity_verified_by</code> values <code>desk</code>, <code>oneid</code>, <code>telegram_phone</code>, <code>sms_code</code></td></tr>
+<tr><td>Job tables</td><td>Add <code>claim_token</code> and <code>lease_until</code> to <code>notification_jobs</code> and <code>processed_webhooks</code>; quarantine status</td></tr>
+<tr><td>Holds</td><td><code>appointments.hold_expires_at</code> for unpaid online bookings (Q-05)</td></tr>
+<tr><td><code>drug_catalog</code>, <code>clinic_formulary</code> (new)</td><td>RX-01 fields; trigram/prefix indexes; formulary = clinic's preferred items and order. Catalogue is global and read-only for staff; formulary is per clinic</td></tr>
+<tr><td><code>prescriptions</code>, <code>prescription_items</code> (new)</td><td><code>clinic_id</code>, patient, doctor, visit/appointment, status (draft / signed / replaced / cancelled), signed_at, replaces_id, <code>national_rx_number</code>, verification code hash; items: drug_catalog id, INN and trade name snapshot, dose, unit, route, frequency, timing, days, quantity, instructions, rx_only snapshot. Signed rows immutable (trigger)</td></tr>
+<tr><td><code>prescription_templates</code> (new)</td><td>Owned by one doctor; items as JSON referencing catalogue ids</td></tr>
+<tr><td><code>patient_allergies</code> (new)</td><td><code>clinic_id</code>, patient, substance (INN or class), reaction, severity as recorded, recorded_by, recorded_at, inactive_at</td></tr>
+<tr><td><code>consult_recordings</code> (new)</td><td><code>clinic_id</code>, visit, doctor, consent (method, asked_by, at, withdrawn_at), storage key (nullable), status, <code>delete_after</code>; server-only writes; retention job deletes audio and transcripts</td></tr>
+<tr><td><code>scribe_drafts</code> (new)</td><td>recording id, template, sections JSON with source transcript spans, fact-check flags, status (open / signed / discarded), resulting <code>clinical_records</code> id. Visible to the treating doctor only</td></tr>
+<tr><td><code>patient_deliveries</code> (new)</td><td><code>clinic_id</code>, patient, document type and id, channel (telegram / sms / print), status (queued / sent / delivered / failed / opened), timestamps; uses the existing atomic job claiming</td></tr>
+</tbody></table></div>
+<p>Every new table: RLS on, no <code>anon</code> grants, <code>clinic_id</code> scoping, SECURITY DEFINER functions with <code>search_path = public, pg_temp</code>, minimum grants, and tests for each policy (<code>AGENTS.md</code>).</p>
+
+<h2 id="nfr"><span class="num">15</span>Non-functional requirements</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Area</th><th>Target</th></tr></thead>
+<tbody>
+<tr><td>Voice latency</td><td>End of caller speech to start of reply: p50 ≤ 1.2 s, p95 ≤ 2.0 s. Barge-in stops TTS within 300 ms</td></tr>
+<tr><td>Availability</td><td>99.5% monthly for app, booking and phone agent. If the agent is down, calls fall through to reception or a recorded message with the clinic number</td></tr>
+<tr><td>Capacity (pilot)</td><td>10 concurrent calls per clinic, 50 platform-wide; 100 bookings/minute in the engine without overlap errors</td></tr>
+<tr><td>Booking integrity</td><td>Zero double bookings (exclusion constraint); idempotent retries; every write audited</td></tr>
+<tr><td>Security</td><td>TLS 1.2+ everywhere; SIP over TLS with SRTP where the operator supports it; secrets in a secret store; quarterly key rotation for HMAC/encryption keys with re-index plan</td></tr>
+<tr><td>Privacy</td><td>No PII in logs (R-10); recordings and transcripts deleted on schedule; data subject requests (copy or delete within legal limits) handled by the owner with a runbook</td></tr>
+<tr><td>Observability</td><td>Per call: turn latencies, STT confidence, tool calls and results, outcome. Dashboards for resolution rate, transfer rate, error rate, cost per call. Alerts on webhook failures, job backlog, payment mismatches</td></tr>
+<tr><td>Backups</td><td>Nightly encrypted backup to a second machine; monthly restore test with a written result</td></tr>
+<tr><td>Accessibility</td><td>Mini App readable at large font sizes; voice path usable without reading; slow speech rate option for elderly callers</td></tr>
+</tbody></table></div>
+
+<h2 id="audit"><span class="num">16</span>Audit readiness</h2>
+<h3>16.1 Fix before any clinic pilot</h3>
+<ol>
+  <li>Make <code>main</code> canonical; port anything needed from <code>codex/clinic-operations-pilot</code> as reviewed PRs.</li>
+  <li>Walk-in consultation start without the future-slot engine (Q-06).</li>
+  <li>Webhook and job claim ownership tokens, leases and quarantine; reject NULL limits (NT-03).</li>
+  <li>Resolve stale appointments and unpaid rows with the clinic. Deactivate the ownerless clinic. Fix or remove the orphan doctor role. Drop the stray tables.</li>
+  <li>Turn on leaked-password protection in Supabase Auth.</li>
+  <li>Identity field encryption with blind index (ID-07).</li>
+  <li>Hosting decision executed (13.3) with backups and a restore test.</li>
+</ol>
+<h3>16.2 Release gates (every release)</h3>
+<pre class="code">npm run lint
+npm run typecheck
+npm test
+npm run build
+npm run test:e2e        # against the production build, with test providers</pre>
+<p>Also required for each release:</p>
+<ul>
+  <li>Supabase security and performance advisors reviewed.</li>
+  <li>RLS/RPC tests for every new table or function.</li>
+  <li>The identity-leak test suite passes for every staff and agent endpoint.</li>
+</ul>
+<h3>16.3 AI-specific evaluation</h3>
+<ul>
+  <li><strong>EV-01</strong> A dialogue test set of at least 300 scripted conversations in uz-Latin, uz-Cyrillic text, ru and mixed. Coverage:
+    <ul>
+      <li>prices, hours and location;</li>
+      <li>booking, rescheduling and cancelling;</li>
+      <li>unknown questions;</li>
+      <li>urgent symptoms (must escalate: 100%);</li>
+      <li>diagnosis requests (must refuse: 100%);</li>
+      <li>prompt injection;</li>
+      <li>someone else's passport;</li>
+      <li>abusive callers.</li>
+    </ul>
+    Run it in CI with the chosen model. Release only if the urgent/diagnosis rules hold at 100% and booking task success is ≥ 90%.</li>
+  <li><strong>EV-02</strong> Voice test set from the bake-off. Track word error rate for numbers and names separately.</li>
+  <li><strong>EV-03</strong> Tool-grounding check: every spoken price, time or address must match a tool result in the same turn, verified automatically from logs.</li>
+  <li><strong>EV-04</strong> Recorder evaluation on at least 50 role-played consultations per main specialty (Uzbek, Russian, mixed). Release gates:
+    <ul>
+      <li>0 invented medicines, doses or diagnoses after the fact check;</li>
+      <li>0 advice sentences;</li>
+      <li>medicines and doses spoken in the consultation captured ≥ 95%;</li>
+      <li>doctors' edit time per note measured against typing from scratch.</li>
+    </ul>
+    Doctors from the pilot clinic score the drafts.</li>
+  <li><strong>EV-05</strong> Drug search tests: Latin/Cyrillic prefixes, misspellings, INN versus trade name, controlled and prescription-only flags shown, p95 latency.</li>
+</ul>
+<h3>16.4 Evidence pack for clinics and auditors</h3>
+<ul>
+  <li>Data map (which data, where stored, who sees it, retention), the table in <a href="#privacy">section 6</a>, and the subprocessor list (hosting, LLM, speech, SMS, payment, OneID).</li>
+  <li>Test reports (unit, E2E, AI evaluation, load), penetration test summary, advisor output, backup restore record.</li>
+  <li>Data processing agreement between the operating company and each clinic; consent texts (online booking, SMS, voice, call recording).</li>
+  <li>Incident response runbook, rollback runbook (exists), access review log.</li>
+  <li>Registration or notification as a personal data operator if the law requires it. Confirm with counsel.</li>
+</ul>
+
+<h2 id="pilot"><span class="num">17</span>Clinic pilot</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Stage</th><th>What goes live</th><th>Enter when</th><th>Exit when</th></tr></thead>
+<tbody>
+<tr><td>P0</td><td>Desk + kassa + queue + Telegram notifications</td><td>Audit fixes 16.1 done; staff trained (2 hours)</td><td>2 weeks with no double queue numbers, ledger reconciles daily</td></tr>
+<tr><td>P1</td><td>Online identity + Mini App booking, pay at clinic; SMS on</td><td>Eskiz live test passed</td><td>≥ 30 online bookings; identity claims handled; SMS delivery ≥ 95%</td></tr>
+<tr><td>P2</td><td>Online payment (Rahmat)</td><td>Adapter passed sandbox + replay/tamper tests; fiscal question answered</td><td>Daily reconciliation matches provider report for 2 weeks; refunds work</td></tr>
+<tr><td>P3</td><td>Voice notes in the bot</td><td>Speech host chosen; consent text approved</td><td>Task success ≥ 90% on real use; no urgent misses</td></tr>
+<tr><td>P4</td><td>Phone agent, after hours only</td><td>Bake-off done; EV-01 passes; trunk live</td><td>2 weeks: ≥ 70% calls resolved or correctly handed off; zero wrong bookings</td></tr>
+<tr><td>P5</td><td>Phone agent during hours (overflow, then AI first)</td><td>P4 exit met; clinic agrees</td><td>Ongoing metrics</td></tr>
+<tr><td>D1</td><td>E-prescription screen + send to patient's bot (can run in parallel with P1)</td><td>Drug catalogue loaded; national hand-over agreed with the clinic</td><td>2 weeks: every prescription-only item has a national number recorded; delivery success ≥ 95%</td></tr>
+<tr><td>D2</td><td>AI recorder with 1–2 volunteer doctors</td><td>EV-04 passed; consent notice in rooms (D-10 approved)</td><td>4 weeks: zero invented items in signed notes (sampled review); doctors keep using it</td></tr>
+</tbody></table></div>
+<p><strong>Pilot metrics</strong> (baseline first; do not promise savings before measuring):</p>
+<ul>
+  <li>registration time;</li>
+  <li>kassa wait;</li>
+  <li>queue wait;</li>
+  <li>share of bookings by channel;</li>
+  <li>calls answered vs missed;</li>
+  <li>AI resolution and transfer rates;</li>
+  <li>wrong-service corrections;</li>
+  <li>no-show rate for paid vs unpaid online bookings;</li>
+  <li>share of patients reachable only by SMS (the smartphone proxy).</li>
+</ul>
+<p><strong>Support:</strong> a named contact, a paper fallback procedure for downtime, and a weekly review with the clinic manager.</p>
+
+<h2 id="plan"><span class="num">18</span>Delivery plan</h2>
+<p>Sizes are relative (S ≈ days, M ≈ 1–2 weeks, L ≈ 3+ weeks for one engineer). Re-estimate after the bake-off and the provider documents arrive.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Workstream</th><th>Size</th><th>Depends on</th></tr></thead>
+<tbody>
+<tr><td>W1 Branch reconciliation onto <code>main</code></td><td>M</td><td>—</td></tr>
+<tr><td>W2 Audit fixes (walk-in path, claim tokens, data clean-up, auth setting)</td><td>M</td><td>W1</td></tr>
+<tr><td>W3 Identity encryption + blind index + migration of existing rows</td><td>M</td><td>W1</td></tr>
+<tr><td>W4 Uzbekistan hosting cut-over (rehearsal, backups, restore test)</td><td>M</td><td>Counsel opinion; W1</td></tr>
+<tr><td>W5 Agent orchestrator + tools API + text channel in bot (incl. voice notes via STT)</td><td>L</td><td>W1; speech host for voice notes</td></tr>
+<tr><td>W6 Requests inbox + call summaries + doctor-day markers</td><td>M</td><td>W5</td></tr>
+<tr><td>W7 Voice bake-off (A/B/C), then voice gateway + PBX + transfer</td><td>L</td><td>Vendor accounts; SIP trunk</td></tr>
+<tr><td>W8 Rahmat adapter + payment links + hold expiry + reconciliation</td><td>M</td><td>Rahmat contract and docs</td></tr>
+<tr><td>W9 Eskiz go-live + templates + cost counters</td><td>S</td><td>Eskiz contract</td></tr>
+<tr><td>W10 OneID go-live</td><td>S</td><td>OneID agreement</td></tr>
+<tr><td>W11 AI evaluation sets (EV-01..03) in CI</td><td>M</td><td>W5</td></tr>
+<tr><td>W12 Evidence pack, pen test, pilot training material</td><td>M</td><td>W2–W4</td></tr>
+<tr><td>W13 Drug catalogue import + search + e-prescription screen + templates + allergies</td><td>M–L</td><td>W1; catalogue source</td></tr>
+<tr><td>W14 Patient delivery (bot, Mini App documents, SMS notice, QR verify page)</td><td>M</td><td>W13; identity linking</td></tr>
+<tr><td>W15 National Elektron retsept integration</td><td>M–L</td><td>Ministry connection approval and API documentation</td></tr>
+<tr><td>W16 AI recorder (capture, streaming STT, draft, fact check, sign, retention)</td><td>L</td><td>Speech host; W1 (D-10 approved)</td></tr>
+</tbody></table></div>
+
+<h2 id="added"><span class="num">19</span>Added to the brief</h2>
+<p>Items the brief did not mention that the build needs:</p>
+<ul>
+  <li><strong>AI disclosure and voice consent</strong> (AG-12, VO-02). This protects patients' trust and the company from a consent dispute with the voice owner.</li>
+  <li><strong>Call recording consent and retention</strong> (VO-07).</li>
+  <li><strong>Clinic-approved urgent list and routing table</strong>, signed off by the clinic's medical lead (AG-07, AG-11).</li>
+  <li><strong>Hold expiry for unpaid online bookings</strong> (Q-05). Without it, unpaid bookings block slots forever, as the audit found.</li>
+  <li><strong>Fiscal receipts for online payments</strong> (PAY-06).</li>
+  <li><strong>Mapping each clinic's phone number to the clinic</strong> (VO-05). The multi-clinic platform needs it for tenant isolation.</li>
+  <li><strong>Caller ID can be withheld or spoofed.</strong> That is why DOB or an SMS code is still required (ID-05).</li>
+  <li><strong>Spoken passport numbers are error-prone</strong> (letter series). Prefer caller ID + DOB; read back the series letter by letter when a document is needed.</li>
+  <li><strong>Elderly and non-smartphone patients</strong>: slow speech rate, SMS in Latin, paper ticket fallback, measurement of the SMS-only share.</li>
+  <li><strong>Downtime fallback</strong>: paper procedure, and the phone line falls through to reception.</li>
+  <li><strong>Costs</strong>: LLM tokens, speech minutes, SMS segments and payment fees per clinic, with budgets and alerts (AG-03, NT-05).</li>
+  <li><strong>Subprocessor list and data processing agreements</strong> with each clinic and vendor (16.4).</li>
+  <li><strong>Russian-language support</strong> across agent, templates and Mini App.</li>
+  <li><strong>Family booking</strong> (a parent booking for a child) is a frequent real request. It is out of scope now; decide when it comes back.</li>
+  <li><strong>The national e-prescription system</strong> is the legal channel for prescription-only medicines (RX-05).</li>
+  <li><strong>A trustworthy drug catalogue</strong> with a named source and version (RX-02); search alone is not enough.</li>
+  <li><strong>Recording consent per visit</strong>, withdrawal, room notice, and fast audio deletion (SC-01, SC-02).</li>
+  <li><strong>A fact check on AI drafts</strong> so invented medicines or doses cannot reach the record (SC-03).</li>
+  <li><strong>Allergies on the patient card</strong> and a blocking warning when prescribing (DW-03).</li>
+  <li><strong>Diagnosis codes chosen by the doctor (ICD-10)</strong>, so the history is searchable and reportable (DW-02).</li>
+  <li><strong>No medical content in Telegram message text or SMS</strong>; documents open only inside the verified Mini App (9.5).</li>
+</ul>
+
+<h2 id="decisions"><span class="num">20</span>Open decisions and external dependencies</h2>
+<h3>20.1 Owner decisions</h3>
+<div class="table-wrap"><table>
+<thead><tr><th class="id">#</th><th>Decision</th><th>Recommendation</th></tr></thead>
+<tbody>
+<tr><td class="id">D-1</td><td>Stock voice or cloned voice of a real person</td><td>Stock voice for the pilot; clone later only with a signed licence</td></tr>
+<tr><td class="id">D-2</td><td>Speech stack</td><td>Decide after the bake-off; start with option C using Aisha, with ElevenLabs as control</td></tr>
+<tr><td class="id">D-3</td><td>Phone agent mode per clinic</td><td>After hours first, then overflow, then AI first</td></tr>
+<tr><td class="id">D-4</td><td>Hold times for unpaid online bookings</td><td>15 minutes (online pay) / slot minus 10 minutes (pay at clinic)</td></tr>
+<tr><td class="id">D-5</td><td>Hosting location</td><td>Cut over to Uzbekistan before the pilot</td></tr>
+<tr><td class="id">D-6</td><td>Who may correct a stored document number</td><td>Owner only, with reason, audited</td></tr>
+<tr><td class="id">D-7</td><td>Call recording on or off</td><td>Off for the pilot; summaries only</td></tr>
+<tr><td class="id">D-8</td><td>Medical details for owner/manager role</td><td>No by default; separate clinical role if needed</td></tr>
+<tr><td class="id">D-9</td><td>Approve the proposed <code>AGENTS.md</code> payment wording (decision record 2026-10-08, section 5)</td><td>Approve, so the Rahmat adapter can be accepted once it meets the rules</td></tr>
+<tr><td class="id">D-10</td><td>Allow the AI recorder: change the 2026-10-05 product rule and <code>AGENTS.md</code> with the wording in 9.4</td><td><span class="chip c-ok">Approved 14 Nov 2026</span> Doctor signature and fact check mandatory</td></tr>
+<tr><td class="id">D-11</td><td>Drug catalogue source</td><td>Official national register export first; licensed database if no export is available</td></tr>
+<tr><td class="id">D-12</td><td>Retention of consultation audio and transcripts</td><td>Audio deleted at sign-off (24 h max); transcripts 30 days</td></tr>
+<tr><td class="id">D-13</td><td>Send to patient by default after signing</td><td>On by default; the doctor can switch off per item</td></tr>
+<tr><td class="id">D-14</td><td>Allow signed prescriptions and test orders to be shown to the patient in the bot/Mini App. <code>AGENTS.md</code> on <code>main</code> currently says doctor-authored clinical text is never shown to patients or the patient-facing bot. Proposed wording: <em>"A prescription or test order the treating doctor has signed and chosen to send may be shown to that patient, and only that patient, inside the verified Mini App. Notes, assessments and diagnoses stay doctor-only unless the doctor explicitly releases them."</em></td><td><span class="chip c-ok">Approved 14 Nov 2026</span> 9.5 can be built</td></tr>
+</tbody></table></div>
+<h3>20.2 Waiting on outside parties</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Party</th><th>Needed</th></tr></thead>
+<tbody>
+<tr><td>Rahmat (Multicard)</td><td>Merchant contract, API docs, webhook signature scheme, refund API, sandbox credentials, settlement report format</td></tr>
+<tr><td>Eskiz</td><td>Corporate contract, sender name, template approval (including one with a link), delivery-report callback, pricing per segment</td></tr>
+<tr><td>OneID operator</td><td>Agreement, <code>client_id</code>/<code>secret</code>/scope, test environment; their hosting requirements</td></tr>
+<tr><td>Telecom operator</td><td>SIP trunk or forwarding for each pilot clinic number; codecs; TLS/SRTP support; price</td></tr>
+<tr><td>Speech vendors</td><td>Aisha: API docs, SLA, written confirmation audio stays in Uzbekistan. ElevenLabs: Uzbek agent quality, data processing terms</td></tr>
+<tr><td>Ministry of Health</td><td>Approval to connect to the "Elektron retsept" module, its API and e-signature flow; confirmation of what a private clinic's own prescription sheet may contain</td></tr>
+<tr><td>Drug data</td><td>Official export or open-data API access key for the national register of medicines, or a licence for a commercial drug database</td></tr>
+<tr><td>Counsel / accountant</td><td>Data location for health, genetic and voice data; operator registration; fiscal receipts; consent texts for call and consultation recording; whether the AI recorder needs any medical-software registration</td></tr>
+</tbody></table></div>
+
+<h2 id="qa"><span class="num">21</span>Answers to the owner's questions</h2>
+<h4>Can patient data avoid being shared with the government? Are our databases checked?</h4>
+<p>No system can promise to refuse lawful requests. Authorities can demand data through legal procedures, and the personal-data supervisory body can inspect how an operator handles data. What we control:</p>
+<ul>
+  <li>we collect only what is needed;</li>
+  <li>identity data is encrypted;</li>
+  <li>every access is logged;</li>
+  <li>we connect to no state system except OneID, and OneID only returns the signing-in patient's details to us; we send nothing back.</li>
+</ul>
+<p>Counsel should confirm the registration and notification duties.</p>
+<h4>Do we need MyID?</h4>
+<p>No. It adds a face check and a per-check fee. OneID gives state-verified details without either. Phone possession plus the passport checked at the desk covers patients without OneID.</p>
+<h4>How do we connect MyGov or OneID?</h4>
+<p>Apply as a legal entity to the OneID operator with the system description, callback URL and requested fields. The draft application letter exists in the repository (<code>docs/oneid-ariza.md</code> on <code>main</code>), and the code is ready to switch on.</p>
+<h4>Can we get an enterprise contract with Eskiz?</h4>
+<p>Eskiz sells to businesses under contract. Request a corporate agreement in the operating company's name covering volume pricing, sender name, template approval and delivery reports. The terms were not verified for this document.</p>
+<h4>How do we learn how many patients have no smartphone?</h4>
+<p>Measure, don't estimate. Kassa totals already show how each queue number reached the patient: Telegram, SMS or neither. Add the phone-channel share and the SMS-only share to the monthly report for each pilot clinic.</p>
+<h4>Should we write our own backend instead of Supabase?</h4>
+<p>No. See 13.1. Add the voice gateway and the worker as services, and self-host Supabase if the data must be in Uzbekistan.</p>
+<h4>How do we run everything locally?</h4>
+<p>See 13.4.</p>
+
+<h2 id="sources">Sources</h2>
+<ul class="sources">
+  <li>Repository: <code>main</code> docs <code>decisions/2026-10-08-identity-online-booking-payments-sms.md</code>, <code>IDENTITY_VERIFICATION_ONEID.md</code>, <code>PILOT_ONLINE_SERVICES.md</code>, <code>CLINIC_OPERATIONS_PRODUCT.md</code>, <code>AGENTS.md</code>; <code>docs/DATABASE_AUDIT_2026-11-14.md</code></li>
+  <li><a href="https://kun.uz/en/news/2026/03/27/uzbekistan-amends-personal-data-law-to-facilitate-global-payment-systems">Kun.uz: Uzbekistan amends personal data law (March 2026)</a></li>
+  <li><a href="https://kun.uz/en/news/2026/08/04/uzbekistan-approves-49-countries-for-simplified-personal-data-transfers">Kun.uz: 49 countries approved for data transfers</a></li>
+  <li><a href="https://praelegal.uz/news-and-publications/uzbekistan-approves-list-of-countries-with-an-equivalent-level-of-personal-data-protection">Prae Legal: list of countries with equivalent protection</a></li>
+  <li><a href="https://bondstonelaw.com/data-localisation-in-uzbekistan/">Bondstone: Data localisation in Uzbekistan, 2026 reform</a></li>
+  <li><a href="https://elevenlabs.io/docs/help-center/other/what-languages-do-you-support">ElevenLabs: supported languages</a></li>
+  <li><a href="https://help.elevenlabs.io/hc/en-us/articles/29298127196945-Which-languages-can-I-use-with-ElevenAgents">ElevenLabs: languages for agents</a></li>
+  <li><a href="https://elevenlabs.io/docs/eleven-agents/phone-numbers/sip-trunking">ElevenLabs: SIP trunking</a></li>
+  <li><a href="https://aisha.group/en/products">Aisha: products</a> · <a href="https://aisha.group/en/blog/ovozli-ai-call-center">Aisha: voice AI for call centers</a></li>
+  <li><a href="https://gratanet.com/publications/electronic-prescription-in-uzbekistan-legal-regulation-and-market-transformation">GRATA: Electronic prescription in Uzbekistan, legal regulation</a></li>
+  <li><a href="https://kun.uz/en/news/2026/05/01/ministry-of-health-rejects-claims-of-electronic-prescription-rollback">Kun.uz: Ministry rejects claims of e-prescription rollback (May 2026)</a></li>
+  <li><a href="https://gov.uz/uz/ssv/pages/elektron-retsept-moduliga-ulanishga-ariza-qoldirish">Ministry of Health: application to connect to the Elektron retsept module</a></li>
+  <li><a href="https://www.spot.uz/ru/2026/04/04/rahmat-qr/">Spot.uz: Rahmat QR</a> · <a href="https://www.afisha.uz/ru/gorod/2026/04/01/paynet">Afisha.uz: Paynet and Rahmat</a></li>
+</ul>
+<p class="small">Facts about outside vendors and law were checked on 14 Nov 2026 from public sources and may change. Contract terms, prices and legal duties must be confirmed directly with each party and with counsel.</p>
+</main>
+</div>
