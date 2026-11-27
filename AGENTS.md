@@ -59,6 +59,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Preserve database-level overlap protection for active appointments.
 - Re-check availability server-side immediately before booking or rescheduling.
 - Payment status is server-controlled. A browser request can never mark payment as `paid`.
+- A provider callback endpoint answers only while that provider is configured with its secret; otherwise it is 404. A signature is never checked against an empty or default key, and a signed callback that reports a failed payment never marks anything paid.
 - Only `manual` payment is production-usable until Click/Payme adapters, signature verification, idempotent webhooks, and merchant credentials are implemented.
 
 ## Telegram, voice, and notifications

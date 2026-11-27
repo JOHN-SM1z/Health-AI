@@ -29,12 +29,16 @@ vi.mock("@/lib/rate-limit", () => ({
 }));
 vi.mock("@/lib/rate-limit-shared", () => ({ sharedRateLimit: async () => ({ ok: true, retryAfterSeconds: 0 }) }));
 
+const escalateMock = vi.fn(async (..._args: unknown[]) => {});
+vi.mock("@/lib/telegram/handlers", () => ({ escalateUrgentFromMiniApp: (...args: unknown[]) => escalateMock(...args) }));
+
 vi.mock("@/lib/analytics", () => ({ trackAnalytics: vi.fn(async () => {}) }));
 vi.mock("@/lib/notifications/jobs", () => ({ enqueueBookingNotifications: vi.fn(async () => {}) }));
 const loggerMock = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ logger: loggerMock }));
 
 import { POST } from "./route";
+import { urgentMessage } from "@/lib/safety/policy";
 
 const CLINIC = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -162,6 +166,54 @@ describe("POST /api/bookings", () => {
     expect(res.status).toBe(201);
     const { p_notes } = supabaseMock.rpc.mock.calls[0][1] as { p_notes?: string };
     expect(p_notes).toBe("Bosh og‘rig‘i, ko‘rik uchun");
+  });
+
+  it("stops the booking and alerts staff when the reason is urgent wording (R-02)", async () => {
+    stubSuccess();
+    resolveMock.mockResolvedValue({ patient: { id: "p-1", telegram_user_id: 123 }, identity: { telegramUserId: 123 } });
+    escalateMock.mockClear();
+    const res = await POST(
+      postReq({
+        initData: "valid",
+        doctorId: "22222222-2222-4222-8222-222222222222",
+        serviceId: "33333333-3333-4333-8333-333333333333",
+        startAt: "2030-01-01T05:00:00.000Z",
+        patientName: "Ali Valiyev",
+        phone: "+998901234567",
+        consent: true,
+        notes: "ko'kragim og'riyapti, nafas ololmayapman",
+      }),
+    );
+    const body = await res.json();
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("urgent_concern");
+    // The clinic-approved urgent-care message, word for word — never an improvised one.
+    expect(body.error).toBe(urgentMessage("ko'kragim og'riyapti, nafas ololmayapman"));
+    // Nothing was booked, and staff were alerted for this patient in this clinic.
+    expect(supabaseMock.rpc).not.toHaveBeenCalled();
+    expect(escalateMock).toHaveBeenCalledTimes(1);
+    expect(escalateMock.mock.calls[0][0]).toMatchObject({ clinicId: CLINIC.id, patientId: "p-1", telegramUserId: 123 });
+  });
+
+  it("still refuses an urgent reason when there is nobody to alert through Telegram (website booking)", async () => {
+    stubSuccess();
+    getOrCreateMock.mockResolvedValue({ id: "p-web" });
+    escalateMock.mockClear();
+    const res = await POST(
+      postReq({
+        doctorId: "22222222-2222-4222-8222-222222222222",
+        serviceId: "33333333-3333-4333-8333-333333333333",
+        startAt: "2030-01-01T05:00:00.000Z",
+        patientName: "Ali Valiyev",
+        phone: "+998901234567",
+        consent: true,
+        notes: "потерял сознание",
+      }),
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("urgent_concern");
+    expect(supabaseMock.rpc).not.toHaveBeenCalled();
+    expect(escalateMock).not.toHaveBeenCalled();
   });
 
   it("sends no notes when the reason is absent", async () => {

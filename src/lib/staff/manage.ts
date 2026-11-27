@@ -193,6 +193,7 @@ export async function setStaffDepartment(opts: { clinicId: string; actorId: stri
  */
 export async function resetStaffPassword(opts: { clinicId: string; actorId: string; profileId: string }): Promise<{ temporaryPassword: string }> {
   await managedMember(opts.clinicId, opts.actorId, opts.profileId);
+  await assertAccountOnlyHere(opts.clinicId, opts.profileId);
   const supabase = createAdminClient();
   const password = temporaryPassword();
   const { error } = await supabase.auth.admin.updateUserById(opts.profileId, { password });
@@ -206,6 +207,23 @@ export async function resetStaffPassword(opts: { clinicId: string; actorId: stri
     actor: { actorId: opts.actorId, actorType: "staff" },
   });
   return { temporaryPassword: password };
+}
+
+/**
+ * A password belongs to the account, not to one clinic. An account that also signs in at another clinic, or
+ * administers the platform, is not this clinic's to reset: the new temporary password would hand its owner's
+ * other sign-ins to whoever reads it here (security assessment 2026-11-27, API-3). Fails closed if it cannot check.
+ */
+async function assertAccountOnlyHere(clinicId: string, profileId: string): Promise<void> {
+  const db = createAdminClient();
+  const [elsewhere, platform] = await Promise.all([
+    db.from("staff_roles").select("clinic_id", { count: "exact", head: true }).eq("profile_id", profileId).neq("clinic_id", clinicId),
+    db.from("platform_admins").select("profile_id", { count: "exact", head: true }).eq("profile_id", profileId),
+  ]);
+  if (elsewhere.error || platform.error) throw new ApiError(503, "Hisobni tekshirib bo‘lmadi, keyinroq urinib ko‘ring", "account_check_failed");
+  if ((elsewhere.count ?? 0) > 0 || (platform.count ?? 0) > 0) {
+    throw new ApiError(409, "Bu hisob boshqa klinikada ham ishlatiladi — parolni hisob egasining o‘zi o‘zgartiradi", "account_shared");
+  }
 }
 
 /** The member's current role in this clinic; owners and the acting owner themself are off limits. */
