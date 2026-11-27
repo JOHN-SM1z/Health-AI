@@ -1,3 +1,4 @@
+import "server-only";
 import { env, aiEnabled } from "@/lib/env";
 import { logger } from "@/lib/logger";
 
@@ -50,18 +51,22 @@ export class OpenAICompatibleProvider implements AiProvider {
         ],
       }),
       signal: AbortSignal.timeout(30_000),
+    }).catch(() => {
+      throw new Error("AI provider request failed");
     });
 
     if (!res.ok) {
-      const detail = (await res.text()).slice(0, 300);
-      logger.error("ai provider error", { status: res.status, detail });
+      // Provider error bodies can contain the request or credentials.
+      logger.error("ai provider error", { status: res.status });
+      await res.body?.cancel().catch(() => {});
       throw new Error(`AI provider returned ${res.status}`);
     }
 
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const text = data.choices?.[0]?.message?.content?.trim();
+    const data = (await res.json().catch(() => {
+      throw new Error("AI provider returned an invalid response");
+    })) as { choices?: Array<{ message?: { content?: unknown } }> } | null;
+    const content = data?.choices?.[0]?.message?.content;
+    const text = typeof content === "string" ? content.trim() : "";
     if (!text) throw new Error("AI provider returned empty content");
     return text;
   }

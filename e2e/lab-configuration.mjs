@@ -45,10 +45,11 @@ async function run() {
     await m.getByRole("row", { name: new RegExp(`CBC${suffix}`) }).getByRole("button", { name: "Ko‘rsatkichlar" }).click();
     await m.getByRole("button", { name: "+ Ko‘rsatkich qo‘shish" }).click();
     await m.getByLabel("Ko‘rsatkich kodi").fill("HGB");
-    await m.getByLabel("Ko‘rsatkich nomi").fill("Gemoglobin");
+    const parameterName = `Gemoglobin ${suffix}`;
+    await m.getByLabel("Ko‘rsatkich nomi").fill(parameterName);
     await m.getByLabel("O‘lchov birligi").fill("g/L");
     await m.getByRole("button", { name: "Qo‘shish", exact: true }).click();
-    await m.getByText("Gemoglobin").waitFor();
+    await m.getByRole("dialog").getByText(parameterName, { exact: true }).waitFor();
 
     await m.getByRole("button", { name: "+ Me’yor" }).click();
     await m.getByLabel("Jins").selectOption("female");

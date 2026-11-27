@@ -16,14 +16,16 @@ export async function getOrCreateConversation(opts: {
 }): Promise<Conversation> {
   const supabase = createAdminClient();
 
-  const { data: existing } = await supabase
+  const { data: existing, error: lookupError } = await supabase
     .from("conversations")
     .select("*")
+    .eq("clinic_id", opts.clinicId)
     .eq("patient_id", opts.patientId)
     .eq("channel", opts.channel)
     .in("status", ["open", "assigned"])
     .maybeSingle();
 
+  if (lookupError) throw new Error("conversation_lookup_failed");
   if (existing) return existing;
 
   const { data, error } = await supabase
@@ -37,7 +39,7 @@ export async function getOrCreateConversation(opts: {
     .select("*")
     .single();
 
-  if (error) throw new Error(`conversation_create_failed: ${error.message}`);
+  if (error) throw new Error("conversation_create_failed");
   return data;
 }
 
@@ -62,29 +64,38 @@ export async function appendMessage(opts: {
     voice_message_id: opts.voiceMessageId ?? null,
     metadata: (opts.metadata ?? {}) as never,
   });
-  if (error) throw new Error(`message_insert_failed: ${error.message}`);
+  if (error) throw new Error("message_insert_failed");
 
   await supabase
     .from("conversations")
     .update({ last_message_at: new Date().toISOString() })
-    .eq("id", opts.conversationId);
+    .eq("id", opts.conversationId)
+    .eq("clinic_id", opts.clinicId);
 }
 
-export async function updateConversationState(conversationId: string, state: Record<string, unknown>) {
+export async function updateConversationState(clinicId: string, conversationId: string, state: Record<string, unknown>) {
   const supabase = createAdminClient();
-  await supabase
+  const { error } = await supabase
     .from("conversations")
     .update({ state: state as never })
-    .eq("id", conversationId);
+    .eq("id", conversationId)
+    .eq("clinic_id", clinicId)
+    .eq("status", "open")
+    .eq("ai_enabled", true);
+  if (error) throw new Error("conversation_state_update_failed");
 }
 
-/** True when the conversation is under human control (bot must stay silent). */
-export async function conversationIsHeld(conversationId: string): Promise<boolean> {
-  const supabase = createAdminClient();
-  const { data } = await supabase
-    .from("conversations")
-    .select("status, ai_enabled")
-    .eq("id", conversationId)
-    .maybeSingle();
-  return !!data && (data.status === "assigned" || data.ai_enabled === false);
+/** Automation is allowed only after verifying the conversation is open and enabled. */
+export async function conversationIsHeld(clinicId: string, conversationId: string): Promise<boolean> {
+  try {
+    const { data, error } = await createAdminClient()
+      .from("conversations")
+      .select("status, ai_enabled")
+      .eq("id", conversationId)
+      .eq("clinic_id", clinicId)
+      .maybeSingle();
+    return !!error || data?.status !== "open" || data.ai_enabled !== true;
+  } catch {
+    return true;
+  }
 }

@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getClinicFromRequest } from "@/lib/clinics/context";
-import { resolvePatientFromInitData, devIdentityAllowed, getOrCreateWebPatient } from "@/lib/patients/identity";
+import { resolvePatientFromInitData, resolveExistingPatientFromInitData, devIdentityAllowed, getOrCreateWebPatient } from "@/lib/patients/identity";
 import { onlineProfile } from "@/lib/patients/online-identity";
 import { handleApiError, ApiError, ok, fail } from "@/lib/api/errors";
 import { parseBody } from "@/lib/api/validate";
@@ -15,6 +15,8 @@ import { getPaymentProvider } from "@/lib/payments/provider";
 import { transitionPaymentStatus } from "@/lib/payments/status";
 import { logger } from "@/lib/logger";
 import { BookingError, IDEMPOTENCY_KEY_PATTERN, createAppointment } from "@/lib/booking/engine";
+import { detectUrgency, urgentMessage } from "@/lib/safety/policy";
+import { escalateUrgentFromMiniApp } from "@/lib/telegram/handlers";
 
 export const dynamic = "force-dynamic";
 
@@ -44,19 +46,24 @@ export async function POST(request: NextRequest) {
     }
 
     const clinic = await getClinicFromRequest(request);
+    if (clinic.online_identity_required && !body.initData) {
+      throw new ApiError(409, "Qabulga yozilish uchun klinikaning Telegram ilovasida shaxsingizni tasdiqlang", "identity_required");
+    }
     let patient;
     let source: "telegram_mini_app" | "telegram_chat" | "web" = "telegram_mini_app";
 
     if (body.initData) {
-      const resolved = await resolvePatientFromInitData(body.initData, clinic.id);
+      const resolved = clinic.online_identity_required
+        ? await resolveExistingPatientFromInitData(body.initData, clinic.id)
+        : await resolvePatientFromInitData(body.initData, clinic.id);
       if (!resolved) {
         throw new ApiError(401, "Telegram identifikatori tasdiqlanmadi", "invalid_init_data");
       }
-      patient = resolved.patient;
-      // The clinic requires passport/JSHSHIR + date of birth first (Mini App identity step); the server holds the line.
-      if (clinic.online_identity_required && !(await onlineProfile(clinic.id, patient.id)).complete) {
+      // Resolve an existing card without creating one when this clinic requires completed identity.
+      if (!resolved.patient || (clinic.online_identity_required && !(await onlineProfile(clinic.id, resolved.patient.id)).complete)) {
         throw new ApiError(409, "Avval hujjat va tug‘ilgan sanani kiriting", "identity_required");
       }
+      patient = resolved.patient;
       // Attribution only: the patient's identity is verified via initData
       // above; the source merely records which entry point was used. A
       // Telegram patient can never be mis-attributed as web, and a
@@ -72,6 +79,27 @@ export async function POST(request: NextRequest) {
         fullName: body.patientName,
       });
       source = "web";
+    }
+
+    // The reason a patient writes for the visit is patient text like any other (R-02): urgent wording stops the
+    // booking with the approved urgent-care message and alerts staff. It is never just stored as a note on an
+    // appointment days away (security assessment 2026-11-27, AI-2).
+    if (body.notes && detectUrgency(body.notes) === "urgent") {
+      const telegramUserId = (patient as { telegram_user_id?: number | null }).telegram_user_id ?? null;
+      if (telegramUserId) {
+        try {
+          await escalateUrgentFromMiniApp({
+            clinicId: clinic.id,
+            patientId: patient.id,
+            telegramUserId,
+            text: body.notes,
+            patientLabel: String(telegramUserId),
+          });
+        } catch {
+          logger.error("booking urgent escalation could not be completed", { clinicId: clinic.id });
+        }
+      }
+      return fail(urgentMessage(body.notes), 409, "urgent_concern", { clinicPhone: clinic.phone ?? null });
     }
 
     const supabase = createAdminClient();

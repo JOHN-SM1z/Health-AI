@@ -74,10 +74,26 @@ function signError(note: string, code = "-1") {
 }
 
 /**
+ * Click callbacks are accepted only while Click is the configured provider
+ * with its merchant secret and service id. Without the secret the signature
+ * would be an MD5 over public values and an EMPTY key — one anybody can
+ * compute — so a forged "payment completed" would be accepted (security
+ * assessment 2026-11-27, SAST-1). Unconfigured, the endpoints do not exist.
+ */
+export function clickCallbacksEnabled(): boolean {
+  return env.PAYMENT_PROVIDER === "click" && !!env.CLICK_SECRET_KEY && !!env.CLICK_SERVICE_ID;
+}
+
+/**
  * Handles one Click callback. `complete` selects the prepare vs complete
  * processing path (Click registers two separate webhook URLs).
  */
 export async function handleClickWebhook(requestBody: string, complete: boolean): Promise<Response> {
+  if (!clickCallbacksEnabled()) {
+    return new Response("Not found", { status: 404 });
+  }
+  const secretKey = env.CLICK_SECRET_KEY as string;
+
   const params = parseParams(requestBody);
   if (!params) {
     return signError("INVALID PAYLOAD", "-6");
@@ -87,7 +103,7 @@ export async function handleClickWebhook(requestBody: string, complete: boolean)
   const signatureValid = clickWebhookSignatureValid({
     clickTransId: params.clickTransId,
     serviceId: params.serviceId,
-    secretKey: env.CLICK_SECRET_KEY ?? "",
+    secretKey,
     merchantTransId: params.merchantTransId,
     amount: params.amount,
     error: params.error,
@@ -96,15 +112,19 @@ export async function handleClickWebhook(requestBody: string, complete: boolean)
     signString: params.signString,
   });
   if (!signatureValid) {
-    logger.warn("click webhook signature mismatch", {
-      clickTransId: params.clickTransId,
-      complete,
-    });
+    logger.warn("click webhook signature mismatch", { complete });
     return signError("SIGN CHECK FAILED!");
   }
 
-  if (env.CLICK_SERVICE_ID && params.serviceId !== env.CLICK_SERVICE_ID) {
+  if (params.serviceId !== env.CLICK_SERVICE_ID) {
     return signError("INSUFFICIENT PERMISSIONS", "-2");
+  }
+
+  // A correctly signed callback can still report a FAILED or cancelled payment (error below zero).
+  // It must never reserve or complete one: only "0" means Click took the money.
+  if (params.error !== "0") {
+    logger.warn("click webhook reported a failed payment", { complete });
+    return signError("TRANSACTION CANCELLED", "-9");
   }
 
   // 2. Atomic idempotency claim (one winner per click_trans_id).
@@ -125,7 +145,7 @@ export async function handleClickWebhook(requestBody: string, complete: boolean)
       .maybeSingle();
 
     if (fetchError || !payment) {
-      logger.warn("click webhook unknown appointment", { merchantTransId: params.merchantTransId });
+      logger.warn("click webhook unknown appointment", { complete });
       return signError("TRANSACTION NOT FOUND", "-5");
     }
 
@@ -155,7 +175,7 @@ export async function handleClickWebhook(requestBody: string, complete: boolean)
           clickTransId: params.clickTransId,
         });
       }
-      await finishWebhookProcessing("click", params.clickTransId);
+      await finishWebhookProcessing("click", params.clickTransId, claimed);
       return Response.json({
         error_code: "0",
         error_note: "Success",
@@ -185,7 +205,7 @@ export async function handleClickWebhook(requestBody: string, complete: boolean)
         clickTransId: params.clickTransId,
       });
     }
-    await finishWebhookProcessing("click", params.clickTransId);
+    await finishWebhookProcessing("click", params.clickTransId, claimed);
     return Response.json({
       error_code: "0",
       error_note: "Success",
@@ -193,14 +213,10 @@ export async function handleClickWebhook(requestBody: string, complete: boolean)
       merchant_trans_id: params.merchantTransId,
       merchant_prepare_id: params.merchantPrepareId ?? "",
     });
-  } catch (e) {
+  } catch {
     // Release the claim so the next Click delivery retries.
-    await releaseWebhookProcessing("click", params.clickTransId).catch(() => {});
-    logger.error("click webhook handler failed", {
-      error: e instanceof Error ? e.message : String(e),
-      clickTransId: params.clickTransId,
-      complete,
-    });
+    await releaseWebhookProcessing("click", params.clickTransId, claimed).catch(() => {});
+    logger.error("click webhook handler failed", { complete });
     return signError("INTERNAL ERROR", "-9");
   }
 }

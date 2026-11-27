@@ -100,7 +100,7 @@ Local run after a clean `supabase db reset`:
   - status codes;
   - test and parameter code lists;
   - a data-processing agreement for what patient data may be sent.
-  
+
   A real adapter must also pin its base URL to HTTPS hosts it expects.
 - **Cancelling at the provider** (stopping is local only), and **amended results** from a provider. An amended result is flagged as `result_conflict` for a person; it is not turned into a correction automatically.
 - **Unit conversion.** Not done; mismatches are held for review.

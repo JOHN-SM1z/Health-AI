@@ -113,9 +113,21 @@ export async function signIn(browser, report, email, viewport = "desktop", { exp
   // shows its permission state after a 403 (expectForbidden).
   const expected = (text) =>
     (expectDenials && /Failed to load resource: .* (404|409|410|415)/.test(text)) || (expectForbidden && /Failed to load resource: .* 403/.test(text));
-  page.on("console", (m) => m.type() === "error" && !expected(m.text()) && report.problems.push(`[${email}] console: ${m.text()}`));
-  page.on("pageerror", (e) => report.problems.push(`[${email}] pageerror: ${e.message}`));
-  page.on("response", (r) => r.status() >= 500 && report.problems.push(`[${email}] HTTP ${r.status()} ${r.url()}`));
+  const onConsole = (m) => m.type() === "error" && !expected(m.text()) && report.problems.push(`[${email}] console: ${m.text()}`);
+  const onPageError = (e) => report.problems.push(`[${email}] pageerror: ${e.message}`);
+  const onResponse = (r) => r.status() >= 500 && report.problems.push(`[${email}] HTTP ${r.status()} ${r.url()}`);
+  page.on("console", onConsole);
+  page.on("pageerror", onPageError);
+  page.on("response", onResponse);
+  const close = context.close.bind(context);
+  context.close = async (...args) => {
+    // Closing a context intentionally interrupts its live polling requests.
+    // Stop observing before teardown; errors during the workflow still fail.
+    page.off("console", onConsole);
+    page.off("pageerror", onPageError);
+    page.off("response", onResponse);
+    return close(...args);
+  };
   await page.goto(`${BASE}/login`);
   await page.getByLabel("Login").fill(email);
   await page.getByLabel("Parol").fill(PASSWORD);

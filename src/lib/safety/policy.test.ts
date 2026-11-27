@@ -41,15 +41,24 @@ describe("detectUrgency", () => {
   });
 
   it("flags near-miss spellings of ko'krak og'rig'i", () => {
-    expect(detectUrgency("ko`krak og`rig`i")).toBe("none"); // typographic apostrophes not covered — safe default
+    expect(detectUrgency("ko`krak og`rig`i")).toBe("urgent");
     expect(detectUrgency("ko'krak og'rig'i kuchaydi")).toBe("urgent");
+  });
+
+  it.each([
+    ["Uzbek Latin", "Bolamning isitmasi yuqori, tutqanoq bo‘lyapti"],
+    ["Uzbek Cyrillic", "Кўкрагим оғрияпти, нафас олишим қийин"],
+    ["Russian", "У ребёнка высокая температура и судороги"],
+  ])("escalates the %s urgent phrasing from the specification audit", (_language, input) => {
+    expect(detectUrgency(input)).toBe("urgent");
   });
 });
 
 describe("urgentMessage", () => {
-  it("returns the Russian message for Cyrillic input and Uzbek otherwise", () => {
+  it("uses the approved message for Russian or Uzbek input", () => {
     expect(urgentMessage("нужна скорая")).toBe(URGENT_MESSAGE_RU);
     expect(urgentMessage("tez yordam kerak")).toBe(URGENT_MESSAGE_UZ);
+    expect(urgentMessage("Кўкрагим оғрияпти, нафас олишим қийин")).toBe(URGENT_MESSAGE_UZ);
   });
 });
 

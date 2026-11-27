@@ -1,4 +1,4 @@
-import { createElement, type ReactNode } from "react";
+import { createElement, type ReactNode, type InputHTMLAttributes, type SelectHTMLAttributes } from "react";
 import { cn } from "@/components/mini-app/ui";
 
 export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
@@ -115,7 +115,8 @@ export function AInput({
   className,
   autoComplete,
   "aria-label": ariaLabel,
-}: {
+  ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> & {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -126,6 +127,7 @@ export function AInput({
 }) {
   return (
     <input
+      {...props}
       type={type}
       value={value}
       aria-label={ariaLabel}
@@ -143,7 +145,8 @@ export function ASelect({
   options,
   className,
   "aria-label": ariaLabel,
-}: {
+  ...props
+}: Omit<SelectHTMLAttributes<HTMLSelectElement>, "value" | "onChange" | "children"> & {
   value: string;
   onChange: (v: string) => void;
   options: Array<{ value: string; label: string }>;
@@ -152,6 +155,7 @@ export function ASelect({
 }) {
   return (
     <select
+      {...props}
       value={value}
       aria-label={ariaLabel}
       onChange={(e) => onChange(e.target.value)}

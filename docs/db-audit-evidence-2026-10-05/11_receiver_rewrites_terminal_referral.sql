@@ -1,0 +1,3 @@
+begin;
+update referrals set status='accepted' where id='00000000-0000-4000-8000-000000000101';update referrals set status='completed' where id='00000000-0000-4000-8000-000000000101';set local role authenticated; set local request.jwt.claim.role='authenticated'; set local request.jwt.claim.sub='00000000-0000-4000-8000-000000000014';update referrals set clinical_handoff_note='SYNTHETIC_REPLACEMENT',expires_at=null where id='00000000-0000-4000-8000-000000000101';select status,clinical_handoff_note='SYNTHETIC_REPLACEMENT',expires_at is null from referrals where id='00000000-0000-4000-8000-000000000101';
+rollback;

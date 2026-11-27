@@ -300,6 +300,7 @@ describeDb("external laboratory integration (mock provider, real database)", () 
     const garbled = await provider({ invalidStatus: true });
     const d = await receivedItem();
     await sendOut(d.itemId, garbled);
+    await due((await request(d.itemId)).id);
     await processExternalLabRequests();
     expect(await request(d.itemId)).toMatchObject({ status: "sent", attempts: 1, last_error_code: "unreadable_status" });
 
@@ -325,6 +326,7 @@ describeDb("external laboratory integration (mock provider, real database)", () 
       const providerId = await provider({ results: { "CBC-X": values } });
       const { itemId } = await receivedItem();
       await sendOut(itemId, providerId);
+      await due((await request(itemId)).id);
       await processExternalLabRequests();
       const req = await request(itemId);
       expect(req).toMatchObject({ status: "in_progress", review_reason: reason, result_id: null });
@@ -335,6 +337,7 @@ describeDb("external laboratory integration (mock provider, real database)", () 
     const partial = await provider({ results: { "CBC-X": [{ code: "HB", value: 128 }] } });
     const { itemId } = await receivedItem();
     await sendOut(itemId, partial);
+    await due((await request(itemId)).id);
     await processExternalLabRequests();
     const req = await request(itemId);
     expect(req).toMatchObject({ status: "resulted", review_reason: "result_incomplete" });

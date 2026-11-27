@@ -66,7 +66,7 @@ Everything moved or copied is recorded on the merge.
    - the two records disagree on date of birth, sex, PINFL or passport/ID;
    - they hold two different Telegram identities;
    - the duplicate has live work: upcoming or ongoing visits, open referrals, active lab orders or unfinished results, open conversations, pending appointment notifications, or import rows waiting.
-   
+
    Differing names or phones are warnings: the canonical record's value stays.
 4. **Confirm.** The staff member gives a reason and confirms it is the same person, checked against a document.
 5. **Merge** (`merge_patients`), in one transaction:

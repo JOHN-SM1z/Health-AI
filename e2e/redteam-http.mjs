@@ -274,9 +274,9 @@ async function run() {
       }
       // The desk's own lookup (passport + date of birth) finds the card and answers without the identity values.
       const desk = await session(browser, DEMO.reception);
-      const found = await desk.api("GET", `/api/operations/patients?q=${ID.document}&dob=${ID.dob}`);
+      const found = await desk.api("POST", "/api/operations/patients", { query: ID.document, dateOfBirth: ID.dob });
       check(found.status === 200 && JSON.parse(found.text).data.exact === true && !leaks(found.text), "reception: passport + date of birth finds the card, no identity in the answer");
-      const alone = await desk.api("GET", `/api/operations/patients?q=${ID.document}`);
+      const alone = await desk.api("POST", "/api/operations/patients", { query: ID.document });
       check(alone.status === 400, `reception: a passport without a date of birth is refused (${alone.status})`);
       const card = await desk.api("GET", `/api/admin/patients?id=${X}`);
       check(card.status === 200 && !leaks(card.text), "reception: the patient card says whether a date of birth is recorded, never what it is");

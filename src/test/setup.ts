@@ -1,16 +1,8 @@
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { loadTestEnvironment } from "./environment";
 
 /**
- * Loads .env.test.example for unit tests, then the real .env when present
- * (values already set in the environment keep precedence, so CI-injected
- * variables win). Server-only modules (supabase clients, env validation)
- * need real-ish values even when never called.
+ * Tests use only .env.test (when present) or safe example defaults. Explicit
+ * CI/shell values keep precedence, but every database target must be local.
+ * Never load the application's .env or .env.local into destructive suites.
  */
-const envFile = resolve(process.cwd(), ".env");
-const fallbackFile = resolve(process.cwd(), ".env.test.example");
-if (existsSync(envFile)) {
-  process.loadEnvFile(envFile);
-} else if (existsSync(fallbackFile)) {
-  process.loadEnvFile(fallbackFile);
-}
+loadTestEnvironment();

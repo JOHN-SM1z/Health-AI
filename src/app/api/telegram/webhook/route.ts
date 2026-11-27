@@ -17,6 +17,7 @@ import {
 import { answerCallbackQuery } from "@/lib/telegram/bot";
 import { handleQueueFollowStart, handleQueueStatus } from "@/lib/telegram/queue-follow";
 import { QUEUE_STATUS_CALLBACK } from "@/lib/operations/queue-messages";
+import { detectUrgency } from "@/lib/safety/policy";
 
 export const dynamic = "force-dynamic";
 // 120s, not the 60s default: the voice-message pipeline (handleVoiceConsent)
@@ -27,12 +28,14 @@ export const dynamic = "force-dynamic";
 // cloudbuild.yaml, which is set to the same 120s for the same reason.
 export const maxDuration = 120;
 
+type TelegramChat = { id?: number; type?: string };
+
 type TelegramUpdate = {
   update_id?: number;
   message?: {
     message_id?: number;
     text?: string;
-    chat?: { id?: number };
+    chat?: TelegramChat;
     from?: { id?: number; first_name?: string; last_name?: string; username?: string };
     voice?: { file_id: string; file_unique_id?: string; duration?: number; mime_type?: string; file_size?: number };
     contact?: { phone_number?: string; user_id?: number; first_name?: string };
@@ -40,7 +43,7 @@ type TelegramUpdate = {
   callback_query?: {
     id?: string;
     data?: string;
-    message?: { chat?: { id?: number } };
+    message?: { chat?: TelegramChat };
     from?: { id?: number; first_name?: string; last_name?: string; username?: string };
   };
 };
@@ -61,7 +64,7 @@ export async function POST(request: NextRequest) {
   const botUsername = request.nextUrl.searchParams.get("bot") ?? "";
   const resolved = await resolveClinicByBotUsername(botUsername);
   if (!resolved) {
-    logger.warn("telegram webhook rejected: unknown bot", { bot: botUsername, ip });
+    logger.warn("telegram webhook rejected: unknown bot");
     return new NextResponse("Unauthorized", { status: 401 });
   }
   const { clinicId, integration } = resolved;
@@ -74,11 +77,11 @@ export async function POST(request: NextRequest) {
   try {
     expected = botWebhookSecret(integration.telegram_bot_token);
   } catch {
-    logger.error("telegram webhook rejected: webhook secret env missing", { clinicId, ip });
+    logger.error("telegram webhook rejected: webhook secret env missing", { clinicId });
     return new NextResponse("Unauthorized", { status: 401 });
   }
   if (!timingSafeCheck(secret, expected)) {
-    logger.warn("telegram webhook rejected: missing/invalid secret token", { clinicId, bot: botUsername, ip });
+    logger.warn("telegram webhook rejected: missing/invalid secret token", { clinicId });
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
@@ -95,7 +98,7 @@ export async function POST(request: NextRequest) {
   // (voice file_id references only), so anything larger is not a real update.
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   if (contentLength > 100_000) {
-    logger.warn("telegram webhook rejected: oversized payload", { bytes: contentLength, ip });
+    logger.warn("telegram webhook rejected: oversized payload", { bytes: contentLength });
     return NextResponse.json({ ok: false, error: "payload too large" }, { status: 413 });
   }
 
@@ -103,24 +106,28 @@ export async function POST(request: NextRequest) {
   try {
     const raw = await request.text();
     if (raw.length > 100_000) {
-      logger.warn("telegram webhook rejected: oversized payload body", { bytes: raw.length, ip });
+      logger.warn("telegram webhook rejected: oversized payload body", { bytes: raw.length });
       return NextResponse.json({ ok: false, error: "payload too large" }, { status: 413 });
     }
-    update = JSON.parse(raw) as TelegramUpdate;
+    const body: unknown = JSON.parse(raw);
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ ok: false, error: "bad update" }, { status: 400 });
+    }
+    update = body as TelegramUpdate;
   } catch {
     return NextResponse.json({ ok: false, error: "bad json" }, { status: 400 });
   }
 
   const updateId = update.update_id;
-  if (typeof updateId !== "number") {
-    logger.warn("telegram webhook: update without update_id", { ip });
+  if (typeof updateId !== "number" || !Number.isSafeInteger(updateId)) {
+    logger.warn("telegram webhook: update without update_id");
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
   // 4. Idempotency: atomically claim this update. The first delivery wins;
   //    duplicates return success without dispatching any work. Claims are
   //    per (bot, update_id) so two clinics' bots never collide.
-  let claimed: boolean;
+  let claimed: string | null;
   try {
     claimed = await claimWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId));
   } catch {
@@ -134,17 +141,13 @@ export async function POST(request: NextRequest) {
 
   try {
     await dispatchUpdate(update, clinicId);
-  } catch (e) {
-    logger.error("telegram update handling failed", {
-      updateId,
-      clinicId,
-      error: e instanceof Error ? e.message : String(e),
-    });
-    await releaseWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId)).catch(() => {});
+  } catch {
+    logger.error("telegram update handling failed", { updateId, clinicId });
+    await releaseWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId), claimed).catch(() => {});
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 
-  await finishWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId)).catch(() => {});
+  await finishWebhookProcessing(`${botUsername}:${clinicId}`, String(updateId), claimed).catch(() => {});
   return NextResponse.json({ ok: true });
 }
 
@@ -155,7 +158,9 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
   if (message) {
     const chatId = message.chat?.id;
     const rawFrom = message.from;
-    if (!chatId || !rawFrom || !rawFrom.id) return;
+    // Patient conversations, appointments, and voice consent belong in DMs.
+    // Telegram includes Chat.type even when a callback's message is inaccessible.
+    if (message.chat?.type !== "private" || !chatId || chatId !== rawFrom?.id) return;
     const from = {
       id: rawFrom.id,
       first_name: rawFrom.first_name,
@@ -170,7 +175,7 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
       return;
     }
 
-    const text = message.text?.trim() ?? "";
+    const text = typeof message.text === "string" ? message.text.trim() : "";
 
     // The kassa's QR: "/start v_<token>" follows that visit's queue only —
     // no patient card is created or linked for it.
@@ -180,7 +185,7 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
       return;
     }
 
-    if (text.startsWith("/")) {
+    if (text.startsWith("/") && detectUrgency(text) !== "urgent") {
       const command = text.split(" ")[0];
       await handleTelegramCommand({ clinicId, chatId, from, command });
       return;
@@ -199,8 +204,8 @@ async function dispatchUpdate(update: TelegramUpdate, clinicId: string) {
   if (callback) {
     const chatId = callback.message?.chat?.id;
     const rawFrom = callback.from;
-    const data = callback.data ?? "";
-    if (!chatId || !rawFrom || !rawFrom.id) return;
+    const data = typeof callback.data === "string" ? callback.data : "";
+    if (callback.message?.chat?.type !== "private" || !chatId || chatId !== rawFrom?.id) return;
     const from = {
       id: rawFrom.id,
       first_name: rawFrom.first_name,
@@ -254,7 +259,7 @@ function isMenuButton(text: string): boolean {
   // labels above are bare text. Strip leading non-word characters so taps on
   // the menu reach handleMenuButton instead of the free-text/AI path.
   const normalized = text.replace(/^\W+/, "");
-  return MENU_BUTTONS.some((b) => normalized === b || normalized.startsWith(b.slice(0, 12)));
+  return MENU_BUTTONS.includes(normalized);
 }
 
 async function requestHumanHandoffFromCallback(

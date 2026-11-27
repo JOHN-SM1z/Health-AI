@@ -5,11 +5,13 @@ vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({ from: () =>
 vi.mock("@/lib/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { recordAudit, recordAudits } from "@/lib/audit";
+import { logger } from "@/lib/logger";
 
 const event = { clinicId: "clinic-a", action: "referral_viewed", entityType: "referrals", entityId: "r-1" };
 
 beforeEach(() => {
   insert.mockReset();
+  vi.mocked(logger.error).mockClear();
 });
 
 describe("recordAudit", () => {
@@ -27,6 +29,14 @@ describe("recordAudit", () => {
 
     insert.mockRejectedValue(new Error("network"));
     await expect(recordAudit({ ...event, strict: true })).rejects.toMatchObject({ status: 503 });
+  });
+
+  it("keeps thrown database details out of the audit failure log", async () => {
+    const sentinel = "SYNTHETIC_SENSITIVE_AUDIT_EXCEPTION";
+    insert.mockRejectedValue(new Error(sentinel));
+    await expect(recordAudit({ ...event, strict: true })).rejects.toMatchObject({ status: 503, code: "audit_unavailable" });
+    expect(logger.error).toHaveBeenCalledWith("audit insert threw", { action: event.action, count: 1 });
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(sentinel);
   });
 
   it("resolves in strict mode when the write succeeds", async () => {

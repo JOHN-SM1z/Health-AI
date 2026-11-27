@@ -21,6 +21,8 @@ import { ReferralDialog } from "@/components/doctor/referral-dialog";
 import { LabWorkspace } from "@/components/doctor/lab-history";
 import { ClinicalRecordForm, type RecordDraft } from "@/components/doctor/clinical-record-form";
 import { ReferralLifecycle } from "@/components/doctor/referral-lifecycle";
+import { PatientAllergies, type Allergy } from "@/components/doctor/patient-allergies";
+import { PrescriptionWorkspace } from "@/components/doctor/prescription-workspace";
 import { RECORD_CATEGORY_LABELS, type RecordCategory } from "@/lib/clinical-records/categories";
 
 type Appointment = {
@@ -194,6 +196,8 @@ export default function DoctorPatientWorkspacePage() {
   const [declineFor, setDeclineFor] = useState<string | null>(null);
   const [declineReason, setDeclineReason] = useState("");
   const [notice, setNotice] = useState<ReactNode | null>(null);
+  // Loaded by the allergy card; the prescription screen names the matched allergy from it.
+  const [allergies, setAllergies] = useState<Allergy[] | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -320,6 +324,8 @@ export default function DoctorPatientWorkspacePage() {
           </span>
         )}
       </div>
+
+      <PatientAllergies patientId={workspace.patient.id} onLoaded={setAllergies} />
 
       {workspace.referrals.length > 0 && (
         <Section title="Yo‘llanmalar">
@@ -508,6 +514,15 @@ export default function DoctorPatientWorkspacePage() {
           ) : (
             <p className="text-sm text-ink-muted">Bu bemor bilan qabul boshlay olmaysiz.</p>
           )}
+        </Card>
+      </Section>
+
+      <Section
+        title="Retsept"
+        subtitle="Dorini ro‘yxatdan tanlang, doza va tartibni kiriting, imzolang. Retsept bilan beriladigan dorilar «Elektron retsept» tizimida rasmiylashtiriladi."
+      >
+        <Card>
+          <PrescriptionWorkspace patientId={workspace.patient.id} appointmentId={current?.appointmentId ?? null} allergies={allergies} />
         </Card>
       </Section>
 

@@ -14,12 +14,14 @@ import { assertSameOrigin } from "@/lib/api/same-origin";
 export async function parseBody<T extends z.ZodTypeAny>(
   request: Request,
   schema: T,
+  options?: { maxBytes: number },
 ): Promise<z.infer<T>> {
   assertSameOrigin(request);
   let raw: unknown;
   try {
-    raw = await request.json();
-  } catch {
+    raw = options ? await readLimitedJson(request, options.maxBytes) : await request.json();
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw new ApiError(400, "Noto‘g‘ri so‘rov formati", "bad_json");
   }
   const result = schema.safeParse(raw);
@@ -28,6 +30,28 @@ export async function parseBody<T extends z.ZodTypeAny>(
     throw new ApiError(400, first?.message ?? "Noto‘g‘ri ma‘lumot", "validation");
   }
   return result.data;
+}
+
+async function readLimitedJson(request: Request, maxBytes: number): Promise<unknown> {
+  const reader = request.body?.getReader();
+  if (!reader) throw new SyntaxError("Missing JSON body");
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let body = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return JSON.parse(body + decoder.decode()) as unknown;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) {
+        void reader.cancel().catch(() => {});
+        throw new ApiError(413, "So‘rov juda uzun", "body_too_large");
+      }
+      body += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export const phoneSchema = z

@@ -58,13 +58,18 @@ export const eskizProvider: SmsProvider = {
       try {
         res = await fetch(`${BASE()}/api/message/sms/send`, { method: "POST", headers: { authorization: `Bearer ${bearer}` }, body: form, signal: AbortSignal.timeout(15_000) });
       } catch {
-        return { accepted: false, error: "network" };
+        // The provider may have accepted before the connection timed out.
+        return { accepted: false, error: "network", outcome: "unknown" };
       }
       if (res.status === 401 && !retry) continue; // token expired: log in again once
       const json = (await res.json().catch(() => null)) as { id?: string | number; status?: string; message?: string } | null;
       if (!res.ok || json?.id === undefined || json?.id === null) {
-        logger.warn("eskiz did not accept the sms", { status: res.status, eskizStatus: json?.status ?? null });
-        return { accepted: false, error: `http_${res.status}` };
+        logger.warn("eskiz send response unusable", { status: res.status });
+        return {
+          accepted: false,
+          error: `http_${res.status}`,
+          outcome: res.ok || res.status >= 500 ? "unknown" : "rejected",
+        };
       }
       return { accepted: true, providerMessageId: String(json.id) };
     }

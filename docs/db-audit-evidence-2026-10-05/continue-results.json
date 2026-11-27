@@ -1,0 +1,32 @@
+[
+  {
+    "file": "diagnostic-audit-trigger-reorder.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260910000001_webhook_claim_recovery.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260910000002_appointment_source_web.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260911000001_patient_operational_notes.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260920000001_referrals.sql",
+    "exit": 0,
+    "errors": ""
+  },
+  {
+    "file": "20260920000002_referral_handoff_workflow.sql",
+    "exit": 3,
+    "errors": "psql:/Users/jahonshoh/Health-AI/supabase/migrations/20260920000002_referral_handoff_workflow.sql:36: ERROR:  relation \"public.clinical_notes\" does not exist\n"
+  }
+]

@@ -5,6 +5,7 @@ import { parseBody, uuidSchema } from "@/lib/api/validate";
 import { ApiError, handleApiError, ok } from "@/lib/api/errors";
 import { createClinicalRecord } from "@/lib/clinical-records/service";
 import { CLINICAL_RECORD_TYPES } from "@/lib/clinical-records/categories";
+import { isAcceptableDiagnosisCode } from "@/lib/prescribing/catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,12 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
     const { id } = await ctx.params;
     if (!uuidSchema.safeParse(id).success) throw new ApiError(404, "Bemor topilmadi", "patient_not_found");
     const body = await parseBody(request, recordSchema);
-    const record = await createClinicalRecord(doctor, id, { ...body, code: body.code || null });
+    // DW-02: once an ICD-10 catalogue is loaded, a diagnosis code is one the doctor picked from it.
+    const code = body.recordType === "diagnosis" && body.code ? body.code.toUpperCase() : body.code || null;
+    if (body.recordType === "diagnosis" && code && !(await isAcceptableDiagnosisCode(code))) {
+      throw new ApiError(400, "Bu kod XKT-10 ro‘yxatida topilmadi — kodni ro‘yxatdan tanlang", "icd10_code_unknown");
+    }
+    const record = await createClinicalRecord(doctor, id, { ...body, code });
     return ok({ record }, { status: record.replayed ? 200 : 201 });
   } catch (e) {
     return handleApiError(e);

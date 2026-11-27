@@ -54,7 +54,7 @@ vi.mock("@/lib/telegram/bot", () => ({
 }));
 
 import { handleVoiceCorrect, handleVoiceConsent, handleTelegramMessage, buildMainKeyboard, buildHeldKeyboard, exitOperatorChat, handleMenuButton } from "@/lib/telegram/handlers";
-import { conversationIsHeld, appendMessage } from "@/lib/telegram/store";
+import { conversationIsHeld, appendMessage, getOrCreateConversation } from "@/lib/telegram/store";
 import { generateReceptionistReply } from "@/lib/ai/receptionist";
 import { sendTelegramMessage } from "@/lib/telegram/bot";
 import { URGENT_MESSAGE_UZ } from "@/lib/safety/policy";
@@ -79,6 +79,8 @@ beforeEach(() => {
                   conversation_id: "conv-1",
                   transcription: "Boshim og'riyapti",
                   transcription_status: "transcribed",
+                  consent_given: true,
+                  expires_at: null,
                   conversations: { patients: { telegram_user_id: 777000 } },
                 },
                 error: null,
@@ -194,40 +196,41 @@ describe("buildHeldKeyboard", () => {
 });
 
 describe("exitOperatorChat", () => {
-  it("releases a held conversation back to the bot and shows the main menu", async () => {
-    let updateValues: Record<string, unknown> | undefined;
-    supabaseMock.from.mockImplementation((table: string) => {
-      if (table === "conversations") {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              maybeSingle: vi.fn(async () => ({ data: { status: "assigned", ai_enabled: false }, error: null })),
-            })),
-          })),
-          update: (values: Record<string, unknown>) => {
-            updateValues = values;
-            return { eq: vi.fn(async () => ({ error: null })) };
-          },
-        };
-      }
-      return {};
-    });
+  const exit = () => exitOperatorChat({
+    clinicId: "clinic-1",
+    patientId: "p-1",
+    conversationId: "conv-1",
+    chatId: 777000,
+    patientLabel: "@ali",
+  });
+  function mockHold(data: unknown, error: unknown = null, released: unknown = { id: "conv-1" }) {
+    const lookup = {
+      eq: vi.fn().mockImplementation(() => lookup),
+      maybeSingle: vi.fn().mockResolvedValue({ data, error }),
+    };
+    const release = {
+      eq: vi.fn().mockImplementation(() => release),
+      is: vi.fn().mockImplementation(() => release),
+      select: vi.fn().mockImplementation(() => release),
+      maybeSingle: vi.fn().mockResolvedValue({ data: released, error: null }),
+    };
+    const update = vi.fn(() => release);
+    supabaseMock.from.mockImplementation((table: string) => table === "conversations"
+      ? { select: vi.fn(() => lookup), update }
+      : { insert: vi.fn().mockResolvedValue({ error: null }) });
+    return { update, release };
+  }
 
-    await exitOperatorChat({
-      clinicId: "clinic-1",
-      patientId: "p-1",
-      conversationId: "conv-1",
-      chatId: 777000,
-      patientLabel: "@ali",
-    });
+  it("lets the patient cancel an unassigned, nonurgent operator request", async () => {
+    const { update, release } = mockHold({ status: "open", ai_enabled: false, urgent_at: null });
+    await exit();
 
-    expect(updateValues).toEqual({
-      status: "open",
-      ai_enabled: true,
-      taken_over_by: null,
-      taken_over_at: null,
-      released_at: expect.any(String),
-    });
+    expect(update).toHaveBeenCalledWith({ ai_enabled: true, released_at: expect.any(String) });
+    expect(release.eq).toHaveBeenCalledWith("clinic_id", "clinic-1");
+    expect(release.eq).toHaveBeenCalledWith("patient_id", "p-1");
+    expect(release.eq).toHaveBeenCalledWith("status", "open");
+    expect(release.eq).toHaveBeenCalledWith("ai_enabled", false);
+    expect(release.is).toHaveBeenCalledWith("urgent_at", null);
     expect(sendTelegramMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         chatId: 777000,
@@ -239,27 +242,10 @@ describe("exitOperatorChat", () => {
   });
 
   it("just shows the main menu when the conversation is not held", async () => {
-    supabaseMock.from.mockImplementation((table: string) => {
-      if (table === "conversations") {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              maybeSingle: vi.fn(async () => ({ data: { status: "open", ai_enabled: true }, error: null })),
-            })),
-          })),
-        };
-      }
-      return {};
-    });
+    const { update } = mockHold({ status: "open", ai_enabled: true, urgent_at: null });
+    await exit();
 
-    await exitOperatorChat({
-      clinicId: "clinic-1",
-      patientId: "p-1",
-      conversationId: "conv-1",
-      chatId: 777000,
-      patientLabel: "@ali",
-    });
-
+    expect(update).not.toHaveBeenCalled();
     expect(sendTelegramMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         chatId: 777000,
@@ -267,6 +253,31 @@ describe("exitOperatorChat", () => {
       }),
       "clinic-1",
     );
+  });
+
+  it.each([
+    ["assigned by staff", { status: "assigned", ai_enabled: false, urgent_at: null }, null],
+    ["paused for an urgent concern", { status: "open", ai_enabled: false, urgent_at: "2030-01-01T00:00:00Z" }, null],
+    ["unknown after a database failure", null, { code: "57014" }],
+  ])("leaves automation paused when the conversation is %s", async (_reason, data, error) => {
+    const { update } = mockHold(data, error);
+    await exit();
+
+    expect(update).not.toHaveBeenCalled();
+    expect(sendTelegramMessage).toHaveBeenCalledWith(expect.objectContaining({
+      replyMarkup: buildHeldKeyboard(),
+      text: expect.not.stringContaining("Endi bot yana javob beradi"),
+    }), "clinic-1");
+  });
+
+  it("does not announce a return to the bot if the guarded release loses a race", async () => {
+    mockHold({ status: "open", ai_enabled: false, urgent_at: null }, null, null);
+    await exit();
+
+    expect(sendTelegramMessage).toHaveBeenCalledWith(expect.objectContaining({
+      replyMarkup: buildHeldKeyboard(),
+      text: expect.not.stringContaining("Endi bot yana javob beradi"),
+    }), "clinic-1");
   });
 });
 
@@ -297,9 +308,10 @@ describe("handleVoiceCorrect", () => {
 
 describe("urgent wording reaches the clinic's own staff", () => {
   let updates: Array<Record<string, unknown>>;
-  function conversationsRecording(result: { data: unknown; error: unknown }) {
+  function conversationsRecording(result: { data: unknown; error: unknown }, auditError: unknown = null) {
     updates = [];
     supabaseMock.from.mockImplementation((table: string) => {
+      if (table === "audit_events") return { insert: vi.fn(async () => ({ error: auditError })) };
       if (table !== "conversations") return {};
       return {
         update: vi.fn((values: Record<string, unknown>) => {
@@ -338,6 +350,44 @@ describe("urgent wording reaches the clinic's own staff", () => {
     conversationsRecording({ data: null, error: { code: "57014" } });
     await send();
     expect(vi.mocked(sendTelegramMessage).mock.calls[0][0].text).toBe(URGENT_MESSAGE_UZ);
+  });
+
+  it("sends the safety message even if saving the inbound text and urgent flag fail", async () => {
+    vi.mocked(appendMessage).mockRejectedValueOnce(new Error("synthetic write failure"));
+    supabaseMock.from.mockImplementationOnce(() => {
+      throw new Error("synthetic database failure");
+    });
+    await send();
+
+    expect(sendTelegramMessage).toHaveBeenCalledWith(expect.objectContaining({ text: URGENT_MESSAGE_UZ }), "clinic-1");
+    expect(generateReceptionistReply).not.toHaveBeenCalled();
+  });
+
+  it("sends only the approved message if the staff flag succeeds and the audit write fails", async () => {
+    conversationsRecording({ data: [{ id: "conv-1" }], error: null }, { code: "57014" });
+    await send();
+
+    expect(updates).toHaveLength(1);
+    expect(sendTelegramMessage).toHaveBeenCalledWith(expect.objectContaining({ text: URGENT_MESSAGE_UZ }), "clinic-1");
+    expect(generateReceptionistReply).not.toHaveBeenCalled();
+  });
+
+  it("sends only the approved message through the verified clinic bot if the conversation cannot open", async () => {
+    vi.mocked(getOrCreateConversation).mockRejectedValueOnce(new Error("synthetic initialization failure"));
+    await send();
+
+    expect(sendTelegramMessage).toHaveBeenCalledExactlyOnceWith({ chatId: 777000, text: URGENT_MESSAGE_UZ }, "clinic-1");
+    expect(appendMessage).not.toHaveBeenCalled();
+    expect(generateReceptionistReply).not.toHaveBeenCalled();
+  });
+
+  it("lets Telegram retry if the initial conversation lookup and emergency notice delivery both fail", async () => {
+    vi.mocked(getOrCreateConversation).mockRejectedValueOnce(new Error("synthetic initialization failure"));
+    vi.mocked(sendTelegramMessage).mockResolvedValueOnce(null);
+
+    await expect(send()).rejects.toThrow("telegram_urgent_notice_unverified");
+    expect(appendMessage).not.toHaveBeenCalled();
+    expect(generateReceptionistReply).not.toHaveBeenCalled();
   });
 });
 

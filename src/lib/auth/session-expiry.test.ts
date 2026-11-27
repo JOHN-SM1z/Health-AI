@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 import { createHmac } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { resolve } from "node:path";
 import { localDbAvailable } from "@/test/local-db";
 
 /**
@@ -16,7 +14,7 @@ import { localDbAvailable } from "@/test/local-db";
  * A live valid session is verified as the baseline so the test is not
  * vacuous.
  *
- * Requires: `npm run db:reset-local` + `.env` with local keys. Skips
+ * Requires: `npm run db:reset-local` + `.env.test` with local keys. Skips
  * cleanly when the stack is down.
  */
 
@@ -26,21 +24,11 @@ const ANON_KEY = process.env.SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABA
 const OWNER_EMAIL = process.env.OWNER_EMAIL ?? "";
 const OWNER_PASSWORD = process.env.OWNER_PASSWORD ?? "";
 
-// Local Supabase default JWT secret; read from the stack's start-secrets
-// when available so a custom secret still passes.
+// Use only the explicit test stack secret, never another project's files.
 function localJwtSecret(): string {
-  const dir = resolve(process.cwd(), "supabase/.temp/start-secrets");
-  if (existsSync(dir)) {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const envFile = resolve(dir, entry.name, "env/docker.env");
-      if (!entry.isDirectory() || !existsSync(envFile)) continue;
-      for (const line of readFileSync(envFile, "utf8").split("\n")) {
-        const m = line.match(/^SUPABASE_INTERNAL_JWT_SECRET=(.+)$/);
-        if (m) return m[1];
-      }
-    }
-  }
-  return "super-secret-jwt-token-with-at-least-32-characters-long";
+  const secret = process.env.SUPABASE_JWT_SECRET;
+  if (!secret) throw new Error("Set SUPABASE_JWT_SECRET for the disposable local test stack.");
+  return secret;
 }
 
 function signJwt(payload: Record<string, unknown>): string {

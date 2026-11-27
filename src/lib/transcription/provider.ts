@@ -1,3 +1,4 @@
+import "server-only";
 import { env, transcriptionEnabled } from "@/lib/env";
 import { logger } from "@/lib/logger";
 
@@ -16,35 +17,36 @@ export interface TranscriptionProvider {
   transcribe(opts: { file: Buffer; mimeType: string; fileName: string }): Promise<TranscriptionResult>;
 }
 
-/** OpenAI-compatible audio transcriptions endpoint (OpenAI, Groq, ...). */
-export class OpenAICompatibleTranscriber implements TranscriptionProvider {
+/** OpenAI-compatible protocol on an approved speech endpoint. */
+class OpenAICompatibleTranscriber implements TranscriptionProvider {
   readonly name = "openai-compatible";
 
-  async transcribe(opts: { file: Buffer; mimeType: string; fileName: string }): Promise<TranscriptionResult> {
-    const baseUrl = env.TRANSCRIPTION_BASE_URL;
-    const apiKey = env.TRANSCRIPTION_API_KEY;
-    if (!baseUrl || !apiKey) {
-      throw new Error("Transcription provider not configured");
-    }
+  constructor(
+    private readonly endpoint: string,
+    private readonly apiKey: string,
+    private readonly model: string,
+  ) {}
 
+  async transcribe(opts: { file: Buffer; mimeType: string; fileName: string }): Promise<TranscriptionResult> {
     const form = new FormData();
     form.append(
       "file",
       new Blob([new Uint8Array(opts.file)], { type: opts.mimeType }),
       opts.fileName || "voice.ogg",
     );
-    form.append("model", env.TRANSCRIPTION_MODEL);
+    form.append("model", this.model);
 
-    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/audio/transcriptions`, {
+    const res = await fetch(this.endpoint, {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: { Authorization: `Bearer ${this.apiKey}` },
       body: form,
+      redirect: "error",
       signal: AbortSignal.timeout(60_000),
     });
 
     if (!res.ok) {
-      const detail = (await res.text()).slice(0, 300);
-      logger.error("transcription provider error", { status: res.status, detail });
+      // Error bodies may echo audio/transcripts, identifiers or credentials.
+      logger.error("transcription provider error", { status: res.status });
       throw new Error(`Transcription provider returned ${res.status}`);
     }
 
@@ -55,37 +57,33 @@ export class OpenAICompatibleTranscriber implements TranscriptionProvider {
   }
 }
 
-let shared: TranscriptionProvider | null = null;
-
 /** Speech services outside Uzbekistan; a patient's spoken health concern is never sent to them. */
 const FOREIGN_SPEECH_HOSTS = /(^|\.)(openai\.com|groq\.com|deepgram\.com|assemblyai\.com|googleapis\.com|azure\.com|amazonaws\.com|elevenlabs\.io|speechmatics\.com|rev\.ai)$/i;
 
 /**
- * The provider for a patient's spoken health concern in the Mini App (owner decision 2026-10-08: local voice models,
- * e.g. Voicelab/Aisha or a self-hosted Whisper). Only an OpenAI-compatible endpoint whose host is explicitly allowed in
- * HEALTH_AUDIO_ALLOWED_HOSTS and is not a known foreign service; otherwise null and the patient types instead.
+ * The provider for a patient's spoken health concern in the Mini App and Telegram
+ * (owner decision 2026-10-08). Only an HTTPS endpoint whose host is explicitly
+ * allowed in HEALTH_AUDIO_ALLOWED_HOSTS and is not a known foreign service.
  * (Aisha/Voicelab's own API is not wired yet — it needs their documentation and keys.)
  */
 export function getHealthTranscriptionProvider(): TranscriptionProvider | null {
-  if (!transcriptionEnabled() || !env.TRANSCRIPTION_BASE_URL) return null;
+  const { TRANSCRIPTION_BASE_URL, TRANSCRIPTION_API_KEY, TRANSCRIPTION_MODEL } = env;
+  if (!transcriptionEnabled() || !TRANSCRIPTION_BASE_URL || !TRANSCRIPTION_API_KEY) return null;
   const allowed = (env.HEALTH_AUDIO_ALLOWED_HOSTS ?? "")
     .split(",")
-    .map((h) => h.trim().toLowerCase())
+    .map((h) => h.trim().toLowerCase().replace(/\.$/, ""))
     .filter(Boolean);
-  let host: string;
+  let endpoint: URL;
   try {
-    host = new URL(env.TRANSCRIPTION_BASE_URL).hostname.toLowerCase();
+    endpoint = new URL(TRANSCRIPTION_BASE_URL);
   } catch {
     return null;
   }
-  if (!allowed.includes(host) || FOREIGN_SPEECH_HOSTS.test(host)) return null;
-  if (!shared) shared = new OpenAICompatibleTranscriber();
-  return shared;
-}
-
-/** Active transcription provider or null when disabled. */
-export function getTranscriptionProvider(): TranscriptionProvider | null {
-  if (!transcriptionEnabled()) return null;
-  if (!shared) shared = new OpenAICompatibleTranscriber();
-  return shared;
+  const host = endpoint.hostname.toLowerCase().replace(/\.$/, "");
+  if (
+    endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.search || endpoint.hash ||
+    !allowed.includes(host) || FOREIGN_SPEECH_HOSTS.test(host)
+  ) return null;
+  endpoint.pathname = `${endpoint.pathname.replace(/\/$/, "")}/audio/transcriptions`;
+  return new OpenAICompatibleTranscriber(endpoint.toString(), TRANSCRIPTION_API_KEY, TRANSCRIPTION_MODEL);
 }

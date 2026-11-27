@@ -241,11 +241,28 @@ describeDb("lab notifications (real database)", () => {
     expect(await jobs({ orderId: imported!.id })).toEqual([]);
   });
 
-  it("retries a failed patient message, gives up after the limit, and skips a changed recipient (wrong patient)", async () => {
+  it("sends a finalized-result notice once, through the claim fence, without result values or test names", async () => {
+    const pid = await patient(tg + 6);
+    const { orderId, itemId } = await consultationOrder(pid);
+    const { resultId } = await receivedAndSubmitted(itemId, orderId, 140);
+    await rpc("verify_lab_result", { p_clinic_id: clinicA, p_result_id: resultId, p_verified_by: people.lab2 });
+    await makeDue();
+    await processDueNotificationJobs(200, [clinicA]);
+    await processDueNotificationJobs(200, [clinicA]);
+    const job = (await jobs({ resultId })).find((j) => j.channel === "telegram");
+    expect(job).toMatchObject({ status: "sent", attempts: 1 });
+    const calls = vi.mocked(sendTelegramMessage).mock.calls.filter(([p]) => Number(p.chatId) === tg + 6);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toBe(clinicA);
+    expect(calls[0][0].text).toContain("Laboratoriya natijangiz tayyor");
+    expect(calls[0][0].text).not.toMatch(/\b140\b|Gemoglobin|Xabar testi|g\/L/);
+  });
+
+  it("quarantines uncertain patient sends without retry and skips a changed recipient (wrong patient)", async () => {
     await settings({ notifyPatientOnCancel: true });
     const send = vi.mocked(sendTelegramMessage);
 
-    // Failed then retried: the first send fails, the next run delivers it.
+    // A null response may hide acceptance. Quarantine it rather than risk a duplicate.
     const p1 = await patient(tg + 2);
     const o1 = await consultationOrder(p1);
     await admin.from("lab_orders").update({ status: "cancelled", cancelled_by: people.reception, cancelled_at: new Date().toISOString(), cancel_reason: "x x" }).eq("id", o1.orderId);
@@ -254,16 +271,16 @@ describeDb("lab notifications (real database)", () => {
     await makeDue();
     await processDueNotificationJobs(200, [clinicA, clinicB]);
     let job = (await jobs({ orderId: o1.orderId })).find((j) => j.channel === "telegram")!;
-    expect(job).toMatchObject({ status: "pending", attempts: 1, error: "send failed, retrying" });
+    expect(job).toMatchObject({ status: "quarantined", attempts: 1, error: "delivery outcome unknown; review before resending" });
     await processDueNotificationJobs(200, [clinicA, clinicB]);
     job = (await jobs({ orderId: o1.orderId })).find((j) => j.channel === "telegram")!;
-    expect(job).toMatchObject({ status: "sent", attempts: 2 });
-    expect(send.mock.calls.filter(([p]) => Number(p.chatId) === tg + 2)).toHaveLength(2);
+    expect(job).toMatchObject({ status: "quarantined", attempts: 1 });
+    expect(send.mock.calls.filter(([p]) => Number(p.chatId) === tg + 2)).toHaveLength(1);
     // Duplicate run: nothing is sent again.
     await processDueNotificationJobs(200, [clinicA, clinicB]);
-    expect(send.mock.calls.filter(([p]) => Number(p.chatId) === tg + 2)).toHaveLength(2);
+    expect(send.mock.calls.filter(([p]) => Number(p.chatId) === tg + 2)).toHaveLength(1);
 
-    // Always failing: gives up after max attempts.
+    // Repeated worker runs never resend an uncertain delivery.
     const p2 = await patient(tg + 3);
     const o2 = await consultationOrder(p2);
     await admin.from("lab_orders").update({ status: "cancelled", cancelled_by: people.reception, cancelled_at: new Date().toISOString(), cancel_reason: "x x" }).eq("id", o2.orderId);
@@ -274,7 +291,8 @@ describeDb("lab notifications (real database)", () => {
       await processDueNotificationJobs(200, [clinicA, clinicB]);
     }
     job = (await jobs({ orderId: o2.orderId })).find((j) => j.channel === "telegram")!;
-    expect(job).toMatchObject({ status: "failed", attempts: 3, error: "send failed after retries" });
+    expect(job).toMatchObject({ status: "quarantined", attempts: 1, error: "delivery outcome unknown; review before resending" });
+    expect(send.mock.calls.filter(([p]) => Number(p.chatId) === tg + 3)).toHaveLength(1);
 
     // Wrong patient: the record's Telegram identity changed before sending → skipped, nothing sent to the old chat.
     const p3 = await patient(tg + 4);

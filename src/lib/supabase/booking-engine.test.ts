@@ -166,7 +166,8 @@ describeDb("booking engine — one authoritative booking, at most one active app
       select pg_get_constraintdef(oid) as def from pg_constraint
        where conrelid = 'public.appointments'::regclass and conname = 'no_overlapping_active_appointments'`;
     expect(c.def).toBe(
-      "EXCLUDE USING gist (clinic_id WITH =, doctor_id WITH =, tstzrange(start_at, end_at, '[)'::text) WITH &&) WHERE ((status <> ALL (ARRAY['cancelled'::appointment_status, 'no_show'::appointment_status])))",
+      // Walk-in queue encounters (20261116000001) are not reservations and are excluded.
+      "EXCLUDE USING gist (clinic_id WITH =, doctor_id WITH =, tstzrange(start_at, end_at, '[)'::text) WITH &&) WHERE (((status <> ALL (ARRAY['cancelled'::appointment_status, 'no_show'::appointment_status])) AND (NOT queue_encounter)))",
     );
   });
 
@@ -424,11 +425,23 @@ describeDb("booking engine — one authoritative booking, at most one active app
     expect((await book({ doctor: doctorNight, service: service30, start: at(day, "13:30") })).error_code).toBeNull();
   });
 
-  it("applies the clinic's own timezone rules, DST included (Europe/Berlin, 25 October 2026)", async () => {
+  it("applies the clinic's own timezone rules, DST included (Europe/Berlin, the next end of summer time)", async () => {
+    // Europe leaves summer time on the last Sunday of October. Use the next one still in the future, so
+    // the booking engine does not refuse it as a past slot.
+    const lastOctoberSunday = (year: number) => {
+      const d = new Date(Date.UTC(year, 9, 31));
+      d.setUTCDate(31 - d.getUTCDay());
+      return d;
+    };
+    const thisYear = new Date().getUTCFullYear();
+    let sunday = lastOctoberSunday(thisYear);
+    if (sunday.getTime() - 2 * 86_400_000 <= Date.now()) sunday = lastOctoberSunday(thisYear + 1);
+    const saturday = new Date(sunday.getTime() - 86_400_000);
+    const iso = (d: Date, hourUtc: number) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hourUtc)).toISOString();
     // Before the change (CEST, UTC+2) 09:00 local = 07:00Z; after it (CET, UTC+1) 09:00 = 08:00Z.
     const base = { clinic: clinicBerlin, doctor: doctorBerlin, service: serviceBerlin, patient: patientBerlin };
-    expect((await book({ ...base, start: "2026-10-24T07:00:00.000Z" })).error_code).toBeNull(); // Sat 09:00 CEST
-    expect((await book({ ...base, start: "2026-10-25T07:00:00.000Z" })).error_code).toBe("outside_working_hours"); // Sun 08:00 CET
-    expect((await book({ ...base, start: "2026-10-25T08:00:00.000Z" })).error_code).toBeNull(); // Sun 09:00 CET
+    expect((await book({ ...base, start: iso(saturday, 7) })).error_code).toBeNull(); // Sat 09:00 CEST
+    expect((await book({ ...base, start: iso(sunday, 7) })).error_code).toBe("outside_working_hours"); // Sun 08:00 CET
+    expect((await book({ ...base, start: iso(sunday, 8) })).error_code).toBeNull(); // Sun 09:00 CET
   });
 });

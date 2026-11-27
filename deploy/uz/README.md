@@ -46,7 +46,7 @@ Check with `dig +short healthai.uz api.healthai.uz` from your Mac before section
 
 ```bash
 apt update && apt -y upgrade
-apt -y install ca-certificates curl git ufw fail2ban unattended-upgrades postgresql-client rsync
+apt -y install ca-certificates curl git ufw fail2ban unattended-upgrades postgresql-client openssl rsync
 timedatectl set-timezone Asia/Tashkent
 # Firewall: SSH and web only. Postgres (5432), Kong (8000), Studio (3000) stay closed.
 ufw default deny incoming && ufw default allow outgoing
@@ -194,19 +194,37 @@ Nothing is lost: the cloud database was not changed after step 2.
 
 ## 8. Backups (non-negotiable on your own server)
 
+Generate a recovery key and certificate on a separate recovery machine with OpenSSL 3. Keep the private key encrypted and store it separately from the backups. Install only the public certificate on the app host as `/opt/healthai/secrets/backup-recipient.pem`.
+
+```bash
+umask 077
+openssl req -x509 -newkey rsa:3072 -sha256 -days 730 \
+  -subj '/CN=Health AI backup recovery' \
+  -keyout backup-recovery-key.pem -out backup-recipient.pem
+```
+
+Confirm the installed certificate fingerprint with the recovery operator. Then install the backup job and configure its second-machine destination.
+
 ```bash
 install -m 700 /opt/healthai/app/deploy/uz/scripts/backup.sh /usr/local/bin/healthai-backup
 ( crontab -l 2>/dev/null; echo '17 2 * * * BACKUP_REMOTE=backup@<second-machine>:/srv/healthai /usr/local/bin/healthai-backup >> /var/log/healthai-backup.log 2>&1' ) | crontab -
 ```
 
-- Every night at 02:17: a full database dump and the stored files.
-- 14 days are kept on the server and copied to the second machine.
+- The 02:17 job streams the database and storage into two encrypted files per backup set. It requires a valid recipient certificate and the storage directory. The script keeps 14 days of local sets and copies each completed encrypted set to the configured destination.
+- Alert on job failure, a missing daily set on the second machine, and certificate expiry. Only use off-site sets with a `.complete` marker. If a transfer fails, copy the two local `.cms` files again and publish the marker on the destination after both copies succeed. Set retention on the second machine and account for plaintext files from previous versions separately.
+- Rotate the recipient before expiry and retain the recovery key for every set still under retention. See the [OpenSSL CMS reference](https://docs.openssl.org/3.0/man1/openssl-cms/) for the encryption and decryption options.
 
-**Once a month, test a restore:**
-- create a scratch database with `docker exec supabase-db createdb -U postgres restore_check`;
-- run `pg_restore -d restore_check` on the latest dump;
-- count patients;
-- drop the database.
+Once a month, retrieve an off-site set on the recovery machine. Decrypt both files in a protected scratch directory and confirm each command exits successfully before using its output.
+
+```bash
+umask 077
+openssl cms -decrypt -binary -inform DER -in database.dump.cms \
+  -recip backup-recipient.pem -inkey backup-recovery-key.pem -out database.dump
+openssl cms -decrypt -binary -inform DER -in storage.tar.gz.cms \
+  -recip backup-recipient.pem -inkey backup-recovery-key.pem -out storage.tar.gz
+```
+
+Restore the database and storage into an isolated stack with the matching Supabase version. Verify Auth, database integrity, and private file access before recording the drill result and removing the temporary plaintext files.
 
 ## 9. Running it
 

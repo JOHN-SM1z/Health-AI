@@ -1,0 +1,14 @@
+
+ RUN  v4.1.10 /Users/jahonshoh/Health-AI
+
+{"level":"error","ts":"2026-10-05T17:00:53.522Z","msg":"notification job processing failed, releasing claim","jobId":"job-1","error":"db connection reset"}
+{"level":"error","ts":"2026-10-05T17:00:53.523Z","msg":"notification job processing failed, releasing claim","jobId":"job-1","error":"db connection reset"}
+{"level":"error","ts":"2026-10-05T17:00:53.528Z","msg":"notification sent but not recorded","jobId":"job-1","error":"db write failed"}
+{"level":"error","ts":"2026-10-05T17:00:53.528Z","msg":"failed to update notification job","jobId":"job-1","status":"failed","error":"db write failed"}
+{"level":"error","ts":"2026-10-05T17:00:53.528Z","msg":"notification job processing failed, releasing claim","jobId":"job-bad","error":"db connection reset"}
+{"level":"error","ts":"2026-10-05T17:00:53.528Z","msg":"notification job processing failed, releasing claim","jobId":"job-ok","error":"db connection reset"}
+
+ Test Files  6 passed | 1 skipped (7)
+      Tests  48 passed | 5 skipped (53)
+   Start at  22:00:52
+   Duration  1.12s (transform 527ms, setup 76ms, import 2.96s, tests 58ms, environment 1ms)

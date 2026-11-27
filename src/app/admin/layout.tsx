@@ -3,7 +3,7 @@ import Link from "next/link";
 import { adminWorkspaceRedirect, requirePanelContext, hasAnyRole, hasRole, isCallCenterStaff, canViewPaymentDynamics, KASSA_ROLES, RECEPTION_ROLES } from "@/lib/auth/staff";
 import { NavLink } from "@/components/admin/nav-link";
 import { NavStrip } from "@/components/admin/nav-strip";
-import { CalendarDays, DoorOpen, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge, Activity, Building2, CreditCard } from "lucide-react";
+import { CalendarDays, DoorOpen, LayoutDashboard, MessagesSquare, Stethoscope, Scissors, Sparkles, Settings, BarChart3, HeartPulse, ClipboardList, Users, Wallet, UserCog, KeyRound, FlaskConical, Receipt, TestTube, Merge, Activity, Building2, CreditCard, Pill } from "lucide-react";
 import { getClinicSubscription } from "@/lib/billing/subscription";
 import { SubscriptionBanner } from "@/components/admin/subscription-banner";
 import { labCan } from "@/lib/labs/permissions";
@@ -38,6 +38,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin/services", label: "Xizmatlar", icon: <Scissors className="h-4 w-4" />, show: isManagement },
     { href: "/admin/lab", label: "Laboratoriya", icon: <FlaskConical className="h-4 w-4" />, show: isManagement },
     { href: "/admin/specialties", label: "Yo‘nalishlar", icon: <Sparkles className="h-4 w-4" />, show: isManagement },
+    // The clinic's formulary decides what doctors can prescribe: owner and administrator only (the API enforces the same).
+    { href: "/admin/formulary", label: "Dorilar ro‘yxati", icon: <Pill className="h-4 w-4" />, show: hasAnyRole(ctx.roles, ["owner", "admin"]) },
     { href: "/admin/faqs", label: "Savol-javoblar", icon: <MessagesSquare className="h-4 w-4" />, show: isManagement },
     { href: "/admin/analytics", label: "Tahlillar", icon: <BarChart3 className="h-4 w-4" />, show: isManagement },
     { href: "/admin/lab-analytics", label: "Laboratoriya tahlili", icon: <Activity className="h-4 w-4" />, show: isManagement },

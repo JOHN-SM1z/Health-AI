@@ -17,7 +17,7 @@ import { localDbAvailable } from "@/test/local-db";
  *
  * and the interruptions and edge cases around it: collection before payment,
  * duplicate order / sample / submission, self-verification, a verification
- * race, a failed Telegram send and its retry, AI disabled and unavailable,
+ * race, an uncertain Telegram send and its quarantine, AI disabled and unavailable,
  * cancellation and refund, correction, missing values, a single lab person
  * (no second verifier), an inactive test, an inactive doctor, a patient
  * mismatch and a cross-clinic mismatch.
@@ -267,21 +267,18 @@ describeDb("lab critical path (QA, real database and routes)", () => {
     expect(JSON.stringify(box.body)).not.toMatch(/\b112\b/);
   });
 
-  it("6. the patient's Telegram message: a failed send is retried, sent once, never with the value", async () => {
+  it("6. the patient's Telegram message: uncertain delivery is quarantined without resending", async () => {
     const [job] = await telegramJobs(s.result);
     expect(job).toMatchObject({ type: "lab_result_ready", status: "pending", patient_telegram_user_id: tg.patient });
     telegram.fail = 1;
     await admin.from("notification_jobs").update({ scheduled_for: new Date(Date.now() - 1000).toISOString() }).eq("id", job.id);
     await processDueNotificationJobs(50, [clinicA]);
-    expect((await telegramJobs(s.result))[0]).toMatchObject({ status: "pending", attempts: 1 });
+    expect((await telegramJobs(s.result))[0]).toMatchObject({ status: "quarantined", attempts: 1 });
     await admin.from("notification_jobs").update({ scheduled_for: new Date(Date.now() - 1000).toISOString() }).eq("id", job.id);
     await processDueNotificationJobs(50, [clinicA]);
     await processDueNotificationJobs(50, [clinicA]); // a second worker run sends nothing again
-    expect((await telegramJobs(s.result))[0]).toMatchObject({ status: "sent" });
-    const mine = telegram.sent.filter((m) => m.chatId === tg.patient);
-    expect(mine).toHaveLength(1);
-    expect(mine[0].text).toContain("Laboratoriya natijangiz tayyor");
-    expect(mine[0].text).not.toMatch(/\b112\b|Gemoglobin|Umumiy qon/);
+    expect((await telegramJobs(s.result))[0]).toMatchObject({ status: "quarantined", attempts: 1 });
+    expect(telegram.sent.filter((m) => m.chatId === tg.patient)).toHaveLength(0);
   });
 
   it("7. the patient's result view and secure document access (signed link, real file); another patient sees neither", async () => {

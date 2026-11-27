@@ -17,6 +17,7 @@ describeDb("voice retention — the scheduled purge on the real database", () =>
   const conversation = randomUUID();
   const expired = randomUUID();
   const current = randomUUID();
+  const previouslyPurged = randomUUID();
 
   beforeAll(async () => {
     sql = postgres(DB_URL, { max: 2, onnotice: () => {} });
@@ -24,12 +25,15 @@ describeDb("voice retention — the scheduled purge on the real database", () =>
     await sql`insert into public.patients (id, clinic_id, full_name) values (${patient}, ${clinic}, ${`Voice patient ${suffix}`})`;
     await sql`insert into public.conversations (id, clinic_id, patient_id, channel) values (${conversation}, ${clinic}, ${patient}, 'telegram')`;
     await sql`insert into public.voice_messages ${sql([
-      { id: expired, clinic_id: clinic, conversation_id: conversation, telegram_file_id: "tg-file-1", transcription: "Qabulga yozilmoqchiman", corrected_transcription: null, expires_at: new Date(Date.now() - 60_000) },
-      { id: current, clinic_id: clinic, conversation_id: conversation, telegram_file_id: "tg-file-2", transcription: "Narxlar qancha", corrected_transcription: null, expires_at: new Date(Date.now() + 86_400_000) },
+      { id: expired, clinic_id: clinic, conversation_id: conversation, telegram_file_id: "tg-file-1", transcription: "Qabulga yozilmoqchiman", corrected_transcription: null, storage_path: `${clinic}/${expired}.ogg`, expires_at: new Date(Date.now() - 60_000) },
+      { id: current, clinic_id: clinic, conversation_id: conversation, telegram_file_id: "tg-file-2", transcription: "Narxlar qancha", corrected_transcription: null, storage_path: null, expires_at: new Date(Date.now() + 86_400_000) },
     ])}`;
+    await sql`insert into public.voice_messages (id, clinic_id, conversation_id, expires_at, purged_at)
+      values (${previouslyPurged}, ${clinic}, ${conversation}, now() - interval '1 hour', now())`;
     await sql`insert into public.messages ${sql([
       { clinic_id: clinic, conversation_id: conversation, role: "patient", type: "text", content: "[ovozdan transkripsiya] Qabulga yozilmoqchiman", voice_message_id: expired },
       { clinic_id: clinic, conversation_id: conversation, role: "patient", type: "text", content: "[ovozdan transkripsiya] Narxlar qancha", voice_message_id: current },
+      { clinic_id: clinic, conversation_id: conversation, role: "patient", type: "text", content: "[ovozdan transkripsiya] Legacy test", voice_message_id: previouslyPurged },
     ])}`;
   });
 
@@ -39,7 +43,7 @@ describeDb("voice retention — the scheduled purge on the real database", () =>
     await sql.end({ timeout: 5 });
   });
 
-  it("removes an expired transcript and its quote, and leaves one still within retention alone", async () => {
+  it("redacts expired and previously purged quotes even when audio is already absent, and leaves current data alone", async () => {
     await purgeExpiredVoiceMessages();
     const rows = await sql<{ id: string; transcription: string | null; telegram_file_id: string | null; purged_at: Date | null }[]>`
       select id, transcription, telegram_file_id, purged_at from public.voice_messages where id in ${sql([expired, current])}`;
@@ -49,5 +53,6 @@ describeDb("voice retention — the scheduled purge on the real database", () =>
       select voice_message_id, content from public.messages where conversation_id = ${conversation}`;
     expect(quotes.find((q) => q.voice_message_id === expired)?.content).toBe(EXPIRED_VOICE_TEXT);
     expect(quotes.find((q) => q.voice_message_id === current)?.content).toContain("Narxlar qancha");
+    expect(quotes.find((q) => q.voice_message_id === previouslyPurged)?.content).toBe(EXPIRED_VOICE_TEXT);
   });
 });

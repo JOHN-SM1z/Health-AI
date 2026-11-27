@@ -1,0 +1,146 @@
+[
+  {
+    "probe": "01_rpc_public_execute",
+    "exit": 0,
+    "result": "book_appointment|f|f\nclaim_due_notification_jobs|t|t\nclaim_webhook_update|t|t\nfinish_webhook_update|t|t\nrelease_webhook_update|t|t\nreschedule_appointment|f|f",
+    "error": ""
+  },
+  {
+    "probe": "02_anonymous_claim_all_tenants",
+    "exit": 0,
+    "result": "00000000-0000-4000-8000-000000000001|1\n00000000-0000-4000-8000-000000000002|1",
+    "error": ""
+  },
+  {
+    "probe": "03_anonymous_webhook_poison",
+    "exit": 0,
+    "result": "t\n\nprocessed",
+    "error": ""
+  },
+  {
+    "probe": "04_browser_insert_paid",
+    "exit": 0,
+    "result": "paid|1.00|t",
+    "error": ""
+  },
+  {
+    "probe": "05_cross_clinic_conversation",
+    "exit": 0,
+    "result": "1",
+    "error": ""
+  },
+  {
+    "probe": "06_cross_clinic_time_block",
+    "exit": 0,
+    "result": "1",
+    "error": ""
+  },
+  {
+    "probe": "07_cross_clinic_cancelled_appointment",
+    "exit": 0,
+    "result": "1",
+    "error": ""
+  },
+  {
+    "probe": "08_cross_clinic_specialty",
+    "exit": 0,
+    "result": "t",
+    "error": ""
+  },
+  {
+    "probe": "09_notification_foreign_appointment_and_recipient",
+    "exit": 0,
+    "result": "t|t",
+    "error": ""
+  },
+  {
+    "probe": "10_referral_forged_authorship_and_access",
+    "exit": 0,
+    "result": "0\n1",
+    "error": ""
+  },
+  {
+    "probe": "11_receiver_rewrites_terminal_referral",
+    "exit": 0,
+    "result": "completed|t|t",
+    "error": ""
+  },
+  {
+    "probe": "12_reception_reads_clinical_handoff",
+    "exit": 0,
+    "result": "t",
+    "error": ""
+  },
+  {
+    "probe": "13_doctor_reads_private_voice_objects",
+    "exit": 0,
+    "result": "1",
+    "error": ""
+  },
+  {
+    "probe": "14_inactive_doctor_retains_direct_access",
+    "exit": 0,
+    "result": "1\n1",
+    "error": ""
+  },
+  {
+    "probe": "15_manager_appointment_notes_denied",
+    "exit": 3,
+    "result": "",
+    "error": "ERROR:  Doctors may only update the status of their own appointments\nCONTEXT:  PL/pgSQL function appointments_doctor_status_only() line 28 at RAISE"
+  },
+  {
+    "probe": "16_reactivate_invalid_slot",
+    "exit": 0,
+    "result": "confirmed",
+    "error": ""
+  },
+  {
+    "probe": "17_multiday_slot_accepted",
+    "exit": 0,
+    "result": "1",
+    "error": ""
+  },
+  {
+    "probe": "18_audit_copies_clinical_text",
+    "exit": 0,
+    "result": "1",
+    "error": ""
+  },
+  {
+    "probe": "19_payment_patient_mismatch",
+    "exit": 0,
+    "result": "t",
+    "error": ""
+  },
+  {
+    "probe": "20_hung_notification_never_reclaimed",
+    "exit": 0,
+    "result": "0",
+    "error": ""
+  },
+  {
+    "probe": "21_existing_booking_rpcs_denied",
+    "exit": 3,
+    "result": "",
+    "error": "ERROR:  permission denied for function book_appointment"
+  },
+  {
+    "probe": "22_existing_payment_update_denied",
+    "exit": 0,
+    "result": "",
+    "error": ""
+  },
+  {
+    "probe": "23_no_public_tables_without_rls",
+    "exit": 0,
+    "result": "",
+    "error": ""
+  },
+  {
+    "probe": "24_cross_clinic_doctor_service_denied",
+    "exit": 3,
+    "result": "",
+    "error": "ERROR:  doctor_services: doctor and service must belong to the same clinic\nCONTEXT:  PL/pgSQL function doctor_services_check_same_clinic() line 9 at RAISE"
+  }
+]

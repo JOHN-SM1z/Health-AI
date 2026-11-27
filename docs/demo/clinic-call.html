@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="uz"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Klinikaga qo‘ng‘iroq</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#eaf2ef;color:#173c34;font:17px/1.5 system-ui}main{max-width:640px;margin:6vh auto;background:white;padding:clamp(20px,5vw,46px);border-radius:24px;border:1px solid #bfd4cd}h1{font:normal 2.6rem/1.1 Georgia;margin:.35em 0}button,input{font:inherit;padding:10px 16px;border:1px solid #85aaa0;border-radius:10px;background:white;color:inherit}button{cursor:pointer;margin:3px}button:disabled{opacity:.5}button.primary{background:#135845;color:white}input{width:100%}section{margin:20px 0}#history{max-height:36vh;overflow:auto;border-left:3px solid #a6c8bd;padding-left:14px}small{color:#42665d}[hidden]{display:none!important}
+</style>
+<main><small>Health AI · Sinov qo‘ng‘irog‘i</small><h1>Willow klinikasi</h1>
+<p>Virtual qabulxona bilan o‘zbekcha suhbatlashing. Klinika va narxlar namuna uchun berilgan. Faqat to‘qima misollardan foydalaning.</p>
+<button class="primary" id="start">Qo‘ng‘iroq qilish</button><button id="end" hidden>Suhbatni tugatish</button>
+<p id="status" role="status">Qo‘ng‘iroqqa tayyor</p>
+<audio id="voice" controls hidden aria-label="Qabulxona javobini tinglash"></audio><small id="voice-note" role="status"></small>
+<section id="panel" hidden><div id="history" role="log" aria-label="Suhbat matni"></div>
+<form id="form"><label for="question">Savolingiz</label><input id="question" maxlength="300" autocomplete="off"><button class="primary">Yuborish</button></form>
+<button id="mic">Mikrofonda gapirish</button>
+<label id="hands-free-option" hidden><input style="width:auto" type="checkbox" id="hands-free"> Javobdan keyin mikrofonni avtomatik yoqish</label>
+<p><small>Mikrofondan foydalansangiz, brauzer ovozingizni nutqni aniqlash xizmatiga yuborishi mumkin. Savolni yozib yuborishingiz ham mumkin.</small></p>
+<div id="samples"><button>Sizlarda qanday xizmatlar bor?</button><button>UZI necha so‘m turadi?</button><button>Shanba kuni ham ishlaysizlarmi?</button><button>Operator bilan gaplashsam bo‘ladimi?</button></div></section></main>
+<script>
+const el=id=>document.getElementById(id);
+const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+let connected=false, listener=null, session=null, callNumber=0, pending=false;
+const instructions = `You are Willow Demo Clinic’s virtual receptionist. Speak natural conversational Uzbek in Latin script. Address the caller politely as siz. Understand Cyrillic Uzbek too.
+Use the conversation so far to resolve follow-ups like "ikkinchisi-chi?" or "shanba kuni-chi?".
+Use one short spoken sentence for ordinary replies. Ask one short clarifying question when needed. Do not repeat the greeting. Respond naturally to greetings or thanks.
+Approved fictional profile: outpatient clinic; general practice consultation 100,000 Uzbek som; ultrasound 150,000 Uzbek som.
+Open Monday through Friday 9 AM to 6 PM. Closed Saturday and Sunday. No other clinic facts are verified.
+Never invent availability, doctors, discounts or policies. If something is unknown, say so and offer reception.
+No bookings, transfers or payments can be made. Never claim an action occurred. Never diagnose, prescribe or recommend treatment.
+For urgent symptoms advise immediate local emergency help. The demonstration cannot notify anyone.`;
+function stopMic(){
+  if(listener){const old=listener;listener=null;old.onresult=null;old.onend=null;old.onerror=null;old.abort();}
+}
+function line(who,message){
+  const row=document.createElement('p');
+  row.textContent=who+' — '+message;
+  el('history').append(row);row.scrollIntoView({block:'nearest'});
+}
+let voiceRequest, voiceUrl;
+function stopVoice(){
+  voiceRequest?.abort();
+  voiceRequest=null;
+  window.speechSynthesis?.cancel();
+  const player=el('voice');
+  player.onended=null;
+  player.pause();
+  player.removeAttribute('src');
+  player.load();
+  player.hidden=true;
+  if(voiceUrl){URL.revokeObjectURL(voiceUrl);voiceUrl=null;}
+  el('voice-note').textContent='';
+}
+async function say(message){
+  stopMic();stopVoice();
+  const current=callNumber;
+  const afterSpeech=()=>{
+    if(connected && current===callNumber && el('hands-free').checked)startListening();
+  };
+  line('Qabulxona',message);
+  if(location.origin!=='http://127.0.0.1:8765'){
+    const synth=window.speechSynthesis;
+    const voice=synth?.getVoices().find(v=>/^uz(?:[-_]|$)/i.test(v.lang));
+    if(voice){
+      const speech=new SpeechSynthesisUtterance(message);
+      speech.voice=voice;speech.lang=voice.lang;speech.onend=afterSpeech;synth.speak(speech);
+    }else el('voice-note').textContent='O‘zbekcha ovozni tinglash uchun mahalliy demoni oching.';
+    return;
+  }
+  const request=new AbortController();
+  voiceRequest=request;
+  try{
+    const response=await fetch('/demo-voice',{method:'POST',body:message,signal:request.signal});
+    if(!response.ok)throw Error();
+    const blob=await response.blob();
+    if(request.signal.aborted)return;
+    voiceUrl=URL.createObjectURL(blob);
+    const player=el('voice');
+    player.src=voiceUrl;player.hidden=false;
+    player.playbackRate=blob.type==='audio/wav'?1.13:1;
+    player.onended=afterSpeech;
+    await player.play();
+  }catch{
+    if(voiceRequest===request && !voiceUrl)voiceRequest=null;
+    if(!request.signal.aborted)el('voice-note').textContent=voiceUrl?'Tinglash uchun ijro tugmasini bosing.':'Ovoz yuklanmadi. Javobni quyida o‘qishingiz mumkin.';
+  }
+}
+function finish(message){
+  ++callNumber;connected=false;pending=false;session?.destroy();session=null;stopMic();el('form').hidden=true;el('mic').hidden=true;el('samples').hidden=true;
+  el('hands-free-option').hidden=true;el('hands-free').checked=false;
+  el('start').hidden=false;el('end').hidden=true;el('status').textContent=message;
+}
+function clinicFact(question){
+  const weekend=/shanba|yakshanba|dam olish kun|шанба|якшанба/i.test(question);
+  const price=/qancha|nech[a-z]*|narx|qimmat|arzon|қанча|нарх|неча/i.test(question);
+  const ultrasound=/\buzi\b|ultratovush|узи/i.test(question);
+  const consultation=/konsultatsiya|terapevt|umumiy shifokor|umumiy amaliyot/i.test(question);
+  const hours=/ish vaqti|soat nech|qachon och|qachon yop/i.test(question);
+  if(weekend) return 'Dam olish kunlari yopiqmiz. Dushanbadan jumagacha ishlaymiz.';
+  if(hours) return 'Soat to‘qqizdan kechki oltigacha ishlaymiz.';
+  if(price && ultrasound && consultation) return 'UZI yuz ellik ming so‘m. Shifokor qabuli yuz ming so‘m.';
+  if(price && ultrasound) return 'UZI yuz ellik ming so‘m.';
+  if(price && consultation) return 'Shifokor qabuli yuz ming so‘m.';
+  return '';
+}
+async function answer(raw){
+  if(!connected||pending||!raw.trim())return;
+  stopMic();stopVoice();
+  const question=raw.trim();
+  line('Siz',question);
+  el('question').value='';
+  const normalized=question.toLowerCase().replace(/[’‘ʻʼ`]/g,"'");
+  if(/tez yordam|shoshilinch|ko'kra[kg].{0,20}og'ri|nafas.{0,20}(qiyin|ololma|olmay)|hushidan ket|tutqanoq|talvasa|тез ёрдам|кўкра[кг].{0,20}оғри|нафас.{0,20}(қийин|ололма)|emergency|chest pain|can.?t breathe|cannot breathe|heavy bleeding|seizure|unconscious|suicid|stroke/i.test(normalized)){
+    say('Bu holat shoshilinch yordam talab qilishi mumkin. Iltimos, mahalliy tez yordam xizmatiga murojaat qiling yoki zudlik bilan shifokorga boring. Bu demo tez yordam chaqira olmaydi.');
+    finish('Suhbat tugadi');return;
+  }
+  if(/operator|оператор|xodim.{0,12}(ula|gaplash)|(?:speak|talk|connect|transfer).*?(?:reception|human|operator)/i.test(question)){
+    say('Albatta. Haqiqiy qo‘ng‘iroqda sizni qabulxona xodimiga ulash mumkin bo‘lardi. Sinov suhbatimiz shu yerda tugaydi.');
+    finish('Operatorga ulash namoyishi tugadi');return;
+  }
+  const current=callNumber;
+  pending=true;
+  el('status').textContent='Javob tayyorlanmoqda…';
+  try{
+    const known = clinicFact(question);
+    const reply = known && session.remember ? known : await session.prompt(question);
+    if(current!==callNumber)return;
+    if(!reply.trim())throw new Error();
+    session.remember?.(question, reply);
+    say(reply);
+    el('status').textContent='Savolingizni kutyapman';
+  }catch{
+    if(current===callNumber)finish('Modeldan javob kelmadi. Mahalliy model ishlayotganini tekshirib, qaytadan qo‘ng‘iroq qiling.');
+  }finally{
+    if(current===callNumber)pending=false;
+  }
+}
+el('start').onclick=async ()=>{
+  const current=++callNumber;
+  el('start').disabled=true;
+  try{
+    const model=window.LanguageModel;
+    const options={expectedInputs:[{type:'text',languages:['uz']}],expectedOutputs:[{type:'text',languages:['uz']}]};
+    el('status').textContent='Til modeli tayyorlanmoqda…';
+    let next;
+    if(location.origin==='http://127.0.0.1:8765'){
+      const ready=await fetch('/ready',{cache:'no-store'});
+      if(!ready.ok){
+        el('status').textContent='Mahalliy model hali tayyor emas. “Start demo.command” faylini oching va model yuklangach, qayta qo‘ng‘iroq qiling.';
+        return;
+      }
+      let history=[];
+      next={async prompt(question){
+        const messages=[{role:'system',content:instructions},...history,{role:'user',content:question}];
+        const response=await fetch('/demo-chat',{method:'POST',body:JSON.stringify(messages)});
+        if(!response.ok)throw new Error();
+        return response.text();
+      },remember(question, reply){
+        history=[...history,{role:'user',content:question},{role:'assistant',content:reply}].slice(-20);
+      },destroy(){history=[];}};
+    }else{
+      if(!model || await model.availability(options)==='unavailable')throw new Error();
+      next=await model.create({...options,initialPrompts:[{role:'system',content:instructions}]});
+    }
+    if(current!==callNumber){next.destroy();return;}
+    session=next;
+  }catch{
+    el('status').textContent='Brauzerda o‘zbekcha model mavjud emas. Mahalliy Ollama modeli bilan sinash uchun demo serverini ishga tushiring.';
+    return;
+  }finally{
+    el('start').disabled=false;
+  }
+  connected=true;el('history').replaceChildren();el('question').value='';el('panel').hidden=false;el('form').hidden=false;el('samples').hidden=false;
+  el('mic').hidden=!Recognition;el('hands-free-option').hidden=!Recognition;el('start').hidden=true;el('end').hidden=false;el('status').textContent='Virtual qabulxonaga ulandingiz';
+  say('Assalomu alaykum! Willow klinikasi. Qanday yordam beray?');
+};
+el('end').onclick=()=>{stopVoice();finish('Suhbat tugadi');};
+el('form').onsubmit=e=>{e.preventDefault();answer(el('question').value);};
+el('samples').onclick=e=>{if(e.target.tagName==='BUTTON')answer(e.target.textContent);};
+function startListening(){
+  if(!Recognition||pending||!connected||listener)return;
+  stopVoice();
+  const rec=new Recognition();
+  listener=rec;
+  rec.lang='uz-UZ';
+  rec.onresult=e=>{if(listener===rec)answer(e.results[0][0].transcript);};
+  rec.onerror=e=>{
+    if(listener!==rec)return;
+    listener=null;
+    if(e?.error==='no-speech'){
+      el('status').textContent='Ovoz eshitilmadi. Qayta gapirish uchun mikrofon tugmasini bosing.';
+    }else{
+      el('hands-free').checked=false;
+      el('status').textContent='Mikrofon ishlamadi. Savolingizni yozing yoki mikrofon ruxsatini tekshiring.';
+    }
+  };
+  rec.onend=()=>{
+    if(listener!==rec)return;
+    listener=null;
+    el('status').textContent='Savolingizni yozing yoki mikrofon tugmasini bosing.';
+  };
+  el('status').textContent='Tinglayapman…';
+  try{rec.start();}catch{rec.onerror();}
+}
+el('mic').onclick=startListening;
+el('hands-free').onchange=()=>{
+  if(!el('hands-free').checked){
+    if(listener){
+      stopMic();
+      el('status').textContent='Savolingizni kutyapman';
+    }
+    return;
+  }
+  const player=el('voice');
+  if(!voiceRequest || player.ended)startListening();
+};
+window.addEventListener('pagehide',()=>{stopVoice();finish('Suhbat tugadi');el('start').disabled=false;});
+</script></html>
