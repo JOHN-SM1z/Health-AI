@@ -271,6 +271,12 @@ describeDb("online identity — passport first, proven by the patient's own Tele
       ),
     );
     expect(res).toMatchObject({ status: 409, body: { code: "identity_required" } });
+    const { count } = await admin
+      .from("patients")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", clinic)
+      .eq("telegram_user_id", tg);
+    expect(count).toBe(0);
     expect((await post(status, tg)).body.data).toMatchObject({ required: true, profile: null });
     await admin.from("clinics").update({ online_identity_required: false }).eq("id", clinic);
   });

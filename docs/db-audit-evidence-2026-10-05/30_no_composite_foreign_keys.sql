@@ -1,0 +1,1 @@
+begin;select count(*) from pg_constraint where contype='f' and connamespace='public'::regnamespace and array_length(conkey,1)>1;rollback;

@@ -78,6 +78,7 @@ const handleCommandMock = vi.mocked(handleTelegramCommand);
 
 const BOT = "clinic_a_bot";
 const CLAIM_SOURCE = `${BOT}:clinic-1`;
+const CLAIM_TOKEN = "00000000-0000-4000-8000-000000000001";
 
 function post(body: unknown, secretToken: string | null = "derived-secret"): Promise<Response> {
   const headers = new Headers({ "content-type": "application/json" });
@@ -96,7 +97,7 @@ const textUpdate = (updateId: number) => ({
   message: {
     message_id: 1,
     text: "Assalomu alaykum",
-    chat: { id: 42 },
+    chat: { id: 42, type: "private" },
     from: { id: 42, first_name: "Ali" },
   },
 });
@@ -105,7 +106,7 @@ const voiceUpdate = (updateId: number) => ({
   update_id: updateId,
   message: {
     message_id: 2,
-    chat: { id: 42 },
+    chat: { id: 42, type: "private" },
     from: { id: 42, first_name: "Ali" },
     voice: { file_id: "voice-1", file_unique_id: "vu-1", duration: 5, mime_type: "audio/ogg" },
   },
@@ -113,10 +114,12 @@ const voiceUpdate = (updateId: number) => ({
 
 beforeEach(() => {
   resolveMock.mockReset().mockResolvedValue({ clinicId: "clinic-1", integration: integrationFixture });
-  claimMock.mockReset().mockResolvedValue(true);
+  claimMock.mockReset().mockResolvedValue(CLAIM_TOKEN);
   finishMock.mockClear();
   releaseMock.mockClear();
   handleMessageMock.mockClear();
+  menuButtonMock.mockClear();
+  handleCommandMock.mockClear();
 });
 
 describe("telegram webhook route (per-clinic bots)", () => {
@@ -139,6 +142,12 @@ describe("telegram webhook route (per-clinic bots)", () => {
     expect(res.status).toBe(401);
   });
 
+  it("rejects a non-object JSON update before claiming it", async () => {
+    const res = await post(null);
+    expect(res.status).toBe(400);
+    expect(claimMock).not.toHaveBeenCalled();
+  });
+
   it("routes a voice update to the clinic's handler with the voice payload", async () => {
     const res = await post(voiceUpdate(10));
     expect(res.status).toBe(200);
@@ -150,7 +159,7 @@ describe("telegram webhook route (per-clinic bots)", () => {
     );
     expect(call.text).toBe("");
     expect(claimMock).toHaveBeenCalledWith(CLAIM_SOURCE, "10");
-    expect(finishMock).toHaveBeenCalledWith(CLAIM_SOURCE, "10");
+    expect(finishMock).toHaveBeenCalledWith(CLAIM_SOURCE, "10", CLAIM_TOKEN);
   });
 
   it("forwards a text update without a voice payload to the right clinic", async () => {
@@ -160,6 +169,43 @@ describe("telegram webhook route (per-clinic bots)", () => {
     expect(call.clinicId).toBe("clinic-1");
     expect(call.text).toBe("Assalomu alaykum");
     expect(call.voice).toBeUndefined();
+  });
+
+  it("ignores appointment menu buttons and queue callbacks sent in groups", async () => {
+    const queueStatusMock = vi.mocked(handleQueueStatus);
+    queueStatusMock.mockClear();
+    answerCallbackMock.mockClear();
+    const group = { id: -100123, type: "supergroup" };
+    const update = textUpdate(110);
+
+    const message = await post({
+      ...update,
+      message: { ...update.message, chat: group, text: "📋 Mening qabullarim" },
+    });
+    const callback = await post({
+      update_id: 111,
+      callback_query: { id: "group-query", from: update.message.from, data: "queue_status", message: { chat: group } },
+    });
+
+    expect(message.status).toBe(200);
+    expect(callback.status).toBe(200);
+    expect(menuButtonMock).not.toHaveBeenCalled();
+    expect(handleMessageMock).not.toHaveBeenCalled();
+    expect(handleCommandMock).not.toHaveBeenCalled();
+    expect(queueStatusMock).not.toHaveBeenCalled();
+    expect(answerCallbackMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "Qabulga yozilish uchun keldim, ko‘kragim og‘riyapti",
+    "/start Кўкрагим оғрияпти, нафас олишим қийин",
+  ])("sends urgent wording to the escalation handler even after a menu label or command", async (text) => {
+    const update = textUpdate(121);
+    const res = await post({ ...update, message: { ...update.message, text } });
+    expect(res.status).toBe(200);
+    expect(handleMessageMock).toHaveBeenCalledWith(expect.objectContaining({ text, clinicId: "clinic-1" }));
+    expect(menuButtonMock).not.toHaveBeenCalled();
+    expect(handleCommandMock).not.toHaveBeenCalled();
   });
 
   it("routes emoji-prefixed reply-keyboard taps to handleMenuButton, not the AI", async () => {
@@ -217,14 +263,14 @@ describe("telegram webhook route (per-clinic bots)", () => {
     expect(followMock).toHaveBeenCalledTimes(1);
 
     // "🔄 Navbatim" asks for the live position, for the user who pressed it.
-    await post({ update_id: 72, callback_query: { id: "c9", from: { id: 42 }, data: "queue_status", message: { chat: { id: 42 } } } });
+    await post({ update_id: 72, callback_query: { id: "c9", from: { id: 42 }, data: "queue_status", message: { chat: { id: 42, type: "private" } } } });
     expect(vi.mocked(handleQueueStatus)).toHaveBeenCalledWith({ clinicId: "clinic-1", chatId: 42, telegramUserId: 42 });
     expect(answerCallbackMock).toHaveBeenCalledWith("c9", "clinic-1");
     answerCallbackMock.mockClear();
   });
 
   it("drops duplicates without dispatching any work", async () => {
-    claimMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    claimMock.mockResolvedValueOnce(CLAIM_TOKEN).mockResolvedValueOnce(null);
     const first = await post(textUpdate(20));
     expect(first.status).toBe(200);
     expect(handleMessageMock).toHaveBeenCalledTimes(1);
@@ -237,14 +283,14 @@ describe("telegram webhook route (per-clinic bots)", () => {
     expect(body.ok).toBe(true);
     expect(body.duplicate).toBe(true);
     expect(handleMessageMock).not.toHaveBeenCalled();
-    expect(finishMock).not.toHaveBeenCalledWith(CLAIM_SOURCE, "20");
+    expect(finishMock).not.toHaveBeenCalledWith(CLAIM_SOURCE, "20", expect.anything());
   });
 
   it("releases the claim and returns 500 when the handler fails (Telegram retries safely)", async () => {
     handleMessageMock.mockRejectedValueOnce(new Error("boom"));
     const res = await post(textUpdate(30));
     expect(res.status).toBe(500);
-    expect(releaseMock).toHaveBeenCalledWith(CLAIM_SOURCE, "30");
+    expect(releaseMock).toHaveBeenCalledWith(CLAIM_SOURCE, "30", CLAIM_TOKEN);
     expect(finishMock).not.toHaveBeenCalled();
   });
 
@@ -270,19 +316,19 @@ describe("telegram webhook route (per-clinic bots)", () => {
   });
 
   it("routes voice callbacks with the webhook's resolved clinicId (tenant-bound)", async () => {
-    claimMock.mockResolvedValueOnce(true);
+    claimMock.mockResolvedValueOnce(CLAIM_TOKEN);
     const { handleVoiceConsent, handleVoiceCorrect, handleVoiceWrong } = await import("@/lib/telegram/handlers");
     const consentMock = vi.mocked(handleVoiceConsent);
     const correctMock = vi.mocked(handleVoiceCorrect);
     const wrongMock = vi.mocked(handleVoiceWrong);
 
-    await post({ update_id: 60, callback_query: { id: "c1", from: { id: 42 }, data: "voice_consent_yes:vm-1", message: { chat: { id: 42 } } } });
+    await post({ update_id: 60, callback_query: { id: "c1", from: { id: 42 }, data: "voice_consent_yes:vm-1", message: { chat: { id: 42, type: "private" } } } });
     expect(consentMock).toHaveBeenCalledWith(expect.objectContaining({ clinicId: "clinic-1", voiceMessageId: "vm-1" }));
 
-    await post({ update_id: 61, callback_query: { id: "c2", from: { id: 42 }, data: "voice_correct:vm-2", message: { chat: { id: 42 } } } });
+    await post({ update_id: 61, callback_query: { id: "c2", from: { id: 42 }, data: "voice_correct:vm-2", message: { chat: { id: 42, type: "private" } } } });
     expect(correctMock).toHaveBeenCalledWith(expect.objectContaining({ clinicId: "clinic-1", voiceMessageId: "vm-2" }));
 
-    await post({ update_id: 62, callback_query: { id: "c3", from: { id: 42 }, data: "voice_wrong:vm-3", message: { chat: { id: 42 } } } });
+    await post({ update_id: 62, callback_query: { id: "c3", from: { id: 42 }, data: "voice_wrong:vm-3", message: { chat: { id: 42, type: "private" } } } });
     expect(wrongMock).toHaveBeenCalledWith(expect.objectContaining({ clinicId: "clinic-1", voiceMessageId: "vm-3" }));
 
     // Each press names the Telegram user who pressed it (ownership is checked

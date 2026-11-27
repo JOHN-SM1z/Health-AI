@@ -74,7 +74,6 @@ function stripWebAppButtons(markup: unknown): unknown {
             const url = typeof webApp?.url === "string" ? webApp.url : undefined;
             if (!url) return null;
             return { ...rest, url };
-            return null;
           })
           .filter((btn) => btn !== null);
       })
@@ -91,7 +90,7 @@ function stripWebAppButtons(markup: unknown): unknown {
  */
 export async function sendTelegramMessage(payload: TelegramMessagePayload, clinicId?: string): Promise<number | null> {
   if (telegramDevModeEnabled()) {
-    logger.info("telegram send skipped (dev mode)", { chatId: payload.chatId, clinicId });
+    logger.info("telegram send skipped (dev mode)", { clinicId });
     return null;
   }
 
@@ -100,14 +99,13 @@ export async function sendTelegramMessage(payload: TelegramMessagePayload, clini
     try {
       target = await getClinicBot(clinicId);
     } catch {
-      logger.warn("telegram send skipped (clinic bot not configured)", { chatId: payload.chatId, clinicId });
+      logger.warn("telegram send skipped (clinic bot not configured)", { clinicId });
       return null;
     }
   } else if (telegramConfigured()) {
     target = getBot();
   } else {
     logger.info("telegram send skipped (not configured)", {
-      chatId: payload.chatId,
       devMode: telegramDevModeEnabled(),
     });
     return null;
@@ -137,28 +135,28 @@ export async function sendTelegramMessage(payload: TelegramMessagePayload, clini
       if (stripped !== payload.replyMarkup) {
         try {
           const id = await send(stripped);
-          logger.warn("telegram send succeeded without web_app buttons", { chatId: payload.chatId });
+          logger.warn("telegram send succeeded without web_app buttons", { clinicId });
           return id;
-        } catch {
-          // Structural problem — fall through to a plain send.
+        } catch (retryError) {
+          const reason = retryError instanceof Error ? retryError.message : "";
+          // Only an explicit keyboard rejection proves the retry was not
+          // accepted. A network failure may hide success; never send again.
+          if (!reason.includes("BUTTON_URL_INVALID") && !reason.includes("KeyboardButton")) {
+            logger.error("telegram fallback outcome unknown", { clinicId });
+            return null;
+          }
         }
       }
       try {
         const id = await send(undefined);
-        logger.warn("telegram send succeeded without keyboard", { chatId: payload.chatId });
+        logger.warn("telegram send succeeded without keyboard", { clinicId });
         return id;
-      } catch (e2) {
-        logger.error("telegram send failed", {
-          chatId: payload.chatId,
-          error: e2 instanceof Error ? e2.message : String(e2),
-        });
+      } catch {
+        logger.error("telegram send failed", { clinicId });
         return null;
       }
     }
-    logger.error("telegram send failed", {
-      chatId: payload.chatId,
-      error: message,
-    });
+    logger.error("telegram send failed", { clinicId });
     return null;
   }
 }
@@ -172,8 +170,8 @@ export async function answerCallbackQuery(callbackQueryId: string, clinicId: str
   try {
     const target = await getClinicBot(clinicId);
     await target.api.answerCallbackQuery(callbackQueryId, text ? { text } : undefined);
-  } catch (e) {
-    logger.warn("telegram answerCallbackQuery failed", { clinicId, error: e instanceof Error ? e.message : String(e) });
+  } catch {
+    logger.warn("telegram answerCallbackQuery failed", { clinicId });
   }
 }
 
@@ -185,8 +183,8 @@ export async function getTelegramFileUrl(fileId: string, clinicId: string): Prom
     const file = await target.api.getFile(fileId);
     if (!file.file_path) return null;
     return `https://api.telegram.org/file/bot${target.token}/${file.file_path}`;
-  } catch (e) {
-    logger.error("telegram getFile failed", { error: e instanceof Error ? e.message : String(e) });
+  } catch {
+    logger.error("telegram getFile failed", { clinicId });
     return null;
   }
 }

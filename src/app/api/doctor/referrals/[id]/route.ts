@@ -8,10 +8,10 @@ import { actOnReferral, getReferralForDoctor } from "@/lib/referrals/service";
 export const dynamic = "force-dynamic";
 
 const actionSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("accept") }),
-  z.object({ action: z.literal("decline"), reason: z.string().trim().max(1000).optional() }),
-  z.object({ action: z.literal("complete") }),
-  z.object({ action: z.literal("revoke"), reason: z.string().trim().min(3, "Bekor qilish sababini yozing").max(1000) }),
+  z.object({ action: z.literal("accept") }).strict(),
+  z.object({ action: z.literal("decline"), reason: z.string().trim().max(1000).optional() }).strict(),
+  z.object({ action: z.literal("complete") }).strict(),
+  z.object({ action: z.literal("revoke"), reason: z.string().trim().min(3, "Bekor qilish sababini yozing").max(1000) }).strict(),
 ]);
 
 type RouteContext = { params: Promise<{ id: string }> };

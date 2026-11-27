@@ -3,6 +3,16 @@ node_modules
 .git
 .gitignore
 .claude
+.agents
+.codex
+.kilo
+.presentation-build
+.chart-data-*
+backups
+tmp
+output
+deliverables
+files
 supabase/.temp
 .env
 .env.*

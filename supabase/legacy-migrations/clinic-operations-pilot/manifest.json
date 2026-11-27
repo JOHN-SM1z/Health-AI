@@ -1,0 +1,82 @@
+{
+  "canonical_commit": "990d082274575baadc402e9c7732d27fc56b1f45",
+  "reason": "Conflicting pilot schema; retained for explicit upgrades only, never part of canonical clean installs.",
+  "files": [
+    {
+      "file": "20260822120000_update_audit_trigger_header.sql",
+      "sha256": "df6a4a71b668e526a4651c54978c83114832a014ffa701c883f2c9e0102cd640"
+    },
+    {
+      "file": "20260822130000_fix_audit_and_multiclinic_rls.sql",
+      "sha256": "feed22036f8d960ef86f6a0440c726f2c3bec985708dc8c0977ca2f8fe584c24"
+    },
+    {
+      "file": "20260919000001_clinical_notes_foundation.sql",
+      "sha256": "07be51d1a7ae9baa6c9889f568c02664ae0608af385d8f121f644be1e86fccae"
+    },
+    {
+      "file": "20260920000001_referrals.sql",
+      "sha256": "a9a2fe1089387e2deca08315ced839c6cc8470e3cb0b0dde3dac2907053b167f"
+    },
+    {
+      "file": "20260920000002_referral_status.sql",
+      "sha256": "8d1c60e0d0861fd4406e8be6dd588b70d2b92cd38ee097b5a6e2ea1200649cc8"
+    },
+    {
+      "file": "20260920000003_referral_handoff_workflow.sql",
+      "sha256": "b9924745583ef050fb12bcc29986f73c12f0684e5b18ea42225fb367d61395cb"
+    },
+    {
+      "file": "20260920000004_referral_lifecycle_hardening.sql",
+      "sha256": "51db499dfb809e476f9dfe823339de8dfd74f48e47e104b57a5bb8ab26b98329"
+    },
+    {
+      "file": "20261005000001_walk_in_operations.sql",
+      "sha256": "e1856fb90072055c1f9a6c9a1aff2780d6352d8e466f7ebc3852c723f3e9301a"
+    },
+    {
+      "file": "20261005000002_simple_referrals_and_history.sql",
+      "sha256": "1d08d4477a12f61e113b20edd854aec70ee63ac749c8975ce9c81ac3a2a0677b"
+    },
+    {
+      "file": "20261005000003_payment_void_status.sql",
+      "sha256": "0e8e93b1eb0bb418201c89f03acf51413cbbf42a968968f59d87fc5ccec04425"
+    },
+    {
+      "file": "20261006000001_staff_role_management.sql",
+      "sha256": "4229d797cc91343412296b94584ca76ad8472d6c873e19c26eddd97c210f2d29"
+    },
+    {
+      "file": "20261006000002_manual_visit_payments.sql",
+      "sha256": "934da760aeddbd01e75603a1a2c65f74bfbbba9259ccb8f8d6d6cfc67df3e7da"
+    },
+    {
+      "file": "20261006000003_tenant_integrity.sql",
+      "sha256": "7470a997e3c9c60ad9b1ae0f1ac62f530807e851ba90d00a2661dc3c0f1267e9"
+    },
+    {
+      "file": "20261006000004_appointment_reactivation.sql",
+      "sha256": "762240faaa07131b67fbe478e8ffbea2f7abbfdbda314c8d0fd3c57f9c323574"
+    },
+    {
+      "file": "20261006000005_notification_stale_claims.sql",
+      "sha256": "331c77f575011d0092063fe15038bd9e7c126a12c2246c909dfda9712bd1c104"
+    },
+    {
+      "file": "20261006000006_operations_summary.sql",
+      "sha256": "c8ebcb3657b08c75730193619a3db666c8ff4be42e083e8c81355b5b62a7e006"
+    },
+    {
+      "file": "20261006000007_webhook_caller_checks.sql",
+      "sha256": "57e0c7171b9f74f8f7a6eb70a27da96148965c5fa059a78a14204273c771f408"
+    },
+    {
+      "file": "20261006102150_laboratory_workbench.sql",
+      "sha256": "db497001e5c973fd04e3712cfabb96cd6eed8f8dc36f09e8f887060f261bf73f"
+    },
+    {
+      "file": "20261006103026_payment_relationship_cardinality.sql",
+      "sha256": "47f4b488031cf09d9220fb0c3d48d32c1a93901315151cd6abcad498ec03b8b1"
+    }
+  ]
+}

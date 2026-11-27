@@ -243,10 +243,17 @@ async function run() {
         check(payments.length === 0, "the consultation adds no second bill");
         await page.goto(`${BASE}/doctor`);
         const again = page.getByRole("list", { name: "Jonli navbat" }).locator("li", { hasText: PATIENT });
+        const completion = page.waitForResponse((r) =>
+          r.request().method() === "POST" && r.url() === `${BASE}/api/doctor/visits/${visitId}`);
         await again.getByRole("button", { name: "Yakunlash" }).click();
-        await page.waitForTimeout(500);
+        const response = await completion;
+        const outcome = await response.json();
+        if (response.status() !== 200 || outcome.data?.status !== "completed") {
+          throw new Error(`Visit completion refused: HTTP ${response.status()} (${outcome.code ?? "unexpected_outcome"})`);
+        }
         const [done] = await db`select status from public.visits where id = ${visitId}`;
         check(done.status === "completed", "the doctor completes the visit");
+        await again.waitFor({ state: "hidden" });
       }
       await context.close();
     }

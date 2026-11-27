@@ -216,4 +216,3 @@ staging and production):
 
 **Staging rehearsal (owner-approved, staging only).** Started; production untouched. Status and the
 connector limits are in `PILOT_RUNBOOK.md` §3.2.
-

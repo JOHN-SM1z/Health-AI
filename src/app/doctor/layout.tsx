@@ -15,7 +15,7 @@ export default async function DoctorLayout({ children }: { children: React.React
 
   return (
     <div className="flex min-h-dvh bg-sand">
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-hairline bg-surface md:flex">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-hairline bg-surface md:flex print:hidden">
         <div className="flex items-center gap-3 px-5 pb-5 pt-6">
           <span className="brand-tile flex h-9 w-9 items-center justify-center rounded-xl text-white">
             <HeartPulse className="h-5 w-5" />
@@ -54,7 +54,7 @@ export default async function DoctorLayout({ children }: { children: React.React
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-hairline bg-surface px-4 py-3 md:hidden">
+        <header className="flex items-center gap-2 border-b border-hairline bg-surface px-4 py-3 md:hidden print:hidden">
           <Link href="/doctor" className="flex items-center gap-2.5">
             <span className="brand-tile flex h-8 w-8 items-center justify-center rounded-lg text-white">
               <HeartPulse className="h-4 w-4" />
@@ -74,7 +74,7 @@ export default async function DoctorLayout({ children }: { children: React.React
           <NavLink href="/doctor/schedule" icon={<CalendarRange className="h-4 w-4" />}>Jadvalim</NavLink>
           <NavLink href="/doctor/password" icon={<KeyRound className="h-4 w-4" />}>Parolim</NavLink>
         </NavStrip>
-        <div className="flex-1 overflow-x-hidden p-4 md:p-8">{children}</div>
+        <div className="flex-1 overflow-x-hidden p-4 md:p-8 print:p-0">{children}</div>
       </div>
     </div>
   );

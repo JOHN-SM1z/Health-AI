@@ -148,7 +148,7 @@ describeDb("notification processor — atomic claims", () => {
     expect(job!.telegram_message_id).toBe(12345);
   });
 
-  it("a failed send stays pending until max attempts, then fails", async () => {
+  it("an ambiguous send is quarantined instead of automatically replayed", async () => {
     const sendMock = vi.mocked(sendTelegramMessage);
     const key = `retry-${Date.now()}`;
     const jobId = await insertJob(key, { maxAttempts: 1 });
@@ -162,7 +162,7 @@ describeDb("notification processor — atomic claims", () => {
       .select("status, attempts")
       .eq("id", jobId)
       .single();
-    expect(afterFirst!.status).toBe("failed");
+    expect(afterFirst!.status).toBe("quarantined");
     expect(afterFirst!.attempts).toBe(1);
     sendMock.mockResolvedValue(12345);
   });

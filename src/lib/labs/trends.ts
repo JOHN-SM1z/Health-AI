@@ -40,4 +40,3 @@ export function buildSeries(results: TrendInput[]): Series[] {
     .map((s) => ({ ...s, points: s.points.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()) }))
     .sort((a, b) => b.points.length - a.points.length || a.title.localeCompare(b.title));
 }
-

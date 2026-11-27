@@ -18,6 +18,7 @@ const report = createReport("lab notifications E2E");
 const { check } = report;
 const db = connect();
 const { suffix, nextSlot } = runFixture();
+let labSettingsSnapshot;
 
 async function run() {
   const [reception] = await db`select u.id, sr.clinic_id from auth.users u join public.staff_roles sr on sr.profile_id = u.id where u.email = ${DEMO.reception}`;
@@ -27,6 +28,9 @@ async function run() {
   if (!reception || !lab || !lab2 || !dr) throw new Error("demo staff missing — run node e2e/seed-demo.mjs");
   const clinic = reception.clinic_id;
   const [service] = await db`select id from public.services where clinic_id = ${clinic} and name = ${DEMO_NAMES.generalService}`;
+  const [previous] = await db`select value::text as value, updated_by, updated_at::text as updated_at
+                             from public.app_settings where clinic_id = ${clinic} and key = 'lab'`;
+  labSettingsSnapshot = { clinic, previous };
   await db`insert into public.app_settings ${db({ clinic_id: clinic, key: "lab", value: db.json({}) })} on conflict (clinic_id, key) do update set value = excluded.value`;
 
   const testName = `E2E xabar testi ${suffix}`;
@@ -92,11 +96,8 @@ async function run() {
     const [order2] = await db`select * from public.create_lab_order(${clinic}, ${patient.id}, ${reception.id}, 'walk_in', ${[test.id]}::uuid[], '{}'::uuid[])`;
     const [{ n }] = await db`select count(*)::int as n from public.notification_jobs where lab_order_id = ${order2.lab_order_id}`;
     check(n === 0, "owner: with staff notifications off, a new order notifies nobody");
-    await toggle.check();
-    await o.getByRole("button", { name: "Saqlash" }).click();
     await oc.close();
   } finally {
-    await db`update public.app_settings set value = '{}'::jsonb where clinic_id = ${clinic} and key = 'lab'`;
     await browser.close();
   }
 }
@@ -108,6 +109,20 @@ try {
 } catch (e) {
   exitCode = report.abort(e);
 } finally {
-  await db.end({ timeout: 5 });
+  try {
+    if (labSettingsSnapshot) {
+      const { clinic, previous } = labSettingsSnapshot;
+      // Replace the fixture row atomically because updates assign a new modification time.
+      await db.begin(async (tx) => {
+        await tx`delete from public.app_settings where clinic_id = ${clinic} and key = 'lab'`;
+        if (previous) {
+          await tx`insert into public.app_settings (clinic_id, key, value, updated_by, updated_at)
+                   values (${clinic}, 'lab', ${previous.value}::text::jsonb, ${previous.updated_by}, ${previous.updated_at}::text::timestamptz)`;
+        }
+      });
+    }
+  } finally {
+    await db.end({ timeout: 5 });
+  }
 }
 process.exit(exitCode);

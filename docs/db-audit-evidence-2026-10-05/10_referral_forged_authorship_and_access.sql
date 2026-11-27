@@ -1,0 +1,3 @@
+begin;
+set local role authenticated; set local request.jwt.claim.role='authenticated'; set local request.jwt.claim.sub='00000000-0000-4000-8000-000000000013';select count(*) as before_access from patients where id='00000000-0000-4000-8000-000000000033';insert into referrals(clinic_id,patient_id,referring_doctor_id,referred_to_doctor_id,referral_reason) values ('00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000033','00000000-0000-4000-8000-000000000022','00000000-0000-4000-8000-000000000021','Synthetic forged reason');select count(*) as after_access from patients where id='00000000-0000-4000-8000-000000000033';
+rollback;

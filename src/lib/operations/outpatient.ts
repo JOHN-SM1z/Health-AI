@@ -9,7 +9,7 @@ import type { Json } from "@/lib/supabase/database.types";
 import { ORDER_ERRORS } from "@/lib/labs/ordering";
 import { classifyQuery, isIdentityDocument } from "@/lib/operations/identity-query";
 import { deliverClinicNotificationsSoon } from "@/lib/notifications/deliver-soon";
-import { recordAudit } from "@/lib/audit";
+import { recordAudit, recordAudits, type AuditEvent } from "@/lib/audit";
 import { parseIdentityDocument, plausibleDateOfBirth } from "@/lib/patients/online-identity";
 import { checkPinflAgainstBirthDate } from "@/lib/identity/pinfl";
 import { sharedRateLimit } from "@/lib/rate-limit-shared";
@@ -178,6 +178,21 @@ export async function searchPatients(staff: Staff, q: string, dateOfBirth?: stri
   if (error) throw new ApiError(500, "Qidirib bo‘lmadi");
   const rows = data ?? [];
   const kept = byDocument ? rows.filter((p) => p.date_of_birth === dateOfBirth) : rows;
+  const dobMismatch = byDocument && rows.length > 0 && kept.length === 0;
+  if (dateOfBirth) {
+    const event = {
+      clinicId: staff.clinicId,
+      action: "patient_identity_lookup",
+      entityType: "patients",
+      actor: { actorType: "staff", actorId: staff.profileId },
+      metadata: { method: term.kind, outcome: kept.length ? "matched" : dobMismatch ? "dob_mismatch" : "no_match" },
+    } satisfies AuditEvent;
+    // Record only the actor, result and the IDs of cards released to the desk.
+    await recordAudits(
+      kept.length ? kept.map(({ id }) => ({ ...event, entityId: id, patientId: id })) : [event],
+      { strict: true },
+    );
+  }
   return {
     patients: kept.map((p) => ({
       id: p.id,
@@ -189,7 +204,7 @@ export async function searchPatients(staff: Staff, q: string, dateOfBirth?: stri
       identityVerified: verifiedBy(p.identity_verified_by),
     })),
     exact: byDocument && kept.length === 1,
-    dobMismatch: byDocument && rows.length > 0 && kept.length === 0,
+    dobMismatch,
   };
 }
 

@@ -53,7 +53,7 @@ Screens: **Laboratoriya → Import** (`/lab/imports`, `/lab/imports/<id>`).
 - **Already in the clinic**, i.e. an existing result (any source, any status but superseded) for the same patient, test and day:
   - same values → `duplicate`;
   - different values → `conflict`.
-  
+
   The existing result is never replaced or merged.
 - **Two results for one patient and test on one day in the file:** `conflict`. They cannot be told apart from duplicates; enter them by hand.
 - The database re-checks both rules when it imports. An import key (`import:<sha256 of patient | test | time | accession>`, unique per clinic) prevents a double import.

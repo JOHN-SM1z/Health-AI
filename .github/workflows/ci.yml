@@ -35,6 +35,8 @@ jobs:
       # Without a database the integration suites skip (they say so); everything else runs.
       - run: npm test
       - run: node scripts/build-full-db-setup.mjs --check
+      - name: Test encrypted backup and restore with synthetic data
+        run: bash deploy/uz/scripts/test-backup.sh
       - name: Build
         run: |
           cp .env.test.example .env
@@ -42,7 +44,8 @@ jobs:
 
   database:
     name: Database, integration and end-to-end tests
-    runs-on: ubuntu-latest
+    # Pinned: Playwright 1.56 cannot install Chromium on ubuntu-latest (26.04) yet.
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
@@ -100,10 +103,22 @@ jobs:
             echo "SMS_PROVIDER=test"
             echo "ALLOW_TEST_SMS=true"
           } > .env
+          # Vitest only loads test-specific configuration; never a real app env.
+          cp .env .env.test
       - name: Clinic owner account (used by the session tests)
         run: npm run create-owner
       - name: Tests (unit, integration, authorization, database)
         run: npm test
+        env:
+          REQUIRE_TEST_DATABASE: "true"
+      - name: Worker claim migration and concurrency checks (disposable database)
+        run: |
+          set -a; . ./.env.test; set +a
+          npm run test:notification-claims
+      - name: Canonical clean-install and upgrade rehearsal (disposable databases)
+        run: |
+          set -a; . ./.env.test; set +a
+          npm run test:schema-rehearsal
       - name: Build and start the app
         run: |
           npm run build

@@ -1,0 +1,150 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import {clinicDateKey} from "@/lib/time/local";
+import type { Database } from "@/lib/supabase/database.types";
+import { PageHeader, Card, ABadge, ATable, AEmpty, AError, AButton, LoadingRow } from "@/components/admin/ui";
+import { ListOrdered } from "lucide-react";
+import { STATUS_LABELS, STATUS_TONES, formatTime, formatPrice, adminApi, AdminApiError } from "@/lib/admin/client";
+
+const WEEKDAYS = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
+const MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
+
+type Row = {
+  id: string;
+  patient_id: string;
+  start_at: string;
+  status: Database["public"]["Enums"]["appointment_status"];
+  patients: { full_name: string | null; phone: string | null } | null;
+  services: { name: string; price: number } | null;
+};
+
+export function ScheduledDoctorQueue({timezone}:{timezone:string}) {
+  const [rows, setRows] = useState<Row[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [doctorName, setDoctorName] = useState<string | null>(null);
+  // Client-only: rendered from fixed arrays (NOT Intl) so server and client
+  // produce identical strings regardless of ICU/locale data — avoids React
+  // #418 hydration mismatch (Node and Chromium differ on uz-UZ).
+  const [todayLabel] = useState(() => {
+    const now = new Date(clinicDateKey(timezone,new Date())+"T12:00:00Z");
+    return `${WEEKDAYS[now.getUTCDay()]}, ${now.getUTCDate()}-${MONTHS[now.getUTCMonth()]}`;
+  });
+
+  const load = async () => {
+    try {
+      const data = await adminApi.get<{appointments:Row[];doctorName:string}>("/api/doctor/appointments");
+      setRows(data.appointments);setDoctorName(data.doctorName);setError(null);
+    } catch(e) {setError(e instanceof Error ? e.message : "Navbatni yuklab bo‘lmadi");}
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const nextPatient = useMemo(() => {
+    if (!rows) return null;
+    return (
+      rows.find((r) => r.status === "checked_in") ??
+      rows.find((r) => r.status === "confirmed") ??
+      rows.find((r) => r.status === "pending") ??
+      null
+    );
+  }, [rows]);
+
+  const advance = async (r: Row) => {
+    const next =
+      r.status === "pending" || r.status === "confirmed"
+        ? "in_progress"
+        : r.status === "in_progress"
+          ? "completed"
+          : r.status === "checked_in"
+            ? "in_progress"
+            : null;
+    if (!next) return;
+    setBusyId(r.id);
+    try {
+      await adminApi.patch(`/api/doctor/appointments/${r.id}`, { status: next });
+      await load();
+    } catch (e) {
+      setError(e instanceof AdminApiError ? e.message : "Xatolik yuz berdi");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div>
+      <PageHeader
+        title="Bugungi navbat"
+        subtitle={doctorName ? `Shifokor: ${doctorName}` : todayLabel}
+      />
+
+      {error && <AError message={error} />}
+
+      {nextPatient && (
+        <Card className="mb-6 border-pine/30 bg-pine-tint/60">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-pine-deep">
+                <span className="pulse-dot" />
+                Navbatdagi bemor
+              </p>
+              <p className="font-display mt-1 text-lg font-bold text-foreground">{nextPatient.patients?.full_name ?? "—"}</p>
+              <p className="font-numeric text-sm text-ink-muted">
+                {formatTime(nextPatient.start_at)} · {nextPatient.services?.name ?? "—"} · {formatPrice(nextPatient.services?.price)}
+              </p>
+            </div>
+            <AButton loading={busyId === nextPatient.id} onClick={() => void advance(nextPatient)}>
+              {nextPatient.status === "in_progress" ? "Yakunlash" : "Qabulni boshlash"}
+            </AButton>
+          </div>
+        </Card>
+      )}
+
+      {rows === null ? (
+        <Card><LoadingRow /></Card>
+      ) : doctorName === null ? (
+        <Card>
+          <AEmpty
+            title="Shifokor hisobi ulanmagan"
+            subtitle="Admin panelda shifokor kartasiga profilingizni bog‘lang (Shifokorlar → Boshqarish)."
+            icon={<ListOrdered className="h-6 w-6" />}
+          />
+        </Card>
+      ) : rows.length === 0 ? (
+        <Card>
+          <AEmpty
+            title="Bugun navbat yo‘q"
+            subtitle="Barcha qabullar yakunlangan yoki rejalashtirilmagan"
+            icon={<ListOrdered className="h-6 w-6" />}
+          />
+        </Card>
+      ) : (
+        <ATable headers={["Vaqt", "Bemor", "Xizmat", "Narx", "Holat", "Amallar"]}>
+          {rows.map((r) => (
+            <tr key={r.id} className={r.id === nextPatient?.id ? "bg-pine-tint/50" : "hover:bg-sand"}>
+              <td className="px-4 py-3 font-semibold text-foreground">{formatTime(r.start_at)}</td>
+              <td className="px-4 py-3">
+                <p className="font-medium text-foreground"><Link href={`/doctor/patients/${r.patient_id}`}>{r.patients?.full_name ?? "—"}</Link></p>
+                {r.patients?.phone && <p className="text-xs text-ink-muted">{r.patients.phone}</p>}
+              </td>
+              <td className="px-4 py-3 text-foreground">{r.services?.name ?? "—"}</td>
+              <td className="px-4 py-3 text-foreground">{formatPrice(r.services?.price)}</td>
+              <td className="px-4 py-3"><ABadge tone={STATUS_TONES[r.status]}>{STATUS_LABELS[r.status]}</ABadge></td>
+              <td className="px-4 py-3">
+                {r.status !== "completed" && (
+                  <AButton size="sm" variant={r.status === "in_progress" ? "primary" : "outline"} loading={busyId === r.id} onClick={() => void advance(r)}>
+                    {r.status === "in_progress" ? "Yakunlash" : r.status === "checked_in" ? "Boshlash" : "Jarayonga olish"}
+                  </AButton>
+                )}
+              </td>
+            </tr>
+          ))}
+        </ATable>
+      )}
+    </div>
+  );
+}

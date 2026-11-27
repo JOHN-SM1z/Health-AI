@@ -20,6 +20,14 @@ const eslintConfig = defineConfig([
     "supabase/seed.sql",
     // Third-party agent skill templates (not project code).
     ".agents/**",
+    // Archived checkouts and generated review artifacts are not application source.
+    "backups/**",
+    "tmp/**",
+    "output/**",
+    ".codex/**",
+    ".claude/**",
+    ".kilo/**",
+    ".presentation-build/**",
   ]),
   {
     rules: {

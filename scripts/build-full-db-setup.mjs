@@ -21,6 +21,10 @@ const RULE = "-- ===============================================================
 
 export function buildFullDbSetup() {
   const files = readdirSync(migrationsDir).filter((f) => f.endsWith(".sql")).sort();
+  const versions = files.map((file) => file.split("_")[0]);
+  if (new Set(versions).size !== versions.length) {
+    throw new Error("Duplicate migration versions: reconcile the migration lineage before generating SQL.");
+  }
   const header = [
     RULE,
     "-- Health AI — FULL DATABASE SETUP (production)",

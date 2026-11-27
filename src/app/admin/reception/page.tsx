@@ -139,9 +139,10 @@ export default function ReceptionPage() {
     }
     setSearching(true);
     try {
-      const params = new URLSearchParams({ q: text });
-      if (dobIso) params.set("dob", dobIso);
-      const res = await adminApi.get<SearchResult>(`/api/operations/patients?${params}`);
+      const res = await adminApi.post<SearchResult>("/api/operations/patients", {
+        query: text,
+        dateOfBirth: dobIso ?? undefined,
+      });
       if (res.exact) {
         // Passport/JSHSHIR and date of birth match one card: it opens at once.
         choose(res.patients[0], "document");

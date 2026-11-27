@@ -6,6 +6,7 @@ import { sharedRateLimit } from "@/lib/rate-limit-shared";
 import { detectUrgency, urgentMessage, NOT_DIAGNOSIS_DISCLAIMER } from "@/lib/safety/policy";
 import { routeConcern } from "@/lib/booking/router";
 import { escalateUrgentFromMiniApp } from "@/lib/telegram/handlers";
+import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 
@@ -24,13 +25,17 @@ export async function POST(request: NextRequest) {
 
     if (detectUrgency(body.text) === "urgent") {
       if (patient.telegram_user_id) {
-        await escalateUrgentFromMiniApp({
-          clinicId: clinic.id,
-          patientId: patient.id,
-          telegramUserId: patient.telegram_user_id,
-          text: body.text,
-          patientLabel: patient.telegram_username ? `@${patient.telegram_username}` : String(patient.telegram_user_id),
-        });
+        try {
+          await escalateUrgentFromMiniApp({
+            clinicId: clinic.id,
+            patientId: patient.id,
+            telegramUserId: patient.telegram_user_id,
+            text: body.text,
+            patientLabel: patient.telegram_username ? `@${patient.telegram_username}` : String(patient.telegram_user_id),
+          });
+        } catch {
+          logger.error("mini app urgent escalation could not be completed", { clinicId: clinic.id });
+        }
       }
       return ok({ urgent: true, message: urgentMessage(body.text), clinicPhone: clinic.phone ?? null });
     }

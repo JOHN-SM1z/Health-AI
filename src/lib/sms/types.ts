@@ -2,7 +2,9 @@
  * An SMS provider (Slice D, 20261008000013). "accepted" means the provider took the message for delivery — never that
  * the patient received it; delivery comes only from the provider's delivery report.
  */
-export type SmsSendResult = { accepted: true; providerMessageId: string } | { accepted: false; error: string };
+export type SmsSendResult =
+  | { accepted: true; providerMessageId: string }
+  | { accepted: false; error: string; outcome?: "rejected" | "unknown" };
 
 export interface SmsProvider {
   readonly name: "eskiz" | "test";

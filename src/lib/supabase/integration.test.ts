@@ -9,7 +9,7 @@ vi.mock("@/lib/telegram/bot", () => ({
 }));
 
 vi.mock("@/lib/transcription/provider", () => ({
-  getTranscriptionProvider: vi.fn(() => ({ name: "test-provider", transcribe: async () => "..." })),
+  getHealthTranscriptionProvider: vi.fn(() => ({ name: "test-provider", transcribe: async () => ({ text: "...", provider: "test-provider" }) })),
 }));
 
 import { sendTelegramMessage } from "@/lib/telegram/bot";

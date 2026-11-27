@@ -90,10 +90,8 @@ export async function generateReceptionistReply(opts: {
       };
     }
     return { text, usedAi: true, urgent: false, handoff: false };
-  } catch (e) {
-    logger.error("ai receptionist failed, using fallback", {
-      error: e instanceof Error ? e.message : String(e),
-    });
+  } catch {
+    logger.error("ai receptionist failed, using fallback", { clinicId });
     const knowledge = await loadClinicKnowledge(clinicId);
     const answers = knowledge.faqs.map((f) => `${f.question} — ${f.answer}`);
     return {

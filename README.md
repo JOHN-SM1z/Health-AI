@@ -2,7 +2,7 @@
 
 Clinic booking and patient-communication platform: a Telegram bot + Mini App for patients, an admin panel and a doctor panel, powered by Supabase (Postgres + Auth + Storage + RLS) and a provider-agnostic AI layer, deployed to Google Cloud Run or Vercel.
 
-**Status:** **AUDIT PASSED & PRODUCTION APPROVED** — All 26 audit phases verified, 10 of 10 critical release gates passed. Platform approved for production deployment subject to standard credential provisioning and operational procedures. See [docs/PRODUCTION_READINESS_AUDIT.md](docs/PRODUCTION_READINESS_AUDIT.md).
+**Status:** **LOCAL RELEASE GATES PASSED**. The 20 November migration-history, compiler and legacy-test blockers are repaired: lint, typecheck, production build, 1,353 tests (zero skipped) and 522 browser/HTTP checks pass. See [current implementation status and upgrade boundaries](docs/IMPLEMENTATION_STATUS_2026-11-20.md). No production database or deployment was changed; earlier audit approvals remain historical evidence.
 
 ---
 
@@ -45,7 +45,7 @@ Clinic booking and patient-communication platform: a Telegram bot + Mini App for
 
 ## 4. Quick Start (Local Development)
 
-Requirements: Node 20+.
+Requirements: Node 22.18+ (CI uses Node 22).
 
 ```bash
 # 1. Install dependencies
@@ -76,6 +76,23 @@ npm run e2e:seed       # demo clinic + staff accounts (idempotent; refuses non-l
 npm run test:e2e       # referral workflow, online-vs-reception booking race, staff management and
                        # urgent escalation (browser) + HTTP red team
 ```
+
+Vitest and the E2E runner load `.env.test` when present, otherwise `.env.test.example`. They never load
+the app's `.env` or `.env.local`; every Supabase API/database target must use a
+loopback host. For database integration tests, configure `.env.test` with keys
+from a disposable local stack. CI creates that file using its generated local
+credentials. Set `REQUIRE_TEST_DATABASE=true` for a release verification run; an
+unavailable database then fails instead of skipping integration suites. E2E also
+requires an explicit local `SUPABASE_DB_URL`. Worker migration/claim checks can run independently with
+`SUPABASE_DB_URL` set to a local administrator connection and
+`npm run test:notification-claims`; they create and remove their own test database.
+`npm run test:schema-rehearsal` additionally verifies canonical clean installs,
+upgrades, RLS/grants and the generated SQL bundle. See the
+[migration lineage rules](supabase/legacy-migrations/README.md) before upgrading.
+
+The working-tree compatibility findings and current verification results are in
+[the implementation status](docs/IMPLEMENTATION_STATUS_2026-11-20.md). Historical
+approval and test counts elsewhere in this README do not certify this checkout.
 
 CI (`.github/workflows/ci.yml`) runs all of the above on every push: lint, typecheck, tests
 without a database, build, then a Supabase stack from the CLI with every migration and the

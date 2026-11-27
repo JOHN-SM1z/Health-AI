@@ -4,16 +4,18 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --env-file-if-exists=.env --env-file-if-exists=.env.local ./node_modules/vitest/vitest.mjs run",
+    "test": "node ./node_modules/vitest/vitest.mjs run",
+    "test:notification-claims": "node scripts/test-notification-claims.mjs",
+    "test:schema-rehearsal": "node scripts/rehearse-canonical-schema.mjs",
     "db:reset-local": "npx supabase db reset --local",
     "db:full-setup": "node scripts/build-full-db-setup.mjs",
     "create-owner": "node --env-file=.env scripts/create-owner.ts",
-    "e2e:seed": "node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/seed-demo.mjs",
-    "test:e2e": "node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/referral-workflow.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/booking-channels.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/my-appointments.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/online-identity.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/online-payment.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/sms-fallback.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/staff-and-safety.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-configuration.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-ordering.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-collection.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-results.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-verification.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-history.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-documents.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-patient-results.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-import.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/patient-merge.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-external.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-notifications.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-dashboards.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-ai-summary.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/outpatient-journey.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/lab-walk-in.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/saas-onboarding.mjs && node --env-file-if-exists=.env --env-file-if-exists=.env.local e2e/redteam-http.mjs",
+    "e2e:seed": "node scripts/run-e2e.mjs --seed",
+    "test:e2e": "node scripts/run-e2e.mjs",
     "sync-telegram-bots": "node --env-file=.env scripts/sync-telegram-bots.mjs"
   },
   "dependencies": {

@@ -40,6 +40,8 @@ export function handleApiError(e: unknown): NextResponse {
   if (e instanceof SyntaxError) {
     return fail("Noto‘g‘ri so‘rov formati", 400, "bad_json");
   }
-  logger.error("unhandled api error", { error: e instanceof Error ? e.message : String(e) });
+  // Provider/database errors may embed patient values, request bodies or keys.
+  // Safe API responses are insufficient if the same content reaches logs.
+  logger.error("unhandled api error");
   return fail("Ichki xatolik yuz berdi", 500, "internal");
 }

@@ -13,7 +13,7 @@ import { startNavigation, suggestNavigation, NAVIGATION_STATE_KEY } from "@/lib/
 import { trackAnalytics } from "@/lib/analytics";
 import { recordAudit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
-import { getTranscriptionProvider } from "@/lib/transcription/provider";
+import { getHealthTranscriptionProvider } from "@/lib/transcription/provider";
 import { detectUrgency, urgentMessage } from "@/lib/safety/policy";
 import { listUpcomingAppointments, upcomingAppointmentsText } from "@/lib/appointments/patient-upcoming";
 
@@ -115,6 +115,9 @@ export async function handleTelegramMessage(opts: {
   voice?: { file_id: string; file_unique_id?: string; duration?: number; mime_type?: string; file_size?: number };
   updateId: number;
 }): Promise<void> {
+  const text = opts.text?.trim() ?? "";
+  const urgent = !opts.voice && detectUrgency(text) === "urgent";
+  let context;
   try {
     const clinic = await getClinicById(opts.clinicId);
     const patient = await getOrCreatePatient({
@@ -126,7 +129,21 @@ export async function handleTelegramMessage(opts: {
       patientId: patient.id,
       channel: "telegram",
     });
+    context = { clinic, patient, conversation };
+  } catch {
+    logger.error("telegram conversation initialization failed", { clinicId: opts.clinicId, updateId: opts.updateId });
+    if (!urgent) throw new Error("telegram_conversation_initialization_failed");
 
+    const messageId = await sendTelegramMessage({
+      chatId: opts.chatId,
+      text: urgentMessage(text),
+    }, opts.clinicId);
+    if (messageId === null) throw new Error("telegram_urgent_notice_unverified");
+    return;
+  }
+
+  const { clinic, patient, conversation } = context;
+  try {
     // Voice messages take the voice pipeline.
     if (opts.voice) {
       await handleVoiceMessage({
@@ -139,17 +156,22 @@ export async function handleTelegramMessage(opts: {
       return;
     }
 
-    const text = opts.text?.trim() ?? "";
     if (!text) return;
 
-    await appendMessage({
-      conversationId: conversation.id,
-      clinicId: clinic.id,
-      role: "patient",
-      type: "text",
-      content: text,
-      telegramMessageId: opts.updateId,
-    });
+    try {
+      await appendMessage({
+        conversationId: conversation.id,
+        clinicId: clinic.id,
+        role: "patient",
+        type: "text",
+        content: text,
+        telegramMessageId: opts.updateId,
+      });
+    } catch (error) {
+      if (!urgent) throw error;
+      // A transcript write failure must not suppress the urgent-care notice.
+      logger.error("urgent message could not be recorded", { conversationId: conversation.id });
+    }
 
     const patientLabel = opts.from.username ? `@${opts.from.username}` : String(opts.from.id);
 
@@ -157,7 +179,7 @@ export async function handleTelegramMessage(opts: {
     // approved urgent-care message goes out and the clinic's staff are
     // alerted — also when an operator already holds the conversation (the
     // deterministic safety message is not an automatic reply).
-    if (detectUrgency(text) === "urgent") {
+    if (urgent) {
       await escalateUrgent({
         clinicId: clinic.id,
         patientId: patient.id,
@@ -170,8 +192,8 @@ export async function handleTelegramMessage(opts: {
     }
 
     // Conversation under human control: store, do not auto-reply.
-    if (await conversationIsHeld(conversation.id)) {
-      logger.info("message stored, conversation held by admin", { conversationId: conversation.id });
+    if (await conversationIsHeld(clinic.id, conversation.id)) {
+      logger.info("automated reply suppressed", { conversationId: conversation.id });
       return;
     }
 
@@ -181,10 +203,10 @@ export async function handleTelegramMessage(opts: {
     if (nav && nav.step === 1) {
       await trackAnalytics({ clinicId: clinic.id, patientId: patient.id, eventType: "navigation_answer" });
       const reply = await suggestNavigation(clinic.id, text);
-      await updateConversationState(conversation.id, { ...state, [NAVIGATION_STATE_KEY]: { step: 2 } });
+      await updateConversationState(clinic.id, conversation.id, { ...state, [NAVIGATION_STATE_KEY]: { step: 2 } });
       // The admin may have taken over while we were thinking — never reply
       // over a human. Re-check immediately before sending.
-      if (await conversationIsHeld(conversation.id)) return;
+      if (await conversationIsHeld(clinic.id, conversation.id)) return;
       await sendTelegramMessage({ chatId: opts.chatId, text: reply, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
       await appendMessage({
         conversationId: conversation.id,
@@ -199,7 +221,7 @@ export async function handleTelegramMessage(opts: {
     const reply = await generateReceptionistReply({ clinicId: clinic.id, userText: text });
     // The admin may have taken over while the AI was generating. One
     // authoritative mode: never send an AI reply over a human operator.
-    if (await conversationIsHeld(conversation.id)) return;
+    if (await conversationIsHeld(clinic.id, conversation.id)) return;
     await sendTelegramMessage(
       {
         chatId: opts.chatId,
@@ -216,11 +238,8 @@ export async function handleTelegramMessage(opts: {
       content: reply.text,
     });
 
-  } catch (e) {
-    logger.error("telegram message handling failed", {
-      chatId: opts.chatId,
-      error: e instanceof Error ? e.message : String(e),
-    });
+  } catch {
+    logger.error("telegram message handling failed", { clinicId: opts.clinicId, updateId: opts.updateId });
   }
 }
 
@@ -241,7 +260,7 @@ export async function handleTelegramCommand(opts: {
     patientId: patient.id,
     channel: "telegram",
   });
-  const held = await conversationIsHeld(conversation.id);
+  const held = await conversationIsHeld(clinic.id, conversation.id);
 
   switch (opts.command) {
     case "/start": {
@@ -256,7 +275,7 @@ export async function handleTelegramCommand(opts: {
         await sendTelegramMessage(
           {
             chatId: opts.chatId,
-            text: "Hozir operator bilan suhbatlashyapsiz. Operator javobini kuting.",
+            text: "Hozir avtomatik javoblar faol emas. Operator javobini kuting.",
             replyMarkup: buildHeldKeyboard(),
           },
           clinic.id,
@@ -331,7 +350,7 @@ export async function handleMenuButton(opts: {
     patientId: patient.id,
     channel: "telegram",
   });
-  const held = await conversationIsHeld(conversation.id);
+  const held = await conversationIsHeld(clinic.id, conversation.id);
 
   // Leaving the operator chat must work even while the conversation is held.
   if (opts.button.includes("Suhbatni yakunlash")) {
@@ -349,7 +368,7 @@ export async function handleMenuButton(opts: {
     await sendTelegramMessage(
       {
         chatId: opts.chatId,
-        text: "Hozir operator bilan suhbatlashyapsiz. Operator javobini kuting.",
+        text: "Hozir avtomatik javoblar faol emas. Operator javobini kuting.",
         replyMarkup: buildHeldKeyboard(),
       },
       clinic.id,
@@ -408,11 +427,12 @@ export async function handleMenuButton(opts: {
   }
 
   if (opts.button.includes("Shifokor tanlashda yordam")) {
-    await updateConversationState(conversation.id, {
+    await updateConversationState(clinic.id, conversation.id, {
       ...(typeof conversation.state === "object" && conversation.state ? conversation.state as Record<string, unknown> : {}),
       [NAVIGATION_STATE_KEY]: { step: 1 },
     });
     const question = await startNavigation();
+    if (await conversationIsHeld(clinic.id, conversation.id)) return;
     await sendTelegramMessage({ chatId: opts.chatId, text: question, replyMarkup: buildMainKeyboard(clinic.id) }, clinic.id);
     await appendMessage({
       conversationId: conversation.id,
@@ -493,38 +513,54 @@ async function escalateUrgent(opts: {
   text: string;
   patientLabel: string;
 }): Promise<void> {
-  const { data: flagged, error } = await createAdminClient()
-    .from("conversations")
-    .update({ urgent_at: new Date().toISOString(), ai_enabled: false })
-    .eq("id", opts.conversationId)
-    .eq("clinic_id", opts.clinicId)
-    .select("id");
-  const alerted = !error && !!flagged?.length;
-  if (!alerted) {
-    logger.error("urgent escalation could not be recorded", { conversationId: opts.conversationId, code: error?.code });
+  let flaggedForStaff = false;
+  try {
+    const { data: flagged, error } = await createAdminClient()
+      .from("conversations")
+      .update({ urgent_at: new Date().toISOString(), ai_enabled: false })
+      .eq("id", opts.conversationId)
+      .eq("clinic_id", opts.clinicId)
+      .select("id");
+    flaggedForStaff = !error && !!flagged?.length;
+  } catch {
+    // Send the approved urgent-care notice even if the database is unavailable.
+  }
+  let alertRecorded = false;
+  if (!flaggedForStaff) {
+    logger.error("urgent escalation could not be recorded", { conversationId: opts.conversationId });
   } else {
-    await recordAudit({
-      clinicId: opts.clinicId,
-      action: "conversation_urgent",
-      entityType: "conversations",
-      entityId: opts.conversationId,
-      actor: { actorType: "telegram" },
-    });
+    try {
+      await recordAudit({
+        clinicId: opts.clinicId,
+        action: "conversation_urgent",
+        entityType: "conversations",
+        entityId: opts.conversationId,
+        actor: { actorType: "telegram" },
+        strict: true,
+      });
+      alertRecorded = true;
+    } catch {
+      // The flag remains available to staff. Do not claim the alert was recorded.
+    }
   }
 
-  const reply = alerted
+  const reply = alertRecorded
     ? `${urgentMessage(opts.text)}\n\nKlinika xodimlariga xabar berildi — operator imkon qadar tezroq javob beradi.`
     : urgentMessage(opts.text);
   await sendTelegramMessage({ chatId: opts.chatId, text: reply, replyMarkup: buildHeldKeyboard() }, opts.clinicId);
-  await appendMessage({
-    conversationId: opts.conversationId,
-    clinicId: opts.clinicId,
-    role: "bot",
-    type: "text",
-    content: reply,
-  });
+  try {
+    await appendMessage({
+      conversationId: opts.conversationId,
+      clinicId: opts.clinicId,
+      role: "bot",
+      type: "text",
+      content: reply,
+    });
+  } catch {
+    logger.error("urgent notice could not be recorded", { conversationId: opts.conversationId });
+  }
   await trackAnalytics({ clinicId: opts.clinicId, patientId: opts.patientId, eventType: "urgent_flag" });
-  await notifyAdmins(`⚠️ Shoshilinch holat ehtimoli: bemor ${opts.patientLabel}`);
+  await notifyAdmins("⚠️ Suhbatni zudlik bilan ko‘rib chiqish kerak.");
 }
 
 /**
@@ -534,7 +570,11 @@ async function escalateUrgent(opts: {
  */
 export async function escalateUrgentFromMiniApp(opts: { clinicId: string; patientId: string; telegramUserId: number; text: string; patientLabel: string }) {
   const conversation = await getOrCreateConversation({ clinicId: opts.clinicId, patientId: opts.patientId, channel: "telegram" });
-  await appendMessage({ conversationId: conversation.id, clinicId: opts.clinicId, role: "patient", type: "text", content: opts.text, metadata: { via: "mini_app_concern" } });
+  try {
+    await appendMessage({ conversationId: conversation.id, clinicId: opts.clinicId, role: "patient", type: "text", content: opts.text, metadata: { via: "mini_app_concern" } });
+  } catch {
+    logger.error("urgent message could not be recorded", { conversationId: conversation.id });
+  }
   await escalateUrgent({
     clinicId: opts.clinicId,
     patientId: opts.patientId,
@@ -553,10 +593,25 @@ export async function requestHumanHandoff(opts: {
   patientLabel: string;
 }): Promise<void> {
   const supabase = createAdminClient();
-  await supabase
+  const { data: requested, error } = await supabase
     .from("conversations")
     .update({ ai_enabled: false })
-    .eq("id", opts.conversationId);
+    .eq("id", opts.conversationId)
+    .eq("clinic_id", opts.clinicId)
+    .eq("patient_id", opts.patientId)
+    .eq("channel", "telegram")
+    .in("status", ["open", "assigned"])
+    .select("id")
+    .maybeSingle();
+
+  if (error || !requested) {
+    logger.error("operator request could not be recorded", { conversationId: opts.conversationId });
+    await sendTelegramMessage({
+      chatId: opts.chatId,
+      text: "Operator so‘rovini hozir yuborib bo‘lmadi. Iltimos, klinika bilan bog‘laning.",
+    }, opts.clinicId);
+    return;
+  }
 
   await recordAudit({
     clinicId: opts.clinicId,
@@ -591,8 +646,8 @@ export async function requestHumanHandoff(opts: {
 }
 
 /**
- * Patient ends the operator chat and returns to the bot. Idempotent: when the
- * conversation is not held it only shows the main menu again.
+ * The patient may cancel their pending request for an operator. An urgent
+ * hold or a conversation assigned to staff can only be released by staff.
  */
 export async function exitOperatorChat(opts: {
   clinicId: string;
@@ -602,14 +657,26 @@ export async function exitOperatorChat(opts: {
   patientLabel: string;
 }): Promise<void> {
   const supabase = createAdminClient();
-  const { data: conv } = await supabase
+  const returnUnavailable = {
+    chatId: opts.chatId,
+    text: "Hozir botga qaytib bo‘lmaydi. Operator javobini kuting.",
+    replyMarkup: buildHeldKeyboard(),
+  };
+  const { data: conv, error: lookupError } = await supabase
     .from("conversations")
-    .select("status, ai_enabled")
+    .select("status, ai_enabled, urgent_at")
     .eq("id", opts.conversationId)
+    .eq("clinic_id", opts.clinicId)
+    .eq("patient_id", opts.patientId)
+    .eq("channel", "telegram")
     .maybeSingle();
-  const held = !!conv && (conv.status === "assigned" || conv.ai_enabled === false);
 
-  if (!held) {
+  if (lookupError || !conv || conv.status !== "open" || (!conv.ai_enabled && conv.urgent_at !== null)) {
+    await sendTelegramMessage(returnUnavailable, opts.clinicId);
+    return;
+  }
+
+  if (conv.ai_enabled) {
     await sendTelegramMessage(
       {
         chatId: opts.chatId,
@@ -621,17 +688,26 @@ export async function exitOperatorChat(opts: {
     return;
   }
 
-  // Release back to the bot — same state transition as an admin release.
-  await supabase
+  // A staff takeover or urgent escalation may have occurred since the read.
+  const { data: released, error } = await supabase
     .from("conversations")
     .update({
-      status: "open",
       ai_enabled: true,
-      taken_over_by: null,
-      taken_over_at: null,
       released_at: new Date().toISOString(),
     })
-    .eq("id", opts.conversationId);
+    .eq("id", opts.conversationId)
+    .eq("clinic_id", opts.clinicId)
+    .eq("patient_id", opts.patientId)
+    .eq("channel", "telegram")
+    .eq("status", "open")
+    .eq("ai_enabled", false)
+    .is("urgent_at", null)
+    .select("id")
+    .maybeSingle();
+  if (error || !released) {
+    await sendTelegramMessage(returnUnavailable, opts.clinicId);
+    return;
+  }
 
   await recordAudit({
     clinicId: opts.clinicId,
@@ -673,6 +749,9 @@ async function notifyAdmins(message: string) {
 // Voice pipeline
 // ---------------------------------------------------------------------------
 
+const VOICE_RETENTION_DAYS = 7;
+const VOICE_DAY_MS = 86_400_000;
+
 async function handleVoiceMessage(opts: {
   clinicId: string;
   patientId: string;
@@ -695,11 +774,14 @@ async function handleVoiceMessage(opts: {
       mime_type: voice.mime_type ?? null,
       size_bytes: voice.file_size ?? null,
       transcription_status: "none",
+      retention_days: VOICE_RETENTION_DAYS,
+      expires_at: new Date(Date.now() + VOICE_RETENTION_DAYS * VOICE_DAY_MS).toISOString(),
     })
     .select("*")
     .single();
   if (error || !voiceRow) {
-    logger.error("voice metadata save failed", { error: error?.message });
+    logger.error("voice metadata save failed", { code: error?.code });
+    if (await conversationIsHeld(clinicId, conversationId)) return;
     await sendTelegramMessage(
       {
         chatId,
@@ -719,8 +801,10 @@ async function handleVoiceMessage(opts: {
     voiceMessageId: voiceRow.id,
   });
 
+  if (await conversationIsHeld(clinicId, conversationId)) return;
+
   // 2. Transcription must be enabled AND consented before processing.
-  if (!getTranscriptionProvider()) {
+  if (!getHealthTranscriptionProvider()) {
     await sendTelegramMessage(
       {
         chatId,
@@ -760,16 +844,24 @@ async function handleVoiceMessage(opts: {
  * one patient consent to (or correct) another patient's recording.
  */
 async function ownVoiceMessage(clinicId: string, voiceMessageId: string, telegramUserId: number) {
-  const { data } = await createAdminClient()
+  const { data, error } = await createAdminClient()
     .from("voice_messages")
     .select("*, conversations!inner(patients!inner(telegram_user_id))")
     .eq("id", voiceMessageId)
     .eq("clinic_id", clinicId)
     .maybeSingle();
   const owner = (data?.conversations as { patients?: { telegram_user_id?: number | null } } | null)?.patients?.telegram_user_id;
-  if (!data || owner !== telegramUserId) return null;
+  if (error || !data || owner !== telegramUserId || data.purged_at || voiceExpired(data.expires_at)) return null;
   return data;
 }
+
+function voiceExpired(expiresAt: string | null): boolean {
+  return expiresAt !== null && Date.parse(expiresAt) <= Date.now();
+}
+
+const voiceFailureText =
+  "Kechirasiz, ovozli xabaringizni qayta ishlay olmadim va eshitilgan matn sifatida javob bera olmayman. " +
+  "Iltimos, xabaringizni matn shaklida yozing yoki operatorlarimizga murojaat qiling — ular yordam beradi.";
 
 export async function handleVoiceConsent(opts: {
   clinicId: string;
@@ -782,16 +874,24 @@ export async function handleVoiceConsent(opts: {
   const supabase = createAdminClient();
   const voiceRow = await ownVoiceMessage(opts.clinicId, opts.voiceMessageId, opts.telegramUserId);
   if (!voiceRow) {
-    // Must go through the patient's own clinic bot like every other reply
-    // in this handler — omitting clinicId here would fall back to the
-    // legacy global admin bot, which has no chat with this patient and
-    // would fail to deliver (or silently no-op when unconfigured).
     await sendTelegramMessage({ chatId: opts.chatId, text: "Ovozli xabar topilmadi." }, opts.clinicId);
     return;
   }
 
+  const { id, clinic_id: clinicId, conversation_id: conversationId } = voiceRow;
+  if (voiceRow.transcription_status !== "none") return;
+
   if (!opts.consent) {
-    await supabase.from("voice_messages").update({ consent_given: false }).eq("id", voiceRow.id);
+    const { data: rejected, error } = await supabase.from("voice_messages")
+      .update({ consent_given: false, transcription_status: "failed", expires_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("clinic_id", clinicId)
+      .eq("transcription_status", "none")
+      .is("purged_at", null)
+      .select("id")
+      .maybeSingle();
+    if (error) logger.error("voice refusal could not be saved", { code: error.code });
+    if (error || !rejected || await conversationIsHeld(clinicId, conversationId)) return;
     await sendTelegramMessage(
       {
         chatId: opts.chatId,
@@ -799,91 +899,118 @@ export async function handleVoiceConsent(opts: {
           "Tushundim, ovozli xabaringizni qayta ishlamaymiz. " +
           "Agar yordam kerak bo‘lsa, matn shaklida yozing yoki operatorlarimiz bilan bog‘laning.",
       },
-      voiceRow.clinic_id,
+      clinicId,
     );
     return;
   }
 
-  // 4. Consent given: download server-side, store privately, transcribe.
-  await supabase.from("voice_messages").update({ consent_given: true }).eq("id", voiceRow.id);
-  await sendTelegramMessage(
-    { chatId: opts.chatId, text: "Ovozli xabaringizni qayta ishlayapmiz... ⏳" },
-    voiceRow.clinic_id,
-  );
+  if (await conversationIsHeld(clinicId, conversationId)) return;
+  const provider = getHealthTranscriptionProvider();
+  if (!provider || !voiceRow.telegram_file_id || voiceRow.retention_days <= 0) {
+    await sendTelegramMessage({ chatId: opts.chatId, text: voiceFailureText }, clinicId);
+    return;
+  }
 
+  const mimeType = voiceRow.mime_type === "audio/mpeg" || voiceRow.mime_type === "audio/mp4" ? voiceRow.mime_type : "audio/ogg";
+  const ext = mimeType === "audio/mpeg" ? "mp3" : mimeType === "audio/mp4" ? "m4a" : "ogg";
+  const path = `${clinicId}/${id}.${ext}`;
+  const startedAt = new Date();
+  const expiresAt = new Date(startedAt.getTime() + voiceRow.retention_days * VOICE_DAY_MS).toISOString();
+  // Persist consent and the cleanup pointer together before reading any audio.
+  // Only one consent button tap can move the row from none to pending.
+  const { data: claimed, error: claimError } = await supabase
+    .from("voice_messages")
+    .update({ consent_given: true, transcription_status: "pending", storage_path: path, expires_at: expiresAt })
+    .eq("id", id)
+    .eq("clinic_id", clinicId)
+    .eq("transcription_status", "none")
+    .is("purged_at", null)
+    .or(`expires_at.is.null,expires_at.gt.${startedAt.toISOString()}`)
+    .select("id")
+    .maybeSingle();
+  if (claimError) {
+    logger.error("voice consent could not be saved", { code: claimError.code });
+    if (!(await conversationIsHeld(clinicId, conversationId))) {
+      await sendTelegramMessage({ chatId: opts.chatId, text: voiceFailureText }, clinicId);
+    }
+    return;
+  }
+  if (!claimed) return;
+
+  let transcript: string;
   try {
-    if (!voiceRow.telegram_file_id) throw new Error("telegram file id unavailable");
-    const fileUrl = await getTelegramFileUrl(voiceRow.telegram_file_id, voiceRow.clinic_id);
-    if (!fileUrl) throw new Error("telegram file url unavailable");
-
-    const res = await fetch(fileUrl, { signal: AbortSignal.timeout(30_000) });
-    if (!res.ok) throw new Error(`file download failed ${res.status}`);
+    if (await conversationIsHeld(clinicId, conversationId)) throw new Error("voice held");
+    await sendTelegramMessage({ chatId: opts.chatId, text: "Ovozli xabaringizni qayta ishlayapmiz... ⏳" }, clinicId);
+    const fileUrl = await getTelegramFileUrl(voiceRow.telegram_file_id, clinicId);
+    if (!fileUrl) throw new Error("telegram file unavailable");
+    const res = await fetch(fileUrl, { redirect: "error", signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new Error("voice download failed");
     const buffer = Buffer.from(await res.arrayBuffer());
 
-    // Private storage: <clinic_id>/<voice_message_id>.<ext>
-    const ext = (voiceRow.mime_type ?? "audio/ogg").split("/")[1] || "ogg";
-    const path = `${voiceRow.clinic_id}/${voiceRow.id}.${ext}`;
-    const { error: uploadError } = await supabase.storage
-      .from("voice-messages")
-      .upload(path, buffer, { contentType: voiceRow.mime_type ?? "audio/ogg", upsert: true });
-    if (uploadError) throw new Error(`storage upload failed: ${uploadError.message}`);
+    if (await conversationIsHeld(clinicId, conversationId)) throw new Error("voice held");
+    const result = await provider.transcribe({ file: buffer, mimeType, fileName: `${id}.${ext}` });
 
-    const provider = getTranscriptionProvider();
-    if (!provider) throw new Error("transcription provider vanished");
-    const result = await provider.transcribe({ file: buffer, mimeType: voiceRow.mime_type ?? "audio/ogg", fileName: `${voiceRow.id}.${ext}` });
+    if (await conversationIsHeld(clinicId, conversationId)) throw new Error("voice held");
+    const { error: uploadError } = await supabase.storage.from("voice-messages")
+      .upload(path, buffer, { contentType: mimeType });
+    if (uploadError) throw new Error("voice upload failed");
 
-    const expiresAt = new Date(Date.now() + voiceRow.retention_days * 24 * 60 * 60 * 1000).toISOString();
-    await supabase
+    const { data: saved, error: saveError } = await supabase
       .from("voice_messages")
       .update({
-        storage_path: path,
         transcription: result.text,
         transcription_status: "transcribed",
         transcription_provider: result.provider,
-        expires_at: expiresAt,
       })
-      .eq("id", voiceRow.id);
-
-    // 5. Show the transcription so the patient can correct it, then use it
-    // for navigation (consent was already given).
-    await sendTelegramMessage(
-      {
-        chatId: opts.chatId,
-        text: `Siz aytdingiz:\n“${result.text}”\n\nBu to‘g‘rimi?`,
-        replyMarkup: {
-          inline_keyboard: [
-            [
-              { text: "✅ To‘g‘ri", callback_data: `voice_correct:${voiceRow.id}` },
-              { text: "✏️ Tuzatish kerak", callback_data: `voice_wrong:${voiceRow.id}` },
-            ],
-          ],
-        },
-      },
-      voiceRow.clinic_id,
-    );
-  } catch (e) {
-    logger.error("voice transcription failed", { voiceId: voiceRow.id, error: String(e) });
-    await supabase
+      .eq("id", id)
+      .eq("clinic_id", clinicId)
+      .eq("transcription_status", "pending")
+      .is("purged_at", null)
+      .gt("expires_at", new Date().toISOString())
+      .select("id")
+      .maybeSingle();
+    if (saveError || !saved) throw new Error("voice transcript save failed");
+    transcript = result.text;
+  } catch {
+    logger.error("voice transcription failed", { voiceId: id });
+    // An upload can succeed even when its response is lost. Keep its pointer
+    // and make cleanup due. If this write fails, the original expiry still applies.
+    const { error: cleanupError } = await supabase
       .from("voice_messages")
-      .update({ transcription_status: "failed", transcription_error: String(e).slice(0, 500) })
-      .eq("id", voiceRow.id);
-    await sendTelegramMessage(
-      {
-        chatId: opts.chatId,
-        text:
-          "Kechirasiz, ovozli xabaringizni qayta ishlay olmadim va eshitilgan matn sifatida javob bera olmayman. " +
-          "Iltimos, xabaringizni matn shaklida yozing yoki operatorlarimizga murojaat qiling — ular yordam beradi.",
-      },
-      voiceRow.clinic_id,
-    );
+      .update({ transcription_status: "failed", transcription_error: "processing_failed", expires_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("clinic_id", clinicId)
+      .eq("transcription_status", "pending")
+      .is("purged_at", null);
+    if (cleanupError) logger.error("voice failure state could not be saved", { code: cleanupError.code });
+    if (!(await conversationIsHeld(clinicId, conversationId))) {
+      await sendTelegramMessage({ chatId: opts.chatId, text: voiceFailureText }, clinicId);
+    }
+    return;
   }
+
+  // Confirm success only after the transcript was durably saved.
+  if (await conversationIsHeld(clinicId, conversationId)) return;
+  await sendTelegramMessage(
+    {
+      chatId: opts.chatId,
+      text: `Siz aytdingiz:\n“${transcript}”\n\nBu to‘g‘rimi?`,
+      replyMarkup: {
+        inline_keyboard: [[
+          { text: "✅ To‘g‘ri", callback_data: `voice_correct:${id}` },
+          { text: "✏️ Tuzatish kerak", callback_data: `voice_wrong:${id}` },
+        ]],
+      },
+    },
+    clinicId,
+  );
 }
 
 /** Patient confirmed the transcription — route it through the AI. */
 export async function handleVoiceCorrect(opts: { clinicId: string; chatId: number; telegramUserId: number; voiceMessageId: string }) {
   const supabase = createAdminClient();
   const voiceRow = await ownVoiceMessage(opts.clinicId, opts.voiceMessageId, opts.telegramUserId);
-  if (!voiceRow || !voiceRow.transcription) return;
+  if (!voiceRow?.consent_given || voiceRow.transcription_status !== "transcribed" || !voiceRow.transcription) return;
 
   const { data: conv } = await supabase
     .from("conversations")
@@ -908,7 +1035,7 @@ export async function handleVoiceCorrect(opts: { clinicId: string; chatId: numbe
 
   // AI automation must stay silent while the conversation is under human
   // control — the same rule as plain text messages.
-  if (await conversationIsHeld(voiceRow.conversation_id)) {
+  if (await conversationIsHeld(voiceRow.clinic_id, voiceRow.conversation_id)) {
     logger.info("voice transcription confirmed, conversation held by admin — no auto-reply", {
       conversationId: voiceRow.conversation_id,
     });
@@ -920,9 +1047,9 @@ export async function handleVoiceCorrect(opts: { clinicId: string; chatId: numbe
   const reply = await generateReceptionistReply({ clinicId: clinic.id, userText: voiceRow.transcription });
   // The admin may have taken over while transcribing/thinking — never reply
   // over a human operator.
-  if (await conversationIsHeld(voiceRow.conversation_id)) return;
+  if (await conversationIsHeld(voiceRow.clinic_id, voiceRow.conversation_id) || voiceExpired(voiceRow.expires_at)) return;
   await sendTelegramMessage({ chatId: opts.chatId, text: reply.text }, clinic.id);
-  if (conv) {
+  if (conv && !voiceExpired(voiceRow.expires_at)) {
     await appendMessage({
       conversationId: voiceRow.conversation_id,
       clinicId: clinic.id,
@@ -937,6 +1064,7 @@ export async function handleVoiceCorrect(opts: { clinicId: string; chatId: numbe
       role: reply.usedAi ? "ai" : "bot",
       type: "text",
       content: reply.text,
+      voiceMessageId: opts.voiceMessageId,
     });
   }
 }
@@ -944,7 +1072,8 @@ export async function handleVoiceCorrect(opts: { clinicId: string; chatId: numbe
 /** Patient wants to correct the transcription — ask them to type it. */
 export async function handleVoiceWrong(opts: { clinicId: string; chatId: number; telegramUserId: number; voiceMessageId: string }) {
   const voiceRow = await ownVoiceMessage(opts.clinicId, opts.voiceMessageId, opts.telegramUserId);
-  if (!voiceRow) return;
+  if (!voiceRow?.consent_given || voiceRow.transcription_status !== "transcribed") return;
+  if (await conversationIsHeld(voiceRow.clinic_id, voiceRow.conversation_id)) return;
   await sendTelegramMessage(
     {
       chatId: opts.chatId,

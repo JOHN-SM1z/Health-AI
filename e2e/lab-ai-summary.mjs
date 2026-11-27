@@ -63,8 +63,9 @@ async function run() {
   }
   if (!today) throw new Error("could not place a visit today");
 
-  const browser = await chromium.launch();
+  let browser;
   try {
+    browser = await chromium.launch();
     const anon = await browser.newContext();
     check((await anon.request.get(`${BASE}/api/doctor/patients/${patient.id}/lab-summary`)).status() === 401, "no session: the summary API → 401");
     await anon.close();
@@ -103,8 +104,11 @@ async function run() {
     check((await r.request.get(`${BASE}/api/doctor/patients/${patient.id}/lab-summary`)).status() === 403, "reception: no access to the summary");
     await rc.close();
   } finally {
-    await db`delete from public.appointments where id = ${today.id}`;
-    await browser.close();
+    try {
+      await browser?.close();
+    } finally {
+      await db`delete from public.appointments where clinic_id = ${clinic} and id = ${today.id}`;
+    }
   }
 }
 

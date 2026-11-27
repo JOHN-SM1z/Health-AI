@@ -225,12 +225,12 @@ describeDb("conversation mark_seen (real DB, mocked session)", () => {
     const { conversationIsHeld } = await import("@/lib/telegram/store");
 
     // AI would currently be allowed to respond.
-    expect(await conversationIsHeld(convId2)).toBe(false);
+    expect(await conversationIsHeld(clinicId, convId2)).toBe(false);
 
     // Take over.
     const takeoverRes = await post(convId2, { action: "takeover" });
     expect(takeoverRes.status).toBe(200);
-    expect(await conversationIsHeld(convId2)).toBe(true);
+    expect(await conversationIsHeld(clinicId, convId2)).toBe(true);
 
     // Operator replies; delivery succeeds.
     sendMock.mockResolvedValueOnce(55555);
@@ -270,7 +270,7 @@ describeDb("conversation mark_seen (real DB, mocked session)", () => {
 
     // AI is allowed to respond again — this is the exact gate
     // handleTelegramMessage checks before every automated reply.
-    expect(await conversationIsHeld(convId2)).toBe(false);
+    expect(await conversationIsHeld(clinicId, convId2)).toBe(false);
 
     await admin.from("conversations").delete().eq("id", convId2);
     await admin.from("patients").delete().eq("id", patient!.id);

@@ -51,8 +51,8 @@ export async function POST(request: NextRequest) {
       const extension = audio.type.includes("mp4") ? "m4a" : audio.type.includes("ogg") ? "ogg" : "webm";
       const result = await provider.transcribe({ file: Buffer.from(await audio.arrayBuffer()), mimeType: audio.type, fileName: `concern.${extension}` });
       return ok({ text: result.text.trim().slice(0, 300) });
-    } catch (e) {
-      logger.warn("concern transcription failed", { error: e instanceof Error ? e.message : "unknown" });
+    } catch {
+      logger.warn("concern transcription failed");
       throw new ApiError(502, "Ovozni matnga aylantirib bo‘lmadi — iltimos, yozib yuboring", "transcription_failed");
     }
   } catch (e) {

@@ -157,4 +157,17 @@ describe("sendTelegramMessage", () => {
     expect(result).toBeNull();
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
   });
+
+  it("does not replay a keyboard fallback after an ambiguous network failure", async () => {
+    sendMessageMock
+      .mockRejectedValueOnce(new Error("Bad Request: BUTTON_URL_INVALID"))
+      .mockRejectedValueOnce(new Error("network timeout after acceptance"));
+    const result = await sendTelegramMessage({
+      chatId: 777000,
+      text: "Salom",
+      replyMarkup: { keyboard: [[{ text: "Book", web_app: { url: "https://example.com/book" } }]] },
+    });
+    expect(result).toBeNull();
+    expect(sendMessageMock).toHaveBeenCalledTimes(2);
+  });
 });
