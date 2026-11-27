@@ -18,6 +18,8 @@
 
 ## What still needs to be done
 
+**Update, 27 November 2026.** Part of sequence 7 is built on `claude/w13-prescribing-and-pentest`: ICD-10 catalogue and picker, structured allergies, the drug catalogue with search and clinic formulary, and the prescribing workflow with signing, replacement, cancellation, the national-number hand-over and a verifiable printed copy. See the [implementation record](STRUCTURED_PRESCRIBING_2026-11-27.md) for what that covers and what it leaves. The same branch carries a [security assessment](SECURITY_ASSESSMENT_2026-11-27.md); its open findings add to sequences 1, 5 and 6 below, most importantly the urgent-wording detector before any patient-facing AI or voice. Licensed catalogue data, the consultation recorder and patient delivery of signed documents are still to do.
+
 | Sequence | Work | Start or release condition |
 | --- | --- | --- |
 | 1 | **Hosted readiness.** Review the pilot merge into canonical `main`, bind the release image to the source and migration ledger, apply the two existing notification claim RPCs, enable leaked-password protection, and rerun compatibility and advisor checks. Reconcile stale appointments and payments, orphaned staff records and legacy tables with clinic staff. | On 21 November, the read-only hosted preflight still returned both missing RPCs, and the Auth advisor still reported leaked-password protection disabled. Apply the prepared migration on the target before releasing the corresponding workers. |

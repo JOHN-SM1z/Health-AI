@@ -8,7 +8,10 @@ with required_columns(table_name, column_name) as (values
   ('referrals','reason'), ('referrals','handoff_note'), ('referrals','expires_at'),
   ('visit_charges','clinic_id'), ('visit_transactions','clinic_id'),
   ('lab_order_items','clinic_id'), ('lab_results','clinic_id'),
-  ('notification_jobs','claim_token'), ('notification_jobs','lease_until')
+  ('notification_jobs','claim_token'), ('notification_jobs','lease_until'),
+  -- Structured prescribing (20261126000001): the doctor screens and the public verification page read these.
+  ('drug_catalog','controlled'), ('drug_catalog','rx_only'), ('patient_allergies','substance_key'),
+  ('prescriptions','clinical_record_id'), ('prescriptions','verification_code_hash'), ('prescription_items','rx_only_snapshot')
 ), required_rpcs(signature) as (values
   ('public.register_arrival(uuid,uuid,uuid,uuid,jsonb,uuid,uuid[])'),
   ('public.record_visit_payment(uuid,uuid,uuid,uuid,jsonb,numeric)'),
@@ -17,7 +20,14 @@ with required_columns(table_name, column_name) as (values
   ('public.open_queue_encounter(uuid,uuid,uuid,uuid,uuid)'),
   ('public.doctor_patient_access(uuid,uuid)'),
   ('public.renew_notification_job_claim(uuid,uuid,uuid)'),
-  ('public.finish_notification_job_claim(uuid,uuid,uuid,public.notification_job_status,text,bigint)')
+  ('public.finish_notification_job_claim(uuid,uuid,uuid,public.notification_job_status,text,bigint)'),
+  ('public.search_drug_catalog(uuid,uuid,text,integer)'),
+  ('public.search_icd10(text,integer)'),
+  ('public.save_prescription_draft(uuid,uuid,uuid,uuid,uuid,uuid,jsonb,uuid,uuid)'),
+  ('public.sign_prescription(uuid,uuid,uuid,uuid,text,text)'),
+  ('public.cancel_prescription(uuid,uuid,uuid,uuid,text)'),
+  ('public.record_national_rx_number(uuid,uuid,uuid,uuid,text)'),
+  ('public.verify_prescription_code(text)')
 ), functions as (
   select signature, to_regprocedure(signature) as oid from required_rpcs
 )

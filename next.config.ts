@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
   // emits. Vercel uses its own serverless pipeline, so disable it there.
   output: process.env.VERCEL ? undefined : "standalone",
   poweredByHeader: false,
+  // next/image is not used anywhere, so the built-in image optimizer endpoint (/_next/image) is switched off:
+  // it answers 404, and the image-decoding advisories against it (security assessment 2026-11-27, DEP-1) have
+  // nothing to reach. Remove this only together with a reviewed `images.remotePatterns` policy.
+  images: { unoptimized: true },
   async redirects() {
     return [
       // Onboarding docs and the owner-bootstrap script point staff at

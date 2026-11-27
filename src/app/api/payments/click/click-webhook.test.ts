@@ -39,7 +39,9 @@ beforeEach(async () => {
   vi.stubEnv("CLICK_SECRET_KEY", SECRET);
   vi.stubEnv("CLICK_SERVICE_ID", SERVICE_ID);
   vi.stubEnv("CRON_SECRET", "0123456789abcdef0123456789abcdef");
-  vi.stubEnv("PAYMENT_PROVIDER", "manual");
+  // Click callbacks exist only while Click is the configured provider with its credentials.
+  vi.stubEnv("PAYMENT_PROVIDER", "click");
+  vi.stubEnv("CLICK_MERCHANT_ID", "456");
   vi.clearAllMocks();
   claimMock.mockResolvedValue("00000000-0000-4000-8000-000000000002");
   finishMock.mockResolvedValue(undefined);
@@ -97,6 +99,57 @@ function signedBody(opts: { amount?: string; clickTransId?: string; error?: stri
   const form = new URLSearchParams({ ...params, sign_string: signString }).toString();
   return { form, clickTransId, amount };
 }
+
+describe("click webhook: exists only when Click is configured", () => {
+  async function handlerWith(env: Record<string, string>) {
+    vi.resetModules();
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    return (await import("@/lib/payments/click-webhook")).handleClickWebhook;
+  }
+
+  /** The callback anybody can build when the secret is empty: MD5 over public values and "". */
+  function forgedWithEmptySecret() {
+    const fields = { clickTransId: "1", serviceId: "1", merchantTransId: APPOINTMENT_ID, amount: "100.00", error: "0", clickPaydocId: "1", signTime: "1700000001" };
+    return new URLSearchParams({
+      click_trans_id: fields.clickTransId,
+      service_id: fields.serviceId,
+      click_paydoc_id: fields.clickPaydocId,
+      merchant_trans_id: fields.merchantTransId,
+      amount: fields.amount,
+      error: fields.error,
+      sign_time: fields.signTime,
+      sign_string: clickWebhookSignature({ ...fields, secretKey: "" }),
+    }).toString();
+  }
+
+  it("is 404 in the default configuration and never marks a forged callback paid", async () => {
+    // Production default: manual payments, no CLICK_* values at all.
+    const manual = await handlerWith({ PAYMENT_PROVIDER: "manual", CLICK_SECRET_KEY: "", CLICK_SERVICE_ID: "", CLICK_MERCHANT_ID: "" });
+    for (const complete of [false, true]) {
+      const res = await manual(forgedWithEmptySecret(), complete);
+      expect(res.status).toBe(404);
+    }
+    expect(claimMock).not.toHaveBeenCalled();
+    expect(transitionMock).not.toHaveBeenCalled();
+    expect(supabaseMock.from).not.toHaveBeenCalled();
+  });
+
+  it("is 404 while another provider is configured, even with a correctly signed callback", async () => {
+    const manual = await handlerWith({ PAYMENT_PROVIDER: "manual" });
+    const res = await manual(signedBody().form, true);
+    expect(res.status).toBe(404);
+    expect(transitionMock).not.toHaveBeenCalled();
+  });
+
+  it("never completes a payment Click reports as failed or cancelled", async () => {
+    for (const complete of [false, true]) {
+      const res = await handler(signedBody({ error: "-5017" }).form, complete);
+      expect((await res.json()).error_code).toBe("-9");
+    }
+    expect(claimMock).not.toHaveBeenCalled();
+    expect(transitionMock).not.toHaveBeenCalled();
+  });
+});
 
 describe("click webhook: signature gate", () => {
   it("rejects an invalid signature before any state change", async () => {

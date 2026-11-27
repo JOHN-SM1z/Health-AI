@@ -15,6 +15,8 @@ import { getPaymentProvider } from "@/lib/payments/provider";
 import { transitionPaymentStatus } from "@/lib/payments/status";
 import { logger } from "@/lib/logger";
 import { BookingError, IDEMPOTENCY_KEY_PATTERN, createAppointment } from "@/lib/booking/engine";
+import { detectUrgency, urgentMessage } from "@/lib/safety/policy";
+import { escalateUrgentFromMiniApp } from "@/lib/telegram/handlers";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +79,27 @@ export async function POST(request: NextRequest) {
         fullName: body.patientName,
       });
       source = "web";
+    }
+
+    // The reason a patient writes for the visit is patient text like any other (R-02): urgent wording stops the
+    // booking with the approved urgent-care message and alerts staff. It is never just stored as a note on an
+    // appointment days away (security assessment 2026-11-27, AI-2).
+    if (body.notes && detectUrgency(body.notes) === "urgent") {
+      const telegramUserId = (patient as { telegram_user_id?: number | null }).telegram_user_id ?? null;
+      if (telegramUserId) {
+        try {
+          await escalateUrgentFromMiniApp({
+            clinicId: clinic.id,
+            patientId: patient.id,
+            telegramUserId,
+            text: body.notes,
+            patientLabel: String(telegramUserId),
+          });
+        } catch {
+          logger.error("booking urgent escalation could not be completed", { clinicId: clinic.id });
+        }
+      }
+      return fail(urgentMessage(body.notes), 409, "urgent_concern", { clinicPhone: clinic.phone ?? null });
     }
 
     const supabase = createAdminClient();

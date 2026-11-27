@@ -280,6 +280,55 @@ export type Database = {
           },
         ]
       }
+      clinic_formulary: {
+        Row: {
+          active: boolean
+          added_by: string
+          clinic_id: string
+          created_at: string
+          drug_id: string
+          sort_order: number
+        }
+        Insert: {
+          active?: boolean
+          added_by: string
+          clinic_id: string
+          created_at?: string
+          drug_id: string
+          sort_order?: number
+        }
+        Update: {
+          active?: boolean
+          added_by?: string
+          clinic_id?: string
+          created_at?: string
+          drug_id?: string
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clinic_formulary_added_by_fkey"
+            columns: ["added_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clinic_formulary_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clinic_formulary_drug_id_fkey"
+            columns: ["drug_id"]
+            isOneToOne: false
+            referencedRelation: "drug_catalog"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clinic_telegram_integrations: {
         Row: {
           clinic_id: string
@@ -769,6 +818,123 @@ export type Database = {
           },
         ]
       }
+      drug_catalog: {
+        Row: {
+          active: boolean
+          aliases: string[]
+          controlled: boolean
+          created_by: string | null
+          drug_class: string | null
+          form: string | null
+          id: string
+          import_id: string | null
+          imported_at: string
+          inn: string
+          inn_latin: string | null
+          manufacturer: string | null
+          owner_clinic_id: string | null
+          registration_number: string | null
+          rx_only: boolean
+          source: string
+          source_version: string
+          strength: string | null
+          trade_name: string | null
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          aliases?: string[]
+          controlled?: boolean
+          created_by?: string | null
+          drug_class?: string | null
+          form?: string | null
+          id?: string
+          import_id?: string | null
+          imported_at?: string
+          inn: string
+          inn_latin?: string | null
+          manufacturer?: string | null
+          owner_clinic_id?: string | null
+          registration_number?: string | null
+          rx_only?: boolean
+          source: string
+          source_version: string
+          strength?: string | null
+          trade_name?: string | null
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          aliases?: string[]
+          controlled?: boolean
+          created_by?: string | null
+          drug_class?: string | null
+          form?: string | null
+          id?: string
+          import_id?: string | null
+          imported_at?: string
+          inn?: string
+          inn_latin?: string | null
+          manufacturer?: string | null
+          owner_clinic_id?: string | null
+          registration_number?: string | null
+          rx_only?: boolean
+          source?: string
+          source_version?: string
+          strength?: string | null
+          trade_name?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drug_catalog_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drug_catalog_import_id_fkey"
+            columns: ["import_id"]
+            isOneToOne: false
+            referencedRelation: "reference_data_imports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drug_catalog_owner_clinic_id_fkey"
+            columns: ["owner_clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      drug_search_terms: {
+        Row: {
+          drug_id: string
+          kind: string
+          term: string
+        }
+        Insert: {
+          drug_id: string
+          kind: string
+          term: string
+        }
+        Update: {
+          drug_id?: string
+          kind?: string
+          term?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drug_search_terms_drug_id_fkey"
+            columns: ["drug_id"]
+            isOneToOne: false
+            referencedRelation: "drug_catalog"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       faq_entries: {
         Row: {
           active: boolean
@@ -809,6 +975,50 @@ export type Database = {
             columns: ["clinic_id"]
             isOneToOne: false
             referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      icd10_codes: {
+        Row: {
+          active: boolean
+          code: string
+          import_id: string
+          imported_at: string
+          name_ru: string | null
+          name_uz: string | null
+          search_key: string | null
+          source: string
+          source_version: string
+        }
+        Insert: {
+          active?: boolean
+          code: string
+          import_id: string
+          imported_at?: string
+          name_ru?: string | null
+          name_uz?: string | null
+          search_key?: never
+          source: string
+          source_version: string
+        }
+        Update: {
+          active?: boolean
+          code?: string
+          import_id?: string
+          imported_at?: string
+          name_ru?: string | null
+          name_uz?: string | null
+          search_key?: never
+          source?: string
+          source_version?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "icd10_codes_import_id_fkey"
+            columns: ["import_id"]
+            isOneToOne: false
+            referencedRelation: "reference_data_imports"
             referencedColumns: ["id"]
           },
         ]
@@ -2403,6 +2613,106 @@ export type Database = {
           },
         ]
       }
+      patient_allergies: {
+        Row: {
+          clinic_id: string
+          creation_key: string | null
+          drug_id: string | null
+          id: string
+          inactivated_by: string | null
+          inactive_at: string | null
+          inactive_reason: string | null
+          patient_id: string
+          reaction: string | null
+          recorded_at: string
+          recorded_by: string
+          recorded_by_doctor_id: string
+          severity: string
+          substance: string
+          substance_key: string | null
+          substance_kind: string
+        }
+        Insert: {
+          clinic_id: string
+          creation_key?: string | null
+          drug_id?: string | null
+          id?: string
+          inactivated_by?: string | null
+          inactive_at?: string | null
+          inactive_reason?: string | null
+          patient_id: string
+          reaction?: string | null
+          recorded_at?: string
+          recorded_by: string
+          recorded_by_doctor_id: string
+          severity?: string
+          substance: string
+          substance_key?: never
+          substance_kind?: string
+        }
+        Update: {
+          clinic_id?: string
+          creation_key?: string | null
+          drug_id?: string | null
+          id?: string
+          inactivated_by?: string | null
+          inactive_at?: string | null
+          inactive_reason?: string | null
+          patient_id?: string
+          reaction?: string | null
+          recorded_at?: string
+          recorded_by?: string
+          recorded_by_doctor_id?: string
+          severity?: string
+          substance?: string
+          substance_key?: never
+          substance_kind?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "patient_allergies_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_allergies_doctor_same_clinic_fkey"
+            columns: ["recorded_by_doctor_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "doctors"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "patient_allergies_drug_id_fkey"
+            columns: ["drug_id"]
+            isOneToOne: false
+            referencedRelation: "drug_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_allergies_inactivated_by_fkey"
+            columns: ["inactivated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_allergies_patient_same_clinic_fkey"
+            columns: ["patient_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "patient_allergies_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       patient_merges: {
         Row: {
           canonical_patient_id: string
@@ -2714,6 +3024,281 @@ export type Database = {
           },
         ]
       }
+      prescription_items: {
+        Row: {
+          allergy_ids: string[]
+          allergy_override_reason: string | null
+          clinic_id: string
+          days: number
+          dose: number
+          dose_unit: string
+          drug_id: string
+          form_snapshot: string | null
+          frequency: string
+          id: string
+          inn_snapshot: string
+          instructions: string | null
+          position: number
+          prescription_id: string
+          quantity: number
+          route: string
+          rx_only_snapshot: boolean
+          strength_snapshot: string | null
+          timing: string
+          trade_name_snapshot: string | null
+        }
+        Insert: {
+          allergy_ids?: string[]
+          allergy_override_reason?: string | null
+          clinic_id: string
+          days: number
+          dose: number
+          dose_unit: string
+          drug_id: string
+          form_snapshot?: string | null
+          frequency: string
+          id?: string
+          inn_snapshot: string
+          instructions?: string | null
+          position: number
+          prescription_id: string
+          quantity: number
+          route: string
+          rx_only_snapshot: boolean
+          strength_snapshot?: string | null
+          timing?: string
+          trade_name_snapshot?: string | null
+        }
+        Update: {
+          allergy_ids?: string[]
+          allergy_override_reason?: string | null
+          clinic_id?: string
+          days?: number
+          dose?: number
+          dose_unit?: string
+          drug_id?: string
+          form_snapshot?: string | null
+          frequency?: string
+          id?: string
+          inn_snapshot?: string
+          instructions?: string | null
+          position?: number
+          prescription_id?: string
+          quantity?: number
+          route?: string
+          rx_only_snapshot?: boolean
+          strength_snapshot?: string | null
+          timing?: string
+          trade_name_snapshot?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prescription_items_drug_id_fkey"
+            columns: ["drug_id"]
+            isOneToOne: false
+            referencedRelation: "drug_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prescription_items_prescription_fkey"
+            columns: ["prescription_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "prescriptions"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
+      prescription_templates: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          created_by: string
+          doctor_id: string
+          id: string
+          items: Json
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          created_by: string
+          doctor_id: string
+          id?: string
+          items: Json
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          created_by?: string
+          doctor_id?: string
+          id?: string
+          items?: Json
+          name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prescription_templates_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prescription_templates_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prescription_templates_doctor_same_clinic_fkey"
+            columns: ["doctor_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "doctors"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
+      prescriptions: {
+        Row: {
+          appointment_id: string
+          cancel_reason: string | null
+          cancel_record_id: string | null
+          cancelled_at: string | null
+          clinic_id: string
+          clinical_record_id: string | null
+          created_at: string
+          created_by: string
+          creation_key: string | null
+          doctor_id: string
+          id: string
+          national_rx_number: string | null
+          national_rx_recorded_at: string | null
+          national_rx_recorded_by: string | null
+          patient_id: string
+          replace_reason: string | null
+          replaces_id: string | null
+          signed_at: string | null
+          status: Database["public"]["Enums"]["prescription_status"]
+          updated_at: string
+          verification_code_hash: string | null
+        }
+        Insert: {
+          appointment_id: string
+          cancel_reason?: string | null
+          cancel_record_id?: string | null
+          cancelled_at?: string | null
+          clinic_id: string
+          clinical_record_id?: string | null
+          created_at?: string
+          created_by: string
+          creation_key?: string | null
+          doctor_id: string
+          id?: string
+          national_rx_number?: string | null
+          national_rx_recorded_at?: string | null
+          national_rx_recorded_by?: string | null
+          patient_id: string
+          replace_reason?: string | null
+          replaces_id?: string | null
+          signed_at?: string | null
+          status?: Database["public"]["Enums"]["prescription_status"]
+          updated_at?: string
+          verification_code_hash?: string | null
+        }
+        Update: {
+          appointment_id?: string
+          cancel_reason?: string | null
+          cancel_record_id?: string | null
+          cancelled_at?: string | null
+          clinic_id?: string
+          clinical_record_id?: string | null
+          created_at?: string
+          created_by?: string
+          creation_key?: string | null
+          doctor_id?: string
+          id?: string
+          national_rx_number?: string | null
+          national_rx_recorded_at?: string | null
+          national_rx_recorded_by?: string | null
+          patient_id?: string
+          replace_reason?: string | null
+          replaces_id?: string | null
+          signed_at?: string | null
+          status?: Database["public"]["Enums"]["prescription_status"]
+          updated_at?: string
+          verification_code_hash?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prescriptions_cancel_record_same_clinic_fkey"
+            columns: ["cancel_record_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinical_records"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "prescriptions_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prescriptions_consultation_fkey"
+            columns: ["appointment_id", "clinic_id", "patient_id", "doctor_id"]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id", "clinic_id", "patient_id", "doctor_id"]
+          },
+          {
+            foreignKeyName: "prescriptions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prescriptions_doctor_same_clinic_fkey"
+            columns: ["doctor_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "doctors"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "prescriptions_national_rx_recorded_by_fkey"
+            columns: ["national_rx_recorded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prescriptions_patient_same_clinic_fkey"
+            columns: ["patient_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "prescriptions_record_same_clinic_fkey"
+            columns: ["clinical_record_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinical_records"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "prescriptions_replaces_same_clinic_fkey"
+            columns: ["replaces_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "prescriptions"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
       processed_webhooks: {
         Row: {
           external_id: string
@@ -2786,6 +3371,36 @@ export type Database = {
           hits?: number
           key?: string
           window_started_at?: string
+        }
+        Relationships: []
+      }
+      reference_data_imports: {
+        Row: {
+          checksum: string | null
+          dataset: string
+          id: string
+          imported_at: string
+          row_count: number
+          source: string
+          source_version: string
+        }
+        Insert: {
+          checksum?: string | null
+          dataset: string
+          id?: string
+          imported_at?: string
+          row_count?: number
+          source: string
+          source_version: string
+        }
+        Update: {
+          checksum?: string | null
+          dataset?: string
+          id?: string
+          imported_at?: string
+          row_count?: number
+          source?: string
+          source_version?: string
         }
         Relationships: []
       }
@@ -4714,6 +5329,134 @@ export type Database = {
         Args: { p_clinic_id: string; p_result_id: string; p_verified_by: string }
         Returns: boolean
       }
+      cancel_prescription: {
+        Args: {
+          p_actor: string
+          p_clinic_id: string
+          p_doctor_id: string
+          p_prescription_id: string
+          p_reason: string
+        }
+        Returns: Json
+      }
+      import_drug_catalog: {
+        Args: {
+          p_checksum: string
+          p_deactivate_missing: boolean
+          p_rows: Json
+          p_source: string
+          p_source_version: string
+        }
+        Returns: Json
+      }
+      import_icd10_codes: {
+        Args: {
+          p_checksum: string
+          p_deactivate_missing: boolean
+          p_rows: Json
+          p_source: string
+          p_source_version: string
+        }
+        Returns: Json
+      }
+      prescription_allergy_matches: {
+        Args: { p_prescription_id: string }
+        Returns: {
+          allergy_ids: string[]
+          drug_id: string
+          item_position: number
+        }[]
+      }
+      prescription_author_check: {
+        Args: {
+          p_actor: string
+          p_appointment_id: string
+          p_clinic_id: string
+          p_doctor_id: string
+          p_patient_id: string
+        }
+        Returns: string
+      }
+      record_national_rx_number: {
+        Args: {
+          p_actor: string
+          p_clinic_id: string
+          p_doctor_id: string
+          p_number: string
+          p_prescription_id: string
+        }
+        Returns: Json
+      }
+      rx_search_key: { Args: { p_text: string }; Returns: string }
+      save_prescription_draft: {
+        Args: {
+          p_actor: string
+          p_appointment_id: string
+          p_clinic_id: string
+          p_creation_key: string
+          p_doctor_id: string
+          p_items: Json
+          p_patient_id: string
+          p_prescription_id: string
+          p_replaces_id: string
+        }
+        Returns: Json
+      }
+      search_drug_catalog: {
+        Args: {
+          p_clinic_id: string
+          p_doctor_id: string
+          p_limit?: number
+          p_query: string
+        }
+        Returns: {
+          clinic_owned: boolean
+          controlled: boolean
+          drug_class: string
+          form: string
+          id: string
+          in_formulary: boolean
+          inn: string
+          inn_latin: string
+          manufacturer: string
+          match: string
+          recent: boolean
+          rx_only: boolean
+          source: string
+          source_version: string
+          strength: string
+          trade_name: string
+        }[]
+      }
+      search_icd10: {
+        Args: { p_limit?: number; p_query: string }
+        Returns: {
+          code: string
+          name_ru: string
+          name_uz: string
+        }[]
+      }
+      sign_prescription: {
+        Args: {
+          p_actor: string
+          p_clinic_id: string
+          p_doctor_id: string
+          p_prescription_id: string
+          p_replace_reason: string
+          p_verification_code_hash: string
+        }
+        Returns: Json
+      }
+      verify_prescription_code: {
+        Args: { p_code_hash: string }
+        Returns: {
+          clinic_name: string
+          clinic_timezone: string
+          doctor_name: string
+          signed_at: string
+          status: string
+        }[]
+      }
     }
     Enums: {
       actor_type: "staff" | "system" | "patient" | "telegram"
@@ -4825,6 +5568,7 @@ export type Database = {
         | "failed"
         | "refunded"
         | "manual_review"
+      prescription_status: "draft" | "signed" | "replaced" | "cancelled"
       referral_priority: "routine" | "urgent"
       referral_status:
         | "pending"
@@ -5095,6 +5839,7 @@ export const Constants = {
         "refunded",
         "manual_review",
       ],
+      prescription_status: ["draft", "signed", "replaced", "cancelled"],
       referral_priority: ["routine", "urgent"],
       referral_status: [
         "pending",

@@ -5,6 +5,7 @@ import { AButton, AError, AInput, ASelect, ATextArea } from "@/components/admin/
 import { adminApi, AdminApiError } from "@/lib/admin/client";
 import { WRITABLE_RECORD_TYPES } from "@/lib/clinical-records/categories";
 import { newIdempotencyKey } from "@/lib/idempotency-key";
+import { SearchPicker } from "@/components/doctor/search-picker";
 
 export type RecordDraft = { recordId: string; type: string; summary: string; details: string | null; code: string | null };
 
@@ -86,9 +87,33 @@ export function ClinicalRecordForm({
         <AInput value={summary} onChange={setSummary} aria-label="Qisqacha mazmun" placeholder={SUMMARY_HINTS[type]} />
       </div>
       {type === "diagnosis" && (
-        <div>
-          <p className="mb-1 text-xs font-medium text-ink-muted">Kod (ixtiyoriy, masalan XKT-10)</p>
-          <AInput value={code} onChange={setCode} aria-label="Kod" placeholder="I10" />
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="sm:col-span-2">
+            <p className="mb-1 text-xs font-medium text-ink-muted">XKT-10 dan tanlash (kod yoki nomi, kamida 2 ta belgi)</p>
+            {/* The doctor looks up the code they have in mind; nothing is proposed. */}
+            <SearchPicker<{ code: string; nameUz: string | null; nameRu: string | null }>
+              endpoint="/api/doctor/icd10"
+              resultKey="codes"
+              itemKey={(c) => c.code}
+              onPick={(c) => {
+                setCode(c.code);
+                if (!summary.trim()) setSummary(c.nameUz ?? c.nameRu ?? "");
+              }}
+              placeholder="Masalan: J06 yoki gipertenziya"
+              ariaLabel="XKT-10 qidirish"
+              emptyText="Kod topilmadi (ro‘yxat yuklanmagan bo‘lsa, kodni qo‘lda yozing)"
+              renderItem={(c) => (
+                <span>
+                  <span className="font-semibold text-foreground">{c.code}</span>{" "}
+                  <span className="text-ink-muted">{c.nameUz ?? c.nameRu}</span>
+                </span>
+              )}
+            />
+          </div>
+          <div>
+            <p className="mb-1 text-xs font-medium text-ink-muted">Kod (ixtiyoriy)</p>
+            <AInput value={code} onChange={setCode} aria-label="Kod" placeholder="I10" />
+          </div>
         </div>
       )}
       <div>
